@@ -1,22 +1,13 @@
-# python
+# bytecode
 __pycache__/
 *.pyc
 
 # IDE
 .idea/
 
-# large regenerable payloads (sizes verified 2026-07-29)
-launcher/scratchpad/
-launcher/logs/
-launcher/dist/
-structurer/exports/
-advisor/reference/reference.sqlite
-advisor/models_store/
-advisor/cache/
-catboost_info/
-advisor/err.txt
-campaigns/*.log
+# build output (regenerate: python bus/pack_multi.py build)
+bus/dist/
 
-# sqlite sidecars (run-dir artifacts never belong here, belt and braces)
+# sqlite sidecars
 *.sqlite-wal
 *.sqlite-shm
