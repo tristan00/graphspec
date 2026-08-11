@@ -5,6 +5,10 @@ __pycache__/
 # IDE
 .idea/
 
+# Jupyter's own backup copies of a notebook. Four of these were committed, so the repo
+# carried two archived duplicates of two notebooks nothing imported.
+.ipynb_checkpoints/
+
 # build output (regenerate: python bus/pack_multi.py build)
 bus/dist/
 
