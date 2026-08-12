@@ -15,3 +15,6 @@ bus/dist/
 # sqlite sidecars
 *.sqlite-wal
 *.sqlite-shm
+
+# scratch capture/crop helpers written into the repo root by mistake
+crop.ps1
