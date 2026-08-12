@@ -18,3 +18,12 @@ bus/dist/
 
 # scratch capture/crop helpers written into the repo root by mistake
 crop.ps1
+
+# the dashboard client's dependencies. ui/dist is deliberately NOT ignored: the dashboard
+# is started by runctl on a machine that may have no node toolchain, and the old UI was a
+# single .py that always ran. Committing the build keeps that property -- `runctl up`
+# serves a working dashboard straight from a checkout, offline.
+ui/node_modules/
+
+# the screenshot tool writes these into the repo root
+.playwright-mcp/
