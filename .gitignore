@@ -33,3 +33,6 @@ CLAUDE.md
 
 # scratch UI captures written into the repo root
 *.png
+
+# machine-local path configuration; copy config.example.toml
+config.toml
