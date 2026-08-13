@@ -27,3 +27,9 @@ ui/node_modules/
 
 # the screenshot tool writes these into the repo root
 .playwright-mcp/
+
+# Agent working rules -- local only, not part of the project
+CLAUDE.md
+
+# scratch UI captures written into the repo root
+*.png
