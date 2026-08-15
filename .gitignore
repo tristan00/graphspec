@@ -28,11 +28,9 @@ ui/node_modules/
 # the screenshot tool writes these into the repo root
 .playwright-mcp/
 
-# Agent working rules -- local only, not part of the project
-CLAUDE.md
-
-# scratch UI captures written into the repo root
+# scratch UI captures written into the repo root; the self-documentation shots are kept
 *.png
+!docs/ui/*.png
 
 # machine-local path configuration; copy config.example.toml
 config.toml
