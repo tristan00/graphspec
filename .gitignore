@@ -42,3 +42,4 @@ bench/gnn-startup-full-*/
 bench/gnn-edge-selection/
 bench/gnn-tuner-check/best_*.json
 bench/gnn-startup-final/*.log
+tests/.results/
