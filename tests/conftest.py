@@ -14,16 +14,6 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    if not any(config.getoption(option) for option in ("--run-adhoc", "--run-integration", "--run-gpu-tests")):
-        import platform
-        import socket
-        from tests.isolation import Isolation
-        patch = pytest.MonkeyPatch()
-        patch.setattr(platform, "node", socket.gethostname)
-        config.add_cleanup(patch.undo)
-        isolation = Isolation(config.rootpath)
-        config.option.basetemp = str(Path(isolation.temp.name) / "fixtures")
-        config.add_cleanup(isolation.close)
     selections = (("--run-adhoc", "adhoc", None),
                   ("--run-integration", "integration", "TW_RUN_INTEGRATION"),
                   ("--run-gpu-tests", "integration/test_gnn_gpu.py", "TW_RUN_GPU_TESTS"))
