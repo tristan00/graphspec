@@ -34,3 +34,11 @@ ui/node_modules/
 
 # machine-local path configuration; copy config.example.toml
 config.toml
+
+bench/gnn-*.log
+bench/gnn-*.pstats
+bench/gnn-study-*/
+bench/gnn-startup-full-*/
+bench/gnn-edge-selection/
+bench/gnn-tuner-check/best_*.json
+bench/gnn-startup-final/*.log
