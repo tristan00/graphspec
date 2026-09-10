@@ -55,8 +55,9 @@ def test_every_proposal_is_a_declared_design(model, monkeypatch):
 
 
 def register(monkeypatch, extra):
-    monkeypatch.setattr(spec, 'MODIFIERS', spec.MODIFIERS + (extra,))
-    monkeypatch.setattr(spec, 'MODIFIER_BY_NAME', dict(spec.MODIFIER_BY_NAME, **{extra.name: extra}))
+    monkeypatch.setattr(spec.REGISTRY, 'modifiers', spec.REGISTRY.modifiers + (extra,))
+    monkeypatch.setattr(spec.REGISTRY, 'modifier_by_name',
+                        dict(spec.REGISTRY.modifier_by_name, **{extra.name: extra}))
 
 
 def test_a_new_modifier_extends_designs_without_touching_the_selector(monkeypatch):
