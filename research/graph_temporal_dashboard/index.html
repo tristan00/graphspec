@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graph + temporal research · Results</title>
+<style>
+:root{font-family:Inter,Segoe UI,system-ui,sans-serif;color:#213047;background:#f5f6f8;font-size:14px;color-scheme:light}
+*{box-sizing:border-box}body{margin:0;padding:28px 32px}header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:24px}h1{font-size:25px;margin:0 0 6px;font-weight:650;letter-spacing:-.7px}p{margin:0;color:#67758b;line-height:1.6}.actions{display:flex;gap:10px;align-items:center}button,select,input,.download{font:inherit;border:1px solid #d8dee8;border-radius:7px;background:white;padding:9px 12px;color:inherit}button,.download{cursor:pointer}.download{text-decoration:none}button:hover,.download:hover{background:#edf2fc}button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #3d68db;outline-offset:2px}.live{font-size:12px;white-space:nowrap;color:#52705f}.live::before{content:'●';margin-right:6px;color:#269362}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:18px}.card{background:white;border:1px solid #e0e5ed;border-radius:10px;padding:17px 20px}.label{color:#67758b;font-size:12px;margin-bottom:6px}.value{font-size:26px;font-weight:650;letter-spacing:-.6px;font-variant-numeric:tabular-nums}.sub{font-size:12px;color:#748096;margin-top:5px;min-height:16px}.run{border-left:3px solid #7290dd;background:#ebf0fb;border-radius:4px;padding:12px 16px;margin-bottom:18px;line-height:1.6}.filters{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:0 0 12px}.filters input{min-width:220px;flex:1}.count{font-size:12px;color:#67758b;margin-left:auto}.table-wrap{background:white;border:1px solid #dfe5ed;border-radius:9px;overflow:auto;max-height:calc(100vh - 335px);min-height:280px}table{border-collapse:separate;border-spacing:0;width:100%;white-space:nowrap;text-align:left}th{position:sticky;top:0;background:#f8fafc;z-index:1;border-bottom:1px solid #dbe2ec;padding:0;font-size:12px;color:#617088}th button{border:0;border-radius:0;background:transparent;width:100%;text-align:left;padding:13px 12px;font-weight:600}th.numeric button{text-align:right}td{padding:12px;border-bottom:1px solid #edf0f5;font-size:13px}tr:last-child td{border-bottom:0}tbody tr:hover{background:#f7f9ff}.numeric{text-align:right;font-variant-numeric:tabular-nums}.baseline{background:#edf6f1}.baseline td:first-child{border-left:3px solid #3a9470}.badge{border-radius:5px;padding:4px 6px;background:#eff2f7;font-size:11px;display:inline-block}.badge.running{background:#e7eeff;color:#4264ac}.badge.problem{background:#fff2df;color:#97651d}.params{max-width:430px;overflow:hidden;text-overflow:ellipsis;font-family:Consolas,ui-monospace,monospace;color:#4d5f79;font-size:12px}.trial{border:0;padding:0;background:none;color:#4165b0;text-decoration:underline;text-underline-offset:3px}.good{color:#23875a}.delta{color:#7b6370}.model-id{color:#8390a2;font-size:11px;margin-right:6px}footer{margin-top:14px;font-size:12px;color:#7a879a;display:flex;gap:12px;justify-content:space-between;line-height:1.6}.error{color:#ae3d32;display:none;margin-bottom:12px}dialog{width:min(780px,95vw);max-height:85vh;border:1px solid #d8dee8;border-radius:12px;padding:24px;color:inherit}dialog::backdrop{background:#192c4866}dialog h2{margin:0 0 8px;font-size:20px}dialog .close{float:right}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6fa;padding:16px;border-radius:7px;font-size:12px;line-height:1.6}details{margin-top:18px}summary{cursor:pointer;color:#5b7091}#empty{padding:30px;text-align:center;color:#76849b;display:none}@media(max-width:800px){body{padding:18px 14px}header{align-items:flex-start;flex-direction:column}.cards{grid-template-columns:repeat(2,1fr)}.table-wrap{max-height:65vh}footer{flex-direction:column}.params{max-width:230px}}
+</style>
+</head>
+<body>
+<header><div><h1>Graph + temporal research</h1><p>Every attempt, ordered by holdout MSE. Lower is better.</p></div><div class="actions"><span id="live" class="live">Connecting</span><button id="refresh">Refresh</button><a class="download" href="/api/results" download="graph-temporal-results.json">Export JSON</a></div></header>
+<section class="cards" aria-label="Search summary">
+<div class="card"><div class="label">Completed neural fits</div><div class="value" id="complete">—</div><div class="sub" id="attempts">Loading attempts</div></div>
+<div class="card"><div class="label">Best neural MSE</div><div class="value" id="best">—</div><div class="sub" id="best-model">—</div></div>
+<div class="card"><div class="label">Fixed CatBoost baseline</div><div class="value" id="baseline">—</div><div class="sub">Same campaign split</div></div>
+<div class="card"><div class="label">Best neural vs. CatBoost</div><div class="value" id="gap">—</div><div class="sub" id="gap-label">Difference in MSE</div></div>
+</section>
+<div class="run" id="running">Reading the current fit…</div>
+<div class="error" role="status" id="error"></div>
+<div class="filters"><input id="search" type="search" aria-label="Search attempts" placeholder="Search model, graph, trial or parameters…"><select id="model" aria-label="Filter model"><option value="">All models</option></select><select id="graph" aria-label="Filter graph"><option value="">All graphs</option></select><select id="mode" aria-label="Filter search mode"><option value="">All modes</option></select><select id="status" aria-label="Filter status"><option value="">All statuses</option></select><span id="count" class="count"></span></div>
+<div class="table-wrap"><table><thead><tr>
+<th class="numeric"><button data-key="rank">Rank</button></th><th><button data-key="id">Trial</button></th><th class="numeric"><button data-key="mse">MSE ↑</button></th><th class="numeric"><button data-key="delta">Δ CatBoost</button></th><th><button data-key="model">Model</button></th><th><button data-key="graph">Graph</button></th><th><button data-key="mode">Mode / range</button></th><th><button data-key="status">Status</button></th><th class="numeric"><button data-key="seconds">Fit time</button></th><th><button data-key="params">Parameters</button></th>
+</tr></thead><tbody id="rows"></tbody></table><div id="empty">No matching attempts.</div></div>
+<footer><span id="split"></span><span>Updates every 10 seconds · Click a trial for full parameters · Reused validation holdout, not a final test</span></footer>
+<dialog id="detail"><button class="close" id="close">Close</button><h2 id="detail-title"></h2><p id="detail-sub"></p><pre id="detail-params"></pre><details><summary>Complete saved configuration and provenance</summary><pre id="detail-record"></pre></details></dialog>
+<script>
+const $=id=>document.getElementById(id);
+let data=null,sortKey='mse',ascending=true,busy=false;
+const nf=new Intl.NumberFormat();
+const fmt=value=>value==null?'—':value.toFixed(4);
+const compact=value=>typeof value==='number'&&!Number.isInteger(value)?Number(value.toPrecision(4)).toString():String(value);
+const labels={hidden:'width',weight_decay:'wd',lr:'lr',history:'history',epochs:'epochs',layers:'layers'};
+const params=row=>Object.entries(row.active_params).map(([key,value])=>`${labels[key]||key}=${compact(value)}`).join(' · ');
+const duration=value=>value==null?'—':value<60?`${value.toFixed(1)}s`:`${Math.floor(value/60)}m ${Math.floor(value%60)}s`;
+function choices(id,values){const select=$(id),current=select.value;for(const value of [...new Set(values)].sort()){if(![...select.options].some(option=>option.value===value)){select.add(new Option(value,value));}}select.value=current;}
+function cell(row,text,className=''){const td=document.createElement('td');td.textContent=text;td.className=className;row.append(td);return td;}
+function openDetail(row){$('detail-title').textContent=`${row.id} · ${row.model}`;$('detail-sub').textContent=`${row.graph} · ${row.mode} · ${row.status} · MSE ${fmt(row.mse)}`;$('detail-params').textContent=JSON.stringify(row.active_params,null,2);$('detail-record').textContent=JSON.stringify(row,null,2);$('detail').showModal();}
+function render(){
+if(!data)return;
+const needle=$('search').value.trim().toLowerCase();
+const rows=data.rows.filter(row=>['model','graph','mode','status'].every(key=>!$(key).value||row[key]===$(key).value)&&(!needle||JSON.stringify(row).toLowerCase().includes(needle)));
+rows.sort((a,b)=>{const x=sortKey==='params'?params(a):a[sortKey],y=sortKey==='params'?params(b):b[sortKey];if(x==null)return y==null?0:1;if(y==null)return -1;const result=typeof x==='number'?x-y:String(x).localeCompare(String(y),undefined,{numeric:true});return ascending?result:-result;});
+const fragment=document.createDocumentFragment();
+for(const row of rows){const tr=document.createElement('tr');if(row.mode==='Fixed'&&row.status==='Complete')tr.className='baseline';cell(tr,row.rank??'—','numeric');const trial=cell(tr,'');const button=document.createElement('button');button.className='trial';button.textContent=row.id;button.onclick=()=>openDetail(row);trial.append(button);cell(tr,fmt(row.mse),'numeric');cell(tr,row.delta==null?'—':`${row.delta>0?'+':''}${fmt(row.delta)}`,'numeric '+(row.delta<0?'good':'delta'));const model=cell(tr,'');if(row.model_id){const id=document.createElement('span');id.className='model-id';id.textContent=row.model_id;model.append(id);}model.append(document.createTextNode(row.model));cell(tr,row.graph);cell(tr,row.mode);const status=cell(tr,'');const badge=document.createElement('span');badge.textContent=row.status;badge.className='badge '+(row.status==='Running'?'running':row.status.startsWith('Complete')?'':'problem');status.append(badge);cell(tr,duration(row.seconds),'numeric');const settings=cell(tr,params(row),'params');settings.title=params(row);fragment.append(tr);}
+$('rows').replaceChildren(fragment);$('count').textContent=`${rows.length} / ${data.rows.length} attempts`;$('empty').style.display=rows.length?'none':'block';
+document.querySelectorAll('th button').forEach(button=>{button.textContent=button.textContent.replace(/ [↑↓]$/,'')+(button.dataset.key===sortKey?(ascending?' ↑':' ↓'):'');button.parentElement.setAttribute('aria-sort',button.dataset.key===sortKey?(ascending?'ascending':'descending'):'none');});
+}
+async function refresh(){
+if(busy)return;busy=true;
+try{const response=await fetch('/api/results',{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);data=await response.json();
+for(const key of ['model','graph','mode','status'])choices(key,data.rows.map(row=>row[key]));
+$('complete').textContent=nf.format(data.complete);$('attempts').textContent=`${data.rows.length} attempts · ${data.unscored} failed / interrupted`;$('best').textContent=fmt(data.best_neural_mse);$('best-model').textContent=data.best_neural_model||'No completed fits';$('baseline').textContent=fmt(data.baseline_mse);
+const gap=data.best_neural_mse!=null&&data.baseline_mse!=null?data.best_neural_mse-data.baseline_mse:null;
+$('gap').textContent=gap==null?'—':`${gap>0?'+':''}${fmt(gap)}`;$('gap-label').textContent=gap==null?'Awaiting scores':`${Math.abs(gap/data.baseline_mse*100).toFixed(1)}% ${gap>=0?'above':'below'} baseline MSE`;
+const current=data.rows.find(row=>row.status==='Running');$('running').textContent=current?`Running ${current.id} · ${current.model} · ${current.graph} · ${duration(current.seconds)} elapsed · ${params(current)}${data.stop_requested?' · Stop requested after this fit':''}`:data.stop_requested?'Stop requested. No active fit.':'No active worker at this refresh. Completed results remain available.';
+if(data.exploration)$('running').textContent=`${data.exploration.phase} · ${data.exploration.finished}/${data.exploration.requested_total??data.exploration.total} random attempts ${data.exploration.ended_early?'before requested TPE switch':'finished'} · `+$('running').textContent;
+$('split').textContent=`${nf.format(data.train_rows)} training rows · ${nf.format(data.holdout_rows)} holdout rows`;$('live').textContent=`Updated ${new Date(data.updated).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;$('error').style.display='none';render();
+}catch(error){$('live').textContent='Update failed';$('error').textContent=`Could not refresh results (${error.message}). Displayed results are from the last successful update. Retrying in 10 seconds.`;$('error').style.display='block';}finally{busy=false;}
+}
+for(const key of ['search','model','graph','mode','status'])$(key).addEventListener('input',render);
+document.querySelectorAll('th button').forEach(button=>button.onclick=()=>{ascending=sortKey===button.dataset.key?!ascending:true;sortKey=button.dataset.key;render();});
+$('refresh').onclick=refresh;$('close').onclick=()=>$('detail').close();
+refresh();setInterval(refresh,10000);
+</script>
+</body>
+</html>

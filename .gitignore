@@ -34,3 +34,4 @@ ui/node_modules/
 
 # machine-local path configuration; copy config.example.toml
 config.toml
+research/graph_temporal/artifacts/
