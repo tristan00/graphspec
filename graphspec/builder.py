@@ -26,6 +26,7 @@ def save_arrays(directory, arrays):
 class Builder:
 
     registry = None
+    views = {}
 
     def __init__(self, name, categories):
         self.name, self.categories = name, categories
@@ -174,6 +175,9 @@ class Builder:
             propagation_ids=np.flatnonzero(events[:, 3] != 0).astype(np.int32))
         for name, block in self.type_attributes.items():
             arrays['attributes_' + name] = np.asarray(block, np.float16).reshape(-1, len(self.registry.attributes(name)))
+        missing = sorted({name for arrays_of in self.views.values() for name in arrays_of} - set(arrays))
+        if missing:
+            raise ValueError('declared views name arrays the builder did not emit: ' + ', '.join(missing))
         LOG.info('campaign cache exit campaign=%s seconds=%.3f decisions=%d nodes=%d events=%d', self.name, time.perf_counter() - started, len(self.rows), len(x), len(events))
         return arrays
 

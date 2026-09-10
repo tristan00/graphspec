@@ -95,6 +95,21 @@ MIXED_EDGES = dict(previous_action=1, previous_observation=4, bundle_action=8,
 
 MARKERS = ('non_relation', 'turn_context')
 
+VIEWS = {
+    'snapshot': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_step',
+                 'spatial_attribute_row', 'query_context'),
+    'mixed': ('mixed_x', 'mixed_kind', 'mixed_tick', 'mixed_entity', 'mixed_edges',
+              'mixed_member_ids', 'mixed_member_offsets'),
+    'event': ('events', 'event_dag', 'x'),
+    'entity': ('events', 'x', 'entity_kind', 'observation_ids', 'observation_offsets'),
+    'role': ('events', 'role_left', 'role_right', 'x'),
+    'neighbor': ('events', 'neighbor_ids', 'neighbor_offsets', 'observation_ids', 'observation_offsets'),
+    'walk': ('walks', 'propagation_ids', 'events', 'neighbor_ids', 'neighbor_offsets'),
+    'affinity': ('actor', 'affinity', 'global_affinity'),
+    'signals': ('signals', 'query'),
+}
+
+
 REGISTRY = Registry('total_war', VERSION, NODES, EDGES, WIDTH, MARKERS, LAYOUTS, MODIFIERS,
                     RECIPE_LIST, CONSTRUCTION,
                     extras=dict(mixed_nodes=list(MIXED_NODES), mixed_edges=dict(MIXED_EDGES)))

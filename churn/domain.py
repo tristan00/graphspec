@@ -11,10 +11,7 @@ INPUTS = {
 }
 BLOCKS = {model: frozenset(name for name, models in INPUTS.items() if model in models) for model in GRAPHS}
 
-VIEWS = {
-    'snapshot': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_step',
-                 'spatial_attribute_row', 'query_context'),
-}
+VIEWS = spec.VIEWS
 
 DOMAIN = Domain(spec.REGISTRY, GRAPHS, BLOCKS, (), VIEWS)
 DESIGNS = DOMAIN.designs

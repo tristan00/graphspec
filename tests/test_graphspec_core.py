@@ -204,3 +204,22 @@ def test_domain_rejects_a_model_naming_an_undeclared_graph():
 
     with pytest.raises(ValueError):
         Domain(CHURN_DOMAIN.registry, dict(C99='not-a-recipe'))
+
+
+def test_declared_views_must_be_emitted():
+    import pytest
+    from graphspec import Builder
+    from totalwar import spec as tw
+    from tests.test_graph_research_cache import records
+
+    class Missing(Builder):
+        registry = tw.REGISTRY
+        views = dict(tw.VIEWS, invented=('no_such_array',))
+
+    from totalwar.cache import Campaign
+    builder = Missing('example', ['attack_army'])
+    builder.append = Campaign.append.__get__(builder)
+    for row, record in records(4):
+        builder.append(row, record)
+    with pytest.raises(ValueError, match='no_such_array'):
+        builder.finish()

@@ -26,6 +26,7 @@ def validate(arrays):
 class Campaign(Builder):
 
     registry = spec.REGISTRY
+    views = spec.VIEWS
 
     def append(self, row, record):
         step = len(self.rows)

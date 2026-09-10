@@ -61,6 +61,12 @@ CONSTRUCTION = dict(
 
 MARKERS = ('non_relation',)
 
+VIEWS = {
+    'snapshot': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_step',
+                 'spatial_attribute_row', 'query_context'),
+}
+
+
 REGISTRY = Registry('churn_tx', VERSION, NODES, EDGES, WIDTH, MARKERS, LAYOUTS, MODIFIERS,
                     RECIPE_LIST, CONSTRUCTION)
 
