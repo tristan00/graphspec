@@ -90,3 +90,10 @@ def test_observed_movement_removes_previous_location():
     changes = arrays['events']
     removal = changes[(changes[:, 0] == actor) & (changes[:, 1] == previous) & (changes[:, 3] == 1) & (changes[:, 8] == 0)]
     assert len(removal) == 1 and removal[0, 2] == 4 and removal[0, 7] == 1
+
+
+def test_rows_keep_their_supervision_dicts():
+    source = records()
+    campaign, _ = make(source)
+    assert campaign.rows == [row for row, _ in source]
+    assert [row['decision'] for row in campaign.rows] == [row['decision'] for row, _ in source]

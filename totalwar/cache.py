@@ -217,9 +217,9 @@ class Campaign:
             self.edge_steps.extend((step, step))
             if declared.attributes:
                 block = self.type_attributes[declared.name]
-                row = len(block)
+                attribute_row = len(block)
                 block.append(attributes.get((source, target, relation), declared.default))
-                self.attribute_rows.extend((row, row))
+                self.attribute_rows.extend((attribute_row, attribute_row))
             else:
                 self.attribute_rows.extend((-1, -1))
             pair = source, target, relation

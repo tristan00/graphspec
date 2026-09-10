@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphspec"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.1", "torch>=2.4", "optuna>=4.0", "psutil>=6.0"]
+
+[tool.setuptools]
+packages = ["graphspec", "totalwar", "churn", "dashboard"]
