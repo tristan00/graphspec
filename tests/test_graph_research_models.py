@@ -15,7 +15,7 @@ from research.graph_temporal.graph_variants import build as graph_variants
 
 @pytest.fixture(scope='module')
 def bank():
-    torch.set_num_threads(2)
+    torch.set_num_threads(1)
     _, arrays = make(records(8))
     arrays['row_index'] = np.arange(8)
     arrays['decision'] = np.arange(10, 18)
@@ -109,28 +109,33 @@ def test_history_context_without_targets_returns_empty_predictions(bank, model):
     assert create(cfg, 1)(batch).shape == (0,)
 
 
-@pytest.mark.parametrize('model', list(DESIGNS))
-@pytest.mark.parametrize('turn_context', ['none', 'end'])
-def test_future_observation_and_action_do_not_change_earlier_predictions(model, turn_context):
+@pytest.fixture(scope='module')
+def causal_banks():
     original = records(8)
     changed = copy.deepcopy(original)
     changed[-1][1]['campaign']['treasury'] = 999999
     changed[-1][1]['entities'][0]['state']['hp'] = 999
     changed[-1][0]['action']['key'] = 'cqi:777'
-    cfg = sample(model, DESIGNS[model][0], np.random.default_rng(7), 9)
-    cfg.update(hidden=16, layers=2, dropout=0.0, neighbors=4)
-    cfg.update(turn_context=turn_context, turn_lookback=3)
-    net = create(cfg, 1).eval()
-    outputs = []
+    built = []
     for source in (original, changed):
         _, arrays = make(source)
         arrays['row_index'] = np.arange(8)
         arrays['decision_turn'] = np.arange(8) // 2 + 1
         arrays.update(turn_index(arrays))
         arrays['turn_walks'] = turn_walks(arrays, arrays)
-        bank = SimpleNamespace(campaign=lambda index: arrays, targets=np.arange(8, dtype=np.float32))
-        with torch.no_grad():
-            outputs.append(net(pack(bank, (0, 0, 8), cfg, 'cpu')))
+        built.append(SimpleNamespace(campaign=lambda index, a=arrays: a, targets=np.arange(8, dtype=np.float32)))
+    return built
+
+
+@pytest.mark.parametrize('model', list(DESIGNS))
+@pytest.mark.parametrize('turn_context', ['none', 'end'])
+def test_future_observation_and_action_do_not_change_earlier_predictions(causal_banks, model, turn_context):
+    cfg = sample(model, DESIGNS[model][0], np.random.default_rng(7), 9)
+    cfg.update(hidden=16, layers=2, dropout=0.0, neighbors=4)
+    cfg.update(turn_context=turn_context, turn_lookback=3)
+    net = create(cfg, 1).eval()
+    with torch.no_grad():
+        outputs = [net(pack(bank, (0, 0, 8), cfg, 'cpu')) for bank in causal_banks]
     torch.testing.assert_close(outputs[0][:-1], outputs[1][:-1], atol=2e-5, rtol=2e-5)
 
 
@@ -166,7 +171,7 @@ def test_defining_components_receive_learning_signal(bank, model, parameter):
 def medium_bank():
     from research.graph_temporal.walk_cache import extend
 
-    torch.set_num_threads(2)
+    torch.set_num_threads(1)
     _, arrays = make(records(32))
     arrays['walks'] = extend(arrays)
     arrays['row_index'] = np.arange(32)

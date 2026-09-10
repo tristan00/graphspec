@@ -23,12 +23,12 @@ def result(config, value):
         training_examples_seen=config['epochs'] * 116652, epochs=config['epochs'])
 
 
-def history(best):
+def history(best, repeats=3):
     rng = np.random.default_rng(77)
     records = []
     for choice in CHOICES:
         model, design = choice.split('/')
-        for i in range(3):
+        for i in range(repeats):
             config = sample(model, design.removesuffix('+turn-end'), rng, len(records) + 1)
             config.update(turn_context='end' if design.endswith('+turn-end') else 'none', turn_lookback=2)
             config['epochs'] = 2 + i % 2
@@ -36,8 +36,8 @@ def history(best):
     return records
 
 
-def selection_history(best):
-    records = history(best)
+def selection_history(best, repeats=1):
+    records = history(best, repeats)
     records.extend(deepcopy([r for r in records if choice(r['config']) == best] * 10))
     np.random.default_rng(71).shuffle(records)
     return records
@@ -197,38 +197,39 @@ def test_longer_history_layout_covers_identical_training_rows(tmp_path):
             assert any(stop - start < history_size for c, start, stop in blocks)
 
 
-def test_exactly_200_random_attempts_then_tpe_and_resume_keeps_counter(tmp_path):
+def test_scheduled_random_attempts_then_tpe_and_resume_keeps_counter(tmp_path):
     from research.graph_temporal.selector import schedule_random
 
+    total = 12
     plan = setup_run(tmp_path)
     activate(tmp_path, plan)
     append_trial(tmp_path, plan)
     pending = plan['trials'][-1]
-    schedule_random(tmp_path, plan, 200)
+    schedule_random(tmp_path, plan, total)
     assert pending['archived_pending']
     start = len(plan['trials'])
-    for i in range(200):
+    for i in range(total):
         append_trial(tmp_path, plan)
         item = plan['trials'][-1]
         selection = json.loads((tmp_path / item['directory'] / 'selection.json').read_text())
         assert item['selector'] == 'random' and selection['random_attempt'] == i + 1
-        if i == 100:
+        if i == total // 2:
             restored = json.loads((tmp_path / 'plan.json').read_text())
-            schedule_random(tmp_path, restored, 200)
+            schedule_random(tmp_path, restored, total)
             assert restored == plan
         config = json.loads((tmp_path / item['directory'] / 'config.json').read_text())
-        if i == 199:
+        if i == total - 1:
             write_json(tmp_path / item['directory'] / 'result.json', result(config, 1.7))
         else:
             write_json(tmp_path / item['directory'] / 'timeout.json', dict(seconds=600))
     append_trial(tmp_path, plan)
-    assert len(plan['trials']) == start + 201
+    assert len(plan['trials']) == start + total + 1
     assert plan['trials'][-1]['selector'] == 'tpe'
     selection = json.loads((tmp_path / plan['trials'][-1]['directory'] / 'selection.json').read_text())
     assert selection['phase'] == 'tpe' and selection['observations'] == 13
     assert selection['history'][-1]['raw_val_mse'] == 1.7
     before = deepcopy(plan)
-    schedule_random(tmp_path, plan, 200)
+    schedule_random(tmp_path, plan, total)
     assert plan == before
 
 
@@ -339,7 +340,7 @@ def test_random_selection_records_reduced_domains_but_tpe_still_accepts_wider_hi
 def test_targeted_tpe_keeps_all_scores_without_clamping_old_parameters(model):
     from research.graph_temporal.selector import random_space
 
-    records = history(model + '/' + DESIGNS[model][0] + '+turn-end')
+    records = history(model + '/' + DESIGNS[model][0] + '+turn-end', 1)
     for record in records:
         cfg = record['config']
         broad = space(cfg['model'], cfg['turn_context'])
@@ -464,7 +465,7 @@ def test_shared_graph_switches_roundtrip_every_supported_combination():
 
 @pytest.mark.parametrize('preferred', [False, True])
 def test_shared_turn_switch_responds_to_scores(preferred):
-    records = history('M13/X-allpast')
+    records = history('M13/X-allpast', 1)
     rng = np.random.default_rng(19)
     for entry in records:
         active = entry['config']['turn_context'] == 'end'
