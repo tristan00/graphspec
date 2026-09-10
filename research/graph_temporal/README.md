@@ -9,9 +9,15 @@ This experiment lives outside the production advisor and production tuning servi
 - **Node types** (`NODES`) and the core subset (`CORE`) used by `S-core`.
 - **Edge types** (`EDGES`), each with a name, a family, permitted source and target kinds, an attribute schema, a per-type default and whether it is symmetric. Canonical and reverse codes are allocated by the registry; symmetric types get one code.
 - **Markers** (`MARKERS`) for the non-relation and turn-context sentinels that event and turn-replay inputs need. `RELATION_SLOTS` sizes every relation embedding.
-- **Recipes** (`RECIPES`), one per design: a view, a node-type set, a set of edge families and an optional lifted layout. `MODIFIERS` maps `+colocated` and `+turn-boundary` onto the families they add, so `resolve('X-allpast+turn-boundary')` returns a complete recipe.
+- **Recipes** (`RECIPES`), one per design: a view, a node-type set, a set of edge families and an optional lifted layout.
+- **Layout groups** (`LAYOUTS`) naming each set of alternative base recipes a model may choose among, and **modifiers** (`MODIFIERS`) declaring the family a `+suffix` adds, the base recipes it applies to and the search parameter it occupies. A modifier must cover all or none of a layout group; partial coverage is rejected at import.
+- **Extraction bindings**: membership types declare the source `collection` and `subject_field` they are read from, and diplomatic types declare their source `field`, so the two regular emitters in `cache.append()` iterate the spec instead of literal tables. Irregular emitters — placement, adjacency, the war graph — stay hand-written, because extraction is domain logic rather than boilerplate.
 
 `S-core` is a declared node-type set, not an ordinal comparison on kind indices, and adding an edge type is a spec edit rather than a change to model constructors. `Spatial` takes its relation count and its attributed types from the recipe, so the weight table and the per-type attribute projections size themselves.
+
+**Graph selection is derived, not enumerated.** `registry.GRAPHS` declares only the graph each model family consumes — a single recipe name, or the name of a layout group when the model may choose. Everything the search needs follows from that: `registry.DESIGNS` (`spec.designs_for`), `selector.CHOICES`, `selector.STRUCTURE`, and both halves of the TPE structure space. `structure()` and `suggest_structure()` iterate `spec.modifiers_for(bases(model))` and the model's layout group instead of testing family numbers, so the propose path and the historical-import path are generated from one declaration and cannot drift apart. Models sharing a layout group share its search coordinate; a modifier is offered only to models whose layouts carry it.
+
+Adding an edge family is therefore a spec declaration, a modifier entry and an emitter. The search picks it up with no selector change: it appears in every compatible model's designs, becomes a binary TPE dimension, and round-trips through observation import. `tests/test_graph_selection.py` registers a synthetic modifier and asserts exactly that.
 
 Edge attributes are stored per type. `spatial` keeps `(source, target, code)` triples ordered by decision step; `spatial_attribute_row` indexes into a separate `attributes_<name>` array for each attributed type, and is `-1` for types without a schema. Widening one type's schema leaves every other type's parameter shapes untouched.
 
@@ -19,7 +25,7 @@ The spec fingerprint is pinned into the bank manifest, the graph-variant manifes
 
 The spec may declare only edges derivable from frozen source data, deterministically and causally. Model-dependent edges would break the frozen-bank property and are not permitted.
 
-Cache format version 2 stores per-type attribute blocks and spec-allocated codes; banks built under version 1 are not readable and must be rebuilt.
+Cache format version 2 stores per-type attribute blocks and spec-allocated codes; banks built under version 1 are not readable and must be rebuilt. Model hyperparameter domains in `selector` and `registry.sample` remain indexed by model family; they describe architectures rather than graphs and are outside this spec.
 
 **Current graph expansion and shared switches, September 10**
 

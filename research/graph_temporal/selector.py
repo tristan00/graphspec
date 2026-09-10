@@ -11,15 +11,17 @@ from optuna.distributions import CategoricalDistribution, FloatDistribution, Int
 
 from . import spec
 from .cache import write_json
-from .registry import DESIGNS, sample
+from .registry import DESIGNS, bases, layout_parameter, sample
 from .turns import graph_name
 
 
 CHOICES = tuple(model + '/' + design + suffix for model, designs in DESIGNS.items() for design in designs for suffix in ('', '+turn-end'))
-GRAPH_VERSION = 2
+GRAPH_VERSION = 3
 MODELS = tuple(DESIGNS)
-STRUCTURE = dict(version=2, model='categorical', shared_binary=['turn_end', 'colocated', 'turn_boundary'],
-    conditional_layouts=['snapshot_graph', 'temporal_layout'], model_parameters='Shared across compatible graph variants within each model.')
+STRUCTURE = dict(version=3, model='categorical',
+    shared_binary=['turn_end'] + [modifier.parameter for modifier in spec.MODIFIERS],
+    conditional_layouts=sorted(spec.LAYOUTS),
+    model_parameters='Shared across compatible graph variants within each model.')
 SETTINGS = dict(n_startup_trials=10, n_ei_candidates=64, multivariate=True, group=True)
 RANGE_VERSION = 5
 RANGE_NAME = 'targeted'
@@ -83,21 +85,17 @@ def random_space(model, turn_context='none'):
 
 def structure(config):
     model, design = config['model'], config['design']
-    base = design.split('+')[0]
+    parts = design.split('+')
+    active = set(parts[1:])
     values = dict(model=model, turn_end=config.get('turn_context', 'none') == 'end')
     domains = dict(model=CategoricalDistribution(MODELS), turn_end=CategoricalDistribution([False, True]))
-    if model in ('M13', 'M14'):
-        values['temporal_layout'] = base
-        domains['temporal_layout'] = CategoricalDistribution(['X-chain', 'X-skip', 'X-allpast'])
-    if model in ('M13', 'M14', 'M15', 'M16'):
-        values['turn_boundary'] = design.endswith('+turn-boundary')
-        domains['turn_boundary'] = CategoricalDistribution([False, True])
-    elif int(model[1:]) <= 11:
-        if model == 'M08':
-            values['snapshot_graph'] = base
-            domains['snapshot_graph'] = CategoricalDistribution(['S-core', 'S-full'])
-        values['colocated'] = design.endswith('+colocated')
-        domains['colocated'] = CategoricalDistribution([False, True])
+    parameter = layout_parameter(model)
+    if parameter is not None:
+        values[parameter] = parts[0]
+        domains[parameter] = CategoricalDistribution(list(spec.LAYOUTS[parameter]))
+    for modifier in spec.modifiers_for(bases(model)):
+        values[modifier.parameter] = modifier.name in active
+        domains[modifier.parameter] = CategoricalDistribution([False, True])
     return values, domains
 
 
@@ -126,16 +124,12 @@ def observation(config, value, targeted=False):
 def suggest_structure(trial, training_seed):
     model = trial.suggest_categorical('model', MODELS)
     end = trial.suggest_categorical('turn_end', [False, True])
-    if model in ('M13', 'M14'):
-        design = trial.suggest_categorical('temporal_layout', ['X-chain', 'X-skip', 'X-allpast'])
-    elif model == 'M08':
-        design = trial.suggest_categorical('snapshot_graph', ['S-core', 'S-full'])
-    else:
-        design = DESIGNS[model][0]
-    if model in ('M13', 'M14', 'M15', 'M16') and trial.suggest_categorical('turn_boundary', [False, True]):
-        design += '+turn-boundary'
-    elif int(model[1:]) <= 11 and trial.suggest_categorical('colocated', [False, True]):
-        design += '+colocated'
+    options = bases(model)
+    parameter = layout_parameter(model)
+    design = trial.suggest_categorical(parameter, list(spec.LAYOUTS[parameter])) if parameter is not None else options[0]
+    for modifier in spec.modifiers_for(options):
+        if trial.suggest_categorical(modifier.parameter, [False, True]):
+            design += '+' + modifier.name
     config = sample(model, design, np.random.default_rng(training_seed), training_seed)
     config['turn_context'] = 'end' if end else 'none'
     return config

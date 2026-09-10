@@ -1,4 +1,5 @@
 import hashlib
+import itertools
 import json
 
 import numpy as np
@@ -13,7 +14,7 @@ NODES = ('faction', 'character', 'region', 'settlement', 'province', 'slot', 'bu
 CORE = ('faction', 'character', 'region', 'settlement', 'province')
 
 ACTORS = ('faction', 'character', 'settlement')
-CATALOGUE = ('count', 'level', 'strength', 'cost')
+CATALOGUE = ('count', 'level', 'strength_pct', 'cost')
 CATALOGUE_DEFAULT = (1.0, 0.0, 0.0, 0.0)
 
 TOPOLOGY = 'topology'
@@ -30,21 +31,27 @@ SNAPSHOT = (TOPOLOGY, OWNERSHIP, MEMBERSHIP, DIPLOMATIC, CONTEXT)
 
 class EdgeType:
 
-    __slots__ = ('name', 'family', 'sources', 'targets', 'attributes', 'default', 'symmetric', 'code', 'reverse')
+    __slots__ = ('name', 'family', 'sources', 'targets', 'attributes', 'default', 'symmetric',
+                 'collection', 'subject_field', 'field', 'code', 'reverse')
 
-    def __init__(self, name, family, sources, targets, attributes=(), default=(), symmetric=False):
+    def __init__(self, name, family, sources, targets, attributes=(), default=(), symmetric=False,
+                 collection=None, subject_field='key', field=None):
         self.name, self.family = name, family
         self.sources, self.targets = tuple(sources), tuple(targets)
         self.attributes, self.symmetric = tuple(attributes), symmetric
         self.default = tuple(default) if default else (0.0,) * len(self.attributes)
         if len(self.default) != len(self.attributes):
             raise ValueError('edge %s default does not match its attribute schema' % name)
+        self.collection, self.subject_field, self.field = collection, subject_field, field
+        if collection and len(self.targets) != 1:
+            raise ValueError('collection edge %s needs exactly one target kind' % name)
         self.code = self.reverse = -1
 
     def declaration(self):
         return dict(name=self.name, family=self.family, sources=list(self.sources),
                     targets=list(self.targets), attributes=list(self.attributes),
-                    default=list(self.default), symmetric=self.symmetric,
+                    default=list(self.default), symmetric=self.symmetric, collection=self.collection,
+                    subject_field=self.subject_field, field=self.field,
                     code=self.code, reverse=self.reverse)
 
 
@@ -53,18 +60,19 @@ EDGES = (
     EdgeType('located', TOPOLOGY, ('region', 'settlement', 'character'), ('region',)),
     EdgeType('contains', TOPOLOGY, ('province', 'region') + ACTORS, ('region', 'settlement', 'character', 'slot')),
     EdgeType('adjacent', TOPOLOGY, ('region',), ('region',)),
-    EdgeType('unit', MEMBERSHIP, ACTORS, ('unit',), CATALOGUE, CATALOGUE_DEFAULT),
-    EdgeType('skill', MEMBERSHIP, ACTORS, ('skill',), CATALOGUE, CATALOGUE_DEFAULT),
-    EdgeType('item', MEMBERSHIP, ACTORS, ('item',), CATALOGUE, CATALOGUE_DEFAULT),
-    EdgeType('building', MEMBERSHIP, ACTORS + ('slot',), ('building',), CATALOGUE, CATALOGUE_DEFAULT),
-    EdgeType('tech', MEMBERSHIP, ACTORS, ('tech',), CATALOGUE, CATALOGUE_DEFAULT),
-    EdgeType('ritual', MEMBERSHIP, ACTORS, ('ritual',), CATALOGUE, CATALOGUE_DEFAULT),
-    EdgeType('war', DIPLOMATIC, ('faction',), ('faction',)),
-    EdgeType('allied', DIPLOMATIC, ('faction',), ('faction',)),
-    EdgeType('trade', DIPLOMATIC, ('faction',), ('faction',)),
-    EdgeType('vassal', DIPLOMATIC, ('faction',), ('faction',)),
-    EdgeType('nap', DIPLOMATIC, ('faction',), ('faction',)),
-    EdgeType('access', DIPLOMATIC, ('faction',), ('faction',)),
+    EdgeType('unit', MEMBERSHIP, ACTORS, ('unit',), CATALOGUE, CATALOGUE_DEFAULT, collection='unit_cards'),
+    EdgeType('skill', MEMBERSHIP, ACTORS, ('skill',), CATALOGUE, CATALOGUE_DEFAULT, collection='skills'),
+    EdgeType('item', MEMBERSHIP, ACTORS, ('item',), CATALOGUE, CATALOGUE_DEFAULT, collection='equipped'),
+    EdgeType('building', MEMBERSHIP, ACTORS + ('slot',), ('building',), CATALOGUE, CATALOGUE_DEFAULT,
+             collection='built', subject_field='value'),
+    EdgeType('tech', MEMBERSHIP, ACTORS, ('tech',), CATALOGUE, CATALOGUE_DEFAULT, collection='tech'),
+    EdgeType('ritual', MEMBERSHIP, ACTORS, ('ritual',), CATALOGUE, CATALOGUE_DEFAULT, collection='rites'),
+    EdgeType('war', DIPLOMATIC, ('faction',), ('faction',), field='at_war'),
+    EdgeType('allied', DIPLOMATIC, ('faction',), ('faction',), field='allied'),
+    EdgeType('trade', DIPLOMATIC, ('faction',), ('faction',), field='trade'),
+    EdgeType('vassal', DIPLOMATIC, ('faction',), ('faction',), field='their_vassal'),
+    EdgeType('nap', DIPLOMATIC, ('faction',), ('faction',), field='nap'),
+    EdgeType('access', DIPLOMATIC, ('faction',), ('faction',), field='mil_access'),
     EdgeType('context', CONTEXT, ('faction',), ('context',)),
     EdgeType('colocated', COLOCATED, ('character', 'settlement'), ('character', 'settlement'), symmetric=True),
     EdgeType('temporal', LIFTED, NODES, NODES, symmetric=True),
@@ -101,6 +109,8 @@ for _edge in EDGES:
 NODE_INDEX = {name: i for i, name in enumerate(NODES)}
 FAMILIES = tuple(dict.fromkeys(edge.family for edge in EDGES))
 ATTRIBUTED = tuple(edge.name for edge in EDGES if edge.attributes)
+COLLECTIONS = tuple(edge for edge in EDGES if edge.collection)
+FLAGGED = tuple(edge for edge in EDGES if edge.field)
 BOUNDARY_CODES = tuple(BY_NAME[name].code for name in ('boundary_first', 'boundary_last', 'boundary_both'))
 MARKERS = ('non_relation', 'turn_context')
 NON_RELATION = RELATIONS
@@ -191,26 +201,69 @@ RECIPES = {
     'V-signals': Recipe('V-signals', 'signals', NODES, ()),
 }
 
-MODIFIERS = {'colocated': COLOCATED, 'turn-boundary': BOUNDARY}
+LAYOUTS = {
+    'snapshot_graph': ('S-core', 'S-full'),
+    'temporal_layout': ('X-chain', 'X-skip', 'X-allpast'),
+}
+
+
+class Modifier:
+
+    __slots__ = ('name', 'family', 'bases', 'parameter')
+
+    def __init__(self, name, family, bases, parameter):
+        self.name, self.family = name, family
+        self.bases, self.parameter = tuple(bases), parameter
+
+    def declaration(self):
+        return dict(name=self.name, family=self.family, bases=list(self.bases), parameter=self.parameter)
+
+
+MODIFIERS = (
+    Modifier('colocated', COLOCATED, ('S-core', 'S-full'), 'colocated'),
+    Modifier('turn-boundary', BOUNDARY, ('X-chain', 'X-skip', 'X-allpast', 'D-event'), 'turn_boundary'),
+)
+MODIFIER_BY_NAME = {modifier.name: modifier for modifier in MODIFIERS}
+
+for _group in LAYOUTS.values():
+    for _modifier in MODIFIERS:
+        _covered = set(_group) & set(_modifier.bases)
+        if _covered and _covered != set(_group):
+            raise ValueError('modifier %s covers part of a layout group' % _modifier.name)
+
+
+def modifiers_for(bases):
+    selected = set(bases)
+    return tuple(modifier for modifier in MODIFIERS if selected & set(modifier.bases))
+
+
+def designs_for(bases):
+    result = list(bases)
+    for base in bases:
+        active = [modifier for modifier in MODIFIERS if base in modifier.bases]
+        for size in range(1, len(active) + 1):
+            for combination in itertools.combinations(active, size):
+                result.append('+'.join([base] + [modifier.name for modifier in combination]))
+    return tuple(result)
 
 
 def resolve(design):
     parts = design.split('+')
     base = RECIPES[parts[0]]
     families = list(base.families)
-    for modifier in parts[1:]:
-        if modifier not in MODIFIERS:
-            raise ValueError('unknown graph modifier ' + modifier)
-        families.append(MODIFIERS[modifier])
+    for name in parts[1:]:
+        if name not in MODIFIER_BY_NAME:
+            raise ValueError('unknown graph modifier ' + name)
+        families.append(MODIFIER_BY_NAME[name].family)
     return Recipe(design, base.view, base.nodes, families, base.lifted)
 
 
 def declaration():
     return dict(version=VERSION, width=WIDTH, features=FEATURES, nodes=list(NODES),
                 relations=RELATIONS, edges=[edge.declaration() for edge in EDGES],
-                markers=list(MARKERS),
+                markers=list(MARKERS), layouts={k: list(v) for k, v in LAYOUTS.items()},
                 recipes=[recipe.declaration() for recipe in RECIPES.values()],
-                modifiers=dict(MODIFIERS))
+                modifiers=[modifier.declaration() for modifier in MODIFIERS])
 
 
 def fingerprint():

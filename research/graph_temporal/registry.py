@@ -13,18 +13,22 @@ NAMES = (
     'Temporal-edge attention', 'Event-DAG gated', 'Event-DAG attention', 'TGAT', 'Typed TGN',
     'JODIE reward', 'DyRep reward', 'GraphMixer', 'DyGFormer', 'HyperEvent', 'TPNet', 'CAWN', 'TNCN',
     'DyGMamba', 'NAViS reward', 'CTAN', 'MTGNN reward')
-DESIGNS = {f'M{i:02d}': ['S-full'] for i in range(1, 12)}
-DESIGNS.update(M08=['S-core', 'S-full'], M12=['O-mixed'], M13=['X-chain', 'X-skip', 'X-allpast'],
-    M14=['X-chain', 'X-skip', 'X-allpast'], M15=['D-event'], M16=['D-event'], M17=['E-entity'],
-    M18=['E-entity'], M19=['B-role'], M20=['E-entity'], M21=['H-neighbor'], M22=['H-neighbor'],
-    M23=['H-neighbor'], M24=['W-temporal'], M25=['W-temporal'], M26=['H-neighbor'], M27=['H-neighbor'],
-    M28=['N-affinity'], M29=['E-entity'], M30=['V-signals'])
-for i in range(1, 12):
-    DESIGNS[f'M{i:02d}'].extend(design + '+colocated' for design in tuple(DESIGNS[f'M{i:02d}']))
-for model in ('M13', 'M14'):
-    DESIGNS[model].extend(design + '+turn-boundary' for design in tuple(DESIGNS[model]))
-for model in ('M15', 'M16'):
-    DESIGNS[model].append('D-event+turn-boundary')
+GRAPHS = {f'M{i:02d}': 'S-full' for i in range(1, 12)}
+GRAPHS.update(M08='snapshot_graph', M12='O-mixed', M13='temporal_layout', M14='temporal_layout',
+    M15='D-event', M16='D-event', M17='E-entity', M18='E-entity', M19='B-role', M20='E-entity',
+    M21='H-neighbor', M22='H-neighbor', M23='H-neighbor', M24='W-temporal', M25='W-temporal',
+    M26='H-neighbor', M27='H-neighbor', M28='N-affinity', M29='E-entity', M30='V-signals')
+
+
+def bases(model):
+    return spec.LAYOUTS.get(GRAPHS[model], (GRAPHS[model],))
+
+
+def layout_parameter(model):
+    return GRAPHS[model] if GRAPHS[model] in spec.LAYOUTS else None
+
+
+DESIGNS = {model: spec.designs_for(bases(model)) for model in GRAPHS}
 
 
 for _designs in DESIGNS.values():

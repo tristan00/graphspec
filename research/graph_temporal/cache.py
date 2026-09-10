@@ -83,21 +83,16 @@ class Campaign:
                 edge(owner, entity, 'owns')
 
         def catalogue(entity, data):
-            for collection, kind, relation in (
-                ('unit_cards', 'unit', 'unit'), ('skills', 'skill', 'skill'), ('equipped', 'item', 'item'),
-                ('tech', 'tech', 'tech'), ('rites', 'ritual', 'ritual'), ('built', 'building', 'building')):
-                for key, value in items(data.get(collection)):
-                    subject = str(value.get('key', key))
-                    if collection == 'built':
-                        subject = str(value.get('value', subject))
-                    other = node(kind, subject, {'key': subject})
-                    edge(entity, other, relation)
-                    pair = entity, other, spec.code(relation)
-                    attr = attributes.setdefault(pair, [0, 0, 0, 0])
+            for declared in spec.COLLECTIONS:
+                for key, value in items(data.get(declared.collection)):
+                    subject = str(value.get(declared.subject_field, value.get('key', key)))
+                    other = node(declared.targets[0], subject, {'key': subject})
+                    edge(entity, other, declared.name)
+                    pair = entity, other, declared.code
+                    attr = attributes.setdefault(pair, [0] * len(declared.attributes))
                     attr[0] += 1
-                    attr[1] += float(value.get('level') or 0)
-                    attr[2] += float(value.get('strength_pct') or 0)
-                    attr[3] += float(value.get('cost') or 0)
+                    for position, field in enumerate(declared.attributes[1:], 1):
+                        attr[position] += float(value.get(field) or 0)
             for collection in ('slot_states', 'horde_slots'):
                 for key, value in items(data.get(collection)):
                     slot_key = (entity, value.get('slot_index', value.get('slot_id', key)))
@@ -138,11 +133,11 @@ class Campaign:
             catalogue(eid, data)
         for _, data in items(record['world'].get('relations')):
             other = node('faction', data['faction'], data)
-            for field, rel in (('at_war', 'war'), ('allied', 'allied'), ('trade', 'trade'), ('their_vassal', 'vassal'), ('nap', 'nap'), ('mil_access', 'access')):
-                if field in data:
-                    pair = (camp, other, spec.code(rel))
-                    explicit_status[pair] = int(bool(data[field]))
-                    if data[field]:
+            for declared in spec.FLAGGED:
+                if declared.field in data:
+                    pair = (camp, other, declared.code)
+                    explicit_status[pair] = int(bool(data[declared.field]))
+                    if data[declared.field]:
                         spatial.add(pair)
         for _, data in items(record['world'].get('war_graph')):
             own = node('faction', data['faction'], {'faction': data['faction']})
