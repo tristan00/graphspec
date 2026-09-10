@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from . import spec
 from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Spatial, TemporalEdges, mean
 from .turns import EndContext, enabled, gather_end
 
@@ -12,17 +13,18 @@ class SnapshotModel(nn.Module):
         super().__init__()
         self.family, self.cfg = int(cfg['model'][1:]), cfg
         hidden, depth = cfg['hidden'], cfg['layers']
-        self.has_turn_edges = enabled(cfg) or cfg['design'].endswith('+turn-boundary')
+        self.recipe = spec.resolve(cfg['design'])
+        self.has_turn_edges = enabled(cfg) or spec.BOUNDARY in self.recipe.families
         if self.has_turn_edges and self.family in (13, 14):
             self.turn_edge_time = nn.Linear(1, hidden, bias=False)
         elif enabled(cfg):
             self.turns = EndContext(hidden * 3)
-        self.input = nn.Sequential(nn.Linear(128, hidden), nn.LayerNorm(hidden), nn.SiLU())
-        self.kind = nn.Embedding(13, hidden)
-        self.query = nn.Linear(128, hidden)
+        self.input = nn.Sequential(nn.Linear(spec.FEATURES, hidden), nn.LayerNorm(hidden), nn.SiLU())
+        self.kind = nn.Embedding(len(spec.NODES), hidden)
+        self.query = nn.Linear(spec.FEATURES, hidden)
         mode = {4: 'gcn', 5: 'sage', 11: 'attention'}.get(self.family, 'relational')
-        self.spatial = nn.ModuleList(Spatial(hidden, mode, relations=39 if cfg['design'].endswith('+colocated') else 38,
-            dropout=cfg['dropout']) for _ in range(0 if self.family in (8, 9, 10) else depth))
+        self.spatial = nn.ModuleList(Spatial(hidden, mode, spec.RELATIONS, self.recipe.attributed(),
+            cfg['dropout']) for _ in range(0 if self.family in (8, 9, 10) else depth))
         if self.family in (1, 2, 3):
             self.action_round = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
             self.feedback = nn.Linear(hidden, hidden)
@@ -42,14 +44,14 @@ class SnapshotModel(nn.Module):
             self.temporal = nn.ModuleList(TemporalEdges(hidden, self.family == 14, cfg['dropout']) for _ in range(depth))
             self.final_spatial = Spatial(hidden, 'sage', dropout=cfg['dropout'])
         self.reward = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+        self.register_buffer('kinds', torch.as_tensor(self.recipe.kind_mask(), dtype=torch.float32), persistent=False)
 
     def forward(self, b):
         h = self.input(b['x']) + self.kind(b['kind'])
-        if self.cfg['design'].startswith('S-core'):
-            h = h * (b['kind'] <= 4)[:, None]
+        h = h * self.kinds[b['kind']][:, None]
         if self.family not in (8, 9, 10):
             for layer in self.spatial:
-                h = layer(h, b['edges'], b['relation'], b['attributes'])
+                h = layer(h, b['edges'], b['relation'], b['attributes'], b['attribute_edges'])
         q = self.query(b['query'])
         if self.family in (1, 2, 3):
             actor, subject = h[b['context_index'][:, 0]], h[b['context_index'][:, 1]]
@@ -65,7 +67,7 @@ class SnapshotModel(nn.Module):
             features = torch.cat((sequence, actor, subject, q), -1)
         elif self.family in (13, 14):
             edges = b['temporal_edges']
-            relation = b['temporal_relation'] if self.has_turn_edges else torch.full_like(edges[0], 41)
+            relation = b['temporal_relation'] if self.has_turn_edges else torch.full_like(edges[0], spec.code('temporal'))
             if self.has_turn_edges:
                 h = h + mean(self.turn_edge_time(b['temporal_turn_gap'].log1p()[:, None]), edges[1], len(h))
             for layer in self.temporal:
@@ -131,7 +133,7 @@ class MixedModel(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         from advisor.temporal_graph.tuning.model import TemporalRewardNet
-        self.net = TemporalRewardNet(128, dict(cfg, aggregation='mean', update='gru'))
+        self.net = TemporalRewardNet(spec.FEATURES, dict(cfg, aggregation='mean', update='gru'))
 
     def forward(self, b):
         return self.net(b['mixed'])[b['selected']]
@@ -145,7 +147,7 @@ class EventDAG(nn.Module):
         self.has_turns = enabled(cfg)
         if self.has_turns:
             self.turn_time = nn.Linear(3, hidden)
-        self.input = nn.Linear(128, hidden)
+        self.input = nn.Linear(spec.FEATURES, hidden)
         self.kind = nn.Embedding(5 if self.has_turns else 4, hidden)
         self.layers = nn.ModuleList(TemporalEdges(hidden, cfg['model'] == 'M16', cfg['dropout']) for _ in range(cfg['layers']))
         self.reward = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, 1))
@@ -162,14 +164,14 @@ class EventDAG(nn.Module):
         gap = torch.cat((b['dag_gap'], (b['events'][:, 2] - b['start'] * 2 + 1).float().repeat(2)))
         if self.has_turns:
             mask = b['end_raw_mask'].reshape(-1)
-            anchors = self.input(b['end_raw'].reshape(-1, 128)[mask]) + self.kind.weight[3]
+            anchors = self.input(b['end_raw'].reshape(-1, spec.FEATURES)[mask]) + self.kind.weight[3]
             anchors = anchors + self.turn_time(b['end_token_gaps'].reshape(-1, 3)[mask].log1p())
             anchor_ids = torch.arange(len(anchors), device=x.device) + len(x)
             queries = torch.arange(b['frames'], device=x.device) + len(x) + len(anchors)
             source, target = b['dag_query_edges']
             anchor_target = queries[:, None, None].expand(-1, 3, b['end_steps'].shape[1]).reshape(-1)[mask]
             edges = torch.cat((edges, torch.stack((source, queries[target])), torch.stack((anchor_ids, anchor_target))), 1)
-            relation = torch.cat((relation, b['events'][source, 3], torch.full_like(anchor_ids, 42)))
+            relation = torch.cat((relation, b['events'][source, 3], torch.full_like(anchor_ids, spec.TURN_CONTEXT)))
             gap = torch.cat((gap, ((b['query_steps'][target] + b['start']) * 2 - b['events'][source, 2]).float(),
                 b['end_token_gaps'].reshape(-1, 3)[mask, 0]))
             x = torch.cat((x, anchors, self.input(b['query']) + self.kind.weight[4]))
@@ -199,7 +201,7 @@ class SignalGraph(nn.Module):
         self.convs = nn.ModuleList(nn.Conv2d(hidden, hidden * 2, (1, 3), dilation=(1, 2**i)) for i in range(cfg['layers']))
         self.mix = nn.ModuleList(nn.Linear(hidden * (1 + 2 * self.mix_hops), hidden) for _ in self.convs)
         self.norms = nn.ModuleList(nn.LayerNorm(hidden) for _ in self.convs)
-        self.query = nn.Linear(128, hidden)
+        self.query = nn.Linear(spec.FEATURES, hidden)
         self.reward = nn.Sequential(nn.Linear(hidden * 2, hidden), nn.SiLU(), nn.Linear(hidden, 1))
 
     def adjacency(self):

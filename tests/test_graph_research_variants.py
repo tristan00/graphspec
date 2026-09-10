@@ -7,6 +7,7 @@ import pytest
 import torch
 
 from research.graph_temporal.data import pack
+from research.graph_temporal import spec
 from research.graph_temporal.graph_variants import DESIGNS, build, prepare, validate, verify
 from research.graph_temporal.registry import DESIGNS as MODELS, create, sample
 from research.graph_temporal.turns import index, walks
@@ -50,13 +51,13 @@ def test_observation_links_mark_first_last_and_single_observation_turns():
     target = observed[4]
     edges = arrays['boundary_observations']
     incoming = {(int(s), int(r), int(g)) for s, d, r, g in edges if d == target}
-    assert (int(observed[2]), 43, 1) in incoming
-    assert (int(observed[3]), 44, 1) in incoming
+    assert (int(observed[2]), spec.code('boundary_first'), 1) in incoming
+    assert (int(observed[3]), spec.code('boundary_last'), 1) in incoming
     assert all(s < target for s, _, _ in incoming)
     single = deepcopy(arrays)
     single['decision_turn'] = np.arange(12)
     extra = build(single)
-    assert set(extra['boundary_observations'][:, 2]) == {45}
+    assert set(extra['boundary_observations'][:, 2]) == {spec.code('boundary_both')}
 
 
 def test_event_boundaries_preserve_all_events_tied_at_endpoint_ticks():
@@ -110,7 +111,7 @@ def test_variant_cache_verifies_inventory_and_checksums(tmp_path):
     campaign.mkdir(parents=True)
     for key, value in source().items():
         np.save(campaign / (key + '.npy'), value)
-    (directory / 'manifest.json').write_text(json.dumps(dict(supervision_sha256='frozen', campaigns=[dict(index=0)])))
+    (directory / 'manifest.json').write_text(json.dumps(dict(supervision_sha256='frozen', spec_sha256=spec.fingerprint(), campaigns=[dict(index=0)])))
     manifest = prepare(directory)
     assert manifest == verify(directory)
     assert manifest['files'][0]['edges']['boundary_observations'] > 0
@@ -142,6 +143,6 @@ def test_new_relation_parameters_receive_learning_signal(model, design):
         gradients = [layer.weights.grad[38] for layer in net.spatial]
     else:
         layers = net.temporal if model == 'M13' else net.layers
-        gradients = [layer.relation.weight.grad[43:46] for layer in layers]
+        gradients = [layer.relation.weight.grad[list(spec.BOUNDARY_CODES)] for layer in layers]
     assert all(torch.isfinite(g).all() for g in gradients)
     assert any(g.abs().sum() > 0 for g in gradients)

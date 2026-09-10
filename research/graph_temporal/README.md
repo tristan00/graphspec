@@ -2,6 +2,25 @@
 
 This experiment lives outside the production advisor and production tuning services. The first pass built a frozen graph bank, implemented the architecture roster, and collected 82 small random fits. The current round adds optional past-turn-end context across every family. After an intermediate TPE phase, the continuous search returned to uniform random selection on September 10 while retaining the same targeted ranges and every accumulated result. Optuna remains available locally for a later TPE phase, without a database or integration into the production tuning system.
 
+**Declarative graph spec**
+
+`spec.py` is the single declaration of graph structure. Nothing else may hardcode a node kind count, a relation code, an attribute width or a design suffix. It declares:
+
+- **Node types** (`NODES`) and the core subset (`CORE`) used by `S-core`.
+- **Edge types** (`EDGES`), each with a name, a family, permitted source and target kinds, an attribute schema, a per-type default and whether it is symmetric. Canonical and reverse codes are allocated by the registry; symmetric types get one code.
+- **Markers** (`MARKERS`) for the non-relation and turn-context sentinels that event and turn-replay inputs need. `RELATION_SLOTS` sizes every relation embedding.
+- **Recipes** (`RECIPES`), one per design: a view, a node-type set, a set of edge families and an optional lifted layout. `MODIFIERS` maps `+colocated` and `+turn-boundary` onto the families they add, so `resolve('X-allpast+turn-boundary')` returns a complete recipe.
+
+`S-core` is a declared node-type set, not an ordinal comparison on kind indices, and adding an edge type is a spec edit rather than a change to model constructors. `Spatial` takes its relation count and its attributed types from the recipe, so the weight table and the per-type attribute projections size themselves.
+
+Edge attributes are stored per type. `spatial` keeps `(source, target, code)` triples ordered by decision step; `spatial_attribute_row` indexes into a separate `attributes_<name>` array for each attributed type, and is `-1` for types without a schema. Widening one type's schema leaves every other type's parameter shapes untouched.
+
+The spec fingerprint is pinned into the bank manifest, the graph-variant manifest, the run plan and every trial's `selection.json`. `Bank` refuses a cache built under a different spec, and `run --resume` refuses a plan built under a different spec, so a spec edit cannot silently change what a cached array means.
+
+The spec may declare only edges derivable from frozen source data, deterministically and causally. Model-dependent edges would break the frozen-bank property and are not permitted.
+
+Cache format version 2 stores per-type attribute blocks and spec-allocated codes; banks built under version 1 are not readable and must be rebuilt.
+
 **Current graph expansion and shared switches, September 10**
 
 The current search has 110 compatible model/graph combinations across the same 30 architecture families. It samples `model` uniformly from 30 categories and then samples compatible graph edits as shared binary parameters. `turn_end` is available to every family; `colocated` is available to snapshot models M01–M11; `turn_boundary` is available to explicit temporal and event-DAG models M13–M16. M08 also selects `snapshot_graph` (core/full), and M13–M14 select `temporal_layout` (chain/skip/all-past). All three temporal layouts can enable boundary links. These switches produce the graph labels shown in the results table; the 110 labels are not a single categorical parameter.

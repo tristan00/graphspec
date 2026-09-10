@@ -48,7 +48,7 @@ def pack_batch(bank, blocks, cfg, device='cuda'):
         query_steps=torch.arange(t).repeat(size), frame_queries=torch.arange(t * size).reshape(size, t).T,
         rows=np.concatenate([p['rows'] for p in parts]))
     direct = ('selected', 'target', 'query', 'context', 'entity_kind', 'signal', 'affinity', 'global_affinity',
-        'x', 'kind', 'relation', 'attributes', 'temporal_gap', 'initial', 'history_x', 'history_mask',
+        'x', 'kind', 'relation', 'temporal_gap', 'initial', 'history_x', 'history_mask',
         'history_gap', 'history_events', 'occurrence', 'structure', 'common_x', 'common_stats',
         'common_frequency', 'pair_gap', 'pair_mask', 'walk_x', 'walk_mask', 'walk_gap', 'walk_identity', 'dag_gap',
         'end_gaps', 'end_mask', 'end_raw', 'end_raw_mask', 'end_token_gaps', 'temporal_relation', 'temporal_turn_gap', 'dag_relation',
@@ -63,6 +63,11 @@ def pack_batch(bank, blocks, cfg, device='cuda'):
     for key in ('actor', 'subject', 'entity', 'history_ids', 'common_ids'):
         if key in parts[0]:
             b[key] = torch.cat([torch.where(p[key] >= 0, p[key] + int(offset), p[key]) for p, offset in zip(parts, entity_offsets)])
+    if 'attributes' in parts[0]:
+        edge_offsets = np.r_[0, np.cumsum([len(p['relation']) for p in parts])]
+        b['attributes'] = {name: torch.cat([p['attributes'][name] for p in parts]) for name in parts[0]['attributes']}
+        b['attribute_edges'] = {name: torch.cat([p['attribute_edges'][name] + int(offset)
+            for p, offset in zip(parts, edge_offsets)]) for name in parts[0]['attributes']}
     if 'x' in b:
         b['context_index'] = torch.cat([p['context_index'] + int(offset) for p, offset in zip(parts, nodes)])
         b['step'] = torch.cat([p['step'] + i * t for i, p in enumerate(parts)])

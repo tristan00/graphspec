@@ -13,6 +13,7 @@ import traceback
 import numpy as np
 import psutil
 
+from . import spec
 from .cache import write_json
 
 
@@ -328,6 +329,8 @@ def run(args):
         plan = json.loads(path.read_text())
         if Path(plan['cache']).resolve() != Path(args.cache).resolve():
             raise ValueError('resume requested with a different cache')
+        if plan['spec_sha256'] != spec.fingerprint():
+            raise ValueError('resume requested under a different graph spec')
     else:
         bank = Bank(args.cache)
         training = bank.blocks(0, 16)
@@ -337,7 +340,8 @@ def run(args):
             baseline=str(Path(args.baseline).resolve()) if args.baseline else None,
             seconds=args.seconds, history=16, selection='seeded shuffled model/design coverage deck without replacement',
             training='Every training decision exactly once per epoch; complete holdout; 2/3 full epochs sampled per fit.',
-            supervision_sha256=bank.manifest['supervision_sha256'], created=datetime.now(timezone.utc).isoformat())
+            supervision_sha256=bank.manifest['supervision_sha256'], spec_sha256=spec.fingerprint(),
+            created=datetime.now(timezone.utc).isoformat())
         if args.selector == 'tpe':
             write_json(path, plan)
         else:

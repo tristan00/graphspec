@@ -1,5 +1,7 @@
 import math
 
+from . import spec
+
 from .history_models import AnonymousWalk, HistoryModel, TemporalAttention
 from .memory_models import MemoryModel, VirtualState, WalkProjection
 from .snapshot_models import EventDAG, MixedModel, SignalGraph, SnapshotModel
@@ -23,6 +25,11 @@ for model in ('M13', 'M14'):
     DESIGNS[model].extend(design + '+turn-boundary' for design in tuple(DESIGNS[model]))
 for model in ('M15', 'M16'):
     DESIGNS[model].append('D-event+turn-boundary')
+
+
+for _designs in DESIGNS.values():
+    for _design in _designs:
+        spec.resolve(_design)
 
 
 def sample(model, design, rng, seed):

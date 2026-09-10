@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from .data import tensor, tree
+from . import spec
 
 
 def add(b, a, start, stop, cfg, device):
@@ -66,12 +67,12 @@ def temporal_edges(b, a, lo, hi, device):
     source_local = np.where(source >= lo, source - lo, hi - lo + np.searchsorted(ghosts, source))
     extra = np.stack((source_local, destination - lo))
     original = b['temporal_edges'].cpu().numpy()
-    relation = b['temporal_relation'].cpu().numpy() if 'temporal_relation' in b else np.full(original.shape[1], 41)
+    relation = b['temporal_relation'].cpu().numpy() if 'temporal_relation' in b else np.full(original.shape[1], spec.code('temporal'))
     pairs = {tuple(edge): int(kind) for edge, kind in zip(original.T.tolist(), relation)}
     for edge in extra.T.tolist():
-        pairs.setdefault(tuple(edge), 42)
-        if pairs[tuple(edge)] == 41:
-            pairs[tuple(edge)] = 42
+        pairs.setdefault(tuple(edge), spec.TURN_CONTEXT)
+        if pairs[tuple(edge)] == spec.code('temporal'):
+            pairs[tuple(edge)] = spec.TURN_CONTEXT
     edges = np.asarray(list(pairs), np.int64).reshape(-1, 2)
     original_ids = np.r_[np.arange(lo, hi), ghosts]
     steps = a['step'][original_ids]
@@ -85,7 +86,7 @@ def temporal_edges(b, a, lo, hi, device):
 def mixed_edges(b, a, start, stop, device):
     mixed = b['mixed']
     mask = b['end_raw_mask'].reshape(-1)
-    raw = b['end_raw'].reshape(-1, 128)[mask]
+    raw = b['end_raw'].reshape(-1, spec.FEATURES)[mask]
     source = torch.arange(len(raw), device=device) + len(mixed['x'])
     destination = mixed['query'][:, None, None].expand(-1, 3, b['end_steps'].shape[1]).reshape(-1)[mask]
     gaps = b['end_token_gaps'].reshape(-1, 3)[mask]

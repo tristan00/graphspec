@@ -3,6 +3,7 @@ import math
 import torch
 from torch import nn
 
+from . import spec
 from .layers import CausalAttention, SelectiveSSM, TimeEncoding
 from .turns import EndContext, enabled
 
@@ -26,10 +27,10 @@ class TemporalAttention(nn.Module):
         if self.has_turns:
             self.turns = EndContext(hidden * 2)
         self.depth = cfg['layers']
-        self.input = nn.Linear(128, hidden)
-        self.kind = nn.Embedding(13, hidden)
+        self.input = nn.Linear(spec.FEATURES, hidden)
+        self.kind = nn.Embedding(len(spec.NODES), hidden)
         self.time = TimeEncoding(hidden)
-        self.relation = nn.Embedding(64, hidden)
+        self.relation = nn.Embedding(spec.RELATION_SLOTS, hidden)
         self.q = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(self.depth))
         self.k = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(self.depth))
         self.v = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(self.depth))
@@ -79,7 +80,7 @@ class HistoryModel(nn.Module):
         if enabled(cfg):
             self.turn_time = nn.Linear(3, hidden)
             self.turn_kind = nn.Embedding(2, hidden)
-        self.input = nn.Linear(128, hidden)
+        self.input = nn.Linear(spec.FEATURES, hidden)
         self.time = TimeEncoding(hidden)
         self.norm = nn.LayerNorm(hidden)
         if self.family == 21:
@@ -160,7 +161,7 @@ class AnonymousWalk(nn.Module):
         if self.has_turns:
             self.turn_time = nn.Linear(3, hidden)
             self.turn_kind = nn.Embedding(2, hidden)
-        self.input = nn.Linear(128, hidden)
+        self.input = nn.Linear(spec.FEATURES, hidden)
         self.anonymous = nn.Sequential(nn.Linear(2 * cfg['walk_hops'], hidden), nn.ReLU(), nn.Linear(hidden, hidden))
         self.time = TimeEncoding(hidden)
         self.walk = nn.LSTM(hidden, hidden // 2, batch_first=True, bidirectional=True)

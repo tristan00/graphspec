@@ -9,6 +9,7 @@ from research.graph_temporal.registry import DESIGNS, sample
 from research.graph_temporal.run import append_round, report, training_layout
 from research.graph_temporal.selector import CHOICES, activate, activate_random, append_trial, load_observations, observation, space, suggest, structure, parameter_key, random_space
 from research.graph_temporal.turns import graph_name
+from research.graph_temporal import spec
 
 
 def choice(config):
@@ -72,7 +73,7 @@ def test_observed_scores_change_model_graph_selection():
 def setup_run(tmp_path):
     cache = tmp_path / 'cache'
     cache.mkdir()
-    write_json(cache / 'manifest.json', dict(supervision_sha256='frozen', train_rows=116652, validation_rows=20387))
+    write_json(cache / 'manifest.json', dict(supervision_sha256='frozen', spec_sha256=spec.fingerprint(), train_rows=116652, validation_rows=20387))
     plan = dict(seed=77, rounds=0, trials=[], cache=str(cache), supervision_sha256='frozen', history=16)
     append_round(tmp_path, plan)
     for item in plan['trials'][:12]:
@@ -179,7 +180,7 @@ def test_longer_history_layout_covers_identical_training_rows(tmp_path):
     campaigns = [dict(index=i, name=str(i), decisions=size) for i, size in enumerate((49, 67, 35))]
     rows = [dict(campaign=c['name'], y=float(j)) for c in campaigns for j in range(c['decisions'])]
     train, held = list(range(116)), list(range(116, 151))
-    write_json(cache / 'manifest.json', dict(supervision_sha256='frozen', campaigns=campaigns))
+    write_json(cache / 'manifest.json', dict(supervision_sha256='frozen', spec_sha256=spec.fingerprint(), campaigns=campaigns))
     write_json(cache / 'supervision.json', dict(rows=rows, split=dict(train_indices=train, validation_indices=held)))
     plan = dict(cache=str(cache), supervision_sha256='frozen', history=16, histories=list(range(1, 33)), batch_sequences=64)
     bank = Bank(cache)

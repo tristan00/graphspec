@@ -7,13 +7,14 @@ import time
 
 import numpy as np
 
+from . import spec
 from .cache import validate, write_json
 from .schema import DESIGNS
 
 
 VIEW_ARRAYS = {
     'S-core': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_step', 'query_context'),
-    'S-full': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_attributes', 'query_context'),
+    'S-full': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_attribute_row', 'query_context'),
     'X-chain': ('x', 'step', 'turn', 'spatial', 'chain'),
     'X-skip': ('x', 'step', 'turn', 'spatial', 'skip'),
     'X-allpast': ('x', 'step', 'turn', 'spatial', 'allpast'),
@@ -42,6 +43,7 @@ def audit(directory):
     assert train == split['train_indices'] and validation == split['validation_indices']
     assert set(rows[i]['campaign'] for i in train).isdisjoint(rows[i]['campaign'] for i in validation)
     assert set(manifest['designs']) == set(DESIGNS) == set(VIEW_ARRAYS)
+    assert manifest['spec_sha256'] == spec.fingerprint()
     seen, counts, unresolved = [], Counter(), Counter()
     for campaign in manifest['campaigns']:
         path = directory / ('campaign_%04d' % campaign['index'])

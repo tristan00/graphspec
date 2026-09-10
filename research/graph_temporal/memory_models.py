@@ -5,6 +5,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from .history_models import masked_mean, masked_weights
+from . import spec
 from .layers import Spatial, TimeEncoding, aggregate, mean
 from .turns import EndContext, enabled
 
@@ -17,13 +18,13 @@ class MemoryModel(nn.Module):
         hidden = cfg['hidden']
         if enabled(cfg):
             self.turns = EndContext(hidden * 2)
-        self.input = nn.Linear(128, hidden)
-        self.kind = nn.Embedding(13, hidden)
+        self.input = nn.Linear(spec.FEATURES, hidden)
+        self.kind = nn.Embedding(len(spec.NODES), hidden)
         if self.family != 29:
             self.time = TimeEncoding(hidden)
         if self.family in (18, 26):
             self.event_kind = nn.Embedding(3, hidden)
-            self.relation = nn.Embedding(64, hidden)
+            self.relation = nn.Embedding(spec.RELATION_SLOTS, hidden)
             self.status = nn.Embedding(3, hidden)
             self.message = nn.Sequential(nn.Linear(hidden * 5, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
             self.update = nn.GRUCell(hidden, hidden)
@@ -154,7 +155,7 @@ class MemoryModel(nn.Module):
                         derivative = (state @ matrix + self.neighbor(aggregate(state, b['frame_edges'][time_step])) + self.drive(forcing)).tanh()
                         state = state + interval * derivative
                 else:
-                    rel = torch.where(kind == 1, events[:, 6] + 1, torch.where(kind == 2, torch.full_like(kind, 40), torch.zeros_like(kind)))
+                    rel = torch.where(kind == 1, events[:, 6] + 1, torch.where(kind == 2, torch.full_like(kind, spec.NON_RELATION), torch.zeros_like(kind)))
                     edge = self.event_kind(kind).repeat(2, 1) + self.relation(rel).repeat(2, 1)
                     edge = edge + self.status(events[:, 8] + 1).repeat(2, 1)
                     temporal = self.time((tick + phase - last[receivers]).clamp_min(0))
@@ -183,7 +184,7 @@ class WalkProjection(nn.Module):
         hidden, hops = cfg['hidden'], cfg['projection_hops']
         if enabled(cfg):
             self.turns = EndContext(hidden)
-        self.input = nn.Linear(128, hidden)
+        self.input = nn.Linear(spec.FEATURES, hidden)
         self.time = TimeEncoding(hidden)
         self.projection = nn.Sequential(nn.Linear((2 * (hops + 1))**2, hidden), nn.SiLU(), nn.LayerNorm(hidden))
         self.reward = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, 1))
@@ -253,7 +254,7 @@ class VirtualState(nn.Module):
             self.turns = EndContext(categories * 2)
         self.xh, self.hh, self.xs, self.hs, self.gs = (nn.Linear(categories, categories, bias=False) for _ in range(5))
         self.bh, self.bs = nn.Parameter(torch.zeros(categories)), nn.Parameter(torch.zeros(categories))
-        self.query = nn.Linear(128, cfg['hidden'])
+        self.query = nn.Linear(spec.FEATURES, cfg['hidden'])
         self.reward = nn.Sequential(nn.Linear(categories * 2 + cfg['hidden'], cfg['hidden']), nn.SiLU(), nn.Linear(cfg['hidden'], 1))
 
     def forward(self, b):

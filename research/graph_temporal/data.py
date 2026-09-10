@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .schema import KINDS, RELATIONS
+from . import spec
+from .schema import KINDS
 
 
 class CampaignArrays(Mapping):
@@ -40,6 +41,8 @@ class Bank:
     def __init__(self, directory):
         self.directory = Path(directory)
         self.manifest = json.loads((self.directory / 'manifest.json').read_text())
+        if self.manifest['spec_sha256'] != spec.fingerprint():
+            raise ValueError('cache was built under a different graph spec')
         supervision = json.loads((self.directory / 'supervision.json').read_text())
         self.rows, self.split = supervision['rows'], supervision['split']
         self.targets = np.asarray([row['y'] for row in self.rows], np.float32)
@@ -132,7 +135,7 @@ def other_endpoint(events, ids, entity):
 
 def tree(arrays, entities, cutoffs, floor, count, depth, device):
     observations = np.concatenate([latest(arrays, [eid], cutoff) for eid, cutoff in zip(entities, cutoffs)])
-    raw = np.zeros((len(entities), 128), np.float32)
+    raw = np.zeros((len(entities), spec.FEATURES), np.float32)
     known = observations >= 0
     raw[known] = arrays['x'][observations[known]]
     result = dict(x=tensor(raw, device), kind=tensor(arrays['entity_kind'][entities], device, torch.long))
@@ -150,7 +153,7 @@ def tree(arrays, entities, cutoffs, floor, count, depth, device):
                 times[i * count:i * count + size] = arrays['events'][ids, 2]
                 mask[i, :size] = True
                 gaps[i, :size] = cutoff - arrays['events'][ids, 2]
-                relation[i, :size] = np.where(arrays['events'][ids, 3] == 1, arrays['events'][ids, 6] + 1, 40)
+                relation[i, :size] = np.where(arrays['events'][ids, 3] == 1, arrays['events'][ids, 6] + 1, spec.NON_RELATION)
         result.update(child=tree(arrays, children, times, floor, count, depth - 1, device),
             mask=tensor(mask, device), gap=tensor(gaps, device), relation=tensor(relation, device))
     return result
@@ -158,12 +161,12 @@ def tree(arrays, entities, cutoffs, floor, count, depth, device):
 
 def history_inputs(arrays, start, stop, count, device, include_structure=False, selected=None):
     n = stop - start
-    raw = np.zeros((n, 2, count, 128), np.float32)
+    raw = np.zeros((n, 2, count, spec.FEATURES), np.float32)
     mask, gap, ids = np.zeros((n, 2, count), bool), np.zeros((n, 2, count), np.float32), np.full((n, 2, count), -1, np.int32)
     event_ids = np.full((n, 2, count), -1, np.int32)
     pair_gaps, pair_mask = np.zeros((n, count), np.float32), np.zeros((n, count), bool)
     structural = np.zeros((n, 2, count, 12), np.float32)
-    common = np.zeros((n, 128), np.float32)
+    common = np.zeros((n, spec.FEATURES), np.float32)
     common_ids = np.full((n, count), -1, np.int32)
     common_frequency = np.zeros((n, count), np.float32)
     common_stats = np.zeros((n, 4), np.float32)
@@ -245,6 +248,7 @@ def pack(bank, block, cfg, device='cuda'):
     target_start = block[3] if len(block) == 4 else start
     a = bank.campaign(campaign)
     family = int(cfg['model'][1:])
+    recipe = spec.resolve(cfg['design'])
     from .graph_variants import DESIGNS as VARIANTS
 
     if cfg['design'] in VARIANTS and 'boundary_observations' not in a:
@@ -281,41 +285,49 @@ def pack(bank, block, cfg, device='cuda'):
                  present=tensor(align < hi - lo, device))
         first, last = np.searchsorted(a['spatial_step'], (start, stop))
         spatial = np.array(a['spatial'][first:last])
-        attributes = np.array(a['spatial_attributes'][first:last])
-        if cfg['design'].endswith('+colocated'):
+        attribute_rows = np.array(a['spatial_attribute_row'][first:last])
+        if spec.COLOCATED in recipe.families:
             left, right = np.searchsorted(a['colocated_steps'], (start, stop))
-            extra = a['colocated_edges'][left:right]
+            extra = np.array(a['colocated_edges'][left:right])
             spatial = np.concatenate((spatial, extra))
-            attributes = np.concatenate((attributes, np.zeros((len(extra), 4), attributes.dtype)))
+            attribute_rows = np.concatenate((attribute_rows, np.full(len(extra), -1, attribute_rows.dtype)))
         edges = spatial[:, :2].T - lo
-        keep = np.ones(len(spatial), bool)
-        if cfg['design'].startswith('S-core'):
-            keep = (a['entity_kind'][entity[edges[0]]] <= 4) & (a['entity_kind'][entity[edges[1]]] <= 4)
-            b['present'] &= b['entity_kind'][None, :] <= 4
-        b.update(edges=tensor(edges[:, keep], device, torch.long), relation=tensor(spatial[keep, 2], device, torch.long),
-                 attributes=tensor(attributes[keep], device, torch.float32))
+        allowed = recipe.kind_mask()
+        kinds = np.asarray(a['entity_kind'])[entity]
+        keep = np.isin(spatial[:, 2], recipe.codes()) & allowed[kinds[edges[0]]] & allowed[kinds[edges[1]]]
+        if not allowed.all():
+            b['present'] &= tensor(allowed, device)[b['entity_kind']][None, :]
+        b.update(edges=tensor(edges[:, keep], device, torch.long), relation=tensor(spatial[keep, 2], device, torch.long))
+        position = np.full(len(spatial), -1, np.int64)
+        position[keep] = np.arange(int(keep.sum()))
+        b['attributes'], b['attribute_edges'] = {}, {}
+        for name in recipe.attributed():
+            declared = spec.BY_NAME[name]
+            selected = keep & np.isin(spatial[:, 2], (declared.code, declared.reverse))
+            block = np.asarray(a['attributes_' + name])[attribute_rows[selected]]
+            b['attributes'][name] = tensor(block.reshape(-1, len(declared.attributes)), device, torch.float32)
+            b['attribute_edges'][name] = tensor(position[selected], device, torch.long)
         b['frame_edges'], b['frame_directed'] = [], []
+        directed = spec.CANONICAL[spatial[:, 2]]
         for t in range(n):
             use = keep & (step[edges[1]] == t)
             b['frame_edges'].append(tensor(entity[edges[:, use]], device, torch.long))
-            directed = (spatial[:, 2] < len(RELATIONS)) | (spatial[:, 2] == 38)
             b['frame_directed'].append(tensor(entity[edges[:, use & directed]], device, torch.long))
         if family in (13, 14):
-            name = {'X-chain': 'chain', 'X-skip': 'skip', 'X-allpast': 'allpast'}[cfg['design'].split('+')[0]]
-            edges = a[name]
+            edges = a[recipe.lifted]
             left, right = np.searchsorted(edges[:, 1], (lo, hi))
             edges = np.array(edges[left:right])
             edges = edges[edges[:, 0] >= lo] - lo
             b.update(temporal_edges=tensor(edges.T, device, torch.long),
                 temporal_gap=tensor(step[edges[:, 1]] - step[edges[:, 0]], device, torch.float32))
-            if cfg['design'].endswith('+turn-boundary'):
+            if spec.BOUNDARY in recipe.families:
                 extra = a['boundary_observations']
                 left, right = np.searchsorted(extra[:, 1], (lo, hi))
                 extra = np.array(extra[left:right])
                 extra = extra[extra[:, 0] >= lo]
                 boundary = extra[:, :2] - lo
                 b.update(temporal_edges=tensor(np.concatenate((edges, boundary)).T, device, torch.long),
-                    temporal_relation=tensor(np.r_[np.full(len(edges), 41), extra[:, 2]], device, torch.long),
+                    temporal_relation=tensor(np.r_[np.full(len(edges), spec.code('temporal')), extra[:, 2]], device, torch.long),
                     temporal_gap=tensor(np.r_[step[edges[:, 1]] - step[edges[:, 0]], step[boundary[:, 1]] - step[boundary[:, 0]]], device, torch.float32),
                     temporal_turn_gap=tensor(np.r_[a['turn'][lo + edges[:, 1]] - a['turn'][lo + edges[:, 0]], extra[:, 3]], device, torch.float32))
             if enabled(cfg):
@@ -355,7 +367,7 @@ def pack(bank, block, cfg, device='cuda'):
         interaction = events[:, 3] == 2
         ex[interaction] = a['query'][events[interaction, 2] // 2]
         initial = latest(a, np.arange(size), start * 2)
-        initial_x = np.zeros((size, 128), np.float32)
+        initial_x = np.zeros((size, spec.FEATURES), np.float32)
         initial_x[initial >= 0] = a['x'][initial[initial >= 0]]
         b.update(events=tensor(events, device, torch.long), event_x=tensor(ex, device), initial=tensor(initial_x, device),
             event_groups=[(int(t), int(s), int(e)) for t, s, e in zip(*(
@@ -366,7 +378,7 @@ def pack(bank, block, cfg, device='cuda'):
             use = (edges[:, 0] >= left) & (edges[:, 1] >= left) & (edges[:, 0] < right) & (edges[:, 1] < right)
             edges = np.array(edges[use]) - left
             b.update(dag_edges=tensor(edges.T, device, torch.long), dag_gap=tensor(events[edges[:, 1], 2] - events[edges[:, 0], 2], device, torch.float32))
-            if cfg['design'].endswith('+turn-boundary'):
+            if spec.BOUNDARY in recipe.families:
                 extra = a['boundary_events']
                 low, high = np.searchsorted(extra[:, 1], (left, right))
                 extra = np.array(extra[low:high])

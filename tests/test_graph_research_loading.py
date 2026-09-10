@@ -5,13 +5,15 @@ import numpy as np
 import pytest
 import torch
 
+from research.graph_temporal import spec
+
 from research.graph_temporal.batching import pack_batch
 from research.graph_temporal.data import Bank, CampaignArrays
 from research.graph_temporal.registry import DESIGNS, sample
 from research.graph_temporal.turns import index, walks
 from research.graph_temporal.walk_cache import extend
 from tests.test_graph_research_cache import make, records
-from research.graph_temporal.graph_variants import build as graph_variants
+from research.graph_temporal.graph_variants import VERSION as VARIANT_VERSION, build as graph_variants
 
 
 @pytest.fixture(scope='module')
@@ -39,8 +41,8 @@ def saved_bank(tmp_path_factory):
     variant_directory = directory.with_name(directory.name + '_variants')
     variant_directory.mkdir()
     np.savez_compressed(variant_directory / 'campaign_0000.npz', **variants)
-    (variant_directory / 'manifest.json').write_text(json.dumps(dict(version=1, supervision_sha256='frozen')))
-    (directory / 'manifest.json').write_text(json.dumps(dict(supervision_sha256='frozen')))
+    (variant_directory / 'manifest.json').write_text(json.dumps(dict(version=VARIANT_VERSION, supervision_sha256='frozen')))
+    (directory / 'manifest.json').write_text(json.dumps(dict(supervision_sha256='frozen', spec_sha256=spec.fingerprint())))
     rows = [dict(campaign='example', y=float(i)) for i in range(8)]
     (directory / 'supervision.json').write_text(json.dumps(dict(rows=rows,
         split=dict(train_indices=list(range(8)), validation_indices=[]))))

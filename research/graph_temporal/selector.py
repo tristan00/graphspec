@@ -9,6 +9,7 @@ import numpy as np
 import optuna
 from optuna.distributions import CategoricalDistribution, FloatDistribution, IntDistribution
 
+from . import spec
 from .cache import write_json
 from .registry import DESIGNS, sample
 from .turns import graph_name
@@ -357,7 +358,8 @@ def append_trial(directory, plan):
         raise ValueError('Bayesian proposal changed on resume: ' + name)
     write_json(trial / 'config.json', config)
     write_json(trial / 'selection.json', dict(metadata, history=history,
-        supervision_sha256=plan['supervision_sha256'], seconds=time.perf_counter() - started))
+        supervision_sha256=plan['supervision_sha256'], spec_sha256=spec.fingerprint(),
+        seconds=time.perf_counter() - started))
     plan['trials'].append(dict(directory=name, model=config['model'], design=config['design'],
         turn_context=config['turn_context'], selector=selector))
     write_json(directory / 'plan.json', plan)

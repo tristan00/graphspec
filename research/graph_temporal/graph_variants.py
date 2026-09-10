@@ -7,15 +7,16 @@ import time
 
 import numpy as np
 
+from . import spec
 from .cache import write_json
-from .schema import KINDS, RELATIONS
 
 
-VERSION = 1
+VERSION = 2
 DESIGNS = ('S-core+colocated', 'S-full+colocated', 'X-chain+turn-boundary', 'X-skip+turn-boundary', 'X-allpast+turn-boundary', 'D-event+turn-boundary')
 LOOKBACK = 3
 WINDOW = 64
-COLOCATED = 38
+COLOCATED = spec.code('colocated')
+BOUNDARY_BY_FLAG = np.asarray([-1, spec.code('boundary_first'), spec.code('boundary_last'), spec.code('boundary_both')], np.int32)
 
 
 def cache_path(directory):
@@ -30,15 +31,15 @@ def marked_edges(pieces, turns):
     pairs, inverse = np.unique(values[:, :2], axis=0, return_inverse=True)
     flags = np.zeros(len(pairs), np.int32)
     np.bitwise_or.at(flags, inverse, values[:, 2])
-    output = np.column_stack((pairs, flags + 42, turns[pairs[:, 1]] - turns[pairs[:, 0]])).astype(np.int32)
+    output = np.column_stack((pairs, BOUNDARY_BY_FLAG[flags], turns[pairs[:, 1]] - turns[pairs[:, 0]])).astype(np.int32)
     return output[np.lexsort((output[:, 0], output[:, 1]))]
 
 
 def colocated(arrays):
     spatial = arrays['spatial']
     kind = arrays['entity_kind'][arrays['entity']]
-    relation = RELATIONS.index('located')
-    allowed = np.isin(kind[spatial[:, 0]], [KINDS.index('character'), KINDS.index('settlement')])
+    relation = spec.code('located')
+    allowed = np.isin(kind[spatial[:, 0]], [spec.kind('character'), spec.kind('settlement')])
     located = spatial[(spatial[:, 2] == relation) & allowed]
     groups = defaultdict(set)
     for source, location, _ in located:
@@ -122,7 +123,7 @@ def validate(arrays, extra):
         shared = (participants[source, :, None] == participants[target, None, :]).any((1, 2))
         if not shared.all() or not (turns[source] < turns[target]).all():
             raise ValueError('boundary edge lacks a shared participant or reads an incomplete turn')
-        if not np.isin(relation, [43, 44, 45]).all() or not np.array_equal(gaps, turns[target] - turns[source]):
+        if not np.isin(relation, spec.BOUNDARY_CODES).all() or not np.array_equal(gaps, turns[target] - turns[source]):
             raise ValueError('invalid turn-boundary relation or gap')
         if not ((step[target] - step[source]) < WINDOW).all():
             raise ValueError('turn-boundary edge exceeds its cached window')
@@ -168,6 +169,7 @@ def prepare(directory):
         if len(files) % 100 == 0:
             print(json.dumps(dict(event='graph_variants_progress', campaigns=len(files), seconds=time.perf_counter() - started)), flush=True)
     write_json(target / 'manifest.json', dict(version=VERSION, supervision_sha256=manifest['supervision_sha256'],
+        spec_sha256=spec.fingerprint(),
         designs=DESIGNS, previous_completed_turns=LOOKBACK, decision_window=WINDOW, files=files,
         definition='Same-location spatial shortcuts and typed first/last completed-turn participant links; original graphs retained.',
         source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), seconds=time.perf_counter() - started))

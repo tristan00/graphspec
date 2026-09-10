@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 import torch
 
+from research.graph_temporal import spec
+
 from research.graph_temporal.batching import batches, pack_batch
 from research.graph_temporal.data import pack
 from research.graph_temporal.registry import DESIGNS, create, sample
@@ -81,7 +83,7 @@ def test_cache_is_complete_and_tampering_prevents_launch(tmp_path):
     campaign.mkdir()
     for key, value in arrays.items():
         np.save(campaign / (key + '.npy'), value, allow_pickle=False)
-    write_json(directory / 'manifest.json', dict(supervision_sha256='frozen', campaigns=[dict(index=0)]))
+    write_json(directory / 'manifest.json', dict(supervision_sha256='frozen', spec_sha256=spec.fingerprint(), campaigns=[dict(index=0)]))
     prepare(directory)
     assert len(verify(directory)['files']) == 1
     path = tmp_path / 'bank_turns' / 'campaign_0000.npz'
@@ -121,14 +123,15 @@ def test_relational_memory_optimization_preserves_outputs_and_gradients():
     from research.graph_temporal.layers import Spatial, mean
 
     torch.manual_seed(4)
-    layer = Spatial(16, 'relational', dropout=0.0)
+    layer = Spatial(16, 'relational', spec.RELATIONS, ('skill',), 0.0)
     h = torch.randn(41, 16, requires_grad=True)
     edges = torch.randint(41, (2, 200))
-    relations = torch.randint(38, (200,))
-    attrs = torch.randn(200, 4)
-    actual = layer(h, edges, relations, attrs)
+    relations = torch.randint(spec.RELATIONS, (200,))
+    attrs = torch.randn(200, len(spec.attributes('skill')))
+    positions = torch.arange(200)
+    actual = layer(h, edges, relations, dict(skill=attrs), dict(skill=positions))
     values = torch.bmm(h[edges[0], None], layer.weights[relations]).squeeze(1)
-    values = values + layer.attributes(attrs.sign() * attrs.abs().log1p())
+    values = values + layer.attributes['skill'](attrs.sign() * attrs.abs().log1p())
     expected = layer.norm(h + torch.nn.functional.silu(layer.root(h) + mean(values, edges[1], len(h))))
     torch.testing.assert_close(actual, expected)
     params = (h, *layer.parameters())

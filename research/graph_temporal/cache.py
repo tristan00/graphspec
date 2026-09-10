@@ -11,12 +11,12 @@ import time
 
 import numpy as np
 
-from .schema import DESIGNS, KINDS, RELATIONS, SIGNALS, encode, identity, items
+from . import spec
+from .schema import KINDS, SIGNALS, encode, identity, items
 
 
 LOG = logging.getLogger(__name__)
-REVERSE = len(RELATIONS)
-VERSION = 1
+VERSION = 2
 
 
 def write_json(path, value):
@@ -37,7 +37,8 @@ class Campaign:
         self.name, self.categories = name, categories
         self.ids, self.node_keys, self.node_kinds = {}, [], []
         self.x, self.entity, self.steps, self.turns, self.offset = [], [], [], [], [0]
-        self.edges, self.edge_steps, self.edge_attributes = [], [], []
+        self.edges, self.edge_steps, self.attribute_rows = [], [], []
+        self.type_attributes = {name: [] for name in spec.ATTRIBUTED}
         self.q, self.actors, self.subjects, self.query_context, self.rows = [], [], [], [], []
         self.events, self.affinity, self.global_affinity, self.signals = [], [], [], []
         self.last_obs, self.associations, self.known_status = {}, {}, {}
@@ -67,7 +68,7 @@ class Campaign:
 
         def edge(source, target, relation):
             if source != target:
-                spatial.add((source, target, RELATIONS.index(relation)))
+                spatial.add((source, target, spec.code(relation)))
 
         def place(entity, data, own=False):
             if data.get('region'):
@@ -91,7 +92,7 @@ class Campaign:
                         subject = str(value.get('value', subject))
                     other = node(kind, subject, {'key': subject})
                     edge(entity, other, relation)
-                    pair = entity, other, RELATIONS.index(relation)
+                    pair = entity, other, spec.code(relation)
                     attr = attributes.setdefault(pair, [0, 0, 0, 0])
                     attr[0] += 1
                     attr[1] += float(value.get('level') or 0)
@@ -139,7 +140,7 @@ class Campaign:
             other = node('faction', data['faction'], data)
             for field, rel in (('at_war', 'war'), ('allied', 'allied'), ('trade', 'trade'), ('their_vassal', 'vassal'), ('nap', 'nap'), ('mil_access', 'access')):
                 if field in data:
-                    pair = (camp, other, RELATIONS.index(rel))
+                    pair = (camp, other, spec.code(rel))
                     explicit_status[pair] = int(bool(data[field]))
                     if data[field]:
                         spatial.add(pair)
@@ -148,9 +149,9 @@ class Campaign:
             for opponent in data.get('at_war_with', []):
                 edge(own, node('faction', opponent, {'faction': opponent}), 'war')
         for source, target, relation in spatial:
-            if relation in (RELATIONS.index('located'), RELATIONS.index('building')):
+            if relation in (spec.code('located'), spec.code('building')):
                 key = source, relation
-            elif relation == RELATIONS.index('owns'):
+            elif relation == spec.code('owns'):
                 key = target, relation
             else:
                 continue
@@ -214,11 +215,18 @@ class Campaign:
                 self.events.append((entity, entity, step * 2, 0, ix, ix, previous, -1, -1))
             self.last_obs[entity] = ix
         for source, target, relation in sorted(spatial):
+            declared = spec.BY_CODE[relation]
+            spec.validate(declared.name, self.node_kinds[source], self.node_kinds[target])
             self.edges.append((mapping[source], mapping[target], relation))
-            self.edges.append((mapping[target], mapping[source], relation + REVERSE))
+            self.edges.append((mapping[target], mapping[source], declared.reverse))
             self.edge_steps.extend((step, step))
-            attr = attributes.get((source, target, relation), [1, 0, 0, 0])
-            self.edge_attributes.extend((attr, attr))
+            if declared.attributes:
+                block = self.type_attributes[declared.name]
+                row = len(block)
+                block.append(attributes.get((source, target, relation), declared.default))
+                self.attribute_rows.extend((row, row))
+            else:
+                self.attribute_rows.extend((-1, -1))
             pair = source, target, relation
             old = self.known_status.get(pair, -1)
             if old != 1:
@@ -363,7 +371,7 @@ class Campaign:
             previous_action = action
         arrays = dict(x=x, entity=entity, step=step, turn=turn, snapshot_offsets=offsets,
             entity_kind=np.asarray(self.node_kinds, np.int8), spatial=np.asarray(self.edges, np.int32).reshape(-1, 3),
-            spatial_attributes=np.asarray(self.edge_attributes, np.float16).reshape(-1, 4),
+            spatial_attribute_row=np.asarray(self.attribute_rows, np.int32),
             spatial_step=np.asarray(self.edge_steps, np.int32), chain=np.asarray(chain, np.int32).reshape(-1, 2),
             skip=np.asarray(skip, np.int32).reshape(-1, 2), allpast=np.asarray(allpast, np.int32).reshape(-1, 2),
             observation_ids=observations, observation_offsets=obs_offsets,
@@ -378,6 +386,8 @@ class Campaign:
             mixed_member_offsets=np.r_[0, np.cumsum([len(group) for group in mixed_members])].astype(np.int64),
             role_left=events[events[:, 3] == 2, 0], role_right=events[events[:, 3] == 2, 1],
             propagation_ids=np.flatnonzero(events[:, 3] != 0).astype(np.int32))
+        for name, block in self.type_attributes.items():
+            arrays['attributes_' + name] = np.asarray(block, np.float16).reshape(-1, len(spec.attributes(name)))
         LOG.info('campaign cache exit campaign=%s seconds=%.3f decisions=%d nodes=%d events=%d', self.name, time.perf_counter() - started, len(self.rows), len(x), len(events))
         return arrays
 
@@ -386,6 +396,18 @@ def validate(arrays):
     x, step, events = arrays['x'], arrays['step'], arrays['events']
     if not np.isfinite(x).all():
         raise ValueError('nonfinite observation features')
+    codes, rows = arrays['spatial'][:, 2], arrays['spatial_attribute_row']
+    for edge in spec.EDGES:
+        selected = rows[codes == edge.code]
+        if not edge.attributes:
+            if np.any(selected != -1):
+                raise ValueError('unattributed edge %s carries an attribute row' % edge.name)
+            continue
+        block = arrays['attributes_' + edge.name]
+        if np.any(selected < 0) or (len(selected) and selected.max() >= len(block)):
+            raise ValueError('attribute row out of range for edge ' + edge.name)
+        if not np.array_equal(rows[codes == edge.reverse], selected):
+            raise ValueError('reverse edge attribute rows diverge for ' + edge.name)
     for name in ('chain', 'skip', 'allpast'):
         source, destination = arrays[name].T
         if np.any(step[source] >= step[destination]) or np.any(arrays['entity'][source] != arrays['entity'][destination]):
@@ -461,10 +483,11 @@ def build(directory, window=2500, workers=4):
                 completed(future)
         store.con.execute('COMMIT')
         manifest = dict(version=VERSION, completed=datetime.now(timezone.utc).isoformat(), seconds=time.perf_counter() - started,
-            window=window, rows=len(corpus.rows), designs=list(DESIGNS), histories=[16, 64, 256], allpast_history=64,
+            window=window, rows=len(corpus.rows), designs=list(spec.RECIPES), histories=[16, 64, 256], allpast_history=64,
             supervision_sha256=fingerprint, holdout_salt='gnn3', validation_fraction=0.15,
             train_rows=len(split['train_indices']), validation_rows=len(split['validation_indices']),
-            categories=categories, kinds=list(KINDS), relations=list(RELATIONS), signals=list(SIGNALS), campaigns=campaigns,
+            categories=categories, signals=list(SIGNALS), campaigns=campaigns,
+            spec=spec.declaration(), spec_sha256=spec.fingerprint(),
             feature_policy='Explicit scalar allowlist; no execution validation, policy scores or outcomes.',
             observation_clock='pre-state tick=2*step; chosen action tick=2*step+1; query cutoff=2*step',
             mixed_recipe='Causal observation/change, four-observation traces, decision bundles and prior-choice links; adapted cache topology for the existing message network.',

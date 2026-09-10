@@ -4,6 +4,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from . import spec
+
 
 def mean(values, index, size):
     result = values.new_zeros((size, values.shape[-1])).index_add_(0, index, values)
@@ -43,7 +45,7 @@ class TimeEncoding(nn.Module):
 
 class Spatial(nn.Module):
 
-    def __init__(self, hidden, mode, relations=38, dropout=0.0):
+    def __init__(self, hidden, mode, relations=spec.RELATIONS, attributed=(), dropout=0.0):
         super().__init__()
         self.mode, self.dropout = mode, dropout
         self.root = nn.Linear(hidden, hidden)
@@ -53,19 +55,21 @@ class Spatial(nn.Module):
         if mode == 'relational':
             self.weights = nn.Parameter(torch.empty(relations, hidden, hidden))
             nn.init.xavier_uniform_(self.weights)
-            self.attributes = nn.Linear(4, hidden, bias=False)
+            self.attributes = nn.ModuleDict({name: nn.Linear(len(spec.attributes(name)), hidden, bias=False) for name in attributed})
         elif mode == 'attention':
             self.query, self.key = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
 
-    def forward(self, h, edges, relation=None, attributes=None):
+    def forward(self, h, edges, relation=None, attributes=None, attribute_edges=None):
         source, destination = edges
         if self.mode == 'relational':
             messages = h.new_zeros(len(source), h.shape[-1])
             for kind in relation.unique().tolist():
                 indices = torch.nonzero(relation == kind, as_tuple=True)[0]
                 messages = messages.index_copy(0, indices, h[source[indices]] @ self.weights[kind])
-            if attributes is not None:
-                messages = messages + self.attributes(attributes.sign() * attributes.abs().log1p())
+            if attributes:
+                for name, values in attributes.items():
+                    if len(values):
+                        messages = messages.index_add(0, attribute_edges[name], self.attributes[name](values.sign() * values.abs().log1p()))
             update = mean(messages, destination, len(h))
         elif self.mode == 'attention':
             score = (self.query(h)[destination] * self.key(h)[source]).sum(-1) / math.sqrt(h.shape[-1])
@@ -186,7 +190,7 @@ class TemporalEdges(nn.Module):
         super().__init__()
         self.attention, self.dropout = attention, dropout
         self.time = TimeEncoding(hidden)
-        self.relation = nn.Embedding(64, hidden)
+        self.relation = nn.Embedding(spec.RELATION_SLOTS, hidden)
         self.value = nn.Linear(hidden, hidden)
         if attention:
             self.score = nn.Linear(hidden * 3, 1)
