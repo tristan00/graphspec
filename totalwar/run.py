@@ -17,6 +17,20 @@ from . import spec
 from .cache import write_json
 
 
+def score(targets, predictions):
+    started = time.perf_counter()
+    targets = np.asarray(targets, dtype=np.float64)
+    values = np.asarray(predictions, dtype=np.float64)
+    if targets.ndim != 1 or targets.shape != values.shape:
+        raise ValueError('reward targets and predictions must be matching vectors')
+    if not len(values) or not np.isfinite(values).all() or not np.isfinite(targets).all():
+        raise ValueError('validation predictions must be nonempty and finite')
+    mse = float(np.mean((values - targets)**2))
+    var = float(targets.var())
+    timed_event('score', seconds=time.perf_counter() - started, rows=len(values), raw_mse=mse)
+    return dict(val_mse=mse, raw_val_mse=mse, val_r2=1 - mse / (var or 1.0))
+
+
 def source_hash():
     digest = hashlib.sha256()
     for path in sorted(Path(__file__).parent.glob('*.py')):
@@ -52,7 +66,6 @@ def stop_worker(process):
 
 def fit(cache, directory, config, training_blocks, seconds=600, batch_size=64, deadline=None):
     import torch
-    from advisor.reward_data import score
     from .data import Bank
     from .batching import batches, pack_batch
     from .registry import create

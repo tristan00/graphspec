@@ -3,6 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from . import spec
+from .message_net import TemporalRewardNet
 from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Spatial, TemporalEdges, mean
 from .turns import EndContext, enabled, gather_end
 
@@ -132,7 +133,6 @@ class MixedModel(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        from advisor.temporal_graph.tuning.model import TemporalRewardNet
         self.net = TemporalRewardNet(spec.FEATURES, dict(cfg, aggregation='mean', update='gru'))
 
     def forward(self, b):
