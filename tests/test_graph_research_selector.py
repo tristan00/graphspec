@@ -4,12 +4,12 @@ import json
 import numpy as np
 import pytest
 
-from research.graph_temporal.cache import write_json
-from research.graph_temporal.registry import DESIGNS, sample
-from research.graph_temporal.run import append_round, report, training_layout
-from research.graph_temporal.selector import CHOICES, activate, activate_random, append_trial, load_observations, observation, space, suggest, structure, parameter_key, random_space
-from research.graph_temporal.turns import graph_name
-from research.graph_temporal import spec
+from totalwar.cache import write_json
+from totalwar.registry import DESIGNS, sample
+from totalwar.run import append_round, report, training_layout
+from totalwar.selector import CHOICES, activate, activate_random, append_trial, load_observations, observation, space, suggest, structure, parameter_key, random_space
+from totalwar.turns import graph_name
+from totalwar import spec
 
 
 def choice(config):
@@ -173,7 +173,7 @@ def test_range_upgrade_keeps_existing_proposals_and_original_plan(tmp_path):
 
 
 def test_longer_history_layout_covers_identical_training_rows(tmp_path):
-    from research.graph_temporal.data import Bank
+    from totalwar.data import Bank
 
     cache = tmp_path / 'cache'
     cache.mkdir()
@@ -198,7 +198,7 @@ def test_longer_history_layout_covers_identical_training_rows(tmp_path):
 
 
 def test_scheduled_random_attempts_then_tpe_and_resume_keeps_counter(tmp_path):
-    from research.graph_temporal.selector import schedule_random
+    from totalwar.selector import schedule_random
 
     total = 12
     plan = setup_run(tmp_path)
@@ -256,7 +256,7 @@ def test_continuous_random_can_replace_tpe_and_switch_back(tmp_path):
 
 def test_random_selection_is_uniform_over_models_and_supports_every_variant():
     from collections import Counter
-    from research.graph_temporal.selector import random_suggest
+    from totalwar.selector import random_suggest
 
     configs = [random_suggest(seed, seed + 1)[0] for seed in range(3000)]
     count = Counter(c['model'] for c in configs)
@@ -287,7 +287,7 @@ def test_budget_stopped_scores_keep_original_tpe_parameters(tmp_path):
 @pytest.mark.parametrize('model', list(DESIGNS))
 @pytest.mark.parametrize('turn_context', ['none', 'end'])
 def test_random_reductions_are_limited_to_authorized_parameters(model, turn_context):
-    from research.graph_temporal.selector import random_space
+    from totalwar.selector import random_space
 
     broad = space(model, turn_context)
     reduced = random_space(model, turn_context)
@@ -315,7 +315,7 @@ def test_random_reductions_are_limited_to_authorized_parameters(model, turn_cont
 
 def test_random_selection_records_reduced_domains_but_tpe_still_accepts_wider_history():
     from optuna.distributions import distribution_to_json
-    from research.graph_temporal.selector import random_space, random_suggest
+    from totalwar.selector import random_space, random_suggest
 
     seen = set()
     for seed in range(500):
@@ -338,7 +338,7 @@ def test_random_selection_records_reduced_domains_but_tpe_still_accepts_wider_hi
 
 @pytest.mark.parametrize('model', ['M10', 'M14', 'M26', 'M29'])
 def test_targeted_tpe_keeps_all_scores_without_clamping_old_parameters(model):
-    from research.graph_temporal.selector import random_space
+    from totalwar.selector import random_space
 
     records = history(model + '/' + DESIGNS[model][0] + '+turn-end', 1)
     for record in records:
@@ -368,7 +368,7 @@ def test_targeted_tpe_keeps_all_scores_without_clamping_old_parameters(model):
 
 
 def test_failure_import_preserves_records_and_excludes_interruptions_and_recovered_trials(tmp_path):
-    from research.graph_temporal.selector import load_failures
+    from totalwar.selector import load_failures
 
     plan = setup_run(tmp_path)
     interrupted, recovered, crashed = plan['trials'][13:16]
@@ -386,7 +386,7 @@ def test_failure_import_preserves_records_and_excludes_interruptions_and_recover
 
 
 def test_failure_import_rejects_another_split(tmp_path):
-    from research.graph_temporal.selector import load_failures
+    from totalwar.selector import load_failures
 
     plan = setup_run(tmp_path)
     failed = tmp_path / plan['trials'][12]['directory']
@@ -407,7 +407,7 @@ def test_timeout_evidence_reduces_model_graph_selection():
 
 
 def test_failure_feedback_changes_parameters_within_the_same_family(monkeypatch):
-    from research.graph_temporal import selector
+    from totalwar import selector
 
     monkeypatch.setattr(selector, 'MODELS', ('M22',))
     records = []
@@ -445,7 +445,7 @@ def test_failure_proposals_keep_penalty_separate_from_prediction_scores(tmp_path
 
 def test_shared_graph_switches_roundtrip_every_supported_combination():
     import optuna
-    from research.graph_temporal.selector import suggest_structure
+    from totalwar.selector import suggest_structure
 
     for graph in CHOICES:
         model, name = graph.split('/')

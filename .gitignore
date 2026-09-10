@@ -1,37 +1,5 @@
-# bytecode
 __pycache__/
 *.pyc
-
-# IDE
 .idea/
-
-# Jupyter's own backup copies of a notebook. Four of these were committed, so the repo
-# carried two archived duplicates of two notebooks nothing imported.
-.ipynb_checkpoints/
-
-# build output (regenerate: python bus/pack_multi.py build)
-bus/dist/
-
-# sqlite sidecars
-*.sqlite-wal
-*.sqlite-shm
-
-# scratch capture/crop helpers written into the repo root by mistake
-crop.ps1
-
-# the dashboard client's dependencies. ui/dist is deliberately NOT ignored: the dashboard
-# is started by runctl on a machine that may have no node toolchain, and the old UI was a
-# single .py that always ran. Committing the build keeps that property -- `runctl up`
-# serves a working dashboard straight from a checkout, offline.
-ui/node_modules/
-
-# the screenshot tool writes these into the repo root
-.playwright-mcp/
-
-# scratch UI captures written into the repo root; the self-documentation shots are kept
-*.png
-!docs/ui/*.png
-
-# machine-local path configuration; copy config.example.toml
-config.toml
-research/graph_temporal/artifacts/
+.venv/
+artifacts/

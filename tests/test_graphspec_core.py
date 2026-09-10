@@ -3,12 +3,12 @@ from collections import Counter
 import optuna
 import pytest
 
-from research.churn import spec as churn
-from research.churn.domain import DOMAIN as CHURN_DOMAIN
-from research.graph_temporal.registry import DOMAIN as TW_DOMAIN
-from research.graphspec import search
-from research.graph_temporal import spec as total_war
-from research.graphspec import EdgeType, Modifier, Recipe, Registry
+from churn import spec as churn
+from churn.domain import DOMAIN as CHURN_DOMAIN
+from totalwar.registry import DOMAIN as TW_DOMAIN
+from graphspec import search
+from totalwar import spec as total_war
+from graphspec import EdgeType, Modifier, Recipe, Registry
 
 DOMAINS = [total_war.REGISTRY, churn.REGISTRY]
 IDS = [registry.domain for registry in DOMAINS]
@@ -200,7 +200,7 @@ def test_switches_are_declared_per_domain_not_baked_in():
 
 
 def test_domain_rejects_a_model_naming_an_undeclared_graph():
-    from research.graphspec import Domain
+    from graphspec import Domain
 
     with pytest.raises(ValueError):
         Domain(CHURN_DOMAIN.registry, dict(C99='not-a-recipe'))

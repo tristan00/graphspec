@@ -11,7 +11,7 @@ from optuna.distributions import CategoricalDistribution, FloatDistribution, Int
 
 from . import spec
 from .cache import write_json
-from ..graphspec import search
+from graphspec import search
 from .registry import DESIGNS, DOMAIN, sample
 from .turns import graph_name
 

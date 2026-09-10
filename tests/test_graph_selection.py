@@ -1,8 +1,8 @@
 import optuna
 import pytest
 
-from research.graph_temporal import selector, spec
-from research.graph_temporal.registry import DESIGNS, bases, layout_parameter
+from totalwar import selector, spec
+from totalwar.registry import DESIGNS, bases, layout_parameter
 
 
 def rebuild(model, values):

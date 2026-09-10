@@ -1,6 +1,6 @@
 import math
 
-from ..graphspec import Domain, Switch
+from graphspec import Domain, Switch
 from . import spec
 
 from .history_models import AnonymousWalk, HistoryModel, TemporalAttention

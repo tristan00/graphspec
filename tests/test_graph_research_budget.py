@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 import torch
 
-from research.graph_temporal.budget import FitBudget, eligible, wait_worker
-from research.graph_temporal.cache import write_json
+from totalwar.budget import FitBudget, eligible, wait_worker
+from totalwar.cache import write_json
 
 
 @pytest.mark.parametrize('durations,expected', [([], False), ([119.99], True), ([120], False),
@@ -18,7 +18,7 @@ def test_only_completed_epochs_averaging_strictly_under_two_minutes_qualify(dura
 
 
 def test_grace_remembers_previous_average_even_if_final_epoch_is_slower(tmp_path, monkeypatch):
-    from research.graph_temporal import budget as module
+    from totalwar import budget as module
 
     clock = SimpleNamespace(now=0.0)
     monkeypatch.setattr(module, 'time', SimpleNamespace(perf_counter=lambda: clock.now))
@@ -39,7 +39,7 @@ def test_grace_remembers_previous_average_even_if_final_epoch_is_slower(tmp_path
 
 @pytest.mark.parametrize('durations', [[], [120], [150, 100]])
 def test_slow_or_missing_previous_epochs_still_time_out(tmp_path, monkeypatch, durations):
-    from research.graph_temporal import budget as module
+    from totalwar import budget as module
 
     monkeypatch.setattr(module, 'time', SimpleNamespace(perf_counter=lambda: 601))
     budget = FitBudget(tmp_path, 600, deadline=600)
@@ -51,7 +51,7 @@ def test_slow_or_missing_previous_epochs_still_time_out(tmp_path, monkeypatch, d
 
 @pytest.mark.parametrize('durations,stamp,allowed', [([90], 600, True), ([120], 600, False), ([], 600, False), ([80], 599, False)])
 def test_supervisor_respects_the_same_epoch_rule_and_rejects_stale_attempts(tmp_path, monkeypatch, durations, stamp, allowed):
-    from research.graph_temporal import budget as module
+    from totalwar import budget as module
 
     monkeypatch.setattr(module, 'time', SimpleNamespace(perf_counter=lambda: 600))
     write_json(tmp_path / 'fit_progress.json', dict(deadline=stamp, updated=600, epoch_seconds=durations, phase='training'))
@@ -77,7 +77,7 @@ def test_supervisor_respects_the_same_epoch_rule_and_rejects_stale_attempts(tmp_
 
 
 def test_supervisor_does_not_leave_a_stalled_grace_worker_running_forever(tmp_path, monkeypatch):
-    from research.graph_temporal import budget as module
+    from totalwar import budget as module
 
     clock = SimpleNamespace(now=600)
     monkeypatch.setattr(module, 'time', SimpleNamespace(perf_counter=lambda: clock.now))
@@ -98,7 +98,7 @@ def test_supervisor_does_not_leave_a_stalled_grace_worker_running_forever(tmp_pa
     (4, 100, 40, 200, 2, True), (4, 160, 40, 200, 2, True),
     (2, 200, 40, 200, 2, True), (2, 600, 40, 20, 2, False)])
 def test_fit_finishes_exact_epoch_then_scores_full_holdout(tmp_path, monkeypatch, requested, limit, training_cost, evaluation_cost, actual, extended):
-    from research.graph_temporal import batching, budget, data, registry, run
+    from totalwar import batching, budget, data, registry, run
 
     clock = SimpleNamespace(now=0.0)
     fake_time = SimpleNamespace(perf_counter=lambda: clock.now)

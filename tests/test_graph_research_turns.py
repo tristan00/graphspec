@@ -6,14 +6,14 @@ import numpy as np
 import pytest
 import torch
 
-from research.graph_temporal import spec
+from totalwar import spec
 
-from research.graph_temporal.batching import batches, pack_batch
-from research.graph_temporal.data import pack
-from research.graph_temporal.registry import DESIGNS, create, sample
-from research.graph_temporal.turns import blocks, index, prepare, verify, walks
+from totalwar.batching import batches, pack_batch
+from totalwar.data import pack
+from totalwar.registry import DESIGNS, create, sample
+from totalwar.turns import blocks, index, prepare, verify, walks
 from tests.test_graph_research_cache import make, records
-from research.graph_temporal.graph_variants import build as graph_variants
+from totalwar.graph_variants import build as graph_variants
 
 
 def source(count=8):
@@ -74,7 +74,7 @@ def test_turn_walks_follow_current_query_entities_at_prior_turn_cutoffs():
 
 
 def test_cache_is_complete_and_tampering_prevents_launch(tmp_path):
-    from research.graph_temporal.cache import write_json
+    from totalwar.cache import write_json
 
     directory = tmp_path / 'bank'
     directory.mkdir()
@@ -120,7 +120,7 @@ def test_turn_readout_learns_with_one_target_decision_and_batched_replay(model, 
 
 
 def test_relational_memory_optimization_preserves_outputs_and_gradients():
-    from research.graph_temporal.layers import Spatial, mean
+    from totalwar.layers import Spatial, mean
 
     torch.manual_seed(4)
     layer = Spatial(16, 'relational', spec.RELATIONS, ('skill',), 0.0)

@@ -6,11 +6,11 @@ import numpy as np
 import pytest
 import torch
 
-from research.graph_temporal.data import pack
-from research.graph_temporal import spec
-from research.graph_temporal.graph_variants import DESIGNS, build, prepare, validate, verify
-from research.graph_temporal.registry import DESIGNS as MODELS, create, sample
-from research.graph_temporal.turns import index, walks
+from totalwar.data import pack
+from totalwar import spec
+from totalwar.graph_variants import DESIGNS, build, prepare, validate, verify
+from totalwar.registry import DESIGNS as MODELS, create, sample
+from totalwar.turns import index, walks
 from tests.test_graph_research_cache import make, records
 
 

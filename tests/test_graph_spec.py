@@ -4,8 +4,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from research.graph_temporal import spec
-from research.graph_temporal.registry import DESIGNS
+from totalwar import spec
+from totalwar.registry import DESIGNS
 
 
 def test_every_code_is_unique_and_dense():
@@ -135,7 +135,7 @@ def test_construction_recipes_cover_every_generated_structure():
 
 
 def test_builders_read_their_windows_from_the_spec():
-    from research.graph_temporal import graph_variants, turns, walk_cache
+    from totalwar import graph_variants, turns, walk_cache
 
     assert graph_variants.LOOKBACK == spec.CONSTRUCTION['boundary']['lookback']
     assert graph_variants.WINDOW == spec.CONSTRUCTION['boundary']['window']

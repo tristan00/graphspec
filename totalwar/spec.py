@@ -1,4 +1,4 @@
-from ..graphspec import EdgeType, Modifier, Recipe, Registry
+from graphspec import EdgeType, Modifier, Recipe, Registry
 
 
 VERSION = 2

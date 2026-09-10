@@ -5,15 +5,15 @@ import numpy as np
 import pytest
 import torch
 
-from research.graph_temporal import spec
+from totalwar import spec
 
-from research.graph_temporal.batching import pack_batch
-from research.graph_temporal.data import Bank, CampaignArrays
-from research.graph_temporal.registry import DESIGNS, sample
-from research.graph_temporal.turns import index, walks
-from research.graph_temporal.walk_cache import extend
+from totalwar.batching import pack_batch
+from totalwar.data import Bank, CampaignArrays
+from totalwar.registry import DESIGNS, sample
+from totalwar.turns import index, walks
+from totalwar.walk_cache import extend
 from tests.test_graph_research_cache import make, records
-from research.graph_temporal.graph_variants import VERSION as VARIANT_VERSION, build as graph_variants
+from totalwar.graph_variants import VERSION as VARIANT_VERSION, build as graph_variants
 
 
 @pytest.fixture(scope='module')

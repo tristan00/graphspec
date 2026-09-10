@@ -5,12 +5,12 @@ import numpy as np
 import pytest
 import torch
 
-from research.graph_temporal.data import pack
-from research.graph_temporal.batching import pack_batch, batches
-from research.graph_temporal.registry import DESIGNS, create, sample
+from totalwar.data import pack
+from totalwar.batching import pack_batch, batches
+from totalwar.registry import DESIGNS, create, sample
 from tests.test_graph_research_cache import make, records
-from research.graph_temporal.turns import index as turn_index, walks as turn_walks
-from research.graph_temporal.graph_variants import build as graph_variants
+from totalwar.turns import index as turn_index, walks as turn_walks
+from totalwar.graph_variants import build as graph_variants
 
 
 @pytest.fixture(scope='module')
@@ -169,7 +169,7 @@ def test_defining_components_receive_learning_signal(bank, model, parameter):
 
 @pytest.fixture(scope='module')
 def medium_bank():
-    from research.graph_temporal.walk_cache import extend
+    from totalwar.walk_cache import extend
 
     torch.set_num_threads(1)
     _, arrays = make(records(32))
@@ -184,7 +184,7 @@ def medium_bank():
 
 @pytest.mark.parametrize('model,design', [(model, design) for model, designs in DESIGNS.items() for design in designs])
 def test_medium_model_limits_with_longer_history(medium_bank, model, design):
-    from research.graph_temporal.selector import space
+    from totalwar.selector import space
 
     cfg = sample(model, design, np.random.default_rng(71), 77)
     for key, distribution in space(model).items():

@@ -7,9 +7,9 @@ import time
 
 import psutil
 
-from research.graph_temporal.cache import write_json
-from research.graph_temporal.registry import DESIGNS
-from research.graph_temporal.run import append_round, report, stop_worker
+from totalwar.cache import write_json
+from totalwar.registry import DESIGNS
+from totalwar.run import append_round, report, stop_worker
 
 
 def test_repeated_random_rounds_preserve_every_family(tmp_path):

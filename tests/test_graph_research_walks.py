@@ -1,6 +1,6 @@
 import numpy as np
 
-from research.graph_temporal.walk_cache import extend
+from totalwar.walk_cache import extend
 from tests.test_graph_research_cache import make, records
 
 

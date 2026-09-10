@@ -364,7 +364,7 @@ def run(args):
                 command = psutil.Process(previous['worker_pid']).cmdline()
             except psutil.NoSuchProcess:
                 command = []
-            if 'research.graph_temporal.run' in command and 'worker' in command and '--output' in command:
+            if 'totalwar.run' in command and 'worker' in command and '--output' in command:
                 output = Path(command[command.index('--output') + 1])
                 if output.parent.resolve() == directory.resolve():
                     raise RuntimeError('the previous worker is still running; wait for it before resuming')
@@ -442,7 +442,7 @@ def execute(directory, plan, continuous):
         config = json.loads((trial / 'config.json').read_text())
         blocks, batch_size = training_layout(directory, plan, config)
         attempt = len(list(trial.glob('worker_*.log')))
-        command = [sys.executable, '-u', '-m', 'research.graph_temporal.run', 'worker', '--cache', plan['cache'],
+        command = [sys.executable, '-u', '-m', 'totalwar.run', 'worker', '--cache', plan['cache'],
             '--output', str(trial.resolve()), '--training-blocks', str(blocks.resolve()),
             '--seconds', str(plan['seconds']), '--batch-sequences', str(batch_size)]
         timed_event('trial_enter', index=index, total=len(plan['trials']), model=item['model'], design=item['design'], attempt=attempt)

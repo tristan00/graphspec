@@ -408,7 +408,7 @@ def pack(bank, block, cfg, device='cuda'):
         history_tokens(b, a, start, stop, cfg, device)
     if 'walks' in blocks:
         if cfg['walks'] > a['walks'].shape[2] or cfg['walk_hops'] > a['walks'].shape[3]:
-            raise ValueError('requested CAWN walks exceed the prepared cache; run research.graph_temporal.walk_cache')
+            raise ValueError('requested CAWN walks exceed the prepared cache; run totalwar.walk_cache')
         walks = np.array(a['walks'][start:stop, :, :cfg['walks'], :cfg['walk_hops']])
         if enabled(cfg):
             extra = a['turn_walks'][start:stop, :, :cfg['turn_lookback'], :cfg['walks'], :cfg['walk_hops']]

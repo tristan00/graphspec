@@ -56,8 +56,8 @@ The [first full-training coverage report](D:/tw_stack/docs/graph_temporal_resear
 Run from the repository root:
 
 ```powershell
-.venv\Scripts\python.exe -m research.graph_temporal.cache --output research/graph_temporal/artifacts/cache_20260909 --window 2500 --workers 4
-.venv\Scripts\python.exe -m research.graph_temporal.audit_cache research/graph_temporal/artifacts/cache_20260909
+.venv\Scripts\python.exe -m totalwar.cache --output research/graph_temporal/artifacts/cache_20260909 --window 2500 --workers 4
+.venv\Scripts\python.exe -m totalwar.audit_cache research/graph_temporal/artifacts/cache_20260909
 ```
 
 The source is one read-only PostgreSQL repeatable-read transaction. `advisor.reward_data.LiveCorpus` supplies the existing reward definition and campaign window. Its `gnn3` campaign hash split is frozen in `supervision.json`, including exact decision IDs, labels, train indices and holdout indices. The holdout is the existing validation partition, not a newly untouched test set. Labels are stored separately from graph inputs.
@@ -133,15 +133,15 @@ Open the [live results table](http://127.0.0.1:8766/) to see every attempt, sort
 Start the local viewer when it is not already running:
 
 ```powershell
-.venv\Scripts\python.exe -m research.graph_temporal_dashboard.server --directory research/graph_temporal/artifacts/full_random_20260909 --port 8766
+.venv\Scripts\python.exe -m dashboard.server --directory research/graph_temporal/artifacts/full_random_20260909 --port 8766
 ```
 
 ```powershell
-.venv\Scripts\python.exe -m research.graph_temporal.check_models research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/model_checks.json
-.venv\Scripts\python.exe -m research.graph_temporal.walk_cache research/graph_temporal/artifacts/cache_20260909
-.venv\Scripts\python.exe -m research.graph_temporal.baseline --cache research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/greedy_catboost_20260909
-.venv\Scripts\python.exe -m research.graph_temporal.run run --cache research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/full_random_20260909 --continuous --resume --selector tpe
-.venv\Scripts\python.exe -m research.graph_temporal.run report research/graph_temporal/artifacts/full_random_20260909
+.venv\Scripts\python.exe -m totalwar.check_models research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/model_checks.json
+.venv\Scripts\python.exe -m totalwar.walk_cache research/graph_temporal/artifacts/cache_20260909
+.venv\Scripts\python.exe -m totalwar.baseline --cache research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/greedy_catboost_20260909
+.venv\Scripts\python.exe -m totalwar.run run --cache research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/full_random_20260909 --continuous --resume --selector tpe
+.venv\Scripts\python.exe -m totalwar.run report research/graph_temporal/artifacts/full_random_20260909
 ```
 
 The initial random phase shuffled a 35-entry model/design deck repeatedly. On September 9, after fit 82 finished, it switched to [Optuna's conditional multivariate TPE sampler](https://optuna.readthedocs.io/en/v4.9.0/reference/samplers/generated/optuna.samplers.TPESampler.html). `model_graph` is a categorical parameter containing every valid model/graph pair, so the optimizer selects the architecture and graph together without proposing incompatible pairs. Parameters are conditional on that pair and have separate names per pair: good settings for one architecture or graph do not overwrite the evidence for another. Multivariate TPE samples interacting settings within each conditional branch. Model allocation is now score-driven, so subsequent trials are not forced into equal coverage rounds. No family is removed, and elapsed time is not part of the objective.

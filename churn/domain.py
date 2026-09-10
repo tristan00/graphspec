@@ -1,4 +1,4 @@
-from ..graphspec import Domain
+from graphspec import Domain
 from . import spec
 
 

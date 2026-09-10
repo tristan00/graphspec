@@ -2,8 +2,8 @@ from copy import deepcopy
 
 import numpy as np
 
-from research.graph_temporal.cache import Campaign, validate
-from research.graph_temporal.schema import encode
+from totalwar.cache import Campaign, validate
+from totalwar.schema import encode
 
 
 def records(count=8):

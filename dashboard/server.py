@@ -8,9 +8,9 @@ from urllib.parse import urlsplit
 
 import psutil
 
-from research.graph_temporal.registry import NAMES
-from research.graph_temporal.selector import space, structure
-from research.graph_temporal.turns import graph_name
+from totalwar.registry import NAMES
+from totalwar.selector import space, structure
+from totalwar.turns import graph_name
 
 
 class Results:
@@ -36,7 +36,7 @@ class Results:
         if running:
             try:
                 command = psutil.Process(running['worker_pid']).cmdline()
-                live = ('research.graph_temporal.run' in command and 'worker' in command
+                live = ('totalwar.run' in command and 'worker' in command
                     and str((self.directory / running['trial']).resolve()) in command)
             except psutil.NoSuchProcess:
                 pass
