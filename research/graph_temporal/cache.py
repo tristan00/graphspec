@@ -271,17 +271,19 @@ class Campaign:
         step = np.asarray(self.steps, np.int32)
         turn = np.asarray(self.turns, np.int32)
         offsets = np.asarray(self.offset, np.int64)
+        lags, lag_window = spec.CONSTRUCTION['skip']['lags'], spec.CONSTRUCTION['skip']['window']
+        fanout, past_window = spec.CONSTRUCTION['allpast']['fanout'], spec.CONSTRUCTION['allpast']['window']
         by_entity = defaultdict(list)
         chain, skip, allpast = [], [], []
         for ix, eid in enumerate(entity):
             history = by_entity[int(eid)]
             if history:
                 chain.append((history[-1], ix))
-            for lag in (1, 2, 4, 8, 16, 32, 64):
-                if len(history) >= lag and step[ix] - step[history[-lag]] <= 256:
+            for lag in lags:
+                if len(history) >= lag and step[ix] - step[history[-lag]] <= lag_window:
                     skip.append((history[-lag], ix))
-            for previous in reversed(history[-64:]):
-                if step[ix] - step[previous] >= 64:
+            for previous in reversed(history[-fanout:]):
+                if step[ix] - step[previous] >= past_window:
                     break
                 allpast.append((previous, ix))
             history.append(ix)
@@ -299,11 +301,11 @@ class Campaign:
                 source, target = events[ix, :2]
                 participants = {int(source), int(target)}
                 for participant in participants:
-                    for lag in (1, 2, 4, 8):
+                    for lag in spec.CONSTRUCTION['event_dag']['lags']:
                         groups = prior_groups[participant]
                         if len(groups) >= lag:
                             for previous in groups[-lag]:
-                                if ticks[ix] - ticks[previous] <= 512:
+                                if ticks[ix] - ticks[previous] <= spec.CONSTRUCTION['event_dag']['window']:
                                     dag.append((previous, ix))
                     members[participant].append(ix)
                     if events[ix, 3] != 0:
@@ -312,19 +314,20 @@ class Campaign:
                 prior_groups[participant].append(group)
         neighbor_ids = np.asarray([i for eid in range(len(self.ids)) for i in neighbors[eid]], np.int32)
         neighbor_offsets = np.r_[0, np.cumsum([len(neighbors[eid]) for eid in range(len(self.ids))])].astype(np.int64)
-        rng = np.random.default_rng(741)
-        walks = np.full((len(self.rows), 2, 8, 4), -1, np.int32)
+        walk = spec.CONSTRUCTION['walk']
+        rng = np.random.default_rng(walk['seed'])
+        walks = np.full((len(self.rows), 2, walk['samples'], walk['hops']), -1, np.int32)
         for query, (actor, subject) in enumerate(zip(self.actors, self.subjects)):
             for side, root in enumerate((actor, subject)):
-                for sample in range(8):
+                for sample in range(walk['samples']):
                     current, cutoff = root, query * 2 + 1
-                    for hop in range(4):
+                    for hop in range(walk['hops']):
                         ids = neighbor_ids[neighbor_offsets[current]:neighbor_offsets[current + 1]]
                         end = np.searchsorted(ticks[ids], cutoff)
-                        start = np.searchsorted(ticks[ids], max(0, (query - 255) * 2))
+                        start = np.searchsorted(ticks[ids], max(0, (query - walk['window'] + 1) * 2))
                         if end <= start:
                             break
-                        event = int(ids[rng.integers(max(start, end - 64), end)])
+                        event = int(ids[rng.integers(max(start, end - walk['fanout']), end)])
                         walks[query, side, sample, hop] = event
                         source, target, cutoff = events[event, :3]
                         current = int(target if current == source else source)
@@ -335,34 +338,34 @@ class Campaign:
             for ix in range(offsets[decision], offsets[decision + 1]):
                 eid = int(entity[ix])
                 j = len(mixed_x)
-                mixed_x.append(x[ix]); mixed_kind.append(0); mixed_step.append(decision * 2); mixed_entity.append(eid); mixed_members.append([ix])
+                mixed_x.append(x[ix]); mixed_kind.append(spec.mixed_kind('observation')); mixed_step.append(decision * 2); mixed_entity.append(eid); mixed_members.append([ix])
                 current.append(j)
                 if eid in last:
                     previous, prior_ix = last[eid]
-                    mixed_edges.append((previous, j, 4))
+                    mixed_edges.append((previous, j, spec.MIXED_EDGES['previous_observation']))
                     if not np.array_equal(x[ix], x[prior_ix]):
                         delta = np.concatenate((x[ix, :64].astype(np.float32) - x[prior_ix, :64], x[ix, 64:])).astype(np.float16)
                         change = len(mixed_x)
-                        mixed_x.append(delta); mixed_kind.append(1); mixed_step.append(decision * 2); mixed_entity.append(eid); mixed_members.append([prior_ix, ix])
-                        mixed_edges.extend(((previous, change, 32), (change, j, 32)))
+                        mixed_x.append(delta); mixed_kind.append(spec.mixed_kind('change')); mixed_step.append(decision * 2); mixed_entity.append(eid); mixed_members.append([prior_ix, ix])
+                        mixed_edges.extend(((previous, change, spec.MIXED_EDGES['change_link']), (change, j, spec.MIXED_EDGES['change_link'])))
                 last[eid] = (j, ix)
                 traces[eid].append((j, ix))
-                if len(traces[eid]) == 4:
+                if len(traces[eid]) == spec.CONSTRUCTION['trace']['size']:
                     trace = len(mixed_x)
                     members = [v for _, v in traces[eid]]
-                    mixed_x.append(x[members].mean(0)); mixed_kind.append(3); mixed_step.append(decision * 2); mixed_entity.append(eid); mixed_members.append(members)
-                    mixed_edges.extend((v, trace, 512) for v, _ in traces[eid])
-                    mixed_edges.append((trace, j, 1024))
+                    mixed_x.append(x[members].mean(0)); mixed_kind.append(spec.mixed_kind('trace')); mixed_step.append(decision * 2); mixed_entity.append(eid); mixed_members.append(members)
+                    mixed_edges.extend((v, trace, spec.MIXED_EDGES['member_group']) for v, _ in traces[eid])
+                    mixed_edges.append((trace, j, spec.MIXED_EDGES['trace_current']))
                     traces[eid].clear()
             bundle = len(mixed_x)
             members = list(range(int(offsets[decision]), int(offsets[decision + 1])))
-            mixed_x.append(x[members].mean(0)); mixed_kind.append(2); mixed_step.append(decision * 2); mixed_entity.append(-1); mixed_members.append(members)
-            mixed_edges.extend((v, bundle, 512) for v in current)
+            mixed_x.append(x[members].mean(0)); mixed_kind.append(spec.mixed_kind('bundle')); mixed_step.append(decision * 2); mixed_entity.append(-1); mixed_members.append(members)
+            mixed_edges.extend((v, bundle, spec.MIXED_EDGES['member_group']) for v in current)
             action = len(mixed_x)
-            mixed_x.append(self.q[decision]); mixed_kind.append(4); mixed_step.append(decision * 2 + 1); mixed_entity.append(self.actors[decision]); mixed_members.append([])
-            mixed_edges.append((bundle, action, 8))
+            mixed_x.append(self.q[decision]); mixed_kind.append(spec.mixed_kind('action')); mixed_step.append(decision * 2 + 1); mixed_entity.append(self.actors[decision]); mixed_members.append([])
+            mixed_edges.append((bundle, action, spec.MIXED_EDGES['bundle_action']))
             if decision:
-                mixed_edges.append((previous_action, action, 1))
+                mixed_edges.append((previous_action, action, spec.MIXED_EDGES['previous_action']))
             previous_action = action
         arrays = dict(x=x, entity=entity, step=step, turn=turn, snapshot_offsets=offsets,
             entity_kind=np.asarray(self.node_kinds, np.int8), spatial=np.asarray(self.edges, np.int32).reshape(-1, 3),
@@ -477,8 +480,9 @@ def build(directory, window=2500, workers=4):
             for future in pending:
                 completed(future)
         store.con.execute('COMMIT')
+        walk_recipe = spec.CONSTRUCTION['walk']
         manifest = dict(version=VERSION, completed=datetime.now(timezone.utc).isoformat(), seconds=time.perf_counter() - started,
-            window=window, rows=len(corpus.rows), designs=list(spec.RECIPES), histories=[16, 64, 256], allpast_history=64,
+            window=window, rows=len(corpus.rows), designs=list(spec.RECIPES), histories=[16, 64, 256], allpast_history=spec.CONSTRUCTION['allpast']['window'],
             supervision_sha256=fingerprint, holdout_salt='gnn3', validation_fraction=0.15,
             train_rows=len(split['train_indices']), validation_rows=len(split['validation_indices']),
             categories=categories, signals=list(SIGNALS), campaigns=campaigns,
@@ -486,7 +490,7 @@ def build(directory, window=2500, workers=4):
             feature_policy='Explicit scalar allowlist; no execution validation, policy scores or outcomes.',
             observation_clock='pre-state tick=2*step; chosen action tick=2*step+1; query cutoff=2*step',
             mixed_recipe='Causal observation/change, four-observation traces, decision bundles and prior-choice links; adapted cache topology for the existing message network.',
-            walk_seed=741, walk_samples=8, walk_hops=4)
+            walk_seed=walk_recipe['seed'], walk_samples=walk_recipe['samples'], walk_hops=walk_recipe['hops'])
         write_json(directory / 'manifest.json', manifest)
         LOG.warning('cache complete seconds=%.3f campaigns=%d rows=%d bytes=%d', manifest['seconds'], len(campaigns), len(corpus.rows), sum(c['bytes'] for c in campaigns))
     finally:

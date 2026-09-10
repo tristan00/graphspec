@@ -12,9 +12,9 @@ from .cache import write_json
 
 
 VERSION = 2
-DESIGNS = ('S-core+colocated', 'S-full+colocated', 'X-chain+turn-boundary', 'X-skip+turn-boundary', 'X-allpast+turn-boundary', 'D-event+turn-boundary')
-LOOKBACK = 3
-WINDOW = 64
+DESIGNS = tuple(sorted({base + '+' + modifier.name for modifier in spec.MODIFIERS for base in modifier.bases}))
+LOOKBACK = spec.CONSTRUCTION['boundary']['lookback']
+WINDOW = spec.CONSTRUCTION['boundary']['window']
 COLOCATED = spec.code('colocated')
 BOUNDARY_BY_FLAG = np.asarray([-1, spec.code('boundary_first'), spec.code('boundary_last'), spec.code('boundary_both')], np.int32)
 

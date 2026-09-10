@@ -112,6 +112,22 @@ ATTRIBUTED = tuple(edge.name for edge in EDGES if edge.attributes)
 COLLECTIONS = tuple(edge for edge in EDGES if edge.collection)
 FLAGGED = tuple(edge for edge in EDGES if edge.field)
 BOUNDARY_CODES = tuple(BY_NAME[name].code for name in ('boundary_first', 'boundary_last', 'boundary_both'))
+CONSTRUCTION = dict(
+    chain=dict(),
+    skip=dict(lags=(1, 2, 4, 8, 16, 32, 64), window=256),
+    allpast=dict(fanout=64, window=64),
+    event_dag=dict(lags=(1, 2, 4, 8), window=512),
+    walk=dict(seed=741, samples=8, hops=4, fanout=64, window=256),
+    expanded_walk=dict(samples=32),
+    turn_walk=dict(samples=32, hops=4, lookback=3),
+    boundary=dict(lookback=3, window=64),
+    trace=dict(size=4),
+)
+
+MIXED_NODES = ('observation', 'change', 'bundle', 'trace', 'action')
+MIXED_EDGES = dict(previous_action=1, previous_observation=4, bundle_action=8,
+                   change_link=32, member_group=512, trace_current=1024)
+
 MARKERS = ('non_relation', 'turn_context')
 NON_RELATION = RELATIONS
 TURN_CONTEXT = RELATIONS + 1
@@ -136,6 +152,10 @@ def default(name):
 
 def kind(name):
     return NODE_INDEX[name]
+
+
+def mixed_kind(name):
+    return MIXED_NODES.index(name)
 
 
 def family_codes(families):
@@ -261,7 +281,10 @@ def resolve(design):
 def declaration():
     return dict(version=VERSION, width=WIDTH, features=FEATURES, nodes=list(NODES),
                 relations=RELATIONS, edges=[edge.declaration() for edge in EDGES],
-                markers=list(MARKERS), layouts={k: list(v) for k, v in LAYOUTS.items()},
+                markers=list(MARKERS), mixed_nodes=list(MIXED_NODES), mixed_edges=dict(MIXED_EDGES),
+                layouts={k: list(v) for k, v in LAYOUTS.items()},
+                construction={name: {k: list(v) if isinstance(v, tuple) else v for k, v in recipe.items()}
+                              for name, recipe in CONSTRUCTION.items()},
                 recipes=[recipe.declaration() for recipe in RECIPES.values()],
                 modifiers=[modifier.declaration() for modifier in MODIFIERS])
 

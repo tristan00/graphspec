@@ -7,6 +7,7 @@ import time
 import numpy as np
 
 from .cache import write_json
+from . import spec
 
 
 def search(arrays, entities, cutoffs):
@@ -22,7 +23,7 @@ def search(arrays, entities, cutoffs):
     return lo
 
 
-def extend(arrays, count=32):
+def extend(arrays, count=spec.CONSTRUCTION['expanded_walk']['samples']):
     original = arrays['walks']
     if count <= original.shape[2]:
         return np.array(original[:, :, :count])
@@ -32,14 +33,14 @@ def extend(arrays, count=32):
     current = np.broadcast_to(np.stack((arrays['actor'], arrays['subject']), 1)[:, :, None], shape).copy().reshape(-1)
     query = np.broadcast_to(np.arange(len(original))[:, None, None], shape).reshape(-1)
     cutoff = query * 2 + 1
-    floor = np.maximum(0, (query - 255) * 2)
+    floor = np.maximum(0, (query - spec.CONSTRUCTION['walk']['window'] + 1) * 2)
     valid = np.ones(len(current), bool)
     for hop in range(original.shape[3]):
         lo, hi = search(arrays, current, floor), search(arrays, current, cutoff)
-        lo = np.maximum(lo, hi - 64)
+        lo = np.maximum(lo, hi - spec.CONSTRUCTION['walk']['fanout'])
         valid &= hi > lo
         for extra in range(shape[2]):
-            rng = np.random.default_rng(np.random.SeedSequence([741, extra + original.shape[2], hop]))
+            rng = np.random.default_rng(np.random.SeedSequence([spec.CONSTRUCTION['walk']['seed'], extra + original.shape[2], hop]))
             selected = np.arange(extra, len(current), shape[2])
             selected = selected[valid[selected]]
             chosen = lo[selected] + (rng.random(len(selected)) * (hi[selected] - lo[selected])).astype(np.int64)
@@ -52,7 +53,7 @@ def extend(arrays, count=32):
 
 
 def cache_path(directory):
-    return directory.with_name(directory.name + '_walks32')
+    return directory.with_name(directory.name + '_walks%d' % spec.CONSTRUCTION['expanded_walk']['samples'])
 
 
 def prepare(directory):
@@ -80,7 +81,8 @@ def prepare(directory):
         if len(files) % 250 == 0:
             print(json.dumps(dict(event='walk_cache_progress', campaigns=len(files), seconds=time.perf_counter() - started)), flush=True)
     write_json(target / 'manifest.json', dict(supervision_sha256=manifest['supervision_sha256'],
-        walks=32, hops=4, files=files, seconds=time.perf_counter() - started))
+        walks=spec.CONSTRUCTION['expanded_walk']['samples'], hops=spec.CONSTRUCTION['walk']['hops'],
+        files=files, seconds=time.perf_counter() - started))
     print(json.dumps(dict(event='walk_cache_complete', campaigns=len(files), seconds=time.perf_counter() - started)), flush=True)
 
 

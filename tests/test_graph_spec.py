@@ -1,4 +1,5 @@
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -122,3 +123,41 @@ def test_declaration_round_trips_every_type_and_recipe():
     assert {entry['name'] for entry in declared['recipes']} == set(spec.RECIPES)
     assert declared['relations'] == spec.RELATIONS
     assert declared['features'] == 2 * declared['width']
+
+
+def test_construction_recipes_cover_every_generated_structure():
+    assert set(spec.CONSTRUCTION) == {'chain', 'skip', 'allpast', 'event_dag', 'walk',
+                                      'expanded_walk', 'turn_walk', 'boundary', 'trace'}
+    assert spec.CONSTRUCTION['skip']['lags'] and spec.CONSTRUCTION['event_dag']['lags']
+    for name in ('skip', 'allpast', 'event_dag', 'walk'):
+        assert spec.CONSTRUCTION[name]['window'] > 0
+    assert spec.CONSTRUCTION['expanded_walk']['samples'] >= spec.CONSTRUCTION['walk']['samples']
+
+
+def test_builders_read_their_windows_from_the_spec():
+    from research.graph_temporal import graph_variants, turns, walk_cache
+
+    assert graph_variants.LOOKBACK == spec.CONSTRUCTION['boundary']['lookback']
+    assert graph_variants.WINDOW == spec.CONSTRUCTION['boundary']['window']
+    assert turns.walks.__defaults__ == (spec.CONSTRUCTION['turn_walk']['samples'],
+                                        spec.CONSTRUCTION['turn_walk']['hops'],
+                                        spec.CONSTRUCTION['turn_walk']['lookback'])
+    assert walk_cache.extend.__defaults__ == (spec.CONSTRUCTION['expanded_walk']['samples'],)
+    assert walk_cache.cache_path(Path('bank')).name.endswith(str(spec.CONSTRUCTION['expanded_walk']['samples']))
+
+
+def test_mixed_view_codes_are_declared_and_distinct():
+    assert len(set(spec.MIXED_EDGES.values())) == len(spec.MIXED_EDGES)
+    assert spec.mixed_kind('observation') == 0 and spec.mixed_kind('action') == len(spec.MIXED_NODES) - 1
+    assert set(spec.MIXED_NODES) == {'observation', 'change', 'bundle', 'trace', 'action'}
+
+
+def test_construction_recipes_reach_the_fingerprint():
+    before = spec.fingerprint()
+    original = spec.CONSTRUCTION['walk']['hops']
+    spec.CONSTRUCTION['walk']['hops'] = original + 1
+    try:
+        assert spec.fingerprint() != before
+    finally:
+        spec.CONSTRUCTION['walk']['hops'] = original
+    assert spec.fingerprint() == before

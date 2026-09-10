@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from . import spec
 from .cache import write_json
 
 
@@ -53,7 +54,8 @@ def index(arrays):
         turn_numbers=turns[starts], turn_observations=observed)
 
 
-def walks(arrays, turns, count=32, hops=4, lookback=3):
+def walks(arrays, turns, count=spec.CONSTRUCTION['turn_walk']['samples'],
+          hops=spec.CONSTRUCTION['turn_walk']['hops'], lookback=spec.CONSTRUCTION['turn_walk']['lookback']):
     from .walk_cache import search
 
     shape = (len(arrays['actor']), 2, lookback, count)
@@ -66,7 +68,7 @@ def walks(arrays, turns, count=32, hops=4, lookback=3):
     result = np.full((len(current), hops), -1, np.int32)
     for hop in range(hops):
         lo, hi = search(arrays, current, floor), search(arrays, current, cutoff)
-        lo = np.maximum(lo, hi - 64)
+        lo = np.maximum(lo, hi - spec.CONSTRUCTION['walk']['fanout'])
         valid &= hi > lo
         selected = np.flatnonzero(valid)
         rng = np.random.default_rng(np.random.SeedSequence([909, hop]))
