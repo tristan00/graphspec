@@ -47,17 +47,17 @@ Model parameters share their coordinates across graph variants within that model
 
 Verification comprises 754 distinct research checks, including causal prediction invariance, gradients reaching new relation parameters, independent campaign batching, complete frozen training coverage, historical import, score-sensitive switches and failure-sensitive TPE selection. All 110 combinations also passed a real-cache CUDA forward/backward/checkpoint check. Reports are `artifacts/graph_variants_checks_20260910.xml`, `artifacts/graph_relations_checks_20260910.xml`, `artifacts/graph_switches_checks_20260910.xml` and `artifacts/graph_variants_gpu_{none,end}_20260910.json`. Earlier sections below retain the historical design and migration details; this section defines the current parameterization.
 
-The [live research table](D:/tw_stack/research/graph_temporal/artifacts/full_random_20260909/progress.md) tracks the continuous full-training search against the fixed greedy CatBoost baseline. The [original diagnostic report](D:/tw_stack/docs/graph_temporal_research_first_pass.md) used an incorrectly restricted 868-row training cohort. Those diagnostics remain archived and are excluded from the full-training comparison.
+The [live research table](artifacts/full_random_20260909/progress.md) tracks the continuous full-training search against the fixed greedy CatBoost baseline. The [original diagnostic report](D:/tw_stack/docs/graph_temporal_research_first_pass.md) used an incorrectly restricted 868-row training cohort. Those diagnostics remain archived and are excluded from the full-training comparison.
 
-The [first full-training coverage report](D:/tw_stack/docs/graph_temporal_research_full_training.md) records successful fits for all 30 architecture versions and all 35 required model/graph combinations. All 35 original combinations and their 35 turn-end variants remain eligible. See the [turn-end implementation and schedule](../../docs/graph_temporal_turn_end.md). The [CatBoost audit](D:/tw_stack/docs/catboost_baseline_audit.md) verifies the fixed baseline and compares historical runs.
+The [first full-training coverage report](D:/tw_stack/docs/graph_temporal_research_full_training.md) records successful fits for all 30 architecture versions and all 35 required model/graph combinations. All 35 original combinations and their 35 turn-end variants remain eligible. See the [turn-end implementation and schedule](D:/tw_stack/docs/graph_temporal_turn_end.md). The [CatBoost audit](D:/tw_stack/docs/catboost_baseline_audit.md) verifies the fixed baseline and compares historical runs.
 
 **Frozen graph bank**
 
 Run from the repository root:
 
 ```powershell
-.venv\Scripts\python.exe -m totalwar.cache --output research/graph_temporal/artifacts/cache_20260909 --window 2500 --workers 4
-.venv\Scripts\python.exe -m totalwar.audit_cache research/graph_temporal/artifacts/cache_20260909
+python -m totalwar.cache --output artifacts/cache_20260909 --window 2500 --workers 4
+python -m totalwar.audit_cache artifacts/cache_20260909
 ```
 
 The source is one read-only PostgreSQL repeatable-read transaction. `advisor.reward_data.LiveCorpus` supplies the existing reward definition and campaign window. Its `gnn3` campaign hash split is frozen in `supervision.json`, including exact decision IDs, labels, train indices and holdout indices. The holdout is the existing validation partition, not a newly untouched test set. Labels are stored separately from graph inputs.
@@ -133,15 +133,20 @@ Open the [live results table](http://127.0.0.1:8766/) to see every attempt, sort
 Start the local viewer when it is not already running:
 
 ```powershell
-.venv\Scripts\python.exe -m dashboard.server --directory research/graph_temporal/artifacts/full_random_20260909 --port 8766
+python -m dashboard.server --directory artifacts/full_random_20260909 --port 8766
 ```
 
 ```powershell
-.venv\Scripts\python.exe -m totalwar.check_models research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/model_checks.json
-.venv\Scripts\python.exe -m totalwar.walk_cache research/graph_temporal/artifacts/cache_20260909
-.venv\Scripts\python.exe -m totalwar.baseline --cache research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/greedy_catboost_20260909
-.venv\Scripts\python.exe -m totalwar.run run --cache research/graph_temporal/artifacts/cache_20260909 --output research/graph_temporal/artifacts/full_random_20260909 --continuous --resume --selector tpe
-.venv\Scripts\python.exe -m totalwar.run report research/graph_temporal/artifacts/full_random_20260909
+python -m totalwar.check_models artifacts/cache_20260909 --output artifacts/model_checks.json
+python -m totalwar.walk_cache artifacts/cache_20260909
+python -m research.graph_baseline --cache artifacts/cache_20260909 --output artifacts/greedy_catboost_20260909
+```
+
+The fixed CatBoost baseline lives in tw_stack, not here: it reads that corpus database directly. Run it from `D:/tw_stack`. This repo consumes only the `result.json` it writes.
+
+```
+python -m totalwar.run run --cache artifacts/cache_20260909 --output artifacts/full_random_20260909 --continuous --resume --selector tpe
+python -m totalwar.run report artifacts/full_random_20260909
 ```
 
 The initial random phase shuffled a 35-entry model/design deck repeatedly. On September 9, after fit 82 finished, it switched to [Optuna's conditional multivariate TPE sampler](https://optuna.readthedocs.io/en/v4.9.0/reference/samplers/generated/optuna.samplers.TPESampler.html). `model_graph` is a categorical parameter containing every valid model/graph pair, so the optimizer selects the architecture and graph together without proposing incompatible pairs. Parameters are conditional on that pair and have separate names per pair: good settings for one architecture or graph do not overwrite the evidence for another. Multivariate TPE samples interacting settings within each conditional branch. Model allocation is now score-driven, so subsequent trials are not forced into equal coverage rounds. No family is removed, and elapsed time is not part of the objective.
@@ -174,7 +179,7 @@ Range version 4 retains the version-3 expanded domains and adds optional turn-en
 
 TGAT's recursive depth remains at two because neighborhood expansion compounds at each hop; its maximum fanout is now 20. All attention widths divide evenly by allowed head counts. DyGFormer pads a partial final patch with masked zeros, so larger patches work with every supported neighbor count. CAWN uses a separately prepared `cache_20260909_walks32` companion cache with 32 four-hop walks. The original eight walks remain byte-identical, and the original graph bank is unchanged. Preparation checks each sampled path moves strictly into the past. Missing expanded walks fail explicitly rather than silently using fewer walks.
 
-The [parameter review](../../docs/graph_temporal_parameter_review.md) records the published settings behind these expansions and their limitations. These are research adaptations to a reward task; timestamp units, features, operators and training schedules differ from the source benchmarks.
+The [parameter review](D:/tw_stack/docs/graph_temporal_parameter_review.md) records the published settings behind these expansions and their limitations. These are research adaptations to a reward task; timestamp units, features, operators and training schedules differ from the source benchmarks.
 
 The new random phase draws models uniformly, then a compatible base graph and turn variant uniformly, then each active parameter independently. After 200 attempts, the saved runner switches to TPE automatically; failures count as attempts without invented scores. Completed trial files are the persistent history. For each proposal the runner rebuilds an in-memory study, imports the results once, and asks for one configuration with a reproducible proposal seed. It creates no external study or database. `selection.json` records parameters, complete distributions, range version, sampler settings/version, exact prior trial IDs, scores and result hashes. Configuration and selection are saved before the worker starts. A resumed pending trial uses its saved configuration. Earlier plans are preserved in `random_plan_before_tpe.json`, `small_plan_before_medium.json` and `plan_before_range_3.json`. Unused pre-drawn random configurations remain on disk but are excluded from the active plan. Old observations retain their original values and scores when reconstructed with the new categorical, integer and continuous distributions. Original files remain unchanged.
 
@@ -191,7 +196,7 @@ Each neural fit runs in its own process with a 600-second deadline and the condi
 **Verification**
 
 ```powershell
-.venv\Scripts\python.exe -m pytest tests/test_graph_research_cache.py tests/test_graph_research_models.py tests/test_graph_research_run.py -q --basetemp=research/graph_temporal/artifacts/pytest_checks
+python -m pytest tests/test_graph_research_cache.py tests/test_graph_research_models.py tests/test_graph_research_run.py -q --basetemp=artifacts/pytest_checks
 ```
 
 Tests cover cache time boundaries, exact all-past windows, observed relation removals, feature independence from outcomes, all model/design forward/backward and checkpoint paths, future-observation/action invariance for all 30 architectures, and learning signals reaching the defining complex-model components. All 35 combinations also check that batched predictions and gradients match independent sequences. Batching retains short tails and every sequence. Real GPU checks compare batched and individual predictions across campaigns, including memory models, EvolveGCN and exact temporal edges.

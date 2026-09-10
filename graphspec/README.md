@@ -4,7 +4,7 @@ Domain-agnostic machinery for declaring a typed relational graph and the recipes
 
 `declarations.py` holds `EdgeType`, `Modifier` and `Recipe`; `registry.py` holds `Registry`, which allocates codes, indexes types, validates the declaration and fingerprints it.
 
-A domain module builds one `Registry` and re-exports what its own package needs. Two exist: `research/graph_temporal/spec.py` (Total War reward prediction) and `research/churn/spec.py` (Texas policy churn).
+A domain module builds one `Registry` and re-exports what its own package needs. Two exist: `totalwar/spec.py` (Total War reward prediction) and `churn/spec.py` (Texas policy churn).
 
 | Concept | Meaning |
 |---|---|
@@ -29,6 +29,6 @@ At most one binding per type. Irregular emitters stay hand-written; extraction i
 
 **Fingerprint.** `declaration()` serialises everything including construction recipes and domain extras; `fingerprint()` hashes it. Pin that hash into any cache, plan or run built under the spec so an edit invalidates a bank rather than silently reinterpreting it.
 
-**Domain and search.** `domain.py` binds a registry to a model roster: which graph each model consumes (`graphs`), which input blocks it needs (`blocks`), which arrays its view requires (`views`), and any orthogonal binary context switches (`switches`). `search.py` derives the exploration space from that — `choices`, `structure_metadata`, `structure` and `suggest_structure` — with no domain content. Both `research/graph_temporal` and `research/churn` build a `Domain`, and `tests/test_graphspec_core.py` runs the same search invariants against both: every declared design round-trips through `structure`, every proposal is a declared design, and switches are per-domain rather than baked in.
+**Domain and search.** `domain.py` binds a registry to a model roster: which graph each model consumes (`graphs`), which input blocks it needs (`blocks`), which arrays its view requires (`views`), and any orthogonal binary context switches (`switches`). `search.py` derives the exploration space from that — `choices`, `structure_metadata`, `structure` and `suggest_structure` — with no domain content. Both `totalwar` and `churn` build a `Domain`, and `tests/test_graphspec_core.py` runs the same search invariants against both: every declared design round-trips through `structure`, every proposal is a declared design, and switches are per-domain rather than baked in.
 
 **Hard rule.** A spec may declare only edges derivable from frozen source data, deterministically and causally. Model-dependent edges would break the frozen-bank property and are not permitted.

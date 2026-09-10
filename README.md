@@ -13,4 +13,13 @@ domain supplied rather than hardcoded.
 - `dashboard/` — results server for a running search.
 - `tests/` — invariants, run against both domains.
 
-Extracted from tw_stack with history at commit 3e08d6e.
+The Total War data path is the one thing this repo cannot do alone: `totalwar/tw_source.py`
+imports the tw_stack corpus reader lazily, so building a Total War cache needs that checkout and
+its database. Everything else — the spec, the search, the models and the whole test suite — runs
+standalone. The fixed CatBoost baseline lives in tw_stack as `research/graph_baseline.py`; this
+repo reads the `baseline.json` it writes but cannot produce it.
+
+History was path-filtered out of tw_stack, so no commit hash is shared with it. The extraction
+point was tw_stack commit 3e08d6e, which exists in that repo, not this one.
+
+Install: `pip install -r requirements.txt -r requirements-test.txt`, then `pytest`.

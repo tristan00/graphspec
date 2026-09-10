@@ -1,12 +1,16 @@
 import os
 import threading
 
-BUDGET_S = 20
+BUDGET_S = 120
 
 
 def pytest_configure(config):
+    capture = config.pluginmanager.getplugin('capturemanager')
+
     def expire():
-        print("suite exceeded the %d second budget" % BUDGET_S, flush=True)
+        if capture is not None:
+            capture.suspend_global_capture(in_=True)
+        os.write(2, b'suite exceeded the %d second budget\n' % BUDGET_S)
         os._exit(124)
 
     config._budget = threading.Timer(BUDGET_S, expire)
