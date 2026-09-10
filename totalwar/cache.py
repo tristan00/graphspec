@@ -440,8 +440,7 @@ def build_campaign(directory, index, name, records, categories, row_indices):
 
 
 def build(directory, window=2500, workers=4):
-    from advisor.reward_data import LiveCorpus
-    from decisions.store import DecisionStore
+    from .tw_source import open_corpus
 
     started = time.perf_counter()
     directory = Path(directory)
@@ -450,10 +449,8 @@ def build(directory, window=2500, workers=4):
         raise FileExistsError('completed cache exists; choose a new directory')
     if any(directory.glob('campaign_*')):
         raise FileExistsError('partial cache exists; choose a new directory to preserve its snapshot')
-    store = DecisionStore(readonly=True)
+    store, corpus = open_corpus(window)
     try:
-        store.con.execute('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
-        corpus = LiveCorpus(store, window, float('inf'))
         categories = sorted({row['action']['action_type'] for row in corpus.heads})
         row_keys = {(row['campaign'], row['step']): i for i, row in enumerate(corpus.rows)}
         split = corpus.split

@@ -29,9 +29,32 @@ VIEW_ARRAYS = {
 }
 
 
-def audit(directory):
-    from advisor.base_model import stable_split
+VAL_FRACTION = 0.15
+SPLIT_SEED = 0
+HOLDOUT_SALT = 'gnn3'
 
+
+def stable_split(n, groups, frac=VAL_FRACTION, salt=HOLDOUT_SALT):
+    import random
+    if not groups or len(groups) != n:
+        idx = list(range(n))
+        random.Random(SPLIT_SEED).shuffle(idx)
+        cut = max(1, int(n * frac)) if n > 20 else 0
+        return idx[:cut], idx[cut:]
+    uniq = set(groups)
+    if len(uniq) < 3:
+        return [], list(range(n))
+    cut = int(round(frac * 10000))
+    held = {g for g in uniq
+            if int.from_bytes(hashlib.sha1(('%s|%s' % (salt, g)).encode()).digest()[:4], 'big') % 10000 < cut}
+    val = [i for i, g in enumerate(groups) if g in held]
+    trn = [i for i, g in enumerate(groups) if g not in held]
+    if not val or not trn:
+        return [], list(range(n))
+    return val, trn
+
+
+def audit(directory):
     started = time.perf_counter()
     directory = Path(directory)
     manifest = json.loads((directory / 'manifest.json').read_text())
