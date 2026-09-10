@@ -1,4 +1,0 @@
-numpy>=2.1
-torch>=2.4
-optuna>=4.0
-psutil>=6.0
