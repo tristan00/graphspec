@@ -56,10 +56,19 @@ def campaign_tensors(arrays, recipe, device):
                 query=torch.as_tensor(np.asarray(arrays['query_context'])[:, 0].astype(np.int64), device=device))
 
 
-def metrics(targets, scores):
-    order = np.argsort(scores)
+def mid_ranks(scores):
+    order = np.argsort(scores, kind='stable')
+    ordered = scores[order]
     ranks = np.empty(len(scores), np.float64)
-    ranks[order] = np.arange(1, len(scores) + 1)
+    start = 0
+    for stop in np.r_[np.flatnonzero(np.diff(ordered)) + 1, len(ordered)]:
+        ranks[order[start:stop]] = (start + stop + 1) / 2
+        start = stop
+    return ranks
+
+
+def metrics(targets, scores):
+    ranks = mid_ranks(scores)
     positive, negative = targets.sum(), len(targets) - targets.sum()
     auc = (ranks[targets == 1].sum() - positive * (positive + 1) / 2) / (positive * negative)
     probability = 1 / (1 + np.exp(-scores))

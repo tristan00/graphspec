@@ -64,7 +64,7 @@ VIEWS = {
                  'spatial_attribute_row', 'query_context'),
 }
 
-NUMBERS = ('policies_in_force', 'policies_known', 'tenure_days', 'age_days', 'term_days', 'gap_days')
+NUMBERS = ('policies_in_force', 'policies_known', 'tenure_days', 'age_days', 'gap_days')
 CATEGORIES = ('policy_type_key', 'policy_type_group_code', 'client_city', 'issuing_state_code',
               'naics_code', 'sic_code', 'integrated_platform', 'pol_income_type', 'branch_key',
               'producer_key', 'servicer_key', 'billing_company_key', 'issuing_company_key', 'key')

@@ -19,7 +19,7 @@ SENTINEL = date(2050, 1, 1)
 
 def parse_date(text):
     year, month, day = (int(part) for part in text.split('-'))
-    return date(min(year, 2050), month, day) if year < 2050 else SENTINEL
+    return date(year, month, day) if year < 2050 else SENTINEL
 
 
 def clean_key(value):
@@ -87,7 +87,7 @@ def population(policies, customer, moment, min_policies, tenure_days=365):
     later = {}
     for policy in policies:
         owner = customer[policy['client_key']]
-        if policy['effective'] < first_seen.get(owner, date(9999, 1, 1)):
+        if policy['effective'] < first_seen.get(owner, SENTINEL):
             first_seen[owner] = policy['effective']
         if in_force(policy, moment):
             held.setdefault(owner, []).append(policy)

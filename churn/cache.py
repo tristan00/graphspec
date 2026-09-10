@@ -123,9 +123,9 @@ def cohort(policies, customer, moment):
     at_risk = population(policies, customer, moment, LABEL['min_policies'], LABEL['tenure_days'])
     records = []
     for owner, held, churned in at_risk:
-        history = sorted(by_owner.get(owner, held), key=lambda p: p['effective'])[-HISTORY['fanout']:]
-        if not history:
-            continue
+        known = {policy['policy_key']: policy for policy in by_owner.get(owner, ())}
+        known.update({policy['policy_key']: policy for policy in held})
+        history = sorted(known.values(), key=lambda policy: policy['effective'])[-HISTORY['fanout']:]
         state = dict(policies_in_force=len(held), policies_known=len(history),
                      tenure_days=(moment - min(p['effective'] for p in history)).days,
                      client_city=held[0].get('client_city'), naics_code=held[0].get('naics_code'),
@@ -150,9 +150,15 @@ def build(directory, source, first=date(2023, 1, 1), count=8, spacing=91):
     last = first + timedelta(days=spacing * (count - 1) + LABEL['horizon_days'])
     if last > coverage:
         raise ValueError('label horizon %s runs past the observable end of the data %s' % (last, coverage))
+    schedule = [first + timedelta(days=spacing * index) for index in range(count)]
+    holdout = {str(moment) for moment in schedule[-2:]}
+    embargo = min(schedule[-2:])
+    trained = {str(moment) for moment in schedule[:-2]
+               if moment + timedelta(days=LABEL['horizon_days']) <= embargo}
     rows, blocks = [], []
-    for index in range(count):
-        moment = first + timedelta(days=spacing * index)
+    for index, moment in enumerate(schedule):
+        if str(moment) not in holdout and str(moment) not in trained:
+            continue
         records, by_key = cohort(policies, customer, moment)
         block = []
         for owner, history, churned, state in records:
@@ -162,10 +168,6 @@ def build(directory, source, first=date(2023, 1, 1), count=8, spacing=91):
                                     by_key=by_key, client_state=state)))
             rows.append(row)
         blocks.append((str(moment), block))
-    holdout = {name for index, (name, _) in enumerate(blocks) if index >= count - 2}
-    embargo = min(date.fromisoformat(name) for name in holdout)
-    trained = {name for name, _ in blocks
-               if name not in holdout and date.fromisoformat(name) + timedelta(days=LABEL['horizon_days']) <= embargo}
     split = dict(validation_indices=[i for i, row in enumerate(rows) if row['campaign'] in holdout],
                  train_indices=[i for i, row in enumerate(rows) if row['campaign'] in trained])
     write_json(directory / 'supervision.json', dict(rows=rows, split=split))
