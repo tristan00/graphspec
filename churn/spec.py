@@ -18,11 +18,10 @@ INDUSTRY = 'industry'
 RENEWAL = 'renewal'
 
 BOOK = (HOLDER, PLACEMENT, SERVICING, CLASSIFICATION)
-TERM = ('term_days', 'cancelled')
 GAP = ('gap_days',)
 
 EDGES = (
-    EdgeType('held_by', HOLDER, ('policy',), ('client',), TERM, column='client_key'),
+    EdgeType('held_by', HOLDER, ('policy',), ('client',), column='client_key'),
     EdgeType('placed_by', PLACEMENT, ('policy',), ('producer',), column='producer_key'),
     EdgeType('specialist', PLACEMENT, ('policy',), ('placement_specialist',), column='placement_specialist_key'),
     EdgeType('executive', PLACEMENT, ('policy',), ('account_executive',), column='account_executive_key'),
@@ -43,7 +42,7 @@ EDGES = (
 RECIPE_LIST = (
     Recipe('P-core', 'snapshot', CORE, BOOK),
     Recipe('P-full', 'snapshot', NODES, BOOK),
-    Recipe('R-chain', 'snapshot', NODES, BOOK, 'renewal'),
+    Recipe('R-chain', 'snapshot', NODES, BOOK + (RENEWAL,)),
 )
 
 LAYOUTS = {'book_graph': ('P-core', 'P-full')}
@@ -54,9 +53,8 @@ MODIFIERS = (
 )
 
 CONSTRUCTION = dict(
-    renewal=dict(window=1095),
     client_history=dict(fanout=32, window=1095),
-    label=dict(grace=90, definition='client_continuity'),
+    label=dict(horizon_days=365, tenure_days=365, min_policies=3, definition='customer_continuity'),
 )
 
 MARKERS = ('non_relation',)
@@ -65,6 +63,11 @@ VIEWS = {
     'snapshot': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_step',
                  'spatial_attribute_row', 'query_context'),
 }
+
+NUMBERS = ('policies_in_force', 'policies_known', 'tenure_days', 'age_days', 'term_days', 'gap_days')
+CATEGORIES = ('policy_type_key', 'policy_type_group_code', 'client_city', 'issuing_state_code',
+              'naics_code', 'sic_code', 'integrated_platform', 'pol_income_type', 'branch_key',
+              'producer_key', 'servicer_key', 'billing_company_key', 'issuing_company_key', 'key')
 
 
 REGISTRY = Registry('churn_tx', VERSION, NODES, EDGES, WIDTH, MARKERS, LAYOUTS, MODIFIERS,

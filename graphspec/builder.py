@@ -204,6 +204,8 @@ def validate(registry, arrays):
     source, destination = arrays['event_dag'].T
     if np.any(events[source, 2] >= events[destination, 2]):
         raise ValueError('event DAG crosses a simultaneous or future group')
+    if 'walk' not in registry.construction:
+        return
     walks = arrays['walks']
     times = np.where(walks >= 0, events[np.maximum(walks, 0), 2], -1)
     if np.any(times[:, :, :, 0] > np.arange(len(walks))[:, None, None] * 2):
