@@ -1,8 +1,12 @@
 from collections import Counter
 
+import optuna
 import pytest
 
 from research.churn import spec as churn
+from research.churn.domain import DOMAIN as CHURN_DOMAIN
+from research.graph_temporal.registry import DOMAIN as TW_DOMAIN
+from research.graphspec import search
 from research.graph_temporal import spec as total_war
 from research.graphspec import EdgeType, Modifier, Recipe, Registry
 
@@ -132,3 +136,71 @@ def test_churn_declares_a_foreign_key_binding_for_every_edge():
 def test_total_war_keeps_its_collection_and_flag_bindings():
     assert not total_war.REGISTRY.keyed
     assert len(total_war.REGISTRY.collections) == 6 and len(total_war.REGISTRY.flagged) == 6
+
+
+PIPELINES = [TW_DOMAIN, CHURN_DOMAIN]
+PIPELINE_IDS = [d.registry.domain for d in PIPELINES]
+
+
+def categorical(options):
+    return tuple(options)
+
+
+def rebuild(domain, model, values):
+    parameter = domain.layout_parameter(model)
+    base = values[parameter] if parameter is not None else domain.bases(model)[0]
+    active = [m.name for m in domain.modifiers(model) if values[m.parameter]]
+    return '+'.join([base] + active)
+
+
+@pytest.mark.parametrize('domain', PIPELINES, ids=PIPELINE_IDS)
+def test_every_declared_design_round_trips_through_structure(domain):
+    for model, designs in domain.designs.items():
+        for design in designs:
+            values, domains = search.structure(domain, dict(model=model, design=design), categorical)
+            assert set(values) == set(domains)
+            assert values['model'] == model
+            assert rebuild(domain, model, values) == design
+
+
+@pytest.mark.parametrize('domain', PIPELINES, ids=PIPELINE_IDS)
+def test_proposals_are_always_declared_designs(domain):
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    for seed in range(8):
+        study = optuna.create_study(sampler=optuna.samplers.RandomSampler(seed=seed))
+        trial = study.ask()
+        model, design, context = search.suggest_structure(domain, trial)
+        assert design in domain.designs[model]
+        assert set(context) == {switch.key for switch in domain.switches}
+        expected = search.structure(domain, dict(model=model, design=design, **context), categorical)[0]
+        assert set(trial.params) == set(expected)
+
+
+@pytest.mark.parametrize('domain', PIPELINES, ids=PIPELINE_IDS)
+def test_choices_cover_every_model_and_design(domain):
+    entries = search.choices(domain)
+    assert len(entries) == sum(len(d) for d in domain.designs.values()) * 2 ** len(domain.switches)
+    assert len(set(entries)) == len(entries)
+
+
+@pytest.mark.parametrize('domain', PIPELINES, ids=PIPELINE_IDS)
+def test_every_model_declares_a_view_and_its_blocks(domain):
+    known = set().union(*domain.blocks.values())
+    for model in domain.models:
+        assert domain.view(model) in {r.view for r in domain.registry.recipes.values()}
+        assert isinstance(domain.blocks[model], frozenset)
+        assert domain.blocks[model] <= known
+
+
+def test_switches_are_declared_per_domain_not_baked_in():
+    assert [s.parameter for s in TW_DOMAIN.switches] == ['turn_end']
+    assert CHURN_DOMAIN.switches == ()
+    assert 'turn_end' in search.structure(TW_DOMAIN, dict(model='M01', design='S-full'), categorical)[0]
+    assert 'turn_end' not in search.structure(CHURN_DOMAIN, dict(model='C02', design='P-full'), categorical)[0]
+
+
+def test_domain_rejects_a_model_naming_an_undeclared_graph():
+    from research.graphspec import Domain
+
+    with pytest.raises(ValueError):
+        Domain(CHURN_DOMAIN.registry, dict(C99='not-a-recipe'))

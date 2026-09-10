@@ -247,7 +247,9 @@ def pack(bank, block, cfg, device='cuda'):
     campaign, start, stop = block[:3]
     target_start = block[3] if len(block) == 4 else start
     a = bank.campaign(campaign)
-    family = int(cfg['model'][1:])
+    from .registry import BLOCKS
+
+    blocks = BLOCKS[cfg['model']]
     recipe = spec.resolve(cfg['design'])
     from .graph_variants import DESIGNS as VARIANTS
 
@@ -279,7 +281,7 @@ def pack(bank, block, cfg, device='cuda'):
         from .turn_inputs import add
 
         add(b, a, start, stop, cfg, device)
-    if family <= 16 or family in (20, 29):
+    if 'snapshot' in blocks:
         b.update(x=tensor(a['x'][lo:hi], device, torch.float32), kind=tensor(a['entity_kind'][entity], device, torch.long),
                  entity=tensor(entity, device, torch.long), step=tensor(step, device, torch.long), align=tensor(align, device, torch.long),
                  present=tensor(align < hi - lo, device))
@@ -313,7 +315,7 @@ def pack(bank, block, cfg, device='cuda'):
             use = keep & (step[edges[1]] == t)
             b['frame_edges'].append(tensor(entity[edges[:, use]], device, torch.long))
             b['frame_directed'].append(tensor(entity[edges[:, use & directed]], device, torch.long))
-        if family in (13, 14):
+        if 'lifted' in blocks:
             edges = a[recipe.lifted]
             left, right = np.searchsorted(edges[:, 1], (lo, hi))
             edges = np.array(edges[left:right])
@@ -334,7 +336,7 @@ def pack(bank, block, cfg, device='cuda'):
                 from .turn_inputs import temporal_edges
 
                 temporal_edges(b, a, lo, hi, device)
-        if family == 12:
+        if 'mixed' in blocks:
             left, right = np.searchsorted(a['mixed_tick'], (start * 2, stop * 2))
             edges = np.array(a['mixed_edges'])
             use = (edges[:, 0] >= left) & (edges[:, 1] >= left) & (edges[:, 0] < right) & (edges[:, 1] < right)
@@ -360,7 +362,7 @@ def pack(bank, block, cfg, device='cuda'):
                 from .turn_inputs import mixed_edges
 
                 mixed_edges(b, a, start, stop, device)
-    if family in (15, 16, 18, 19, 20, 24, 26, 28, 29):
+    if 'events' in blocks:
         left, right = np.searchsorted(a['events'][:, 2], (start * 2, stop * 2))
         events = np.array(a['events'][left:right])
         ex = np.array((a['x'][events[:, 4]].astype(np.float32) + a['x'][events[:, 5]]) / 2)
@@ -373,7 +375,7 @@ def pack(bank, block, cfg, device='cuda'):
             event_groups=[(int(t), int(s), int(e)) for t, s, e in zip(*(
                 lambda boundaries: (events[boundaries[:-1], 2], boundaries[:-1], boundaries[1:]))(
                     np.r_[0, np.flatnonzero(np.diff(events[:, 2])) + 1, len(events)]))])
-        if family in (15, 16):
+        if 'dag' in blocks:
             edges = a['event_dag']
             use = (edges[:, 0] >= left) & (edges[:, 1] >= left) & (edges[:, 0] < right) & (edges[:, 1] < right)
             edges = np.array(edges[use]) - left
@@ -393,18 +395,18 @@ def pack(bank, block, cfg, device='cuda'):
                 indices = np.flatnonzero((events[:, 2] <= (start + i) * 2) & np.isin(events[:, :2], roots).any(1))
                 links.extend((int(e), i) for e in indices)
             b['dag_query_edges'] = tensor(np.asarray(links, np.int64).reshape(-1, 2).T, device, torch.long)
-    if family == 17:
+    if 'tree' in blocks:
         roots = np.stack((a['actor'][start:stop], a['subject'][start:stop]), 1).reshape(-1)
         cutoffs = np.repeat(np.arange(start, stop) * 2 + 1, 2)
         b['tree'] = tree(a, roots, cutoffs, start * 2, count, cfg['layers'], device)
-    if family in (18, 20, 21, 22, 23, 24, 26, 27):
-        b.update(history_inputs(a, start, stop, count, device, family == 23,
-            selected if family in (21, 22, 23, 27) else None))
-    if enabled(cfg) and family in (17, 21, 22, 23, 27):
+    if 'history' in blocks:
+        b.update(history_inputs(a, start, stop, count, device, 'structure' in blocks,
+            selected if 'history_targets' in blocks else None))
+    if enabled(cfg) and 'turn_history' in blocks:
         from .turn_inputs import history_tokens
 
         history_tokens(b, a, start, stop, cfg, device)
-    if family == 25:
+    if 'walks' in blocks:
         if cfg['walks'] > a['walks'].shape[2] or cfg['walk_hops'] > a['walks'].shape[3]:
             raise ValueError('requested CAWN walks exceed the prepared cache; run research.graph_temporal.walk_cache')
         walks = np.array(a['walks'][start:stop, :, :cfg['walks'], :cfg['walk_hops']])

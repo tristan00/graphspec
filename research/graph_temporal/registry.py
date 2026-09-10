@@ -1,5 +1,6 @@
 import math
 
+from ..graphspec import Domain, Switch
 from . import spec
 
 from .history_models import AnonymousWalk, HistoryModel, TemporalAttention
@@ -20,15 +21,41 @@ GRAPHS.update(M08='snapshot_graph', M12='O-mixed', M13='temporal_layout', M14='t
     M26='H-neighbor', M27='H-neighbor', M28='N-affinity', M29='E-entity', M30='V-signals')
 
 
-def bases(model):
-    return spec.LAYOUTS.get(GRAPHS[model], (GRAPHS[model],))
+SWITCHES = (Switch('turn_end', 'turn_context', 'end', 'none'),)
 
+INPUTS = {
+    'snapshot': tuple('M%02d' % i for i in list(range(1, 17)) + [20, 29]),
+    'lifted': ('M13', 'M14'),
+    'mixed': ('M12',),
+    'events': ('M15', 'M16', 'M18', 'M19', 'M20', 'M24', 'M26', 'M28', 'M29'),
+    'dag': ('M15', 'M16'),
+    'tree': ('M17',),
+    'history': ('M18', 'M20', 'M21', 'M22', 'M23', 'M24', 'M26', 'M27'),
+    'structure': ('M23',),
+    'history_targets': ('M21', 'M22', 'M23', 'M27'),
+    'turn_history': ('M17', 'M21', 'M22', 'M23', 'M27'),
+    'walks': ('M25',),
+}
+BLOCKS = {model: frozenset(name for name, models in INPUTS.items() if model in models) for model in GRAPHS}
 
-def layout_parameter(model):
-    return GRAPHS[model] if GRAPHS[model] in spec.LAYOUTS else None
+VIEWS = {
+    'snapshot': ('x', 'entity', 'entity_kind', 'snapshot_offsets', 'spatial', 'spatial_step',
+                 'spatial_attribute_row', 'query_context'),
+    'mixed': ('mixed_x', 'mixed_kind', 'mixed_tick', 'mixed_entity', 'mixed_edges',
+              'mixed_member_ids', 'mixed_member_offsets'),
+    'event': ('events', 'event_dag', 'x'),
+    'entity': ('events', 'x', 'entity_kind', 'observation_ids', 'observation_offsets'),
+    'role': ('events', 'role_left', 'role_right', 'x'),
+    'neighbor': ('events', 'neighbor_ids', 'neighbor_offsets', 'observation_ids', 'observation_offsets'),
+    'walk': ('walks', 'propagation_ids', 'events', 'neighbor_ids', 'neighbor_offsets'),
+    'affinity': ('actor', 'affinity', 'global_affinity'),
+    'signals': ('signals', 'query'),
+}
 
-
-DESIGNS = {model: spec.designs_for(bases(model)) for model in GRAPHS}
+DOMAIN = Domain(spec.REGISTRY, GRAPHS, BLOCKS, SWITCHES, VIEWS)
+DESIGNS = DOMAIN.designs
+bases = DOMAIN.bases
+layout_parameter = DOMAIN.layout_parameter
 
 
 for _designs in DESIGNS.values():

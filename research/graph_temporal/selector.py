@@ -11,17 +11,15 @@ from optuna.distributions import CategoricalDistribution, FloatDistribution, Int
 
 from . import spec
 from .cache import write_json
-from .registry import DESIGNS, bases, layout_parameter, sample
+from ..graphspec import search
+from .registry import DESIGNS, DOMAIN, sample
 from .turns import graph_name
 
 
-CHOICES = tuple(model + '/' + design + suffix for model, designs in DESIGNS.items() for design in designs for suffix in ('', '+turn-end'))
+CHOICES = search.choices(DOMAIN)
 GRAPH_VERSION = 3
 MODELS = tuple(DESIGNS)
-STRUCTURE = dict(version=3, model='categorical',
-    shared_binary=['turn_end'] + [modifier.parameter for modifier in spec.MODIFIERS],
-    conditional_layouts=sorted(spec.LAYOUTS),
-    model_parameters='Shared across compatible graph variants within each model.')
+STRUCTURE = search.structure_metadata(DOMAIN, 3)
 SETTINGS = dict(n_startup_trials=10, n_ei_candidates=64, multivariate=True, group=True)
 RANGE_VERSION = 5
 RANGE_NAME = 'targeted'
@@ -84,19 +82,7 @@ def random_space(model, turn_context='none'):
 
 
 def structure(config):
-    model, design = config['model'], config['design']
-    parts = design.split('+')
-    active = set(parts[1:])
-    values = dict(model=model, turn_end=config.get('turn_context', 'none') == 'end')
-    domains = dict(model=CategoricalDistribution(MODELS), turn_end=CategoricalDistribution([False, True]))
-    parameter = layout_parameter(model)
-    if parameter is not None:
-        values[parameter] = parts[0]
-        domains[parameter] = CategoricalDistribution(list(spec.LAYOUTS[parameter]))
-    for modifier in spec.modifiers_for(bases(model)):
-        values[modifier.parameter] = modifier.name in active
-        domains[modifier.parameter] = CategoricalDistribution([False, True])
-    return values, domains
+    return search.structure(DOMAIN, config, lambda options: CategoricalDistribution(list(options)))
 
 
 def parameter_key(model, name, turn_context):
@@ -122,16 +108,9 @@ def observation(config, value, targeted=False):
 
 
 def suggest_structure(trial, training_seed):
-    model = trial.suggest_categorical('model', MODELS)
-    end = trial.suggest_categorical('turn_end', [False, True])
-    options = bases(model)
-    parameter = layout_parameter(model)
-    design = trial.suggest_categorical(parameter, list(spec.LAYOUTS[parameter])) if parameter is not None else options[0]
-    for modifier in spec.modifiers_for(options):
-        if trial.suggest_categorical(modifier.parameter, [False, True]):
-            design += '+' + modifier.name
+    model, design, context = search.suggest_structure(DOMAIN, trial, MODELS)
     config = sample(model, design, np.random.default_rng(training_seed), training_seed)
-    config['turn_context'] = 'end' if end else 'none'
+    config.update(context)
     return config
 
 
