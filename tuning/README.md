@@ -6,7 +6,11 @@
 
 `python -m tuning.build` reads the database once and writes each graph's truth arrays under `truth/`. Training never touches the database. Labels live in `supervision.json`, apart from the model inputs. `Bank` refuses a manifest from another bank version or whose declaration does not reproduce its fingerprint.
 
-A trial's configuration carries its spec under `graph`. `Bank.arrays` canonicalises the spec against the model's representation groups, then materialises the variant of a graph on first use under `variants/<digest>/graph_NNNN/`. The digest covers the spec without the parameters read only when packing (`time/history`, `time/context`, `neighbors/order`, `neighbors/decay`), the groups and the `graphspec` and `graph_tuning_infra` sources, so trials that differ only in those share a variant until the transform code changes. It memory-maps the arrays and keeps the eight most recent graphs open.
+A trial's configuration carries its spec under `graph`. `Bank.arrays` canonicalises the spec against the model's representation groups, then materialises the variant of a graph on first use under `variants/<digest>/graph_NNNN/`. The runner materialises every graph of a trial's variant in parallel before the worker starts (`--workers`) and prunes the least recently used variants to the `--variant-gb` budget, so the fit budget is spent on training. The digest covers the spec without the parameters read only when packing (`time/history`, `time/context`, `neighbors/order`, `neighbors/decay`), the groups and the `graphspec` and `graph_tuning_infra` sources, so trials that differ only in those share a variant until the transform code changes. It memory-maps the arrays and keeps the eight most recent graphs open; each open graph also holds the arrays that packing searches in RAM and its feature matrices on the training device (`Bank.resident`).
+
+**Packing**
+
+`pack` turns one training window into model inputs. Every per-entity or per-event loop lives in a numba kernel in `gather.py`: the latest observation of an entity before a tick, neighbour sampling (recent, uniform or decay-weighted Gumbel top-k keyed by the seeded hash), the levels of a temporal-neighbour tree, interaction histories with their structural features, the events reachable from a prediction's entities, and walk identities. Feature rows are gathered on the device from the resident matrices, and edge tables are cut by binary search on their sorted columns. A block of the largest churn graph (156k entities) packs in 1 to 8 ms on the GPU for every family.
 
 **Models**
 
@@ -98,7 +102,7 @@ Model parameters draw from these ranges. Only the parameters a model uses enter 
 
 | File | Contents |
 |---|---|
-| `plan.json` | Bank path and manifest hash, fingerprints, seed, budget, selector and every planned trial. |
+| `plan.json` | Bank path and manifest hash, fingerprints, seed, budget, selector, workers, variant budget and every planned trial. |
 | `runner.lock`, `running.json` | One runner per directory; the active worker's process id and trial. |
 | `train_blocks_H.json` | The training windows for history H. |
 | `trial_NNNNNN_<selector>_<model>_<spec digest>/` | One trial. |

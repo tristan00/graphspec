@@ -12,6 +12,7 @@ Domain-free machinery that reads a typed temporal truth graph from LadybugDB and
 | `operators.py` | One function per graph stage. |
 | `representations.py` | Model inputs built from a derived graph, and their validation. |
 | `transform.py` | `derive` runs the stages and verifies the graph after each; `materialize` adds the representations. |
+| `kernels.py` | The numba kernels behind the stages, the representations and `verify`. |
 
 **Truth graph.** `truth.Graph` holds one graph as flat arrays:
 
@@ -61,7 +62,7 @@ The markers `non_relation` and `turn_context` take codes above every relation. T
 - Every hashed or sampled choice in the stages and representations uses one fixed seed, `transform.SEED`, so changing one parameter never reshuffles the random choices of another.
 - `materialized` drops the parameters read only when packing: `time/history`, `time/context`, `neighbors/order` and `neighbors/decay`. Its digest, with the groups and the `graphspec` and `graph_tuning_infra` sources, names a cached variant.
 
-**Stages.** `transform.derive` applies seven stages in a fixed order. Each stage reads the graph the stage before it produced.
+**Stages.** `transform.derive` applies seven stages in a fixed order. Each stage reads the graph the stage before it produced. A stage that returns its input unchanged is not verified again, and a relation whose edge filters sit at their identity values is left untouched.
 
 1. Periods
 
@@ -108,11 +109,11 @@ Computed at each step from the present facts that survive stage 3. Completion an
 | `derive/complete/<type>` | on, off | Completes that type: every pair of observed entities of the completed types at a step is linked. Offered while the type is kept. |
 | `derive/complete_within/<type>` | on, off | Links completed entities only when they share a neighbour of that type; with several types on, a shared neighbour of any of them is enough. Offered while this type is kept and a kept base relation joins it to a completed type. |
 | `derive/hops` | 1–3 | Adds `hop:2` up to `hop:k`. Offered while a base relation is kept. |
-| `derive/diffusion` | none, ppr, heat | Scores pairs by personalised PageRank α(I−(1−α)T)⁻¹ or the heat kernel exp(−t(I−T)), with T the symmetric-normalised adjacency of the step's observed entities. Each entity links to its highest-scoring non-adjacent entities in its own connected component. Offered while a base relation is kept. |
+| `derive/diffusion` | none, ppr, heat | Scores pairs by personalised PageRank α(I−(1−α)T)⁻¹ or the heat kernel exp(−t(I−T)), with T the symmetric-normalised adjacency of the step's observed entities. Each entity links to its highest-scoring non-adjacent entities in its own connected component. Computed per component; components of at least 1024 entities use the GPU in float64. Offered while a base relation is kept. |
 | `derive/diffusion_top_k` | 1–16 | Neighbours per entity. Offered with diffusion. |
 | `derive/ppr_alpha` | 0.05–0.5 | α. Offered with ppr. |
 | `derive/heat_time` | 0.5–5 | t. Offered with heat. |
-| `derive/rewiring` | none, sdrf, fosr | fosr works inside connected components. Each addition goes to the component with the smallest spectral gap, at the non-edge that minimises the product of degree-scaled second-eigenvector entries of the component's self-looped normalised adjacency. sdrf takes the edge of lowest balanced Forman curvature. It adds an edge between the two neighbourhoods, sampled by softmax of temperature × curvature gain, and removes the most curved edge above the threshold. Offered while a base relation is kept. |
+| `derive/rewiring` | none, sdrf, fosr | fosr works inside connected components. Each addition goes to the component with the smallest spectral gap, at the non-edge that minimises the product of degree-scaled second-eigenvector entries of the component's self-looped normalised adjacency. sdrf takes the edge of lowest balanced Forman curvature. It adds an edge between the two neighbourhoods, sampled by softmax of temperature × curvature gain, and removes the most curved edge above the threshold. Curvature runs in a numba kernel, and fosr reuses a component's decomposition until an edge changes it. Offered while a base relation is kept. |
 | `derive/rewiring_budget` | 1–64 | Iterations per step. Offered with rewiring. |
 | `derive/sdrf_temperature` | 1–500, log | Sampling temperature. Offered with sdrf. |
 | `derive/sdrf_threshold` | 0.1–20, log | Curvature above which an edge is removed. Offered with sdrf. |
