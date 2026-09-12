@@ -15,3 +15,7 @@ Given a plan with numbered section and subsections. You may not begin a section 
 Given a plan, Anything blocked stays at the top of every user status request you write until it clears.   
 
 You are not allowed to use anything about whether an action validated in the model features or to select model training data.
+
+Never ever move on from a failing test. Never bother me about tests. 
+Tests are for you not me. But I won't allow you to leave broken garbage 
+in my project or have long running test suites of 20+ seconds. 

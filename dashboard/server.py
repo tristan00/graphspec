@@ -1,32 +1,23 @@
 import argparse
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 from pathlib import Path
 import time
-from urllib.parse import urlsplit
 
-import psutil
-
-from totalwar.registry import NAMES
-from totalwar.selector import space, structure
-from totalwar.turns import graph_name
+from graph_tuning_infra.files import JsonCache, read_json
+from graph_tuning_infra.log import emit
+from graph_tuning_infra.processes import command
+from graph_tuning_infra.serve import serve
+from tuning.roster import NAMES
 
 
 class Results:
+
     def __init__(self, directory):
         self.directory = Path(directory).resolve()
-        self.cache = {}
+        self.cache = JsonCache()
 
     def read(self, path):
-        path = Path(path)
-        if not path.exists():
-            return None
-        stat = path.stat()
-        key = (stat.st_mtime_ns, stat.st_size)
-        if path not in self.cache or self.cache[path][0] != key:
-            self.cache[path] = (key, json.loads(path.read_text(encoding='utf-8')))
-        return self.cache[path][1]
+        return self.cache.read(path)
 
     def snapshot(self):
         started = time.perf_counter()
@@ -34,48 +25,27 @@ class Results:
         running = self.read(self.directory / 'running.json') or {}
         live = False
         if running:
-            try:
-                command = psutil.Process(running['worker_pid']).cmdline()
-                live = ('totalwar.run' in command and 'worker' in command
-                    and str((self.directory / running['trial']).resolve()) in command)
-            except psutil.NoSuchProcess:
-                pass
+            invocation = command(running['worker_pid'])
+            live = 'tuning.run' in invocation and 'worker' in invocation and str((self.directory / running['trial']).resolve()) in invocation
         rows = []
-        baseline = self.read(plan['baseline']) if plan.get('baseline') else None
+        baseline = read_json(plan['baseline']) if plan['baseline'] else None
         if baseline:
             if baseline['supervision_sha256'] != plan['supervision_sha256']:
                 raise ValueError('Baseline uses a different split')
-            rows.append(self.row('CB', 'Greedy CatBoost', 'Tabular', 'Fixed', 'Complete', baseline['config'], baseline))
-            rows[-1]['active_params'] = dict(baseline['config'], fitted_trees=baseline['iterations'],
-                early_stopping_rounds=baseline['early_stopping_rounds'])
-            log = Path(plan['baseline']).parent.with_suffix('.log')
-            if log.exists() and 'Traceback (most recent call last)' in log.read_text(encoding='utf-8'):
-                rows.append(self.row('CB-first', 'Greedy CatBoost', 'Tabular', 'Fixed', 'Prediction error', baseline['config']))
-                rows[-1]['log'] = str(log)
+            rows.append(self.row('REF', 'Reference', '—', 'Fixed', 'Complete', baseline['config'], {}, baseline))
         for item in plan['trials']:
             trial = self.directory / item['directory']
             logs = sorted(trial.glob('worker_*.log'))
             if not logs:
                 continue
             config = self.read(trial / 'config.json')
-            selection = self.read(trial / 'selection.json') or {}
-            method = 'Random' if item.get('selector', 'random') == 'random' else 'TPE'
-            ranges = {1: 'small', 2: 'small–medium', 3: 'expanded', 4: 'expanded + turns', 5: 'targeted ranges'}
-            mode = method + ' · ' + ranges[selection.get('parameter_range_version', 1)]
-            if selection.get('random_parameter_range') == 'targeted':
-                mode = 'Random · targeted ranges'
-            if method == 'TPE' and selection.get('structure_parameterization', {}).get('version') == 2:
-                mode += ' · graph switches'
+            selection = self.read(trial / 'selection.json')
+            mode = 'TPE' if item['selector'] == 'tpe' else 'Random'
             result = self.read(trial / 'result.json')
             failure = self.read(trial / 'failure.json')
             timeout = self.read(trial / 'timeout.json')
             for index, log in enumerate(logs):
                 last = index == len(logs) - 1
-                actual = config
-                with log.open(encoding='utf-8') as stream:
-                    first = stream.readline()
-                if first.startswith('{') and first.endswith('\n'):
-                    actual = json.loads(first).get('config', config)
                 status = 'Interrupted'
                 if last:
                     if result:
@@ -83,15 +53,15 @@ class Results:
                     elif timeout:
                         status = 'Timeout'
                     elif failure:
-                        status = 'Interrupted' if failure.get('status') == 'interrupted' else 'Failed'
+                        status = 'Failed'
                     elif live and running['trial'] == item['directory']:
                         status = 'Running'
                 identifier = str(int(item['directory'].split('_')[1])).zfill(3)
                 if len(logs) > 1:
                     identifier += chr(97 + index)
-                row = self.row(identifier, NAMES[int(actual['model'][1:]) - 1], graph_name(actual), mode,
-                    status, actual, result if last and result else None)
-                row.update(trial=item['directory'], log=str(log), model_id=actual['model'])
+                row = self.row(identifier, NAMES[int(config['model'][1:]) - 1], item['graph'][:10], mode,
+                    status, config, selection['graph_summary'], result if last and result else None)
+                row.update(trial=item['directory'], log=str(log), model_id=config['model'])
                 if last and not result:
                     row['error'] = failure
                     row['seconds'] = timeout['seconds'] if timeout else None
@@ -110,25 +80,16 @@ class Results:
             baseline_mse=baseline['raw_val_mse'] if baseline else None,
             best_neural_mse=neural[0]['mse'] if neural else None,
             best_neural_model=neural[0]['model'] if neural else None,
-            train_rows=plan.get('train_rows'), holdout_rows=plan.get('holdout_rows'),
-            range=plan.get('parameter_range'), stop_requested=(self.directory / 'STOP').exists(),
+            train_rows=plan['train_rows'], holdout_rows=plan['holdout_rows'],
+            stop_requested=(self.directory / 'STOP').exists(),
             running=running if live else None, directory=str(self.directory))
-        exploration = plan.get('random_exploration')
-        if exploration:
-            attempts = plan['trials'][exploration['start_index']:exploration['start_index'] + exploration['count']]
-            finished = sum(any((self.directory / item['directory'] / name).exists()
-                for name in ('result.json', 'failure.json', 'timeout.json')) for item in attempts)
-            output['exploration'] = dict(finished=finished, total=exploration['count'],
-                requested_total=exploration.get('requested_count', exploration['count']), ended_early=exploration.get('ended_early', False),
-                phase='Random' if plan.get('parameter_selection') == 'random' or finished < exploration['count'] else 'TPE')
-        print(json.dumps(dict(event='dashboard_snapshot', attempts=len(rows), seconds=round(time.perf_counter() - started, 4))), flush=True)
+        emit('dashboard_snapshot', attempts=len(rows), seconds=round(time.perf_counter() - started, 4))
         return output
 
-    def row(self, identifier, model, graph, mode, status, config, result=None):
+    def row(self, identifier, model, graph, mode, status, config, summary, result=None):
         result = result or {}
-        active = config if mode == 'Fixed' else {key: config[key] for key in space(config['model'], config.get('turn_context', 'none')) if key in config}
-        if mode != 'Fixed':
-            active.update({key:value for key,value in structure(config)[0].items() if key != 'model'})
+        active = {key: value for key, value in config.items() if key != 'graph'}
+        active.update({'graph/' + key: value for key, value in summary.items()})
         return dict(id=identifier, model=model, graph=graph, mode=mode, status=status, config=config,
             active_params=active, mse=result.get('raw_val_mse'), r2=result.get('val_r2'),
             seconds=result.get('seconds'), parameters=result.get('parameters'),
@@ -147,42 +108,7 @@ def main():
     parser.add_argument('--port', type=int, default=8766)
     args = parser.parse_args()
     results = Results(args.directory)
-    page = Path(__file__).with_name('index.html')
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            path = urlsplit(self.path).path
-            try:
-                if path in ('/', '/index.html'):
-                    body, content_type = page.read_bytes(), 'text/html; charset=utf-8'
-                elif path == '/api/results':
-                    body = json.dumps(results.snapshot(), allow_nan=False).encode('utf-8')
-                    content_type = 'application/json; charset=utf-8'
-                elif path == '/favicon.ico':
-                    self.send_response(204)
-                    self.end_headers()
-                    return
-                else:
-                    self.send_error(404)
-                    return
-            except Exception as error:
-                print(json.dumps(dict(event='dashboard_error', error=repr(error))), flush=True)
-                self.send_error(503, 'Results could not be read; retry shortly')
-                return
-            self.send_response(200)
-            self.send_header('Content-Type', content_type)
-            self.send_header('Cache-Control', 'no-store')
-            self.send_header('Content-Length', str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, format, *args):
-            pass
-
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
-    print(json.dumps(dict(event='dashboard_listening', url='http://127.0.0.1:%d' % args.port,
-        directory=str(results.directory))), flush=True)
-    server.serve_forever()
+    serve(args.port, Path(__file__).with_name('index.html'), {'/api/results': results.snapshot}, directory=str(results.directory))
 
 
 if __name__ == '__main__':
