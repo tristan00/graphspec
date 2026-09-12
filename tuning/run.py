@@ -18,7 +18,7 @@ from graph_tuning_infra.log import configure, emit
 from graph_tuning_infra.processes import Lock, command, stop
 
 
-VERSION = 6
+VERSION = 7
 REFERENCE_HISTORY = 16
 PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / 'graphspec', Path(graph_tuning_infra.__file__).parent)
 
@@ -292,6 +292,7 @@ def run(args):
     else:
         plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
             batch_sequences=args.batch_sequences, baseline=str(Path(args.baseline).resolve()) if args.baseline else None,
+            workers=args.workers, variant_bytes=args.variant_gb << 30,
             seconds=args.seconds, train_rows=bank.manifest['train_rows'], holdout_rows=bank.manifest['validation_rows'],
             supervision_sha256=bank.manifest['supervision_sha256'], spec_sha256=bank.manifest['spec_sha256'],
             created=datetime.now(timezone.utc).isoformat())
@@ -331,6 +332,7 @@ def training_layout(directory, plan, config):
 def execute(directory, plan, continuous, registry):
     from .budget import wait_worker
     from .selector import append_trial
+    from .variants import prepare, prune
 
     emit('run_enter', trials=len(plan['trials']), seconds_per_fit=plan['seconds'], continuous=continuous)
     index = 0
@@ -349,6 +351,8 @@ def execute(directory, plan, continuous, registry):
             continue
         config = read_json(trial / 'config.json')
         blocks, batch_size = training_layout(directory, plan, config)
+        root = prepare(plan['bank'], config, plan['workers'])
+        prune(plan['bank'], plan['variant_bytes'], root)
         attempt = len(list(trial.glob('worker_*.log')))
         invocation = [sys.executable, '-u', '-m', 'tuning.run', 'worker', '--bank', plan['bank'],
             '--output', str(trial.resolve()), '--training-blocks', str(blocks.resolve()), '--batch-sequences', str(batch_size)]
@@ -393,6 +397,8 @@ def main():
     run_parser.add_argument('--seconds', type=int, default=600)
     run_parser.add_argument('--resume', action='store_true')
     run_parser.add_argument('--selector', choices=('tpe', 'random'), default='tpe')
+    run_parser.add_argument('--workers', type=int, default=4)
+    run_parser.add_argument('--variant-gb', type=int, default=300)
     worker_parser = subparsers.add_parser('worker')
     worker_parser.add_argument('--bank', required=True)
     worker_parser.add_argument('--output', required=True)
