@@ -1178,3 +1178,61 @@ def audit(obs_entity, obs_step, obs_anchor, fact_source, fact_target, fact_step,
             if stamp[label_entity[row]] != moment:
                 flags[18] = True
     return flags
+
+
+@njit(cache=True)
+def components(source, target, count):
+    parent = np.arange(count)
+    for row in range(len(source)):
+        a, b = source[row], target[row]
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        while parent[b] != b:
+            parent[b] = parent[parent[b]]
+            b = parent[b]
+        if a < b:
+            parent[b] = a
+        elif b < a:
+            parent[a] = b
+    labels = np.empty(count, np.int64)
+    for node in range(count):
+        root = node
+        while parent[root] != root:
+            root = parent[root]
+        labels[node] = root
+    return labels
+
+
+@njit(cache=True, parallel=True)
+def forman(adjacency, sources, targets):
+    size = adjacency.shape[0]
+    values = np.zeros(len(sources))
+    for edge in prange(len(sources)):
+        i, j = sources[edge], targets[edge]
+        di, dj, triangles = 0, 0, 0
+        for k in range(size):
+            di += adjacency[i, k]
+            dj += adjacency[j, k]
+            triangles += adjacency[i, k] & adjacency[j, k]
+        if min(di, dj) == 1:
+            continue
+        largest, smallest = max(di, dj), min(di, dj)
+        value = 2 / di + 2 / dj - 2 + 2 * triangles / largest + triangles / smallest
+        squares, gamma = 0, 0
+        for side in range(2):
+            near, far, other = (i, j, j) if side == 0 else (j, i, i)
+            for k in range(size):
+                if not adjacency[near, k] or adjacency[far, k] or k == other:
+                    continue
+                count = -1
+                for x in range(size):
+                    count += adjacency[k, x] & adjacency[far, x] & (not adjacency[near, x])
+                if count > 0:
+                    squares += 1
+                if count > gamma:
+                    gamma = count
+        if gamma > 0:
+            value += squares / (gamma * largest)
+        values[edge] = value
+    return values

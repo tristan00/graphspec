@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 from graph_tuning_infra.hashing import unit
 
@@ -10,6 +11,7 @@ FACTS = ('fact_source', 'fact_target', 'fact_code', 'fact_step', 'fact_present',
 OBSERVATIONS = ('obs_entity', 'obs_step', 'obs_x', 'obs_anchor')
 SAMPLE, DROP, RANDOM, REWIRE = 1, 2, 3, 4
 BLOCK = 1 << 22
+GPU_FROM = 1024
 
 
 def counted(counts):
@@ -221,103 +223,113 @@ def closure(registry, u, v, limit, entities):
     return result
 
 
-def dense(present, u, v, entities):
-    index = np.full(entities, -1, np.int64)
-    index[present] = np.arange(len(present))
-    adjacency = np.zeros((len(present), len(present)), bool)
-    adjacency[index[u], index[v]] = True
-    adjacency[index[v], index[u]] = True
+def dense(members, u, v):
+    index = np.full(int(max(members.max(initial=-1), u.max(initial=-1), v.max(initial=-1))) + 1, -1, np.int64)
+    index[members] = np.arange(len(members))
+    use = (index[u] >= 0) & (index[v] >= 0)
+    adjacency = np.zeros((len(members), len(members)), bool)
+    adjacency[index[u[use]], index[v[use]]] = True
+    adjacency[index[v[use]], index[u[use]]] = True
     return adjacency
 
 
-def components(adjacency):
-    labels = np.arange(len(adjacency))
-    while True:
-        spread = np.where(adjacency, labels[None, :], labels[:, None]).min(1, initial=len(labels))
-        if np.array_equal(spread, labels):
-            return labels
-        labels = spread
+def blocks(labels):
+    order = np.argsort(labels, kind='stable')
+    bounds = np.flatnonzero(np.r_[True, np.diff(labels[order]) != 0, True])
+    return [order[lo:hi] for lo, hi in zip(bounds[:-1], bounds[1:]) if hi - lo > 1]
+
+
+def device(size):
+    return 'cuda' if size >= GPU_FROM else 'cpu'
+
+
+def normalized(adjacency, loops):
+    dense_adjacency = torch.as_tensor(adjacency, dtype=torch.float64, device=device(len(adjacency)))
+    if loops:
+        dense_adjacency = dense_adjacency + torch.eye(len(adjacency), dtype=torch.float64, device=dense_adjacency.device)
+    scale = dense_adjacency.sum(1).rsqrt()
+    return dense_adjacency, scale, scale[:, None] * dense_adjacency * scale[None, :]
+
+
+def diffusion_scores(adjacency, spec):
+    dense_adjacency, _, transition = normalized(adjacency, False)
+    identity = torch.eye(len(adjacency), dtype=torch.float64, device=transition.device)
+    if spec['derive/diffusion'] == 'ppr':
+        alpha = spec['derive/ppr_alpha']
+        scores = alpha * torch.linalg.inv(identity - (1 - alpha) * transition)
+    else:
+        values, vectors = torch.linalg.eigh(transition)
+        scores = (vectors * torch.exp(-spec['derive/heat_time'] * (1 - values))) @ vectors.T
+    scores = scores.masked_fill(dense_adjacency.bool() | identity.bool(), -torch.inf)
+    return scores
 
 
 def diffuse(registry, spec, present, u, v, entities):
     count = len(present)
     if count < 2:
         return np.zeros(0, np.int32), np.zeros(0, np.int32), np.zeros(0, np.int64)
-    adjacency = dense(present, u, v, entities)
-    degree = adjacency.sum(1).astype(np.float64)
-    scale = np.divide(1.0, np.sqrt(degree), out=np.zeros(count), where=degree > 0)
-    transition = scale[:, None] * adjacency * scale[None, :]
-    if spec['derive/diffusion'] == 'ppr':
-        alpha = spec['derive/ppr_alpha']
-        scores = alpha * np.linalg.inv(np.eye(count) - (1 - alpha) * transition)
-    else:
-        values, vectors = np.linalg.eigh(transition)
-        scores = (vectors * np.exp(-spec['derive/heat_time'] * (1 - values))) @ vectors.T
-    scores[adjacency] = -np.inf
-    np.fill_diagonal(scores, -np.inf)
-    labels = components(adjacency)
-    scores[labels[:, None] != labels[None, :]] = -np.inf
-    width = min(spec['derive/diffusion_top_k'], count - 1)
-    chosen = np.argsort(-scores, axis=1, kind='stable')[:, :width]
-    rows = np.repeat(np.arange(count), width)
-    columns = chosen.ravel()
-    valid = np.isfinite(scores[rows, columns])
-    return present[rows[valid]], present[columns[valid]], np.full(int(valid.sum()), registry.code('diffusion'), np.int64)
+    local_u, local_v = np.searchsorted(present, u), np.searchsorted(present, v)
+    labels = kernels.components(local_u.astype(np.int64), local_v.astype(np.int64), count)
+    sources, targets = [], []
+    for members in blocks(labels):
+        scores = diffusion_scores(dense(members, local_u, local_v), spec)
+        width = min(spec['derive/diffusion_top_k'], len(members) - 1)
+        ranked, chosen = torch.sort(scores, dim=1, descending=True, stable=True)
+        chosen, valid = chosen[:, :width].cpu().numpy(), torch.isfinite(ranked[:, :width]).cpu().numpy()
+        rows = np.broadcast_to(np.arange(len(members))[:, None], chosen.shape)
+        sources.append(present[members[rows[valid]]])
+        targets.append(present[members[chosen[valid]]])
+    source = np.concatenate(sources + [np.zeros(0, np.int32)]).astype(np.int32)
+    target = np.concatenate(targets + [np.zeros(0, np.int32)]).astype(np.int32)
+    return source, target, np.full(len(source), registry.code('diffusion'), np.int64)
 
 
 def curvature(adjacency, i, j):
-    left, right = adjacency[i], adjacency[j]
-    di, dj = int(left.sum()), int(right.sum())
-    if min(di, dj) == 1:
-        return 0.0
-    triangles = int((left & right).sum())
-    value = 2 / di + 2 / dj - 2 + 2 * triangles / max(di, dj) + triangles / min(di, dj)
-    squares, gamma = 0, 0
-    for near, far, other in ((left, right, j), (right, left, i)):
-        candidates = np.flatnonzero(near & ~far)
-        candidates = candidates[candidates != other]
-        if len(candidates):
-            counts = (adjacency[candidates] & far & ~near).sum(1) - 1
-            squares += int((counts > 0).sum())
-            gamma = max(gamma, int(counts.max()))
-    if gamma > 0:
-        value += squares / (gamma * max(di, dj))
-    return value
+    return float(kernels.forman(adjacency, np.asarray([i], np.int64), np.asarray([j], np.int64))[0])
 
 
-def fosr(adjacency):
-    labels, best = components(adjacency), None
-    for label in np.unique(labels).tolist():
-        members = np.flatnonzero(labels == label)
-        local = adjacency[np.ix_(members, members)]
-        if local.sum() == len(members) * (len(members) - 1):
-            continue
-        scale = 1 / np.sqrt(local.sum(1) + 1.0)
-        values, vectors = np.linalg.eigh(scale[:, None] * (local + np.eye(len(members))) * scale[None, :])
-        scores = np.outer(vectors[:, -2] * scale, vectors[:, -2] * scale)
-        scores[local] = np.inf
-        np.fill_diagonal(scores, np.inf)
-        i, j = divmod(int(np.argmin(scores)), len(members))
-        gap = values[-1] - values[-2]
-        if best is None or gap < best[0] - 1e-9:
-            best = (gap, members[i], members[j])
+def spectral(adjacency, members):
+    local = adjacency[np.ix_(members, members)]
+    if local.sum() == len(members) * (len(members) - 1):
+        return None
+    _, scale, matrix = normalized(local, True)
+    values, vectors = torch.linalg.eigh(matrix)
+    fiedler = (vectors[:, -2] * scale)
+    scores = fiedler[:, None] * fiedler[None, :]
+    scores = scores.masked_fill(torch.as_tensor(local | np.eye(len(members), dtype=bool), device=scores.device), torch.inf)
+    i, j = divmod(int(torch.argmin(scores)), len(members))
+    return float(values[-1] - values[-2]), members[i], members[j]
+
+
+def fosr(adjacency, groups, found):
+    best = None
+    for label, members in enumerate(groups):
+        if label not in found:
+            found[label] = spectral(adjacency, members)
+        candidate = found[label]
+        if candidate is not None and (best is None or candidate[0] < best[1][0] - 1e-9):
+            best = label, candidate
     return best
 
 
 def rewire(spec, present, u, v, entities, rng):
-    original = dense(present, u, v, entities)
+    original = dense(present, u, v)
     adjacency = original.copy()
+    groups = blocks(kernels.components(np.searchsorted(present, u).astype(np.int64), np.searchsorted(present, v).astype(np.int64), len(present)))
+    found = {}
     for _ in range(spec['derive/rewiring_budget']):
         if spec['derive/rewiring'] == 'fosr':
-            best = fosr(adjacency)
+            best = fosr(adjacency, groups, found)
             if best is None:
                 break
-            adjacency[best[1], best[2]] = adjacency[best[2], best[1]] = True
+            label, (_, i, j) = best
+            adjacency[i, j] = adjacency[j, i] = True
+            del found[label]
             continue
         edges = np.argwhere(np.triu(adjacency, 1))
         if not len(edges):
             break
-        values = np.asarray([curvature(adjacency, i, j) for i, j in edges])
+        values = kernels.forman(adjacency, edges[:, 0], edges[:, 1])
         i, j = edges[int(np.argmin(values))]
         candidates = [(k, l) for k in np.r_[i, np.flatnonzero(adjacency[i])] for l in np.r_[j, np.flatnonzero(adjacency[j])]
                       if k != l and not adjacency[k, l]]
@@ -332,7 +344,7 @@ def rewire(spec, present, u, v, entities, rng):
             k, l = candidates[int(rng.choice(len(candidates), p=probability / probability.sum()))]
             adjacency[k, l] = adjacency[l, k] = True
         edges = np.argwhere(np.triu(adjacency, 1))
-        values = np.asarray([curvature(adjacency, p, q) for p, q in edges])
+        values = kernels.forman(adjacency, edges[:, 0], edges[:, 1])
         if values.max() > spec['derive/sdrf_threshold']:
             p, q = edges[int(np.argmax(values))]
             adjacency[p, q] = adjacency[q, p] = False
