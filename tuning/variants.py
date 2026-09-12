@@ -1,5 +1,4 @@
 from concurrent.futures import ProcessPoolExecutor
-import logging
 import os
 from pathlib import Path
 import shutil
@@ -10,7 +9,6 @@ from graph_tuning_infra.log import emit
 from .data import Bank
 
 
-LOG = logging.getLogger(__name__)
 WORKER = {}
 
 
@@ -33,7 +31,7 @@ def prepare(bank_directory, cfg, workers):
     seconds = 0.0
     if missing:
         with ProcessPoolExecutor(max_workers=min(workers, len(missing)), initializer=attach, initargs=(str(bank_directory),)) as pool:
-            for _, elapsed in pool.map(materialize, [(index, cfg) for index in missing], chunksize=4):
+            for _, elapsed in pool.map(materialize, [(index, cfg) for index in missing]):
                 seconds += elapsed
     os.utime(root / 'variant.json')
     emit('variant_prepare', digest=root.name[:10], graphs=len(bank.manifest['graphs']), built=len(missing), workers=workers,
@@ -47,12 +45,11 @@ def size(folder):
 
 def prune(bank_directory, limit, keep):
     started = time.perf_counter()
-    root = Path(bank_directory) / 'variants'
-    folders = [folder for folder in root.iterdir() if folder.is_dir() and folder != keep] if root.exists() else []
+    folders = [folder for folder in (Path(bank_directory) / 'variants').iterdir() if folder.is_dir() and folder != keep]
     sizes = {folder: size(folder) for folder in folders}
-    total = sum(sizes.values()) + (size(keep) if keep.exists() else 0)
+    total = sum(sizes.values()) + size(keep)
     removed = 0
-    for folder in sorted(folders, key=lambda folder: (folder / 'variant.json').stat().st_mtime if (folder / 'variant.json').exists() else 0):
+    for folder in sorted(folders, key=lambda folder: (folder / 'variant.json').stat().st_mtime):
         if total <= limit:
             break
         shutil.rmtree(folder)

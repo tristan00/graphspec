@@ -60,14 +60,18 @@ class Resident:
 
     def column(self, key, index):
         if (key, index) not in self.columns:
+            started = time.perf_counter()
             self.columns[(key, index)] = np.ascontiguousarray(self.arrays[key][:, index])
+            LOG.debug('resident column exit key=%s index=%d rows=%d seconds=%.4f', key, index, len(self.columns[(key, index)]), time.perf_counter() - started)
         return self.columns[(key, index)]
 
     def order(self, key, index):
         if (key, index) not in self.orders:
+            started = time.perf_counter()
             values = self.column(key, index)
             order = np.argsort(values, kind='stable')
             self.orders[(key, index)] = (order, values[order])
+            LOG.debug('resident order exit key=%s index=%d rows=%d seconds=%.4f', key, index, len(order), time.perf_counter() - started)
         return self.orders[(key, index)]
 
     def rows_by(self, key, index, low, high):
@@ -172,7 +176,8 @@ def features_at(held, observations, device):
     return torch.where(known[..., None], held.tensor('x')[index.clamp_min(0)].float(), 0.0)
 
 
-def tree(a, held, entities, cutoffs, floor, count, depth, device, registry, spec, stream):
+def tree(held, entities, cutoffs, floor, count, depth, device, registry, spec, stream):
+    started = time.perf_counter()
     mode, decay = sampling(spec)
     events, ticks = held.numpy('events'), held.ticks
     ids, offsets = held.numpy('neighbor_ids'), held.numpy('neighbor_offsets')
@@ -191,10 +196,12 @@ def tree(a, held, entities, cutoffs, floor, count, depth, device, registry, spec
     result = node(entities, cutoffs)
     for entities, cutoffs, mask, gaps, relation in reversed(levels):
         result = dict(node(entities, cutoffs), child=result, mask=tensor(mask, device), gap=tensor(gaps, device), relation=tensor(relation, device))
+    LOG.debug('tree exit roots=%d depth=%d count=%d seconds=%.4f', len(levels[0][0]) if levels else len(entities), depth, count, time.perf_counter() - started)
     return result
 
 
 def history_inputs(held, first, last, start, count, device, spec, stream, include_structure, selected):
+    started = time.perf_counter()
     mode, decay = sampling(spec)
     chosen = np.ones(last - first, bool) if selected is None else np.asarray(selected, bool)
     (observed, interaction, query_tick, mask, gap, ids, structural, common_ids, common_frequency, common_stats,
@@ -213,6 +220,7 @@ def history_inputs(held, first, last, start, count, device, spec, stream, includ
     result.update({name: tensor(value, device) for name, value in dict(history_mask=mask, history_gap=gap, history_ids=ids, occurrence=occurrence,
         structure=structural, common_stats=common_stats, common_ids=common_ids, common_frequency=common_frequency,
         pair_gap=pair_gaps, pair_mask=pair_mask).items()})
+    LOG.debug('history exit rows=%d count=%d structure=%s seconds=%.4f', last - first, count, include_structure, time.perf_counter() - started)
     return result
 
 
@@ -366,7 +374,7 @@ def pack(bank, block, cfg, device='cuda'):
     if 'tree' in blocks:
         roots = np.stack((actors, subjects), 1).reshape(-1).astype(np.int64)
         cutoffs = np.repeat(moment * 2 + 1, 2)
-        b['tree'] = tree(a, held, roots, cutoffs, start * 2, count, cfg['layers'], device, registry, spec, stream)
+        b['tree'] = tree(held, roots, cutoffs, start * 2, count, cfg['layers'], device, registry, spec, stream)
     if 'history' in blocks:
         b.update(history_inputs(held, first, last, start, count, device, spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None))
     if enabled(cfg) and 'turn_history' in blocks:

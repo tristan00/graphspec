@@ -289,6 +289,7 @@ def run(args):
             raise ValueError('resume requested with a different baseline')
         if plan['bank_manifest_sha256'] != sha256_file(Path(args.bank) / 'manifest.json'):
             raise ValueError('resume requested with a rebuilt bank')
+        plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30)
     else:
         plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
             batch_sequences=args.batch_sequences, baseline=str(Path(args.baseline).resolve()) if args.baseline else None,
@@ -351,8 +352,14 @@ def execute(directory, plan, continuous, registry):
             continue
         config = read_json(trial / 'config.json')
         blocks, batch_size = training_layout(directory, plan, config)
-        root = prepare(plan['bank'], config, plan['workers'])
-        prune(plan['bank'], plan['variant_bytes'], root)
+        try:
+            root = prepare(plan['bank'], config, plan['workers'])
+            prune(plan['bank'], plan['variant_bytes'], root)
+        except Exception as error:
+            write_json(trial / 'failure.json', dict(model=item['model'], graph=item['graph'], error=repr(error), traceback=traceback.format_exc()))
+            report(directory)
+            emit('trial_failed', trial=item['directory'], stage='variant')
+            continue
         attempt = len(list(trial.glob('worker_*.log')))
         invocation = [sys.executable, '-u', '-m', 'tuning.run', 'worker', '--bank', plan['bank'],
             '--output', str(trial.resolve()), '--training-blocks', str(blocks.resolve()), '--batch-sequences', str(batch_size)]

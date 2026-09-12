@@ -108,7 +108,7 @@ def history_tokens(b, a, held, first, last, start, cfg, device, registry):
         roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1)
         ends = b['end_steps'].cpu().numpy() + start
         cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1)
-        b['end_tree'] = tree(a, held, roots, cutoffs, start * 2, cfg['neighbors'], cfg['layers'], device, registry, cfg['graph'], SEED)
+        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['neighbors'], cfg['layers'], device, registry, cfg['graph'], SEED)
         return
     original = b['history_mask'].shape[-1]
     valid = b['end_raw_mask'][:, :2]
