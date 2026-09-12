@@ -34,7 +34,7 @@ def layout(index, rows, steps, partitions, partition, history, level):
                 part = members[piece:piece + ROWS]
                 result.append((index, start, stop, moment, partition, int(part[0]), int(part[-1]) + 1))
         else:
-            first, last = np.searchsorted(steps, (start, stop))
+            first, last = between(steps, start, stop)
             result.append((index, start, stop, moment, partition, int(first), int(last)))
     return result
 
@@ -42,15 +42,38 @@ def layout(index, rows, steps, partitions, partition, history, level):
 class Resident:
 
     def __init__(self, arrays, device):
-        self.arrays, self.device, self.tensors = arrays, device, {}
-        self.ticks = np.ascontiguousarray(arrays['events'][:, 2])
+        self.arrays, self.device = arrays, device
+        self.tensors, self.loaded, self.columns, self.orders = {}, {}, {}, {}
+        self.ticks = self.column('events', 2)
 
     def tensor(self, key):
         if key not in self.tensors:
             started = time.perf_counter()
             self.tensors[key] = torch.as_tensor(np.array(self.arrays[key]), dtype=DTYPES.get(key), device=self.device)
-            LOG.debug('resident exit key=%s device=%s seconds=%.4f', key, self.device, time.perf_counter() - started)
+            LOG.debug('resident tensor exit key=%s device=%s seconds=%.4f', key, self.device, time.perf_counter() - started)
         return self.tensors[key]
+
+    def numpy(self, key):
+        if key not in self.loaded:
+            self.loaded[key] = np.array(self.arrays[key])
+        return self.loaded[key]
+
+    def column(self, key, index):
+        if (key, index) not in self.columns:
+            self.columns[(key, index)] = np.ascontiguousarray(self.arrays[key][:, index])
+        return self.columns[(key, index)]
+
+    def order(self, key, index):
+        if (key, index) not in self.orders:
+            values = self.column(key, index)
+            order = np.argsort(values, kind='stable')
+            self.orders[(key, index)] = (order, values[order])
+        return self.orders[(key, index)]
+
+    def rows_by(self, key, index, low, high):
+        order, sorted_values = self.order(key, index)
+        lo, hi = between(sorted_values, low, high)
+        return np.sort(order[lo:hi])
 
 
 class Bank:
@@ -130,6 +153,10 @@ class Bank:
         return result
 
 
+def between(values, low, high):
+    return tuple(int(index) for index in np.searchsorted(values, np.asarray((low, high), values.dtype)))
+
+
 def tensor(value, device, dtype=None):
     return torch.as_tensor(np.array(value, copy=True), dtype=dtype, device=device)
 
@@ -147,9 +174,9 @@ def features_at(held, observations, device):
 
 def tree(a, held, entities, cutoffs, floor, count, depth, device, registry, spec, stream):
     mode, decay = sampling(spec)
-    events, ticks = a['events'], held.ticks
-    ids, offsets = a['neighbor_ids'], a['neighbor_offsets']
-    observation_ids, observation_offsets, step = a['observation_ids'], a['observation_offsets'], a['step']
+    events, ticks = held.numpy('events'), held.ticks
+    ids, offsets = held.numpy('neighbor_ids'), held.numpy('neighbor_offsets')
+    observation_ids, observation_offsets, step = held.numpy('observation_ids'), held.numpy('observation_offsets'), held.numpy('step')
     levels = []
     for _ in range(depth):
         table, sizes = gather.neighbor_table(ids, offsets, ticks, entities, cutoffs, floor, count, mode, decay, stream, NEIGHBOURS)
@@ -167,13 +194,14 @@ def tree(a, held, entities, cutoffs, floor, count, depth, device, registry, spec
     return result
 
 
-def history_inputs(a, held, first, last, start, count, device, spec, stream, include_structure, selected):
+def history_inputs(held, first, last, start, count, device, spec, stream, include_structure, selected):
     mode, decay = sampling(spec)
     chosen = np.ones(last - first, bool) if selected is None else np.asarray(selected, bool)
     (observed, interaction, query_tick, mask, gap, ids, structural, common_ids, common_frequency, common_stats,
-     pair_gaps, pair_mask) = gather.history(a['events'], a['neighbor_ids'], a['neighbor_offsets'], held.ticks, np.asarray(a['actor'][first:last], np.int64),
-                                            np.asarray(a['subject'][first:last], np.int64), np.asarray(a['query_step'][first:last], np.int64), start, count,
-                                            mode, decay, stream, NEIGHBOURS, include_structure, chosen)
+     pair_gaps, pair_mask) = gather.history(held.numpy('events'), held.numpy('neighbor_ids'), held.numpy('neighbor_offsets'), held.ticks,
+                                            held.numpy('actor')[first:last].astype(np.int64), held.numpy('subject')[first:last].astype(np.int64),
+                                            held.numpy('query_step')[first:last].astype(np.int64), start, count, mode, decay, stream, NEIGHBOURS,
+                                            include_structure, chosen)
     raw = features_at(held, observed, device)
     picked = tensor(interaction, device)
     raw[picked] = (raw[picked] + held.tensor('query')[tensor(query_tick, device, torch.long)[picked]].float()) / 2
@@ -199,23 +227,24 @@ def pack(bank, block, cfg, device='cuda'):
     registry, spec, stream = bank.registry, cfg['graph'], SEED
     node = registry.extras['level'] == 'node'
     blocks = BLOCKS[cfg['model']]
-    lo, hi = (int(value) for value in a['snapshot_offsets'][[start, stop]])
+    lo, hi = (int(value) for value in held.numpy('snapshot_offsets')[[start, stop]])
     n, count = stop - start, cfg['neighbors']
-    entity = np.array(a['entity'][lo:hi])
-    step = np.array(a['step'][lo:hi]) - start
+    entity = held.numpy('entity')[lo:hi]
+    step = held.numpy('step')[lo:hi] - start
     size = len(a['entity_kind'])
-    first, last = (row_lo, row_hi) if node else tuple(int(value) for value in np.searchsorted(a['query_step'], (start, stop)))
+    query_steps = held.numpy('query_step')
+    first, last = (row_lo, row_hi) if node else between(query_steps, start, stop)
     m = last - first
-    moment = np.array(a['query_step'][first:last]).astype(np.int64)
-    rows = np.array(a['row_index'][first:last])
+    moment = query_steps[first:last].astype(np.int64)
+    rows = held.numpy('row_index')[first:last]
     ids = np.arange(first, last)
     selected = (rows >= 0) & (moment >= target_start) & (ids >= row_lo) & (ids < row_hi)
     selected[selected] = bank.partitions[rows[selected]] == partition
     local = moment - start
     bounds = np.searchsorted(local, np.arange(n + 1))
-    query_context = np.array(a['query_context'][first:last])
+    query_context = held.numpy('query_context')[first:last]
     features = torch.zeros(m, registry.features, device=device) if node else held.tensor('query')[first:last].float()
-    actors, subjects = np.array(a['actor'][first:last]), np.array(a['subject'][first:last])
+    actors, subjects = held.numpy('actor')[first:last], held.numpy('subject')[first:last]
     b = dict(graph=graph, start=start, stop=stop, frames=n, time_steps=n, batch_size=1, predictions=m, observations=hi - lo,
         graphs=[graph], entity_sizes=[size], entity_batch=torch.zeros(size, dtype=torch.long, device=device),
         query_steps=tensor(local, device, torch.long), query_frames=tensor(local, device, torch.long),
@@ -226,8 +255,8 @@ def pack(bank, block, cfg, device='cuda'):
         actor=tensor(actors, device, torch.long), subject=tensor(subjects, device, torch.long),
         context_index=tensor(query_context - lo, device, torch.long),
         entity_kind=held.tensor('entity_kind'),
-        signal=tensor(a['signals'][first:last], device), affinity=tensor(a['affinity'][first:last], device),
-        global_affinity=tensor(a['global_affinity'][first:last], device))
+        signal=tensor(held.numpy('signals')[first:last], device), affinity=tensor(held.numpy('affinity')[first:last], device),
+        global_affinity=tensor(held.numpy('global_affinity')[first:last], device))
     if enabled(cfg):
         from .turn_inputs import add
 
@@ -239,22 +268,22 @@ def pack(bank, block, cfg, device='cuda'):
         b.update(x=held.tensor('x')[lo:hi].float(), kind=held.tensor('entity_kind')[entity_index], entity=entity_index, step=step_index, align=align,
                  present=align < hi - lo)
         if registry.extras['queries']:
-            left, right = np.searchsorted(held.ticks, (start * 2, stop * 2))
-            choices = np.array(a['events'][left:right])
+            left, right = between(held.ticks, start * 2, stop * 2)
+            choices = held.numpy('events')[left:right]
             choices = choices[choices[:, 3] == 2]
             b.update(decision_query=held.tensor('query')[start:stop].float(), decision_context=tensor(choices[:, 4:6] - lo, device, torch.long))
         else:
             b.update(decision_query=torch.zeros(n, registry.features, device=device), decision_context=torch.full((n, 2), -1, dtype=torch.long, device=device))
-        first_edge, last_edge = np.searchsorted(a['spatial_step'], (start, stop))
-        spatial = np.array(a['spatial'][first_edge:last_edge])
-        attribute_rows = np.array(a['spatial_attribute_row'][first_edge:last_edge])
+        first_edge, last_edge = between(held.numpy('spatial_step'), start, stop)
+        spatial = held.numpy('spatial')[first_edge:last_edge]
+        attribute_rows = held.numpy('spatial_attribute_row')[first_edge:last_edge]
         edges = spatial[:, :2].T - lo
         b.update(edges=tensor(edges, device, torch.long), relation=tensor(spatial[:, 2], device, torch.long))
         b['attributes'], b['attribute_edges'] = {}, {}
         for name in registry.attributed:
             declared = registry.by_name[name]
             chosen = np.flatnonzero(np.isin(spatial[:, 2], (declared.code, declared.reverse)))
-            values = np.asarray(a['attributes_' + name])[attribute_rows[chosen]]
+            values = held.numpy('attributes_' + name)[attribute_rows[chosen]]
             b['attributes'][name] = tensor(values.reshape(-1, len(declared.attributes)), device, torch.float32)
             b['attribute_edges'][name] = tensor(chosen, device, torch.long)
         b['frame_edges'], b['frame_directed'] = [], []
@@ -264,33 +293,32 @@ def pack(bank, block, cfg, device='cuda'):
             b['frame_edges'].append(tensor(entity[edges[:, use]], device, torch.long))
             b['frame_directed'].append(tensor(entity[edges[:, use & directed]], device, torch.long))
         if 'lifted' in blocks:
-            coupled = a['coupling']
-            left, right = np.searchsorted(coupled[:, 1], (lo, hi))
-            coupled = np.array(coupled[left:right])
+            left, right = between(held.column('coupling', 1), lo, hi)
+            coupled = held.numpy('coupling')[left:right]
             coupled = coupled[coupled[:, 0] >= lo] - lo
-            extra = a['coupling_boundaries']
-            low, high = np.searchsorted(extra[:, 1], (lo, hi))
-            extra = np.array(extra[low:high])
+            low, high = between(held.column('coupling_boundaries', 1), lo, hi)
+            extra = held.numpy('coupling_boundaries')[low:high]
             extra = extra[extra[:, 0] >= lo]
             boundary = extra[:, :2] - lo
+            turn = held.numpy('turn')
             b.update(temporal_edges=tensor(np.concatenate((coupled, boundary)).T, device, torch.long),
                 temporal_relation=tensor(np.r_[np.full(len(coupled), registry.code('temporal')), extra[:, 2]], device, torch.long),
                 temporal_gap=tensor(np.r_[step[coupled[:, 1]] - step[coupled[:, 0]], step[boundary[:, 1]] - step[boundary[:, 0]]], device, torch.float32),
-                temporal_turn_gap=tensor(np.r_[a['turn'][lo + coupled[:, 1]] - a['turn'][lo + coupled[:, 0]], extra[:, 3]], device, torch.float32))
+                temporal_turn_gap=tensor(np.r_[turn[lo + coupled[:, 1]] - turn[lo + coupled[:, 0]], extra[:, 3]], device, torch.float32))
             if enabled(cfg):
                 from .turn_inputs import temporal_edges
 
                 temporal_edges(b, a, lo, hi, device, registry)
         if 'mixed' in blocks:
-            left, right = np.searchsorted(a['mixed_tick'], (start * 2, stop * 2))
-            mixed_edges = np.array(a['mixed_edges'])
-            use = (mixed_edges[:, 0] >= left) & (mixed_edges[:, 1] >= left) & (mixed_edges[:, 0] < right) & (mixed_edges[:, 1] < right)
-            mixed_edges = mixed_edges[use]
-            ticks = np.array(a['mixed_tick'][left:right])
-            mk = np.r_[a['mixed_kind'][left:right], np.full(m, 5)].astype(np.int64)
+            mixed_ticks = held.numpy('mixed_tick')
+            left, right = between(mixed_ticks, start * 2, stop * 2)
+            mixed_edges = held.numpy('mixed_edges')[held.rows_by('mixed_edges', 1, left, right)]
+            mixed_edges = mixed_edges[(mixed_edges[:, 0] >= left) & (mixed_edges[:, 0] < right)]
+            ticks = mixed_ticks[left:right]
+            mk = np.r_[held.numpy('mixed_kind')[left:right], np.full(m, 5)].astype(np.int64)
             qi = np.arange(right - left, right - left + m)
             roots = np.stack((actors, subjects, np.full(m, -1)), 1).astype(np.int64)
-            sources, offsets = gather.reachable(np.array(a['mixed_entity'][left:right], np.int64), np.arange(right - left), ticks, roots, moment * 2)
+            sources, offsets = gather.reachable(held.numpy('mixed_entity')[left:right].astype(np.int64), np.arange(right - left), ticks, roots, moment * 2)
             extra = np.column_stack((sources, np.repeat(qi, np.diff(offsets)), np.full(len(sources), 2048))).astype(np.int64)
             edge = np.concatenate((np.column_stack((mixed_edges[:, :2] - left, mixed_edges[:, 2])), extra))
             all_ticks = np.r_[ticks, moment * 2]
@@ -305,10 +333,10 @@ def pack(bank, block, cfg, device='cuda'):
 
                 extend_mixed(b, a, start, stop, device, registry.features)
     if 'events' in blocks:
-        left, right = np.searchsorted(held.ticks, (start * 2, stop * 2))
-        events = np.array(a['events'][left:right])
+        left, right = between(held.ticks, start * 2, stop * 2)
+        events = held.numpy('events')[left:right]
         if 'dag' in blocks:
-            members = np.flatnonzero(np.asarray(a['event_member'][left:right]))
+            members = np.flatnonzero(held.numpy('event_member')[left:right])
             position = np.full(right - left, -1, np.int64)
             position[members] = np.arange(len(members))
             events = events[members]
@@ -316,17 +344,16 @@ def pack(bank, block, cfg, device='cuda'):
         ex = (held.tensor('x')[endpoints[:, 0]].float() + held.tensor('x')[endpoints[:, 1]].float()) / 2
         interaction = events[:, 3] == 2
         ex[tensor(interaction, device)] = held.tensor('query')[tensor(events[interaction, 2] // 2, device, torch.long)].float()
-        initial = gather.latest(a['observation_ids'], a['observation_offsets'], a['step'], np.arange(size), np.full(size, start * 2, np.int64))
+        initial = gather.latest(held.numpy('observation_ids'), held.numpy('observation_offsets'), held.numpy('step'), np.arange(size), np.full(size, start * 2, np.int64))
         starts = np.flatnonzero(np.diff(events[:, 2], prepend=-1))
         b.update(events=tensor(events, device, torch.long), event_x=ex, initial=features_at(held, initial, device),
             event_groups=[(int(events[s, 2]), int(s), int(e)) for s, e in zip(starts, np.append(starts[1:], len(events)))])
         if 'dag' in blocks:
-            linked = a['event_dag']
-            use = (linked[:, 0] >= left) & (linked[:, 1] >= left) & (linked[:, 0] < right) & (linked[:, 1] < right)
-            linked = position[np.array(linked[use]) - left]
-            extra = a['event_boundaries']
-            low, high = np.searchsorted(extra[:, 1], (left, right))
-            extra = np.array(extra[low:high])
+            low, high = between(held.column('event_dag', 1), left, right)
+            linked = np.array(a['event_dag'][low:high])
+            linked = position[linked[linked[:, 0] >= left] - left]
+            low, high = between(held.column('event_boundaries', 1), left, right)
+            extra = held.numpy('event_boundaries')[low:high]
             extra = extra[extra[:, 0] >= left]
             boundary = position[extra[:, :2] - left]
             b.update(dag_edges=tensor(np.concatenate((linked, boundary)).T, device, torch.long),
@@ -341,7 +368,7 @@ def pack(bank, block, cfg, device='cuda'):
         cutoffs = np.repeat(moment * 2 + 1, 2)
         b['tree'] = tree(a, held, roots, cutoffs, start * 2, count, cfg['layers'], device, registry, spec, stream)
     if 'history' in blocks:
-        b.update(history_inputs(a, held, first, last, start, count, device, spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None))
+        b.update(history_inputs(held, first, last, start, count, device, spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None))
     if enabled(cfg) and 'turn_history' in blocks:
         from .turn_inputs import history_tokens
 
@@ -349,10 +376,10 @@ def pack(bank, block, cfg, device='cuda'):
     if 'walks' in blocks:
         if cfg['walks'] > a['walks'].shape[2] or cfg['walk_hops'] > a['walks'].shape[3]:
             raise ValueError('requested walks exceed the walks stored for this graph variant')
-        walks = np.array(a['walks'][first:last, :, :cfg['walks'], :cfg['walk_hops']])
+        walks = held.numpy('walks')[first:last, :, :cfg['walks'], :cfg['walk_hops']]
         if enabled(cfg):
-            extra = a['turn_walks'][first:last, :, :lookback(cfg), :cfg['walks'], :cfg['walk_hops']]
-            extra = np.array(extra).reshape(m, 2, lookback(cfg) * cfg['walks'], cfg['walk_hops'])
+            extra = held.numpy('turn_walks')[first:last, :, :lookback(cfg), :cfg['walks'], :cfg['walk_hops']]
+            extra = extra.reshape(m, 2, lookback(cfg) * cfg['walks'], cfg['walk_hops'])
             walks = np.concatenate((walks, extra), 2)
             kinds = np.zeros(walks.shape, np.int64)
             kinds[:, :, cfg['walks']:] = 1
@@ -362,7 +389,7 @@ def pack(bank, block, cfg, device='cuda'):
             b.update(walk_turn_kind=tensor(kinds, device, torch.long), walk_end_time=tensor(gaps, device))
         known = walks >= 0
         known &= held.ticks[np.maximum(walks, 0)] >= start * 2
-        events = a['events'][np.maximum(walks, 0)]
+        events = held.numpy('events')[np.maximum(walks, 0)]
         nodes = np.empty(walks.shape, np.int32)
         observations = np.empty_like(nodes)
         current = np.broadcast_to(np.stack((actors, subjects), 1)[:, :, None], walks.shape[:3]).copy()
