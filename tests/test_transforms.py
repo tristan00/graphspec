@@ -1,6 +1,6 @@
 import numpy as np
 
-from graphspec import operators, spec as specs, transform
+from graphspec import Registry, operators, spec as specs, transform
 
 from . import graphs
 from .graphs import categories, chain, gapped, layered, line, links, mesh, periodic, random_graph, relation, tiny, vector, weighted
