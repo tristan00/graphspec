@@ -21,8 +21,10 @@ def derive(graph, registry, spec):
     started = time.perf_counter()
     for name, stage in STAGES:
         clock = time.perf_counter()
+        before = graph
         graph = stage(graph, registry, spec, SEED)
-        verify(graph, registry)
+        if graph is not before:
+            verify(graph, registry)
         LOG.info('stage exit stage=%s graph=%s seconds=%.3f facts=%d observations=%d', name, graph.name, time.perf_counter() - clock,
                  len(graph.fact_step), len(graph.obs_step))
     LOG.info('derive exit graph=%s seconds=%.3f', graph.name, time.perf_counter() - started)

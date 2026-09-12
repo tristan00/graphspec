@@ -37,25 +37,13 @@ def batches(blocks, size, entities, seed=None, frame_budget=None):
     return result
 
 
-def move(value, device):
-    if isinstance(value, torch.Tensor):
-        return value.to(device)
-    if isinstance(value, dict):
-        return {key: move(item, device) for key, item in value.items()}
-    if isinstance(value, list):
-        return [move(item, device) for item in value]
-    if isinstance(value, tuple):
-        return tuple(move(item, device) for item in value)
-    return value
-
-
 def combine_tree(trees):
     return {key: combine_tree([tree[key] for tree in trees]) if key == 'child' else torch.cat([tree[key] for tree in trees]) for key in trees[0]}
 
 
 def pack_batch(bank, blocks, cfg, device='cuda'):
     started = time.perf_counter()
-    parts = [pack(bank, block, cfg, 'cpu') for block in blocks]
+    parts = [pack(bank, block, cfg, device) for block in blocks]
     t, size = parts[0]['frames'], len(parts)
     if any(p['frames'] != t for p in parts):
         raise ValueError('a batch must contain equal-length independent sequences')
@@ -66,14 +54,14 @@ def pack_batch(bank, blocks, cfg, device='cuda'):
     b = dict(frames=t * size, time_steps=t, batch_size=size, predictions=int(row_offsets[-1]), entities=total_entities, start=0, stop=t,
         graph=parts[0]['graph'], graphs=[p['graph'] for p in parts],
         entity_sizes=[p['entities'] for p in parts],
-        entity_batch=torch.repeat_interleave(torch.arange(size), torch.tensor([p['entities'] for p in parts])),
+        entity_batch=torch.repeat_interleave(torch.arange(size, device=device), torch.tensor([p['entities'] for p in parts], device=device)),
         query_steps=torch.cat([p['query_steps'] for p in parts]),
         query_frames=torch.cat([p['query_steps'] + i * t for i, p in enumerate(parts)]),
         frame_queries=[torch.cat([p['frame_queries'][time] + int(offset) for p, offset in zip(parts, row_offsets)]) for time in range(t)],
         rows=np.concatenate([p['rows'] for p in parts]))
     direct = ('selected', 'target', 'query', 'context', 'entity_kind', 'signal', 'affinity', 'global_affinity',
         'x', 'kind', 'relation', 'temporal_gap', 'initial', 'history_x', 'history_mask',
-        'history_gap', 'history_events', 'occurrence', 'structure', 'common_x', 'common_stats',
+        'history_gap', 'occurrence', 'structure', 'common_stats',
         'common_frequency', 'pair_gap', 'pair_mask', 'walk_x', 'walk_mask', 'walk_gap', 'walk_identity', 'dag_gap',
         'end_gaps', 'end_mask', 'end_raw', 'end_raw_mask', 'end_token_gaps', 'temporal_relation', 'temporal_turn_gap', 'dag_relation',
         'history_turn_kind', 'history_end_time', 'end_affinity', 'end_global_affinity', 'walk_turn_kind', 'walk_end_time', 'decision_query')
@@ -122,13 +110,13 @@ def pack_batch(bank, blocks, cfg, device='cuda'):
         events = torch.cat(events)
         order = torch.argsort(events[:, 2], stable=True)
         b['events'], b['event_x'] = events[order], torch.cat([p['event_x'] for p in parts])[order]
-        times = b['events'][:, 2].numpy()
+        times = b['events'][:, 2].cpu().numpy()
         starts = np.flatnonzero(np.diff(times, prepend=-1))
         b['event_groups'] = [(int(times[left]), int(left), int(right)) for left, right in zip(starts, np.append(starts[1:], len(times)))]
         if 'dag_edges' in parts[0]:
             offsets = np.r_[0, np.cumsum([len(p['events']) for p in parts])]
             inverse = torch.empty_like(order)
-            inverse[order] = torch.arange(len(order))
+            inverse[order] = torch.arange(len(order), device=device)
             b['dag_edges'] = inverse[torch.cat([p['dag_edges'] + int(offset) for p, offset in zip(parts, offsets)], 1)]
             b['dag_query_edges'] = torch.cat([torch.stack((inverse[p['dag_query_edges'][0] + int(offset)], p['dag_query_edges'][1] + int(row_offset)))
                 for p, offset, row_offset in zip(parts, offsets, row_offsets)], 1)
@@ -137,4 +125,4 @@ def pack_batch(bank, blocks, cfg, device='cuda'):
 
         capture_schedule(b)
     LOG.debug('pack batch exit blocks=%d predictions=%d seconds=%.4f', size, b['predictions'], time.perf_counter() - started)
-    return move(b, device)
+    return b

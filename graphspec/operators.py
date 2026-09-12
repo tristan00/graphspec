@@ -441,8 +441,13 @@ def symmetric(registry, spec):
     return np.asarray([edge.symmetric for edge in registry.edges] + [False] * (registry.relations - len(registry.edges))) | (spec.get('relations/direction') == 'symmetric')
 
 
+def filtering(spec, name):
+    prefix = 'edges/%s/' % name
+    return prefix + 'drop' in spec and (spec[prefix + 'drop'] > 0 or spec[prefix + 'persistence'] > 1 or spec[prefix + 'cap'] > 0)
+
+
 def edges(graph, registry, spec, seed):
-    named = [edge for edge in registry.edges if 'edges/%s/drop' % edge.name in spec]
+    named = [edge for edge in registry.edges if filtering(spec, edge.name)]
     if not named:
         return graph
     kept = np.ones(len(graph.fact_step), bool)

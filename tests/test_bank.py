@@ -7,9 +7,20 @@ import numpy as np
 import pyarrow as pa
 
 from graph_tuning_infra import database as db
+from tuning.gather import neighbor_table
 
 from .graphs import WIDTH, vector
 from .support import configured, equal
+
+
+def neighbors(arrays, entity, cutoff, floor, count, spec, stream):
+    from tuning.data import NEIGHBOURS, sampling
+
+    mode, decay = sampling(spec)
+    ticks = np.ascontiguousarray(np.asarray(arrays['events'])[:, 2])
+    table, sizes = neighbor_table(np.asarray(arrays['neighbor_ids']), np.asarray(arrays['neighbor_offsets']), ticks, np.array([entity]), np.array([cutoff]),
+                                  floor, count, mode, decay, stream, NEIGHBOURS)
+    return table[0, :sizes[0]]
 
 
 def database(path):
@@ -66,7 +77,7 @@ def test_bank():
 
     from tuning.batching import pack_batch
     from tuning.build import build
-    from tuning.data import Bank, neighbors, pack
+    from tuning.data import Bank, pack
     from tuning.roster import groups, sample
     from tuning.turns import blocks as turn_blocks
 
