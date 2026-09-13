@@ -17,7 +17,7 @@ HIDDEN = (16, 24, 32, 48, 64)
 HEADS = (1, 2, 4)
 NEIGHBOURS = (4, 8, 10, 12, 16, 20, 30, 32, 64)
 REPRESENTATIONS = dict(lifted='coupling', dag='events', tree='neighbors', history='neighbors', walks='walks', mixed='mixed')
-TRAINING = (number('epochs', 2, 12, 4), real('clip', 0.5, 2.0, 1.0), real('lr', 0.0001, 0.005, 0.001, log=True),
+TRAINING = (number('epochs', 1, 12, 4), real('clip', 0.5, 2.0, 1.0), real('lr', 0.0001, 0.005, 0.001, log=True),
             real('weight_decay', 1e-7, 1e-2, 1e-5, log=True))
 
 

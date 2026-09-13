@@ -262,12 +262,14 @@ def report(directory):
 def run(args):
     from .data import Bank
     from .budget import POLICY
-    from .selector import FAILURE_POLICY
+    from .selector import FAILURE_POLICY, check_bounds
 
     directory = Path(args.output)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / 'plan.json'
     bank = Bank(args.bank)
+    bounds = read_json(args.bounds) if args.bounds else {}
+    check_bounds(bank.registry, bounds)
     if path.exists():
         if not args.resume:
             raise FileExistsError('run exists; pass --resume to continue its pending trials')
@@ -283,10 +285,12 @@ def run(args):
         plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30)
         if args.random_trials is not None and args.random_trials != plan['random_trials']:
             raise ValueError('resume requested with a different random phase')
+        if args.bounds and bounds != plan['bounds']:
+            raise ValueError('resume requested with different bounds')
     else:
         plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
             batch_sequences=args.batch_sequences,
-            workers=args.workers, variant_bytes=args.variant_gb << 30, random_trials=args.random_trials or 0,
+            workers=args.workers, variant_bytes=args.variant_gb << 30, random_trials=args.random_trials or 0, bounds=bounds,
             seconds=args.seconds, train_rows=bank.manifest['train_rows'], holdout_rows=bank.manifest['validation_rows'],
             supervision_sha256=bank.manifest['supervision_sha256'], spec_sha256=bank.manifest['spec_sha256'],
             created=datetime.now(timezone.utc).isoformat())
@@ -405,6 +409,7 @@ def main():
     run_parser.add_argument('--resume', action='store_true')
     run_parser.add_argument('--selector', choices=('tpe', 'random'), default='tpe')
     run_parser.add_argument('--random-trials', type=int)
+    run_parser.add_argument('--bounds')
     run_parser.add_argument('--workers', type=int, default=WORKERS)
     run_parser.add_argument('--variant-gb', type=int, default=BUDGET >> 30)
     worker_parser = subparsers.add_parser('worker')

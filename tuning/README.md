@@ -65,7 +65,7 @@ For every proposal the runner rebuilds an in-memory study from the trial files; 
 - prior trial ids with result hashes
 - the bank manifest hash, the supervision hash and the declaration fingerprint
 
-Configuration and selection are saved before the worker starts, and a resumed trial reuses them.
+Configuration and selection are saved before the worker starts, and a resumed trial reuses them. `--bounds` narrows the space both selectors draw from and the distributions TPE is told about; the bounds are stored in `plan.json` and in every `selection.json`.
 
 A trial's configuration holds the model spec under `model`, the graph spec under `graph`, the training parameters below at the top level and `seed`. Model parameters draw from these ranges; a parameter is drawn only while its condition holds. Spec parameters and their ranges are in [graphspec/README.md](../graphspec/README.md).
 

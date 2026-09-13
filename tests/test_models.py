@@ -117,3 +117,25 @@ def test_every_configuration_fits_a_window_and_reloads(banks):
     for values in CONTEXT:
         bank = query if values['view'] in ('affinity', 'signal') or values.get('memory/update') == 'mutual_rnn' else node
         exercise(bank, values, 2, 1, 'cuda')
+
+
+def test_bounds_narrow_every_space(banks):
+    import numpy as np
+    from graphspec import spec as specs
+    from tuning.selector import check_bounds, random_suggest
+
+    bank = banks[1]
+    bounds = {'view': ['tree', 'walks'], 'hidden': [16, 24], 'epochs': {'low': 1, 'high': 2}, 'time/history': {'low': 2, 'high': 4},
+              'graphs/join': 'separate', 'derive/rewiring': 'none', 'lr': 0.002}
+    check_bounds(bank.registry, bounds)
+    for seed in range(12):
+        config, selection = random_suggest(bank.registry, seed, 7, bounds)
+        assert config['model']['view'] in ('tree', 'walks') and config['model']['hidden'] in (16, 24) and 1 <= config['epochs'] <= 2
+        assert 2 <= config['graph']['time/history'] <= 4 and config['graph']['graphs/join'] == 'separate' and config['lr'] == 0.002
+        assert config['graph'].get('derive/rewiring', 'none') == 'none' and selection['phase'] == 'random'
+    with pytest.raises(ValueError):
+        check_bounds(bank.registry, {'no/such': 1})
+    with pytest.raises(ValueError):
+        check_bounds(bank.registry, {'time/history': {'low': 0, 'high': 4}})
+    with pytest.raises(ValueError):
+        specs.narrow(specs.space(bank.registry, ()), {'time/history': {'low': 5, 'high': 4}})

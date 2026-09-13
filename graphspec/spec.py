@@ -209,6 +209,26 @@ def space(registry, groups):
     return tuple(parameters)
 
 
+def narrow(parameters, bounds):
+    result = []
+    for parameter in parameters:
+        if parameter.name not in bounds:
+            result.append(parameter)
+            continue
+        bound = bounds[parameter.name]
+        if parameter.kind in ('bool', 'choice'):
+            options = tuple(parameter.check(option) for option in (bound if isinstance(bound, list) else [bound]))
+            default = parameter.default if parameter.default in options else options[0]
+            result.append(Parameter(parameter.name, parameter.kind, default, options=options, condition=parameter.condition))
+            continue
+        low, high = (bound['low'], bound['high']) if isinstance(bound, dict) else (bound, bound)
+        low, high = parameter.check(low), parameter.check(high)
+        if low > high:
+            raise ValueError('%s bound %r is empty' % (parameter.name, bound))
+        result.append(Parameter(parameter.name, parameter.kind, min(max(parameter.default, low), high), low, high, parameter.log, condition=parameter.condition))
+    return tuple(result)
+
+
 def draw(parameters, choose):
     spec = {}
     for parameter in parameters:
