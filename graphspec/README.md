@@ -120,6 +120,8 @@ Computed at each step from the present facts that survive stage 3. Completion an
 
 A derived pair is stated at every step it holds and gets an absent row at the step after each run ends. Base facts that rewiring removes are deleted at that step.
 
+Derivation stops with an error once a variant's derived facts exceed the budget the infra layer sets from the machine's memory, so a spec that completes a large type into a clique fails its trial instead of exhausting the machine.
+
 5. Relations
 
 | Parameter | Range | Effect |

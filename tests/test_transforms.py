@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from graphspec import Registry, operators, spec as specs, transform
 
@@ -687,3 +688,14 @@ def test_mixed():
     assert gap['mixed_member_offsets'].tolist() == [0, 1, 2, 4, 5, 6, 8, 8, 9, 10, 12]
     assert gap['mixed_member_ids'].tolist() == [0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5]
     assert np.isfinite(gap['mixed_x']).all() and not gap['mixed_x'][6].any()
+
+
+def test_derivation_stops_at_the_fact_budget(monkeypatch):
+    from graph_tuning_infra import compute
+
+    registry, graph = tiny()
+    monkeypatch.setattr(compute, 'FACTS', 4)
+    with pytest.raises(ValueError, match='exceed 4 facts'):
+        derived(graph, registry, {'derive/complete/person': True, 'derive/complete/place': True})
+    monkeypatch.setattr(compute, 'FACTS', 1000)
+    assert len(derived(graph, registry, {'derive/complete/person': True, 'derive/complete/place': True}).fact_step) > len(graph.fact_step)

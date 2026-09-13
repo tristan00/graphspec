@@ -361,7 +361,7 @@ def derive(graph, registry, spec, seed):
     statements = np.flatnonzero(stated)
     ids, count = kernels.keyed(graph.fact_code[statements], graph.fact_source[statements], graph.fact_target[statements])
     recency[statements] = kernels.runs(ids, graph.fact_step[statements], count)[1]
-    chunks, removed = [], np.zeros(len(graph.fact_step), bool)
+    chunks, removed, derived = [], np.zeros(len(graph.fact_step), bool), 0
     for step in range(steps):
         span = np.arange(fact_bounds[step], fact_bounds[step + 1])
         every, rows = span[stated[span]], span[kept[span]]
@@ -386,6 +386,9 @@ def derive(graph, registry, spec, seed):
             keys = np.minimum(source, target).astype(np.int64) * entities + np.maximum(source, target)
             removed[rows[np.isin(keys, cut)]] = True
         chunks.extend((a, b, c, np.full(len(a), step, np.int32)) for a, b, c in found)
+        derived += sum(len(a) for a, _, _ in found)
+        if derived > compute.FACTS:
+            raise ValueError('derived relations of graph %s exceed %d facts by step %d' % (graph.name, compute.FACTS, step))
     graph = prune(graph, ~removed)
     source, target, code, step = (np.concatenate([chunk[i] for chunk in chunks] + [np.zeros(0, dtype)])
                                   for i, dtype in enumerate((np.int32, np.int32, np.int64, np.int32)))
