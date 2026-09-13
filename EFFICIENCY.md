@@ -27,7 +27,7 @@ Milliseconds per training window including batching, on CUDA, 24 windows per cas
 | M12 MPNN over derived nodes | 45.0 | 12.3 | 3,700 | 1,708 |
 | M19 JODIE | 31.3 | 2.4 | 2,885 | 144 |
 
-What changed: every per-entity or per-event Python loop became a numba kernel (latest observation, neighbour sampling, tree levels, interaction histories with their structural features, reachability, walk identities); each open graph keeps the arrays that packing searches in RAM and its feature matrices on the training device, so feature rows are gathered on the device; DAG and mixed edges are selected by binary search on a sorted column instead of masking the whole table; frame edges are sliced by per-step bounds instead of sixteen scans; mixed edge features and DAG gaps are computed on the device; searches use the array's own dtype, which stops numpy copying a whole column to int64 on every call. Two packed keys read by no model, `common_x` and `history_events`, were dropped. What remains on the large graph is proportional to the data a window carries: 26M DAG edges and 1.4M observation rows per window for the event and snapshot families. A fixed floor of 1 to 3 ms of Python per window remains; packing a whole batch in one pass would be the next step.
+What changed: every per-entity or per-event Python loop became a numba kernel (latest observation, neighbour sampling, tree levels, interaction histories with their structural features, reachability, walk identities); each open graph keeps the arrays that packing searches in RAM and its feature matrices on the training device, so feature rows are gathered on the device; DAG and mixed edges are selected by binary search on a sorted column instead of masking the whole table; frame edges are sliced by per-step bounds instead of sixteen scans; mixed edge features and DAG gaps are computed on the device; searches use the array's own dtype, which stops numpy copying a whole column to int64 on every call. Two packed keys read by no model, `common_x` and `history_events`, were dropped. Every small array of a window is then bundled into one device transfer (`graph_tuning_infra.arrays.Bundle`), so a window costs a handful of copies instead of about fifty; the fixed cost per window is about 1 ms. What remains on the large graph is proportional to the data a window carries: 26M DAG edges and 1.4M observation rows per window for the event and snapshot families.
 
 **Dense operators** (`graphspec/operators.py`, `graphspec/kernels.py`, `graph_tuning_infra/compute.py`)
 
@@ -44,7 +44,7 @@ What changed: connected components come from a union-find kernel; diffusion and 
 
 **Transform stages** (`graphspec/operators.py`, `graphspec/transform.py`)
 
-Seconds for the full transform, 107 cases; median speedup 1.33x, 81 cases faster, one within noise slower, every case completes on both sides. Peak memory after includes about 0.5 GB for torch loaded in the measuring process.
+Seconds for the full transform, 107 cases; median speedup 1.40x, 79 cases faster, one within noise slower, every case completes on both sides. Peak memory after includes about 0.5 GB for torch loaded in the measuring process.
 
 | Case | Graph | Before | After |
 |---|---|---:|---:|
@@ -52,13 +52,16 @@ Seconds for the full transform, 107 cases; median speedup 1.33x, 81 cases faster
 | window 4 | large | 2.1 | 1.4 |
 | degree | large | 1.3 | 0.9 |
 | hops 2 | large | 7.7 | 5.4 |
-| completion of teams | medium | 14.0 | 8.6 |
-| coupling ordinal | large | 3.8 | 3.1 |
-| walks | large | 4.1 | 3.5 |
-| events periods | large | 53.5 | 49.2 |
-| mixed | large | 10.7 | 10.1 |
+| completion of teams | medium | 14.0 | 8.3 |
+| coupling ordinal | large | 3.8 | 3.3 |
+| coupling periods | large | 10.8 | 8.5 |
+| walks | large | 4.1 | 3.6 |
+| events next | large | 8.4 | 5.2 |
+| events window capped | large | 19.2 | 9.2 |
+| events periods | large | 53.5 | 12.9 |
+| mixed | large | 10.7 | 10.9 |
 
-What changed: a relation whose edge filters sit at their identity values is no longer filtered, and a stage that returns its input unchanged is not verified again. The event and mixed representation groups were not rewritten and dominate their cases. The earlier out-of-memory results were artefacts of the previous benchmark graphs, which used preferential attachment and so held hubs of thousands of neighbours; on bounded-degree graphs two-hop closure on 200k entities takes 5.4 s at 2.3 GB. One legal spec can still run away: completing a large node type into a clique produced 768M facts and 46 GB on the medium graph. Derivation now stops at the infra fact budget (200M facts) with a clear error, so such a trial fails instead of exhausting the machine.
+What changed: a relation whose edge filters sit at their identity values is no longer filtered, and a stage that returns its input unchanged is not verified again. In the event group the boundary links are enumerated in two parallel passes with an analytic duplicate rule instead of a growing hash table, the DAG links in two parallel passes per event, the 49M output rows are ordered by a parallel bucket sort instead of `np.lexsort`, and their validation runs in a kernel; the group fell from 20.6 s to 4.0 s on the large graph with identical rows. The mixed group was not rewritten and is bound by its 7.5M derived nodes. The earlier out-of-memory results were artefacts of the previous benchmark graphs, which used preferential attachment and so held hubs of thousands of neighbours; on bounded-degree graphs two-hop closure on 200k entities takes 5.4 s at 2.3 GB. One legal spec can still run away: completing a large node type into a clique produced 768M facts and 46 GB on the medium graph. Derivation now stops at the infra fact budget (200M facts) with a clear error, so such a trial fails instead of exhausting the machine.
 
 **Variants in the search** (`tuning/variants.py`, `tuning/run.py`)
 
