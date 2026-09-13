@@ -94,3 +94,7 @@ Second-epoch seconds per view (two-epoch fits, 8 packing processes): signal 2, w
 **Data**
 
 The first build of the Total War database carried NaN in the `side` attribute of every present `fought_with` fact of nine campaigns; the builder writes only 0 or 1 there and a rebuild from the corpus reproduced neither. `graphspec.truth.parse` now refuses a present fact whose attribute is not finite, so a bank cannot be built from such a database; the search runs on the rebuilt database, verified against the corpus on 2,884 checks.
+
+**Rewiring**
+
+Five of the first twenty trials of the search timed out inside the variant build. The cause was `derive/rewiring` with the SDRF curvature: for every candidate edge the balanced Forman curvature was recomputed by a kernel that scans every node of the component twice, about 80 µs a call, and a step with two well-connected endpoints offers tens of thousands of candidates; a graph of 80 steps took 375 s in that stage. The curvature now runs over neighbour lists with the candidate edge applied virtually (`kernels.curvature_with`), which visits the same nodes the dense scan tested and so returns the same integers and the same floats: identical values on 2,446 candidate evaluations against the old kernel. The same graph builds in 6.9 s.

@@ -1262,37 +1262,58 @@ def components(source, target, count):
     return labels
 
 
+@njit(cache=True)
+def linked(adjacency, a, b, k, l):
+    return adjacency[a, b] or (a == k and b == l) or (a == l and b == k)
+
+
+@njit(cache=True)
+def curvature_with(adjacency, offsets, columns, i, j, k, l):
+    di = offsets[i + 1] - offsets[i] + (1 if i == k or i == l else 0)
+    dj = offsets[j + 1] - offsets[j] + (1 if j == k or j == l else 0)
+    if min(di, dj) == 1:
+        return 0.0
+    triangles = 0
+    for position in range(offsets[i], offsets[i + 1] + (1 if i == k or i == l else 0)):
+        x = columns[position] if position < offsets[i + 1] else (l if i == k else k)
+        triangles += linked(adjacency, j, x, k, l)
+    largest, smallest = max(di, dj), min(di, dj)
+    value = 2 / di + 2 / dj - 2 + 2 * triangles / largest + triangles / smallest
+    squares, gamma = 0, 0
+    for side in range(2):
+        near, far, other = (i, j, j) if side == 0 else (j, i, i)
+        extra_near = 1 if near == k or near == l else 0
+        for position in range(offsets[near], offsets[near + 1] + extra_near):
+            kk = columns[position] if position < offsets[near + 1] else (l if near == k else k)
+            if linked(adjacency, far, kk, k, l) or kk == other:
+                continue
+            count = -1
+            extra = 1 if kk == k or kk == l else 0
+            for slot in range(offsets[kk], offsets[kk + 1] + extra):
+                x = columns[slot] if slot < offsets[kk + 1] else (l if kk == k else k)
+                count += linked(adjacency, far, x, k, l) & (not linked(adjacency, near, x, k, l))
+            if count > 0:
+                squares += 1
+            if count > gamma:
+                gamma = count
+    if gamma > 0:
+        value += squares / (gamma * largest)
+    return value
+
+
 @njit(cache=True, parallel=True)
-def forman(adjacency, sources, targets):
-    size = adjacency.shape[0]
+def forman(adjacency, offsets, columns, sources, targets):
     values = np.zeros(len(sources))
     for edge in prange(len(sources)):
-        i, j = sources[edge], targets[edge]
-        di, dj, triangles = 0, 0, 0
-        for k in range(size):
-            di += adjacency[i, k]
-            dj += adjacency[j, k]
-            triangles += adjacency[i, k] & adjacency[j, k]
-        if min(di, dj) == 1:
-            continue
-        largest, smallest = max(di, dj), min(di, dj)
-        value = 2 / di + 2 / dj - 2 + 2 * triangles / largest + triangles / smallest
-        squares, gamma = 0, 0
-        for side in range(2):
-            near, far, other = (i, j, j) if side == 0 else (j, i, i)
-            for k in range(size):
-                if not adjacency[near, k] or adjacency[far, k] or k == other:
-                    continue
-                count = -1
-                for x in range(size):
-                    count += adjacency[k, x] & adjacency[far, x] & (not adjacency[near, x])
-                if count > 0:
-                    squares += 1
-                if count > gamma:
-                    gamma = count
-        if gamma > 0:
-            value += squares / (gamma * largest)
-        values[edge] = value
+        values[edge] = curvature_with(adjacency, offsets, columns, sources[edge], targets[edge], -1, -1)
+    return values
+
+
+@njit(cache=True, parallel=True)
+def forman_with(adjacency, offsets, columns, i, j, ks, ls):
+    values = np.zeros(len(ks))
+    for candidate in prange(len(ks)):
+        values[candidate] = curvature_with(adjacency, offsets, columns, i, j, ks[candidate], ls[candidate])
     return values
 
 

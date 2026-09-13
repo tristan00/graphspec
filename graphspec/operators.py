@@ -277,8 +277,17 @@ def diffuse(registry, spec, present, u, v, entities):
     return source, target, np.full(len(source), registry.code('diffusion'), np.int64)
 
 
+def neighbours(adjacency):
+    return np.r_[0, np.cumsum(adjacency.sum(1))].astype(np.int64), np.nonzero(adjacency)[1].astype(np.int64)
+
+
+def forman(adjacency, sources, targets):
+    offsets, columns = neighbours(adjacency)
+    return kernels.forman(adjacency, offsets, columns, sources.astype(np.int64), targets.astype(np.int64))
+
+
 def curvature(adjacency, i, j):
-    return float(kernels.forman(adjacency, np.asarray([i], np.int64), np.asarray([j], np.int64))[0])
+    return float(forman(adjacency, np.asarray([i], np.int64), np.asarray([j], np.int64))[0])
 
 
 def spectral(adjacency, members):
@@ -323,22 +332,20 @@ def rewire(spec, present, u, v, entities, rng):
         edges = np.argwhere(np.triu(adjacency, 1))
         if not len(edges):
             break
-        values = kernels.forman(adjacency, edges[:, 0], edges[:, 1])
+        values = forman(adjacency, edges[:, 0], edges[:, 1])
         i, j = edges[int(np.argmin(values))]
         candidates = [(k, l) for k in np.r_[i, np.flatnonzero(adjacency[i])] for l in np.r_[j, np.flatnonzero(adjacency[j])]
                       if k != l and not adjacency[k, l]]
         if candidates:
-            gains = []
-            for k, l in candidates:
-                adjacency[k, l] = adjacency[l, k] = True
-                gains.append(curvature(adjacency, i, j) - values.min())
-                adjacency[k, l] = adjacency[l, k] = False
+            offsets, columns = neighbours(adjacency)
+            chosen = np.asarray(candidates, np.int64)
+            gains = kernels.forman_with(adjacency, offsets, columns, int(i), int(j), chosen[:, 0], chosen[:, 1]) - values.min()
             scaled = np.asarray(gains) * spec['derive/sdrf_temperature']
             probability = np.exp(scaled - scaled.max())
             k, l = candidates[int(rng.choice(len(candidates), p=probability / probability.sum()))]
             adjacency[k, l] = adjacency[l, k] = True
         edges = np.argwhere(np.triu(adjacency, 1))
-        values = kernels.forman(adjacency, edges[:, 0], edges[:, 1])
+        values = forman(adjacency, edges[:, 0], edges[:, 1])
         if values.max() > spec['derive/sdrf_threshold']:
             p, q = edges[int(np.argmax(values))]
             adjacency[p, q] = adjacency[q, p] = False
