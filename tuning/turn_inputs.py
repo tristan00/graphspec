@@ -3,7 +3,7 @@ import torch
 
 from graphspec.transform import SEED
 
-from .data import Features, array, features, gathered, joined, length, tree
+from .data import Features, MixedEdges, array, features, gathered, joined, length, tree
 from .turns import lookback
 
 
@@ -98,7 +98,7 @@ def mixed_edges(b, graph):
     mixed['x'] = joined([mixed['x'], features(graph, (len(chosen),), ('x', chosen, 1.0))])
     mixed['kind'] = np.concatenate((mixed['kind'], np.zeros(len(chosen), np.int64)))
     mixed['edge_index'] = np.concatenate((mixed['edge_index'], np.stack((source, destination))), 1)
-    mixed['edge'] = np.concatenate((mixed['edge'], feature))
+    mixed['edge'] = MixedEdges(mixed['edge'].segments + [('raw', feature)])
 
 
 def history_tokens(b, graph, held, first, last, start, cfg, registry):

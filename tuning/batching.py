@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 
-from .data import ROWS, Host, joined, length, materialise, recipe
+from .data import ROWS, Frames, Host, joined, length, materialise, recipe
 from .turns import enabled
 
 
@@ -87,8 +87,11 @@ def recipe_batch(bank, blocks, cfg):
         for key in ('edges', 'temporal_edges'):
             if key in parts[0]:
                 b[key] = np.concatenate([p[key] + int(offset) for p, offset in zip(parts, nodes)], 1)
-        for key in ('frame_edges', 'frame_directed'):
-            b[key] = [np.concatenate([p[key][step] + int(offset) for p, offset in zip(parts, entity_offsets)], 1) for step in range(t)]
+        edge_offsets = np.r_[0, np.cumsum([len(p['relation']) for p in parts])]
+        canonical_offsets = np.r_[0, np.cumsum([int(p['frame_edges'].directed.sum()) for p in parts])]
+        directed = np.concatenate([p['frame_edges'].directed for p in parts])
+        for key, offsets, canonical in (('frame_edges', edge_offsets, False), ('frame_directed', canonical_offsets, True)):
+            b[key] = Frames(directed, [[(lo + int(offset), hi + int(offset)) for p, offset in zip(parts, offsets) for lo, hi in p[key].ranges[step]] for step in range(t)], canonical)
     if 'tree' in parts[0]:
         b['tree'] = combine_tree([p['tree'] for p in parts])
     if 'end_tree' in parts[0]:

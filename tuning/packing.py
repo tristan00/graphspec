@@ -43,6 +43,7 @@ class Packer:
     def __init__(self, bank, cfg, device, workers):
         started = time.perf_counter()
         self.bank, self.cfg, self.device = bank, cfg, device
+        self.pinned = torch.empty(0, dtype=torch.uint8, pin_memory=True)
         context = multiprocessing.get_context('spawn')
         self.jobs, self.results = context.Queue(), context.Queue()
         threads = max(1, os.cpu_count() // workers)
@@ -69,7 +70,11 @@ class Packer:
                 self.jobs.put((submitted, groups[submitted]))
                 submitted += 1
             started = time.perf_counter()
-            batch = resolve(tree, self.bank, self.cfg, views(buffer.to(self.device), spans), self.device)
+            if len(self.pinned) < len(buffer):
+                self.pinned = torch.empty(max(len(buffer), 2 * len(self.pinned)), dtype=torch.uint8, pin_memory=True)
+            staged = self.pinned[:len(buffer)]
+            staged.copy_(buffer)
+            batch = resolve(tree, self.bank, self.cfg, views(staged.to(self.device), spans), self.device)
             LOG.debug('packer batch exit index=%d bytes=%d seconds=%.4f', index, len(buffer), time.perf_counter() - started)
             yield batch
 

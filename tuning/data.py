@@ -174,6 +174,22 @@ class Features:
         self.segments, self.order = segments, order
 
 
+class Frames:
+
+    __slots__ = ('directed', 'ranges', 'canonical')
+
+    def __init__(self, directed, ranges, canonical):
+        self.directed, self.ranges, self.canonical = directed, ranges, canonical
+
+
+class MixedEdges:
+
+    __slots__ = ('segments',)
+
+    def __init__(self, segments):
+        self.segments = segments
+
+
 def gathered(graph, key, index=None):
     return Gather([(graph, key, None if index is None else array(index, torch.long))])
 
@@ -197,6 +213,8 @@ def joined(items, axis=0, order=None):
         return np.concatenate(items, axis)
     if isinstance(first, Gather):
         return Gather([segment for item in items for segment in item.segments])
+    if isinstance(first, MixedEdges):
+        return MixedEdges([segment for item in items for segment in item.segments])
     return Features([segment for item in items for segment in item.segments], order)
 
 
@@ -329,11 +347,9 @@ def recipe(bank, block, cfg):
             b['attributes'][name] = array(values.reshape(-1, len(declared.attributes)), torch.float32)
             b['attribute_edges'][name] = array(chosen, torch.long)
         directed = registry.canonical[spatial[:, 2]]
-        endpoints = entity[edges]
-        canonical = entity[edges[:, directed]]
         canonical_bounds = np.r_[0, np.cumsum(directed)][edge_bounds]
-        b['frame_edges'] = [array(endpoints[:, edge_bounds[t]:edge_bounds[t + 1]], torch.long) for t in range(n)]
-        b['frame_directed'] = [array(canonical[:, canonical_bounds[t]:canonical_bounds[t + 1]], torch.long) for t in range(n)]
+        b['frame_edges'] = Frames(directed, [[(int(edge_bounds[t]), int(edge_bounds[t + 1]))] for t in range(n)], False)
+        b['frame_directed'] = Frames(directed, [[(int(canonical_bounds[t]), int(canonical_bounds[t + 1]))] for t in range(n)], True)
         if 'lifted' in blocks:
             left, right = between(held.column('coupling', 1), lo, hi)
             coupled = held.numpy('coupling')[left:right]
@@ -364,12 +380,9 @@ def recipe(bank, block, cfg):
         extra = np.column_stack((sources, np.repeat(qi, np.diff(offsets)), np.full(len(sources), 2048))).astype(np.int64)
         edge = np.concatenate((np.column_stack((mixed_edges[:, :2] - left, mixed_edges[:, 2])), extra))
         all_ticks = np.r_[ticks, moment * 2]
-        feature = np.zeros((len(edge), 16), np.float32)
-        feature[:, :13] = (edge[:, 2, None] & (1 << np.arange(13))) != 0
-        feature[:, 13] = 1
-        feature[:, 14] = np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2)
+        gaps = np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2).astype(np.float32)
         b['mixed'] = dict(x=joined([features(graph, (right - left,), ('mixed_x', (left, right), None)), b['query']]), kind=mk,
-                          edge_index=array(edge[:, :2].T, torch.long), edge=feature, query=array(qi, torch.long))
+                          edge_index=array(edge[:, :2].T, torch.long), edge=MixedEdges([('coded', array(edge[:, 2], torch.long), gaps)]), query=array(qi, torch.long))
         if enabled(cfg):
             from .turn_inputs import mixed_edges as extend_mixed
 
@@ -459,6 +472,10 @@ def prepare(value, bundle):
         segments = [(graph, shape, [(key, index if isinstance(index, tuple) else bundle.hold(index), bundle.hold(weight) if isinstance(weight, np.ndarray) else weight)
                                     for key, index, weight in pieces]) for graph, shape, pieces in value.segments]
         return Features(segments, None if value.order is None else bundle.hold(value.order))
+    if isinstance(value, Frames):
+        return Frames(bundle.hold(value.directed), value.ranges, value.canonical)
+    if isinstance(value, MixedEdges):
+        return MixedEdges([(segment[0],) + tuple(bundle.hold(item) for item in segment[1:]) for segment in value.segments])
     if isinstance(value, dict):
         return {key: prepare(item, bundle) for key, item in value.items()}
     if isinstance(value, list):
@@ -501,8 +518,28 @@ def resolve(value, bank, cfg, tensors, device):
             parts.append(torch.zeros(shape + (bank.registry.features,), device=device) if out is None else out)
         result = parts[0] if len(parts) == 1 else torch.cat(parts)
         return result if value.order is None else result[tensors[value.order.index]]
+    if isinstance(value, MixedEdges):
+        parts = []
+        for segment in value.segments:
+            if segment[0] == 'raw':
+                parts.append(tensors[segment[1].index])
+                continue
+            codes, gaps = tensors[segment[1].index], tensors[segment[2].index]
+            feature = torch.zeros((len(codes), 16), device=device)
+            feature[:, :13] = ((codes[:, None] & (1 << torch.arange(13, device=device))) != 0).float()
+            feature[:, 13] = 1
+            feature[:, 14] = gaps
+            parts.append(feature)
+        return parts[0] if len(parts) == 1 else torch.cat(parts)
     if isinstance(value, dict):
-        return {key: resolve(item, bank, cfg, tensors, device) for key, item in value.items()}
+        result = {key: resolve(item, bank, cfg, tensors, device) for key, item in value.items() if not isinstance(item, Frames)}
+        for key, item in value.items():
+            if isinstance(item, Frames):
+                endpoints = result['entity'][result['edges']]
+                if item.canonical:
+                    endpoints = endpoints[:, tensors[item.directed.index]]
+                result[key] = [torch.cat([endpoints[:, lo:hi] for lo, hi in step], 1) if len(step) > 1 else endpoints[:, step[0][0]:step[0][1]] for step in item.ranges]
+        return result
     if isinstance(value, list):
         return [resolve(item, bank, cfg, tensors, device) for item in value]
     if isinstance(value, tuple):

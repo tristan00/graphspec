@@ -277,7 +277,7 @@ python -m tuning.run report RUN
   uniform draws; TPE then starts from all of them.
 - `--seconds` sets each trial's budget (600), covering everything from parameter selection to the variant pruning after the worker exits, `--batch-sequences` the sequences per batch at history 16 (64), and
   `--seed` the proposal seed.
-- `--workers` (4) builds the trial's variant for every graph in parallel before the worker starts. `--variant-gb` (300)
+- `--workers` (4) is the number of processes that build the trial's variant and, during the fit, pack batches ahead of the GPU. `--variant-gb` (300)
   is the disk budget for `variants/`; the least recently used variants are removed first.
 - `--resume` continues a run with its planned selector, seed, budget and batch size, and refuses a rebuilt or
   different bank or declaration.
