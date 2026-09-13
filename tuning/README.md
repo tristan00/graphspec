@@ -6,7 +6,7 @@
 
 `python -m tuning.build` reads the database once and writes each graph's truth arrays under `truth/`. Training never touches the database. Labels live in `supervision.json`, apart from the model inputs. `Bank` refuses a manifest from another bank version or whose declaration does not reproduce its fingerprint.
 
-A trial's configuration carries its spec under `graph`. `Bank.arrays` canonicalises the spec against the model's representation groups, then materialises the variant of a graph on first use under `variants/<digest>/graph_NNNN/`. The runner materialises every graph of a trial's variant in parallel before the worker starts (`--workers`) and prunes the least recently used variants to the `--variant-gb` budget, so the fit budget is spent on training. The digest covers the spec without the parameters read only when packing (`time/history`, `time/context`, `neighbors/order`, `neighbors/decay`), the groups and the `graphspec` and `graph_tuning_infra` sources, so trials that differ only in those share a variant until the transform code changes. It memory-maps the arrays and keeps the eight most recent graphs open; each open graph also holds the arrays that packing searches in RAM and its feature matrices on the training device (`Bank.resident`).
+A trial's configuration carries its spec under `graph`. `Bank.arrays` canonicalises the spec against the model's representation groups, then materialises the variant of a graph on first use under `variants/<digest>/graph_NNNN/`. The runner materialises every graph of a trial's variant in parallel before the worker starts (`--workers`) and prunes the least recently used variants to the `--variant-gb` budget, so the fit budget is spent on training. The digest covers the spec without the parameters read only when packing (`time/history`, `time/context`, `neighbors/order`, `neighbors/decay`), the groups and the `graphspec` and `graph_tuning_infra` sources, so trials that differ only in those share a variant until the transform code changes. It memory-maps the arrays and keeps the eight most recent graphs open; each open graph also holds the arrays that packing searches in RAM and its feature matrices on the training device, through the infra layer's resident cache, which also owns the eviction limit.
 
 **Packing**
 
@@ -52,7 +52,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 - A training window ends at a labelled step s and covers steps s−H+1 to s, with H = `time/history`. It supervises only the labels at s. A node-target window holds at most 1,024 labels, so a step with more labels gets several windows over the same steps.
 - With `time/context` c above 0, a window that starts in period p starts instead at the first step of period max(0, p−c). Each family gets its period-end readout. Replayed steps add no supervised rows.
 - A batch groups windows of equal length, `batch sequences × 16 // H` of them. It holds at most 1,024 frames, 1,024 prediction rows and 1,048,576 entity-frames, where a window contributes its steps times its graph's entity count.
-- Fits and model checks may allocate 90% of GPU memory.
+- The infra layer reserves the GPU memory a fit or model check may use.
 - Sequence and memory states reset at window boundaries. Event models start from the last features known before the window.
 - Targets are standardised with the training mean and sample standard deviation. Predictions are converted back before scoring raw MSE and R².
 - The saved checkpoint is reloaded and must reproduce the first validation batch.

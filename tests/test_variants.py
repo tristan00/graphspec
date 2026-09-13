@@ -8,7 +8,8 @@ import numpy as np
 from tuning.build import build
 from tuning.data import Bank
 from tuning.roster import groups, sample
-from tuning.variants import prepare, prune, size
+from graph_tuning_infra.files import folder_size as size
+from tuning.variants import prepare, prune
 
 from .support import configured
 from .test_bank import database

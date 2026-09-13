@@ -10,7 +10,6 @@ from .turns import enabled
 
 LOG = logging.getLogger(__name__)
 ENTITY_FRAMES = 1 << 20
-MEMORY_FRACTION = 0.9
 
 
 def batches(blocks, size, entities, seed=None, frame_budget=None):

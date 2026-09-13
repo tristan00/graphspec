@@ -12,7 +12,7 @@ import numpy as np
 
 import graph_tuning_infra
 from graphspec.spec import digest
-from graph_tuning_infra import sources
+from graph_tuning_infra import compute, sources
 from graph_tuning_infra.files import read_json, sha256_bytes, sha256_file, write_csv, write_json, write_jsonl
 from graph_tuning_infra.log import configure, emit
 from graph_tuning_infra.processes import Lock, command, stop
@@ -39,7 +39,7 @@ def score(targets, predictions):
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline):
     import torch
     from .data import Bank
-    from .batching import MEMORY_FRACTION, batches, pack_batch
+    from .batching import batches, pack_batch
     from .roster import create
     from .turns import blocks as turn_blocks
     from .budget import FitBudget, POLICY
@@ -55,7 +55,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     device = 'cuda'
     if not torch.cuda.is_available():
         raise RuntimeError('this research run requires the available CUDA GPU')
-    torch.cuda.set_per_process_memory_fraction(MEMORY_FRACTION)
+    compute.reserve()
     bank = Bank(bank_directory)
     actual_hash = sha256_file(Path(bank_directory) / 'supervision.json')
     if actual_hash != bank.manifest['supervision_sha256']:

@@ -109,7 +109,7 @@ Computed at each step from the present facts that survive stage 3. Completion an
 | `derive/complete/<type>` | on, off | Completes that type: every pair of observed entities of the completed types at a step is linked. Offered while the type is kept. |
 | `derive/complete_within/<type>` | on, off | Links completed entities only when they share a neighbour of that type; with several types on, a shared neighbour of any of them is enough. Offered while this type is kept and a kept base relation joins it to a completed type. |
 | `derive/hops` | 1–3 | Adds `hop:2` up to `hop:k`. Offered while a base relation is kept. |
-| `derive/diffusion` | none, ppr, heat | Scores pairs by personalised PageRank α(I−(1−α)T)⁻¹ or the heat kernel exp(−t(I−T)), with T the symmetric-normalised adjacency of the step's observed entities. Each entity links to its highest-scoring non-adjacent entities in its own connected component. Computed per component; components of at least 1024 entities use the GPU in float64. Offered while a base relation is kept. |
+| `derive/diffusion` | none, ppr, heat | Scores pairs by personalised PageRank α(I−(1−α)T)⁻¹ or the heat kernel exp(−t(I−T)), with T the symmetric-normalised adjacency of the step's observed entities. Each entity links to its highest-scoring non-adjacent entities in its own connected component. Computed per component in float64; the infra layer chooses the device by component size. Offered while a base relation is kept. |
 | `derive/diffusion_top_k` | 1–16 | Neighbours per entity. Offered with diffusion. |
 | `derive/ppr_alpha` | 0.05–0.5 | α. Offered with ppr. |
 | `derive/heat_time` | 0.5–5 | t. Offered with heat. |

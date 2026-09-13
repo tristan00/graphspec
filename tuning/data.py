@@ -1,4 +1,3 @@
-from collections import OrderedDict
 import logging
 from pathlib import Path
 import time
@@ -10,13 +9,13 @@ from graphspec import Registry
 from graphspec import spec as specs
 from graphspec.transform import SEED, SOURCE, materialize
 from graphspec.truth import VERSION, Graph
+from graph_tuning_infra.arrays import Residents, between
 from graph_tuning_infra.files import ArrayStore, load_arrays, read_json, write_json
 from . import gather
 
 
 LOG = logging.getLogger(__name__)
 ROWS = 1024
-LOADED = 8
 NEIGHBOURS = 8
 ORDERS = dict(recent=0, uniform=1, decay=2)
 DTYPES = dict(entity_kind=torch.long)
@@ -37,47 +36,6 @@ def layout(index, rows, steps, partitions, partition, history, level):
             first, last = between(steps, start, stop)
             result.append((index, start, stop, moment, partition, int(first), int(last)))
     return result
-
-
-class Resident:
-
-    def __init__(self, arrays, device):
-        self.arrays, self.device = arrays, device
-        self.tensors, self.loaded, self.columns, self.orders = {}, {}, {}, {}
-        self.ticks = self.column('events', 2)
-
-    def tensor(self, key):
-        if key not in self.tensors:
-            started = time.perf_counter()
-            self.tensors[key] = torch.as_tensor(np.array(self.arrays[key]), dtype=DTYPES.get(key), device=self.device)
-            LOG.debug('resident tensor exit key=%s device=%s seconds=%.4f', key, self.device, time.perf_counter() - started)
-        return self.tensors[key]
-
-    def numpy(self, key):
-        if key not in self.loaded:
-            self.loaded[key] = np.array(self.arrays[key])
-        return self.loaded[key]
-
-    def column(self, key, index):
-        if (key, index) not in self.columns:
-            started = time.perf_counter()
-            self.columns[(key, index)] = np.ascontiguousarray(self.arrays[key][:, index])
-            LOG.debug('resident column exit key=%s index=%d rows=%d seconds=%.4f', key, index, len(self.columns[(key, index)]), time.perf_counter() - started)
-        return self.columns[(key, index)]
-
-    def order(self, key, index):
-        if (key, index) not in self.orders:
-            started = time.perf_counter()
-            values = self.column(key, index)
-            order = np.argsort(values, kind='stable')
-            self.orders[(key, index)] = (order, values[order])
-            LOG.debug('resident order exit key=%s index=%d rows=%d seconds=%.4f', key, index, len(order), time.perf_counter() - started)
-        return self.orders[(key, index)]
-
-    def rows_by(self, key, index, low, high):
-        order, sorted_values = self.order(key, index)
-        lo, hi = between(sorted_values, low, high)
-        return np.sort(order[lo:hi])
 
 
 class Bank:
@@ -109,7 +67,7 @@ class Bank:
                 self.row_index[index][labels['label_step']] = labels['label_row']
                 self.row_steps[index] = np.arange(graph['steps'], dtype=np.int32)
             self.entities[index] = graph['entities']
-        self.variants, self.store, self.residents = {}, ArrayStore(LOADED), OrderedDict()
+        self.variants, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES)
         LOG.info('bank exit seconds=%.3f graphs=%d rows=%d level=%s', time.perf_counter() - started, len(self.manifest['graphs']), len(self.rows), self.level)
 
     def truth(self, index):
@@ -139,13 +97,7 @@ class Bank:
         return self.store.open(root / ('graph_%04d' % index), build)
 
     def resident(self, index, cfg, device):
-        key = (self.variant(cfg)[0] / ('graph_%04d' % index), str(device))
-        if key not in self.residents:
-            self.residents[key] = Resident(self.arrays(index, cfg), device)
-            while len(self.residents) > LOADED:
-                self.residents.popitem(last=False)
-        self.residents.move_to_end(key)
-        return self.residents[key]
+        return self.residents.get(self.variant(cfg)[0] / ('graph_%04d' % index), device, lambda: self.arrays(index, cfg))
 
     def blocks(self, partition, history):
         started = time.perf_counter()
@@ -155,10 +107,6 @@ class Bank:
             result.extend(layout(index, self.row_index[index], self.row_steps[index], self.partitions, partition, history, self.level))
         LOG.info('bank blocks exit seconds=%.3f partition=%d history=%d blocks=%d', time.perf_counter() - started, partition, history, len(result))
         return result
-
-
-def between(values, low, high):
-    return tuple(int(index) for index in np.searchsorted(values, np.asarray((low, high), values.dtype)))
 
 
 def tensor(value, device, dtype=None):
@@ -179,7 +127,7 @@ def features_at(held, observations, device):
 def tree(held, entities, cutoffs, floor, count, depth, device, registry, spec, stream):
     started = time.perf_counter()
     mode, decay = sampling(spec)
-    events, ticks = held.numpy('events'), held.ticks
+    events, ticks = held.numpy('events'), held.column('events', 2)
     ids, offsets = held.numpy('neighbor_ids'), held.numpy('neighbor_offsets')
     observation_ids, observation_offsets, step = held.numpy('observation_ids'), held.numpy('observation_offsets'), held.numpy('step')
     levels = []
@@ -205,7 +153,7 @@ def history_inputs(held, first, last, start, count, device, spec, stream, includ
     mode, decay = sampling(spec)
     chosen = np.ones(last - first, bool) if selected is None else np.asarray(selected, bool)
     (observed, interaction, query_tick, mask, gap, ids, structural, common_ids, common_frequency, common_stats,
-     pair_gaps, pair_mask) = gather.history(held.numpy('events'), held.numpy('neighbor_ids'), held.numpy('neighbor_offsets'), held.ticks,
+     pair_gaps, pair_mask) = gather.history(held.numpy('events'), held.numpy('neighbor_ids'), held.numpy('neighbor_offsets'), held.column('events', 2),
                                             held.numpy('actor')[first:last].astype(np.int64), held.numpy('subject')[first:last].astype(np.int64),
                                             held.numpy('query_step')[first:last].astype(np.int64), start, count, mode, decay, stream, NEIGHBOURS,
                                             include_structure, chosen)
@@ -276,7 +224,7 @@ def pack(bank, block, cfg, device='cuda'):
         b.update(x=held.tensor('x')[lo:hi].float(), kind=held.tensor('entity_kind')[entity_index], entity=entity_index, step=step_index, align=align,
                  present=align < hi - lo)
         if registry.extras['queries']:
-            left, right = between(held.ticks, start * 2, stop * 2)
+            left, right = between(held.column('events', 2), start * 2, stop * 2)
             choices = held.numpy('events')[left:right]
             choices = choices[choices[:, 3] == 2]
             b.update(decision_query=held.tensor('query')[start:stop].float(), decision_context=tensor(choices[:, 4:6] - lo, device, torch.long))
@@ -341,7 +289,7 @@ def pack(bank, block, cfg, device='cuda'):
 
                 extend_mixed(b, a, start, stop, device, registry.features)
     if 'events' in blocks:
-        left, right = between(held.ticks, start * 2, stop * 2)
+        left, right = between(held.column('events', 2), start * 2, stop * 2)
         events = held.numpy('events')[left:right]
         if 'dag' in blocks:
             members = np.flatnonzero(held.numpy('event_member')[left:right])
@@ -396,7 +344,7 @@ def pack(bank, block, cfg, device='cuda'):
             gaps[:, :, cfg['walks']:] = np.repeat(past, cfg['walks'], axis=2)[:, :, :, None, :]
             b.update(walk_turn_kind=tensor(kinds, device, torch.long), walk_end_time=tensor(gaps, device))
         known = walks >= 0
-        known &= held.ticks[np.maximum(walks, 0)] >= start * 2
+        known &= held.column('events', 2)[np.maximum(walks, 0)] >= start * 2
         events = held.numpy('events')[np.maximum(walks, 0)]
         nodes = np.empty(walks.shape, np.int32)
         observations = np.empty_like(nodes)

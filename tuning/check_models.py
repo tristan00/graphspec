@@ -6,9 +6,9 @@ import numpy as np
 import torch
 
 from graphspec import spec as specs
+from graph_tuning_infra import compute
 from graph_tuning_infra.files import read_json, write_json
 from graph_tuning_infra.log import configure, emit
-from .batching import MEMORY_FRACTION
 from .data import Bank, pack
 from .roster import create, groups, models, sample
 
@@ -50,7 +50,7 @@ def check(directory, output, device='cuda', graph=None, spec_path=None):
     entered = time.perf_counter()
     torch.set_num_threads(2)
     if device == 'cuda':
-        torch.cuda.set_per_process_memory_fraction(MEMORY_FRACTION)
+        compute.reserve()
     bank = Bank(directory)
     chosen = max(bank.manifest['graphs'], key=lambda entry: entry['observations'])['index'] if graph is None else graph
     given = read_json(spec_path) if spec_path else {}

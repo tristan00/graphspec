@@ -1,6 +1,6 @@
 import numpy as np
-import torch
 
+from graph_tuning_infra import compute
 from graph_tuning_infra.hashing import unit
 
 from . import kernels
@@ -11,7 +11,6 @@ FACTS = ('fact_source', 'fact_target', 'fact_code', 'fact_step', 'fact_present',
 OBSERVATIONS = ('obs_entity', 'obs_step', 'obs_x', 'obs_anchor')
 SAMPLE, DROP, RANDOM, REWIRE = 1, 2, 3, 4
 BLOCK = 1 << 22
-GPU_FROM = 1024
 
 
 def counted(counts):
@@ -239,28 +238,18 @@ def blocks(labels):
     return [order[lo:hi] for lo, hi in zip(bounds[:-1], bounds[1:]) if hi - lo > 1]
 
 
-def device(size):
-    return 'cuda' if size >= GPU_FROM else 'cpu'
-
-
-def normalized(adjacency, loops):
-    dense_adjacency = torch.as_tensor(adjacency, dtype=torch.float64, device=device(len(adjacency)))
-    if loops:
-        dense_adjacency = dense_adjacency + torch.eye(len(adjacency), dtype=torch.float64, device=dense_adjacency.device)
-    scale = dense_adjacency.sum(1).rsqrt()
-    return dense_adjacency, scale, scale[:, None] * dense_adjacency * scale[None, :]
-
-
 def diffusion_scores(adjacency, spec):
-    dense_adjacency, _, transition = normalized(adjacency, False)
-    identity = torch.eye(len(adjacency), dtype=torch.float64, device=transition.device)
+    count = len(adjacency)
+    scale = 1 / np.sqrt(adjacency.sum(1))
+    transition = scale[:, None] * adjacency * scale[None, :]
     if spec['derive/diffusion'] == 'ppr':
         alpha = spec['derive/ppr_alpha']
-        scores = alpha * torch.linalg.inv(identity - (1 - alpha) * transition)
+        scores = alpha * compute.inverse(np.eye(count) - (1 - alpha) * transition)
     else:
-        values, vectors = torch.linalg.eigh(transition)
-        scores = (vectors * torch.exp(-spec['derive/heat_time'] * (1 - values))) @ vectors.T
-    scores = scores.masked_fill(dense_adjacency.bool() | identity.bool(), -torch.inf)
+        values, vectors = compute.eigh(transition)
+        scores = compute.compose(vectors, np.exp(-spec['derive/heat_time'] * (1 - values)))
+    scores[adjacency] = -np.inf
+    np.fill_diagonal(scores, -np.inf)
     return scores
 
 
@@ -274,8 +263,8 @@ def diffuse(registry, spec, present, u, v, entities):
     for members in blocks(labels):
         scores = diffusion_scores(dense(members, local_u, local_v), spec)
         width = min(spec['derive/diffusion_top_k'], len(members) - 1)
-        ranked, chosen = torch.sort(scores, dim=1, descending=True, stable=True)
-        chosen, valid = chosen[:, :width].cpu().numpy(), torch.isfinite(ranked[:, :width]).cpu().numpy()
+        chosen, ranked = compute.top(scores, width)
+        valid = np.isfinite(ranked)
         rows = np.broadcast_to(np.arange(len(members))[:, None], chosen.shape)
         sources.append(present[members[rows[valid]]])
         targets.append(present[members[chosen[valid]]])
@@ -292,12 +281,13 @@ def spectral(adjacency, members):
     local = adjacency[np.ix_(members, members)]
     if local.sum() == len(members) * (len(members) - 1):
         return None
-    _, scale, matrix = normalized(local, True)
-    values, vectors = torch.linalg.eigh(matrix)
-    fiedler = (vectors[:, -2] * scale)
-    scores = fiedler[:, None] * fiedler[None, :]
-    scores = scores.masked_fill(torch.as_tensor(local | np.eye(len(members), dtype=bool), device=scores.device), torch.inf)
-    i, j = divmod(int(torch.argmin(scores)), len(members))
+    scale = 1 / np.sqrt(local.sum(1) + 1.0)
+    values, vectors = compute.eigh(scale[:, None] * (local + np.eye(len(members))) * scale[None, :])
+    fiedler = vectors[:, -2] * scale
+    scores = np.outer(fiedler, fiedler)
+    scores[local] = np.inf
+    np.fill_diagonal(scores, np.inf)
+    i, j = divmod(int(np.argmin(scores)), len(members))
     return float(values[-1] - values[-2]), members[i], members[j]
 
 
