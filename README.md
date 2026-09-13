@@ -54,6 +54,18 @@ python -m dashboard.server --directory artifacts/run_retention --port 8766
 
 `retention` is the example used throughout this page.
 
+**Total War**
+
+`totalwar/` loads the Total War: Warhammer III corpus of `tw_stack` into the contract: one graph per campaign, one step per snapshot (decisions and interrupt screens alike), the game turn as the period, twenty-one node types from factions and characters to the technology, skill, building, unit, item and effect catalogue, about seventy relations, the taken action as the query, and the trainers' own reward as the label. The design, the exact reward and split rules and the sizes are in [TOTALWAR.md](TOTALWAR.md).
+
+```powershell
+python -m totalwar.build --output artifacts/graphdb_totalwar --campaigns 100 --port 55433
+python -m totalwar.verify artifacts/graphdb_totalwar/totalwar.task.json --samples 300
+python -m tuning.build --task artifacts/graphdb_totalwar/totalwar.task.json --output artifacts/bank_totalwar --workers 8
+```
+
+`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.lbug`, `<name>.task.json` and `<name>.build.json` with per-campaign sizes; `verify` samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
+
 **Synthetic data**
 
 Development and benchmarking use generated databases, never client data. `python -m graphspec.synthetic --output artifacts/graphdb --name dev --graphs 4 --entities 2000 --steps 48` writes `dev.lbug` and `dev.task.json` following the contract: four node types, five relations with bounded degrees (`--degree`, `--max-degree`), relations that persist for a geometric lifetime and end with a removal row (`--lifetime`), observation coverage `--alive`, one query per step with categories and `--signals` channels, periods of `--period` steps, and a target on queries, nodes or graphs (`--level`). Every run is fixed by `--seed`. The generator refuses settings that cannot give two training and two validation label groups: at least ten steps for query targets, labelled periods on both sides of the 80% split for node targets, four graphs for graph targets.

@@ -64,7 +64,7 @@ def base(graph, registry, spec, categories):
         edge = registry.by_name[name]
         use = codes == edge.code
         attribute_row[use] = np.arange(int(use.sum()))
-        arrays['attributes_' + name] = values[use, :len(edge.attributes)].astype(np.float16)
+        arrays['attributes_' + name] = values[use, :len(edge.attributes)].astype(np.float32)
     decided, width = registry.extras['queries'], len(categories)
     moments = np.arange(steps)
     if decided:
