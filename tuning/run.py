@@ -39,7 +39,8 @@ def score(targets, predictions):
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, workers):
     import torch
     from .data import Bank
-    from .batching import batches, pack_batch
+    from .batching import batches
+    from .packing import Packer
     from .variants import prepare
     from .models import build
     from .model_spec import describe
@@ -66,7 +67,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     net = build(cfg, bank.registry, len(bank.categories)).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=cfg['lr'], weight_decay=cfg['weight_decay'])
     torch.cuda.reset_peak_memory_stats()
-    timing = dict(prepare=time.perf_counter() - entered, train_pack=0.0, train_compute=0.0, validation_pack=0.0, validation_compute=0.0)
+    timing = dict(prepare=time.perf_counter() - entered, packer=0.0, train_pack=0.0, train_compute=0.0, validation_pack=0.0, validation_compute=0.0)
     losses, trained_rows, epoch_losses = [], [], []
     if sorted(map(tuple, training_blocks)) != sorted(bank.blocks(0, history, cfg)):
         raise ValueError('training blocks must cover the entire frozen training partition')
@@ -81,12 +82,16 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         training_rows=len(bank.split['train_indices']), batch_sequences=batch_size, config=cfg)
     net.train()
     epoch_rows, epoch_sum = [], 0.0
+    started = time.perf_counter()
+    packer = Packer(bank, cfg, device, workers)
+    timing['packer'] = time.perf_counter() - started
+    stream = packer.stream([blocks for _, blocks in training])
     epoch_started = time.perf_counter()
     budget.pulse('training')
     for update, (epoch, blocks) in enumerate(training):
         budget.check()
         started = time.perf_counter()
-        b = pack_batch(bank, blocks, cfg, device)
+        b = next(stream)
         timing['train_pack'] += time.perf_counter() - started
         if np.any(bank.partitions[b['rows']] != 0):
             raise ValueError('holdout row reached the optimizer')
@@ -137,11 +142,12 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     torch.save(checkpoint, directory / 'checkpoint.pt')
     values, indices = [], []
     validation = batches(turn_blocks(bank, bank.blocks(1, history, cfg), cfg), batch_size, sizes, frame_budget=1024)
+    stream = packer.stream(validation)
     with torch.inference_mode():
         for index, blocks in enumerate(validation):
             budget.check()
             started = time.perf_counter()
-            b = pack_batch(bank, blocks, cfg, device)
+            b = next(stream)
             timing['validation_pack'] += time.perf_counter() - started
             started = time.perf_counter()
             predictions = net(b)
@@ -162,6 +168,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
             if (index + 1) % 256 == 0:
                 emit('validation_progress', blocks=index + 1, total_blocks=len(validation), rows=len(indices), seconds=time.perf_counter() - entered)
             del b, predictions
+    packer.close()
     ordering = np.argsort(indices)
     indices, values = np.asarray(indices, np.int64)[ordering], np.asarray(values, np.float64)[ordering]
     if not np.array_equal(indices, np.asarray(bank.split['validation_indices'])):

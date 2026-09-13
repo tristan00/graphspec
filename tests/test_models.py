@@ -5,10 +5,10 @@ from graphspec import spec as specs
 from graphspec.synthetic import generate
 from tuning import model_spec
 from tuning.build import build as build_bank
-from tuning.data import Bank, pack
+from tuning.batching import pack_batch
+from tuning.data import Bank
 from tuning.models import build
-from tuning.turn_inputs import capture_schedule
-from tuning.turns import blocks as turn_blocks, enabled
+from tuning.turns import blocks as turn_blocks
 
 from .support import config
 
@@ -65,10 +65,7 @@ def offered(registry, values):
 
 def exercise(bank, values, history, context, device):
     cfg = config(bank.registry, dict(values, hidden=16), {'time/history': history, 'time/context': context})
-    block = turn_blocks(bank, [bank.blocks(0, history, cfg)[-1]], cfg)[0]
-    b = pack(bank, block, cfg, device)
-    if enabled(cfg):
-        capture_schedule(b)
+    b = pack_batch(bank, turn_blocks(bank, [bank.blocks(0, history, cfg)[-1]], cfg), cfg, device)
     net = build(cfg, bank.registry, len(bank.categories)).to(device)
     values = net(b)
     target = (b['target'] - bank.split['reward_mean']) / bank.split['reward_sd']

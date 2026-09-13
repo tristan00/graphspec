@@ -10,7 +10,7 @@ A trial's configuration carries its spec under `graph`. `Bank.arrays` canonicali
 
 **Packing**
 
-`pack` turns one training window into model inputs. Every per-entity or per-event loop lives in a numba kernel in `gather.py`: the latest observation of an entity before a tick, neighbour sampling (recent, uniform or decay-weighted Gumbel top-k keyed by the seeded hash), the levels of a temporal-neighbour tree, interaction histories with their structural features, the events reachable from a prediction's entities, and walk identities. Feature rows are gathered on the device from the resident matrices, and edge tables are cut by binary search on their sorted columns. Every other array of a window travels in one bundled transfer, so a window costs a handful of copies rather than one per array. A block of graph 4 of the churn bank (156k entities, 9,441 steps) packs in 1 to 8 ms on the GPU for every family.
+`recipe` turns one training window into model inputs as numpy arrays and deferred gathers, with no torch work: every per-entity or per-event loop lives in a numba kernel in `gather.py` (the latest observation of an entity before a tick, neighbour sampling by recent, uniform or decay-weighted Gumbel top-k keyed by the seeded hash, the levels of a temporal-neighbour tree, interaction histories with their structural features, the events reachable from a prediction's entities, and walk identities), and edge tables are cut by binary search on their sorted columns. Feature rows are never copied on the CPU: a `Features` marker names the resident matrix, the row indices and a weight per row, and `materialise` resolves it on the device, so a masked gather, the mean of two endpoint rows or the average of an observation and a query are one device expression each. `recipe_batch` concatenates the windows of a batch in numpy; `materialise` sends every array of the batch in one bundled transfer and resolves the markers. During a fit, `packing.Packer` runs the recipes in worker processes (`--workers` of them, sharing the machine's cores between their numba kernels) and streams the bundled batches to the training process through shared memory, so packing runs ahead of the GPU instead of alternating with it.
 
 **Models**
 
@@ -45,7 +45,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 - Sequence and memory states reset at window boundaries. Event models start from the last features known before the window.
 - Targets are standardised with the training mean and sample standard deviation. Predictions are converted back before scoring raw MSE and R².
 - The saved checkpoint is reloaded and must reproduce the first validation batch.
-- Each trial runs in its own worker process with a 600-second deadline that covers everything the trial does: building its graph variant, packing, every requested epoch, and scoring the holdout. At the deadline the runner kills the worker and records a timeout; there is no extension. A fit that cannot complete its requested epochs in time scores nothing, so the search learns to propose epochs and structures that fit.
+- Each trial has a 600-second budget measured by the runner from the moment it starts selecting the trial's parameters to the moment the variant store has been pruned after the worker exits; it covers selection, the training layout, the source snapshot, the worker's start, building the graph variant, packing, every requested epoch, scoring the holdout and the pruning. At the deadline the runner kills the worker and records a timeout; a result recorded by a worker that finished inside its own deadline but whose trial ran over the budget is set aside as `late_result.json` and the trial counts as a timeout. There is no extension. A fit that cannot complete its requested epochs in time scores nothing, so the search learns to propose epochs and structures that fit. `trial.json` records the seconds of each phase.
 
 **Search**
 
@@ -110,6 +110,7 @@ A trial's configuration holds the model spec under `model`, the graph spec under
 | `trial_*/source/` | The `tuning`, `graphspec` and `graph_tuning_infra` sources the worker ran. |
 | `trial_*/result.json`, `predictions.npz`, `checkpoint.pt` | Scores, timings, parameter count, peak GPU memory and row hashes; validation predictions; weights. |
 | `trial_*/failure.json`, `timeout.json`, `fit_progress.json` | Failure records and the budget heartbeat. |
+| `trial_*/trial.json`, `late_result.json` | The runner's phase timings for the whole trial, and a result that arrived after the budget. |
 | `results.csv`, `results.jsonl`, `progress.md`, `coverage.json` | Every attempt with its model description, including failures; the best MSE, R², model and spec digest per view in `progress.md`; completed fits per view in `coverage.json`. |
 
 A file named `STOP` in the run directory stops the run after the current fit, and stops a resumed run before its first trial. The runner refuses to resume while the worker named in `running.json` is still alive.

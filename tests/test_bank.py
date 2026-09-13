@@ -110,3 +110,36 @@ def test_bank(book):
             assert len(wide) == 2 and equal(wide, same_floor) and set(wide[wide >= 1].tolist()) <= set(narrow.tolist())
         chosen = neighbors(arrays, 0, 12, 0, 1, settings, 7)
         assert len(chosen) == 1 and np.isin(chosen, window).all() and equal(chosen, neighbors(arrays, 0, 12, 0, 1, settings, 7))
+
+
+def test_packer_matches_in_process_packing(book):
+    from tuning.batching import batches, pack_batch
+    from tuning.data import Bank
+    from tuning.packing import Packer
+    from tuning.turns import blocks as turn_blocks
+
+    bank = Bank(book)
+    cfg = config(bank.registry, {'view': 'event_graph'}, {'time/history': 3, 'time/context': 1})
+    groups = batches(turn_blocks(bank, bank.blocks(0, 3, cfg), cfg), 2, bank.sizes(cfg), 1)
+    packer = Packer(bank, cfg, 'cpu', 2)
+    try:
+        streamed = list(packer.stream(groups))
+    finally:
+        packer.close()
+    assert len(streamed) == len(groups) > 1
+    for blocks, batch in zip(groups, streamed):
+        assert matching(batch, pack_batch(bank, blocks, cfg, 'cpu'))
+
+
+def matching(left, right):
+    import torch
+
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(matching(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(matching(a, b) for a, b in zip(left, right))
+    if isinstance(left, torch.Tensor):
+        return left.dtype == right.dtype and left.shape == right.shape and torch.equal(left, right)
+    if isinstance(left, np.ndarray):
+        return equal(left, right)
+    return left == right

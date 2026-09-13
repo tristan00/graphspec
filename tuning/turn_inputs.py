@@ -3,139 +3,141 @@ import torch
 
 from graphspec.transform import SEED
 
-from .data import tensor, tree
+from .data import Features, array, features, gathered, joined, length, tree
 from .turns import lookback
 
 
-def add(b, a, first, last, start, cfg, hold):
-    queries = np.asarray(a['query_step'][first:last], np.int64)
-    membership = a['turn_membership'][queries]
+def add(b, graph, held, first, last, start, cfg):
+    queries = held.numpy('query_step')[first:last].astype(np.int64)
+    membership = held.numpy('turn_membership')[queries]
     previous = membership[:, None] - np.arange(1, lookback(cfg) + 1)
     valid = previous >= 0
     prior = previous.clip(0)
-    ends = a['turn_ends'][prior]
+    ends = held.numpy('turn_ends')[prior]
     valid &= ends >= start
-    roots = np.stack((a['actor'][first:last], a['subject'][first:last], a['entity'][a['query_context'][first:last, 2]]), 1)
-    observed = a['turn_observations'][prior[:, :, None], roots[:, None, :]]
+    entity, step = held.numpy('entity'), held.numpy('step')
+    roots = np.stack((held.numpy('actor')[first:last], held.numpy('subject')[first:last], entity[held.numpy('query_context')[first:last, 2]]), 1)
+    observed = held.numpy('turn_observations')[prior[:, :, None], roots[:, None, :]]
     mask = (observed >= 0) & valid[:, :, None]
-    raw = np.array(a['x'][observed.clip(0)], np.float32)
-    raw[~mask] = 0
-    age = np.maximum(ends[:, :, None] - a['step'][observed.clip(0)], 0)
+    age = np.maximum(ends[:, :, None] - step[observed.clip(0)], 0)
     age[~mask] = 0
     delta = queries[:, None] - ends
-    turn_gap = a['turn_numbers'][membership, None] - a['turn_numbers'][prior]
+    numbers = held.numpy('turn_numbers')
+    turn_gap = numbers[membership, None] - numbers[prior]
     gaps = np.stack((delta, turn_gap, age.max(-1)), -1).clip(0).astype(np.float32)
-    token_gaps = np.stack((queries[:, None, None] - a['step'][observed.clip(0)],
+    token_gaps = np.stack((queries[:, None, None] - step[observed.clip(0)],
         np.broadcast_to(turn_gap[:, :, None], age.shape), age), -1).clip(0).astype(np.float32)
-    local = observed - int(a['snapshot_offsets'][start])
-    b.update(end_steps=hold(np.where(valid, ends - start, -1), torch.long),
-        end_mask=hold(valid), end_gaps=hold(gaps),
-        end_raw=hold(raw.transpose(0, 2, 1, 3)), end_raw_mask=hold(mask.transpose(0, 2, 1)),
-        end_token_gaps=hold(token_gaps.transpose(0, 2, 1, 3)),
-        end_observation_local=hold(np.where(mask & (local >= 0), local, -1), torch.long))
+    local = observed - int(held.numpy('snapshot_offsets')[start])
+    index = np.where(mask, observed, -1).transpose(0, 2, 1)
+    b.update(end_steps=array(np.where(valid, ends - start, -1), torch.long),
+        end_mask=array(valid), end_gaps=gaps,
+        end_raw=features(graph, index.shape, ('x', index, 1.0)), end_raw_mask=array(mask.transpose(0, 2, 1)),
+        end_token_gaps=array(token_gaps.transpose(0, 2, 1, 3)),
+        end_observation_local=array(np.where(mask & (local >= 0), local, -1), torch.long))
     if cfg['model']['view'] == 'affinity':
-        last = a['turn_actor_decision'][prior, roots[:, 0, None]]
-        affinity = np.array(a['affinity'][last.clip(0)], np.float32)
-        categories = a['turn_action_category'][last.clip(0)]
-        affinity += np.eye(affinity.shape[-1], dtype=np.float32)[categories]
-        affinity[(last < 0) | ~valid] = 0
-        global_affinity = np.array(a['global_affinity'][ends], np.float32)
-        global_affinity += np.eye(affinity.shape[-1], dtype=np.float32)[a['turn_action_category'][ends]]
+        decision = held.numpy('turn_actor_decision')[prior, roots[:, 0, None]]
+        category = held.numpy('turn_action_category')
+        affinity = np.array(held.numpy('affinity')[decision.clip(0)], np.float32)
+        affinity += np.eye(affinity.shape[-1], dtype=np.float32)[category[decision.clip(0)]]
+        affinity[(decision < 0) | ~valid] = 0
+        global_affinity = np.array(held.numpy('global_affinity')[ends], np.float32)
+        global_affinity += np.eye(affinity.shape[-1], dtype=np.float32)[category[ends]]
         global_affinity[~valid] = 0
-        b.update(end_affinity=hold(affinity), end_global_affinity=hold(global_affinity))
+        b.update(end_affinity=affinity, end_global_affinity=global_affinity)
 
 
-def temporal_edges(b, a, lo, hi, device, registry, hold):
+def temporal_edges(b, graph, held, lo, hi, registry):
     temporal, context = registry.code('temporal'), registry.marker('turn_context')
     nodes = np.arange(lo, hi)
-    query = a['step'][nodes]
-    membership = a['turn_membership'][query]
+    step, entity = held.numpy('step'), held.numpy('entity')
+    query = step[nodes]
+    membership = held.numpy('turn_membership')[query]
     prior = membership[:, None] - np.arange(1, b['end_steps'].shape[1] + 1)
     valid = prior >= 0
-    observed = a['turn_observations'][prior.clip(0), a['entity'][nodes, None]]
+    observed = held.numpy('turn_observations')[prior.clip(0), entity[nodes, None]]
     valid &= observed >= 0
-    valid &= a['turn_ends'][prior.clip(0)] >= b['start']
+    valid &= held.numpy('turn_ends')[prior.clip(0)] >= b['start']
     source = observed[valid]
     destination = np.broadcast_to(nodes[:, None], observed.shape)[valid]
     ghosts = np.unique(source[source < lo])
     if len(ghosts):
-        count = len(b['x'])
-        b['x'] = torch.cat((b['x'], tensor(a['x'][ghosts], device, torch.float32)))
-        b['kind'] = torch.cat((b['kind'], tensor(a['entity_kind'][a['entity'][ghosts]], device, torch.long)))
-        b['entity'] = torch.cat((b['entity'], tensor(a['entity'][ghosts], device, torch.long)))
-        b['step'] = torch.cat((b['step'], tensor(a['step'][ghosts] - b['start'], device, torch.long)))
-        b['align'] = torch.where(b['align'] == count, len(b['x']), b['align'])
-        b['observations'] = len(b['x'])
+        count = b['observations']
+        b['x'] = joined([b['x'], features(graph, (len(ghosts),), ('x', ghosts, None))])
+        b['kind'] = joined([b['kind'], gathered(graph, 'entity_kind', entity[ghosts])])
+        b['entity'] = np.concatenate((b['entity'], entity[ghosts].astype(np.int64)))
+        b['step'] = np.concatenate((b['step'], (step[ghosts] - b['start']).astype(np.int64)))
+        b['align'] = np.where(b['align'] == count, count + len(ghosts), b['align'])
+        b['observations'] = count + len(ghosts)
     source_local = np.where(source >= lo, source - lo, hi - lo + np.searchsorted(ghosts, source))
     extra = np.stack((source_local, destination - lo))
-    original = b['temporal_edges'].cpu().numpy()
-    relation = b['temporal_relation'].cpu().numpy()
-    pairs = {tuple(edge): int(kind) for edge, kind in zip(original.T.tolist(), relation)}
+    pairs = {tuple(edge): int(kind) for edge, kind in zip(b['temporal_edges'].T.tolist(), b['temporal_relation'])}
     for edge in extra.T.tolist():
         pairs.setdefault(tuple(edge), context)
         if pairs[tuple(edge)] == temporal:
             pairs[tuple(edge)] = context
     edges = np.asarray(list(pairs), np.int64).reshape(-1, 2)
     original_ids = np.r_[np.arange(lo, hi), ghosts]
-    steps = a['step'][original_ids]
-    turns = a['turn'][original_ids]
-    b.update(temporal_edges=hold(edges.T, torch.long),
-        temporal_relation=hold(np.asarray(list(pairs.values())), torch.long),
-        temporal_gap=hold(steps[edges[:, 1]] - steps[edges[:, 0]], torch.float32),
-        temporal_turn_gap=hold(turns[edges[:, 1]] - turns[edges[:, 0]], torch.float32))
+    steps = step[original_ids]
+    turns = held.numpy('turn')[original_ids]
+    b.update(temporal_edges=array(edges.T, torch.long),
+        temporal_relation=array(np.asarray(list(pairs.values())), torch.long),
+        temporal_gap=array(steps[edges[:, 1]] - steps[edges[:, 0]], torch.float32),
+        temporal_turn_gap=array(turns[edges[:, 1]] - turns[edges[:, 0]], torch.float32))
 
 
-def mixed_edges(b, a, start, stop, device, features):
+def mixed_edges(b, graph):
     mixed = b['mixed']
     mask = b['end_raw_mask'].reshape(-1)
-    raw = b['end_raw'].reshape(-1, features)[mask]
-    source = torch.arange(len(raw), device=device) + len(mixed['x'])
-    destination = mixed['query'][:, None, None].expand(-1, 3, b['end_steps'].shape[1]).reshape(-1)[mask]
+    chosen = b['end_raw'].segments[0][2][0][1].reshape(-1)[mask]
+    source = np.arange(len(chosen)) + length(mixed['x'])
+    destination = np.broadcast_to(mixed['query'][:, None, None], b['end_raw_mask'].shape).reshape(-1)[mask]
     gaps = b['end_token_gaps'].reshape(-1, 3)[mask]
-    features = raw.new_zeros(len(raw), 16)
-    features[:, 12:14] = 1
-    features[:, 14:16] = gaps[:, :2].log1p()
-    mixed['x'] = torch.cat((mixed['x'], raw))
-    mixed['kind'] = torch.cat((mixed['kind'], torch.zeros(len(raw), dtype=torch.long, device=device)))
-    mixed['edge_index'] = torch.cat((mixed['edge_index'], torch.stack((source, destination))), 1)
-    mixed['edge'] = torch.cat((mixed['edge'], features))
+    feature = np.zeros((len(chosen), 16), np.float32)
+    feature[:, 12:14] = 1
+    feature[:, 14:16] = np.log1p(gaps[:, :2])
+    mixed['x'] = joined([mixed['x'], features(graph, (len(chosen),), ('x', chosen, 1.0))])
+    mixed['kind'] = np.concatenate((mixed['kind'], np.zeros(len(chosen), np.int64)))
+    mixed['edge_index'] = np.concatenate((mixed['edge_index'], np.stack((source, destination))), 1)
+    mixed['edge'] = np.concatenate((mixed['edge'], feature))
 
 
-def history_tokens(b, a, held, first, last, start, cfg, device, registry, hold):
+def history_tokens(b, graph, held, first, last, start, cfg, registry):
     n, depth = last - first, lookback(cfg)
     if cfg['model']['view'] == 'tree':
-        roots = np.stack((a['actor'][first:last], a['subject'][first:last]), 1)
+        roots = np.stack((held.numpy('actor')[first:last], held.numpy('subject')[first:last]), 1)
         roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1).copy()
-        ends = b['end_steps'].cpu().numpy() + start
+        ends = b['end_steps'] + start
         cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1).copy()
-        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['model']['tree/neighbors'], cfg['model']['tree/depth'], device, registry, cfg['graph'], SEED, hold)
+        b['end_tree'] = tree(graph, held, roots, cutoffs, start * 2, cfg['model']['tree/neighbors'], cfg['model']['tree/depth'], registry, cfg['graph'], SEED)
         return
     original = b['history_mask'].shape[-1]
     valid = b['end_raw_mask'][:, :2]
     gaps = b['end_token_gaps'][:, :2]
-    b['history_x'] = torch.cat((b['history_x'], b['end_raw'][:, :2]), 2)
-    b['history_mask'] = torch.cat((b['history_mask'], valid), 2)
-    b['history_gap'] = torch.cat((b['history_gap'], gaps[..., 0] * 2 + 1), 2)
-    end_time = b['history_x'].new_zeros(n, 2, original + depth, 3)
+    raw_index = b['end_raw'].segments[0][2][0][1][:, :2]
+    (x_key, x_index, x_weight), (q_key, q_index, q_weight) = b['history_x'].segments[0][2]
+    pieces = [(x_key, np.concatenate((x_index, raw_index), 2), np.concatenate((x_weight, np.ones(raw_index.shape, np.float32)), 2)),
+              (q_key, np.concatenate((q_index, np.full(raw_index.shape, -1, np.int64)), 2), q_weight)]
+    b['history_mask'] = np.concatenate((b['history_mask'], valid), 2)
+    b['history_gap'] = np.concatenate((b['history_gap'], gaps[..., 0] * 2 + 1), 2)
+    end_time = np.zeros((n, 2, original + depth, 3), np.float32)
     end_time[:, :, original:] = gaps
     b['history_end_time'] = end_time
-    b['history_turn_kind'] = torch.cat((torch.zeros(n, 2, original, dtype=torch.long, device=device),
-        torch.ones(n, 2, depth, dtype=torch.long, device=device)), 2)
+    b['history_turn_kind'] = np.concatenate((np.zeros((n, 2, original), np.int64), np.ones((n, 2, depth), np.int64)), 2)
     for key, width in (('occurrence', 2), ('structure', 12)):
-        b[key] = torch.cat((b[key], b[key].new_zeros(n, 2, depth, width)), 2)
-    order = b['history_gap'].masked_fill(~b['history_mask'], torch.inf).argsort(dim=-1, descending=True, stable=True)
-    for key in ('history_x', 'history_mask', 'history_gap', 'history_end_time', 'history_turn_kind', 'occurrence', 'structure'):
+        b[key] = np.concatenate((b[key], np.zeros((n, 2, depth, width), np.float32)), 2)
+    order = np.argsort(-np.where(b['history_mask'], b['history_gap'], np.inf), axis=-1, kind='stable')
+    for key in ('history_mask', 'history_gap', 'history_end_time', 'history_turn_kind', 'occurrence', 'structure'):
         value = b[key]
-        indices = order if value.ndim == 3 else order[..., None].expand_as(value)
-        b[key] = value.gather(2, indices)
+        b[key] = np.take_along_axis(value, order if value.ndim == 3 else order[..., None], 2)
+    pieces = [(key, np.take_along_axis(index, order, 2), np.take_along_axis(weight, order, 2) if isinstance(weight, np.ndarray) else weight)
+              for key, index, weight in pieces]
+    b['history_x'] = Features([(graph, (n, 2, original + depth), pieces)])
 
 
 def capture_schedule(b):
-    ends = b['end_steps'].cpu().numpy()
+    ends = b['end_steps']
     result = []
     for time_step in range(b['time_steps']):
         query, slot = np.nonzero((ends >= 0) & (ends % b['time_steps'] == time_step))
-        flat = torch.as_tensor(query * ends.shape[1] + slot, device=b['query'].device, dtype=torch.long)
-        roots = torch.stack((b['actor'][query], b['subject'][query]), -1)
-        result.append((flat, roots))
+        result.append(((query * ends.shape[1] + slot).astype(np.int64), np.stack((b['actor'][query], b['subject'][query]), -1)))
     b['end_capture'] = result

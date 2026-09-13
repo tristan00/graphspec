@@ -98,6 +98,11 @@ def parse(registry, categories, tables, rows, name):
     facts = {key: np.concatenate(value) for key, value in parts.items()}
     arrangement = np.lexsort((facts['seq'], ~facts['present'], facts['step']))
     facts = {key: value[arrangement] for key, value in facts.items()}
+    for relation in registry.attributed:
+        edge = registry.by_name[relation]
+        chosen = facts['present'] & (facts['code'] == edge.code)
+        if not np.isfinite(facts['values'][chosen, :len(edge.attributes)]).all():
+            raise ValueError('graph %s has a non-finite %s attribute on a present fact' % (name, relation))
     for flag, label in ((True, 'present fact'), (False, 'absent fact')):
         use = facts['present'] == flag
         untied(facts['step'][use], facts['seq'][use], label, name)

@@ -8,20 +8,17 @@ from graphspec import spec as specs
 from graph_tuning_infra import compute
 from graph_tuning_infra.files import read_json, write_json
 from graph_tuning_infra.log import configure, emit
-from .data import Bank, pack
+from .batching import pack_batch
+from .data import Bank
 from .model_spec import configuration, describe, groups, samples
 from .models import build
 
 
 def probe(bank, block, cfg, device):
-    from .turn_inputs import capture_schedule
-    from .turns import blocks as turn_blocks, enabled
+    from .turns import blocks as turn_blocks
 
     started = time.perf_counter()
-    context = turn_blocks(bank, [block], cfg)[0]
-    b = pack(bank, context, cfg, device)
-    if enabled(cfg):
-        capture_schedule(b)
+    b = pack_batch(bank, turn_blocks(bank, [block], cfg), cfg, device)
     packed = time.perf_counter()
     net = build(cfg, bank.registry, len(bank.categories)).to(device)
     if device == 'cuda':

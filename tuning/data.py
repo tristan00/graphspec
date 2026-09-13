@@ -10,7 +10,7 @@ from graphspec import spec as specs
 from graphspec.transform import SEED, SOURCE, materialize
 from graphspec import join
 from graphspec.truth import VERSION, Graph
-from graph_tuning_infra.arrays import Bundle, Residents, between
+from graph_tuning_infra.arrays import NUMPY, Bundle, Pending, Residents, between, views
 from graph_tuning_infra.files import ArrayStore, load_arrays, read_json, write_json
 from . import gather
 
@@ -143,8 +143,61 @@ class Bank:
         return result
 
 
-def tensor(value, device, dtype=None):
-    return torch.as_tensor(np.require(value, requirements=('C', 'W')), dtype=dtype, device=device)
+def array(value, dtype=None):
+    result = np.ascontiguousarray(value)
+    if dtype is not None and result.dtype != NUMPY[dtype]:
+        result = result.astype(NUMPY[dtype])
+    return result
+
+
+class Host:
+
+    __slots__ = ('value',)
+
+    def __init__(self, value):
+        self.value = value
+
+
+class Gather:
+
+    __slots__ = ('segments',)
+
+    def __init__(self, segments):
+        self.segments = segments
+
+
+class Features:
+
+    __slots__ = ('segments', 'order')
+
+    def __init__(self, segments, order=None):
+        self.segments, self.order = segments, order
+
+
+def gathered(graph, key, index=None):
+    return Gather([(graph, key, None if index is None else array(index, torch.long))])
+
+
+def features(graph, shape, *pieces):
+    return Features([(graph, tuple(shape), [(key, index if isinstance(index, tuple) else array(index, torch.long), weight) for key, index, weight in pieces])])
+
+
+def features_at(graph, observations):
+    index = array(observations, torch.long)
+    return features(graph, index.shape, ('x', index, 1.0))
+
+
+def length(value):
+    return sum(segment[1][0] for segment in value.segments)
+
+
+def joined(items, axis=0, order=None):
+    first = items[0]
+    if isinstance(first, np.ndarray):
+        return np.concatenate(items, axis)
+    if isinstance(first, Gather):
+        return Gather([segment for item in items for segment in item.segments])
+    return Features([segment for item in items for segment in item.segments], order)
 
 
 def sampling(spec):
@@ -152,13 +205,7 @@ def sampling(spec):
     return ORDERS[order], spec['neighbors/decay'] if order == 'decay' else 0.0
 
 
-def features_at(held, observations, device):
-    index = tensor(observations, device, torch.long)
-    known = index >= 0
-    return torch.where(known[..., None], held.tensor('x')[index.clamp_min(0)].float(), 0.0)
-
-
-def tree(held, entities, cutoffs, floor, count, depth, device, registry, spec, stream, hold):
+def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, stream):
     started = time.perf_counter()
     mode, decay = sampling(spec)
     events, ticks = held.numpy('events'), held.column('events', 2)
@@ -173,16 +220,16 @@ def tree(held, entities, cutoffs, floor, count, depth, device, registry, spec, s
 
     def node(members, moments):
         observations = gather.latest(observation_ids, observation_offsets, step, members, moments)
-        return dict(x=features_at(held, observations, device), kind=held.tensor('entity_kind')[tensor(members, device, torch.long)])
+        return dict(x=features_at(graph, observations), kind=gathered(graph, 'entity_kind', members))
 
     result = node(entities, cutoffs)
     for entities, cutoffs, mask, gaps, relation in reversed(levels):
-        result = dict(node(entities, cutoffs), child=result, mask=hold(mask), gap=hold(gaps), relation=hold(relation))
+        result = dict(node(entities, cutoffs), child=result, mask=array(mask), gap=array(gaps), relation=array(relation))
     LOG.debug('tree exit roots=%d depth=%d count=%d seconds=%.4f', len(levels[0][0]) if levels else len(entities), depth, count, time.perf_counter() - started)
     return result
 
 
-def history_inputs(held, first, last, start, count, device, spec, stream, include_structure, selected, hold):
+def history_inputs(graph, held, first, last, start, count, spec, stream, include_structure, selected):
     started = time.perf_counter()
     mode, decay = sampling(spec)
     chosen = np.ones(last - first, bool) if selected is None else np.asarray(selected, bool)
@@ -191,31 +238,26 @@ def history_inputs(held, first, last, start, count, device, spec, stream, includ
                                             held.numpy('actor')[first:last].astype(np.int64), held.numpy('subject')[first:last].astype(np.int64),
                                             held.numpy('query_step')[first:last].astype(np.int64), start, count, mode, decay, stream, NEIGHBOURS,
                                             include_structure, chosen)
-    raw = features_at(held, observed, device)
-    picked = tensor(interaction, device)
-    raw[picked] = (raw[picked] + held.tensor('query')[tensor(query_tick, device, torch.long)[picked]].float()) / 2
     occurrence = np.zeros((last - first, 2, count, 2), np.float32)
     for side in range(2):
         for other in range(2):
             occurrence[:, side, :, other] = ((ids[:, side, :, None] == ids[:, other, None, :]) & mask[:, side, :, None] & mask[:, other, None, :]).sum(-1)
-    result = dict(history_x=raw)
-    result.update({name: hold(value) for name, value in dict(history_mask=mask, history_gap=gap, history_ids=ids, occurrence=occurrence,
+    weight = np.where(interaction, np.float32(0.5), np.float32(1.0))
+    result = dict(history_x=features(graph, observed.shape, ('x', observed, weight), ('query', np.where(interaction, query_tick, -1), 0.5)))
+    result.update({name: array(value) for name, value in dict(history_mask=mask, history_gap=gap, history_ids=ids, occurrence=occurrence,
         structure=structural, common_stats=common_stats, common_ids=common_ids, common_frequency=common_frequency,
         pair_gap=pair_gaps, pair_mask=pair_mask).items()})
     LOG.debug('history exit rows=%d count=%d structure=%s seconds=%.4f', last - first, count, include_structure, time.perf_counter() - started)
     return result
 
 
-def pack(bank, block, cfg, device):
+def recipe(bank, block, cfg):
     from .model_spec import blocks as model_blocks, neighbors
     from .turns import enabled, lookback
 
     started = time.perf_counter()
     graph, start, stop, target_start, partition, row_lo, row_hi = block
-    a = bank.arrays(graph, cfg)
-    held = bank.resident(graph, cfg, device)
-    bundle = Bundle(device)
-    hold = bundle.hold
+    held = bank.resident(graph, cfg, 'cpu')
     registry, spec, stream = bank.registry, cfg['graph'], SEED
     node = registry.extras['level'] == 'node'
     blocks = model_blocks(cfg['model'])
@@ -223,7 +265,7 @@ def pack(bank, block, cfg, device):
     n = stop - start
     entity = held.numpy('entity')[lo:hi]
     step = held.numpy('step')[lo:hi] - start
-    size = len(a['entity_kind'])
+    size = len(held.numpy('entity_kind'))
     query_steps = held.numpy('query_step')
     first, last = (row_lo, row_hi) if node else between(query_steps, start, stop)
     m = last - first
@@ -235,65 +277,63 @@ def pack(bank, block, cfg, device):
     local = moment - start
     bounds = np.searchsorted(local, np.arange(n + 1))
     query_context = held.numpy('query_context')[first:last]
-    features = torch.zeros(m, registry.features, device=device) if node else held.tensor('query')[first:last].float()
     actors, subjects = held.numpy('actor')[first:last], held.numpy('subject')[first:last]
     b = dict(graph=graph, start=start, stop=stop, frames=n, time_steps=n, batch_size=1, predictions=m, observations=hi - lo,
-        graphs=[graph], entity_sizes=[size], entity_batch=hold(np.zeros(size, np.int64)),
-        query_steps=hold(local, torch.long), query_frames=hold(local, torch.long),
-        frame_queries=[hold(np.arange(bounds[t], bounds[t + 1], dtype=np.int64)) for t in range(n)],
-        entities=size, selected=hold(selected),
-        rows=rows[selected], target=hold(bank.targets[rows[selected]]),
-        query=features, context=held.tensor('x')[tensor(query_context, device, torch.long)].float(),
-        actor=hold(actors, torch.long), subject=hold(subjects, torch.long),
-        context_index=hold(query_context - lo, torch.long),
-        entity_kind=held.tensor('entity_kind'),
-        signal=hold(held.numpy('signals')[first:last]), affinity=hold(held.numpy('affinity')[first:last]),
-        global_affinity=hold(held.numpy('global_affinity')[first:last]))
+        graphs=[graph], entity_sizes=[size], entity_batch=np.zeros(size, np.int64),
+        query_steps=array(local, torch.long), query_frames=array(local, torch.long),
+        frame_queries=[np.arange(bounds[t], bounds[t + 1], dtype=np.int64) for t in range(n)],
+        entities=size, selected=array(selected),
+        rows=Host(rows[selected]), target=array(bank.targets[rows[selected]]),
+        query=features(graph, (m,)) if node else features(graph, (m,), ('query', (first, last), None)),
+        context=features(graph, query_context.shape, ('x', query_context, None)),
+        actor=array(actors, torch.long), subject=array(subjects, torch.long),
+        context_index=array(query_context - lo, torch.long),
+        entity_kind=gathered(graph, 'entity_kind'),
+        signal=array(held.numpy('signals')[first:last]), affinity=array(held.numpy('affinity')[first:last]),
+        global_affinity=array(held.numpy('global_affinity')[first:last]))
     if enabled(cfg):
         from .turn_inputs import add
 
-        add(b, a, first, last, start, cfg, hold)
-        b = bundle.flush(b)
+        add(b, graph, held, first, last, start, cfg)
     if 'snapshot' in blocks:
-        entity_index, step_index = tensor(entity, device, torch.long), tensor(step, device, torch.long)
-        align = torch.full((n, size), hi - lo, dtype=torch.long, device=device)
-        align[step_index, entity_index] = torch.arange(hi - lo, device=device)
-        b.update(x=held.tensor('x')[lo:hi].float(), kind=held.tensor('entity_kind')[entity_index], entity=entity_index, step=step_index, align=align,
-                 present=align < hi - lo)
+        align = np.full((n, size), hi - lo, np.int64)
+        align[step, entity] = np.arange(hi - lo)
+        b.update(x=features(graph, (hi - lo,), ('x', (lo, hi), None)), kind=gathered(graph, 'entity_kind', entity), entity=array(entity, torch.long),
+                 step=array(step, torch.long), align=align, present=align < hi - lo)
         if registry.extras['queries']:
             left, right = between(held.column('events', 2), start * 2, stop * 2)
             choices = held.numpy('events')[left:right]
             choices = choices[choices[:, 3] == 2]
-            b.update(decision_query=held.tensor('query')[start:stop].float(), decision_context=hold(choices[:, 4:6] - lo, torch.long))
+            b.update(decision_query=features(graph, (n,), ('query', (start, stop), None)), decision_context=array(choices[:, 4:6] - lo, torch.long))
         else:
-            b.update(decision_query=torch.zeros(n, registry.features, device=device), decision_context=hold(np.full((n, 2), -1, np.int64)))
+            b.update(decision_query=features(graph, (n,)), decision_context=np.full((n, 2), -1, np.int64))
         spatial_steps = held.numpy('spatial_step')
         first_edge, last_edge = between(spatial_steps, start, stop)
         spatial = held.numpy('spatial')[first_edge:last_edge]
         edge_bounds = np.searchsorted(spatial_steps[first_edge:last_edge], np.arange(start, stop + 1, dtype=spatial_steps.dtype))
         attribute_rows = held.numpy('spatial_attribute_row')[first_edge:last_edge]
         edges = spatial[:, :2].T - lo
-        b.update(edges=hold(edges, torch.long), relation=hold(spatial[:, 2], torch.long))
+        b.update(edges=array(edges, torch.long), relation=array(spatial[:, 2], torch.long))
         b['attributes'], b['attribute_edges'] = {}, {}
         by_code = np.argsort(spatial[:, 2], kind='stable')
         sorted_codes = spatial[by_code, 2]
         codes = [list(dict.fromkeys((registry.by_name[name].code, registry.by_name[name].reverse))) for name in registry.attributed]
-        bounds = np.searchsorted(sorted_codes, np.asarray([[code, code + 1] for group in codes for code in group], sorted_codes.dtype).reshape(-1)).reshape(-1, 2)
+        code_bounds = np.searchsorted(sorted_codes, np.asarray([[code, code + 1] for group in codes for code in group], sorted_codes.dtype).reshape(-1)).reshape(-1, 2)
         offset = 0
         for name, group in zip(registry.attributed, codes):
             declared = registry.by_name[name]
-            pieces = [by_code[lo:hi] for lo, hi in bounds[offset:offset + len(group)]]
+            pieces = [by_code[lo_code:hi_code] for lo_code, hi_code in code_bounds[offset:offset + len(group)]]
             offset += len(group)
             chosen = pieces[0] if len(pieces) == 1 else np.sort(np.concatenate(pieces))
             values = held.numpy('attributes_' + name)[attribute_rows[chosen]]
-            b['attributes'][name] = hold(values.reshape(-1, len(declared.attributes)), torch.float32)
-            b['attribute_edges'][name] = hold(chosen, torch.long)
+            b['attributes'][name] = array(values.reshape(-1, len(declared.attributes)), torch.float32)
+            b['attribute_edges'][name] = array(chosen, torch.long)
         directed = registry.canonical[spatial[:, 2]]
         endpoints = entity[edges]
         canonical = entity[edges[:, directed]]
         canonical_bounds = np.r_[0, np.cumsum(directed)][edge_bounds]
-        b['frame_edges'] = [hold(endpoints[:, edge_bounds[t]:edge_bounds[t + 1]], torch.long) for t in range(n)]
-        b['frame_directed'] = [hold(canonical[:, canonical_bounds[t]:canonical_bounds[t + 1]], torch.long) for t in range(n)]
+        b['frame_edges'] = [array(endpoints[:, edge_bounds[t]:edge_bounds[t + 1]], torch.long) for t in range(n)]
+        b['frame_directed'] = [array(canonical[:, canonical_bounds[t]:canonical_bounds[t + 1]], torch.long) for t in range(n)]
         if 'lifted' in blocks:
             left, right = between(held.column('coupling', 1), lo, hi)
             coupled = held.numpy('coupling')[left:right]
@@ -303,15 +343,14 @@ def pack(bank, block, cfg, device):
             extra = extra[extra[:, 0] >= lo]
             boundary = extra[:, :2] - lo
             turn = held.numpy('turn')
-            b.update(temporal_edges=hold(np.concatenate((coupled, boundary)).T, torch.long),
-                temporal_relation=hold(np.r_[np.full(len(coupled), registry.code('temporal')), extra[:, 2]], torch.long),
-                temporal_gap=hold(np.r_[step[coupled[:, 1]] - step[coupled[:, 0]], step[boundary[:, 1]] - step[boundary[:, 0]]], torch.float32),
-                temporal_turn_gap=hold(np.r_[turn[lo + coupled[:, 1]] - turn[lo + coupled[:, 0]], extra[:, 3]], torch.float32))
+            b.update(temporal_edges=array(np.concatenate((coupled, boundary)).T, torch.long),
+                temporal_relation=array(np.r_[np.full(len(coupled), registry.code('temporal')), extra[:, 2]], torch.long),
+                temporal_gap=array(np.r_[step[coupled[:, 1]] - step[coupled[:, 0]], step[boundary[:, 1]] - step[boundary[:, 0]]], torch.float32),
+                temporal_turn_gap=array(np.r_[turn[lo + coupled[:, 1]] - turn[lo + coupled[:, 0]], extra[:, 3]], torch.float32))
             if enabled(cfg):
                 from .turn_inputs import temporal_edges
 
-                b = bundle.flush(b)
-                temporal_edges(b, a, lo, hi, device, registry, hold)
+                temporal_edges(b, graph, held, lo, hi, registry)
     if 'mixed' in blocks:
         mixed_ticks = held.numpy('mixed_tick')
         left, right = between(mixed_ticks, start * 2, stop * 2)
@@ -325,18 +364,16 @@ def pack(bank, block, cfg, device):
         extra = np.column_stack((sources, np.repeat(qi, np.diff(offsets)), np.full(len(sources), 2048))).astype(np.int64)
         edge = np.concatenate((np.column_stack((mixed_edges[:, :2] - left, mixed_edges[:, 2])), extra))
         all_ticks = np.r_[ticks, moment * 2]
-        edge_index = hold(edge[:, :2].T, torch.long)
-        feature = torch.zeros((len(edge), 16), device=device)
-        feature[:, :13] = ((tensor(edge[:, 2], device, torch.long)[:, None] & (1 << torch.arange(13, device=device))) != 0).float()
+        feature = np.zeros((len(edge), 16), np.float32)
+        feature[:, :13] = (edge[:, 2, None] & (1 << np.arange(13))) != 0
         feature[:, 13] = 1
-        feature[:, 14] = tensor(np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2), device, torch.float32)
-        b['mixed'] = dict(x=torch.cat((held.tensor('mixed_x')[left:right].float(), features)), kind=hold(mk),
-                          edge_index=edge_index, edge=feature, query=hold(qi, torch.long))
+        feature[:, 14] = np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2)
+        b['mixed'] = dict(x=joined([features(graph, (right - left,), ('mixed_x', (left, right), None)), b['query']]), kind=mk,
+                          edge_index=array(edge[:, :2].T, torch.long), edge=feature, query=array(qi, torch.long))
         if enabled(cfg):
             from .turn_inputs import mixed_edges as extend_mixed
 
-            b = bundle.flush(b)
-            extend_mixed(b, a, start, stop, device, registry.features)
+            extend_mixed(b, graph)
     if 'events' in blocks:
         left, right = between(held.column('events', 2), start * 2, stop * 2)
         events = held.numpy('events')[left:right]
@@ -345,45 +382,44 @@ def pack(bank, block, cfg, device):
             position = np.full(right - left, -1, np.int64)
             position[members] = np.arange(len(members))
             events = events[members]
-        endpoints = tensor(events[:, 4:6], device, torch.long)
-        ex = (held.tensor('x')[endpoints[:, 0]].float() + held.tensor('x')[endpoints[:, 1]].float()) / 2
         interaction = events[:, 3] == 2
-        ex[tensor(interaction, device)] = held.tensor('query')[tensor(events[interaction, 2] // 2, device, torch.long)].float()
+        endpoints = np.where(interaction[:, None], -1, events[:, 4:6])
         initial = gather.latest(held.numpy('observation_ids'), held.numpy('observation_offsets'), held.numpy('step'), np.arange(size), np.full(size, start * 2, np.int64))
         starts = np.flatnonzero(np.diff(events[:, 2], prepend=-1))
-        b.update(events=tensor(events, device, torch.long), event_x=ex, initial=features_at(held, initial, device),
+        b.update(events=array(events, torch.long), initial=features_at(graph, initial),
+            event_x=features(graph, (len(events),), ('x', endpoints[:, 0], 0.5), ('x', endpoints[:, 1], 0.5), ('query', np.where(interaction, events[:, 2] // 2, -1), 1.0)),
             event_groups=[(int(events[s, 2]), int(s), int(e)) for s, e in zip(starts, np.append(starts[1:], len(events)))])
         if 'dag' in blocks:
             low, high = between(held.column('event_dag', 1), left, right)
-            linked = np.array(a['event_dag'][low:high])
+            linked = held.numpy('event_dag')[low:high]
             linked = position[linked[linked[:, 0] >= left] - left]
             low, high = between(held.column('event_boundaries', 1), left, right)
             extra = held.numpy('event_boundaries')[low:high]
             extra = extra[extra[:, 0] >= left]
             boundary = position[extra[:, :2] - left]
-            dag = tensor(np.concatenate((linked, boundary)).T, device, torch.long)
-            b.update(dag_edges=dag, dag_relation=torch.cat((b['events'][dag[1, :len(linked)], 3], tensor(extra[:, 2], device, torch.long))),
-                dag_gap=(b['events'][dag[1], 2] - b['events'][dag[0], 2]).float())
+            dag = np.concatenate((linked, boundary)).T.astype(np.int64)
+            b.update(dag_edges=array(dag), dag_relation=array(np.concatenate((events[dag[1, :len(linked)], 3], extra[:, 2])), torch.long),
+                dag_gap=array(events[dag[1], 2] - events[dag[0], 2], torch.float32))
             positions = np.r_[np.arange(len(events)), np.arange(len(events))]
             reached, offsets = gather.reachable(np.r_[events[:, 0], events[:, 1]].astype(np.int64), positions, events[:, 2].astype(np.int64),
                                                 np.stack((actors, subjects), 1).astype(np.int64), moment * 2)
-            b['dag_query_edges'] = hold(np.stack((reached, np.repeat(np.arange(m), np.diff(offsets)))), torch.long)
+            b['dag_query_edges'] = array(np.stack((reached, np.repeat(np.arange(m), np.diff(offsets)))), torch.long)
     if 'tree' in blocks:
         roots = np.stack((actors, subjects), 1).reshape(-1).astype(np.int64)
         cutoffs = np.repeat(moment * 2 + 1, 2)
-        b['tree'] = tree(held, roots, cutoffs, start * 2, neighbors(cfg['model']), cfg['model']['tree/depth'], device, registry, spec, stream, hold)
+        b['tree'] = tree(graph, held, roots, cutoffs, start * 2, neighbors(cfg['model']), cfg['model']['tree/depth'], registry, spec, stream)
     if 'history' in blocks:
-        b.update(history_inputs(held, first, last, start, neighbors(cfg['model']), device, spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None, hold))
+        b.update(history_inputs(graph, held, first, last, start, neighbors(cfg['model']), spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None))
     if enabled(cfg) and 'turn_history' in blocks:
         from .turn_inputs import history_tokens
 
-        b = bundle.flush(b)
-        history_tokens(b, a, held, first, last, start, cfg, device, registry, hold)
+        history_tokens(b, graph, held, first, last, start, cfg, registry)
     if 'walks' in blocks:
         walk_count, hops = cfg['model']['walks/count'], cfg['model']['walks/hops']
-        if walk_count > a['walks'].shape[2] or hops > a['walks'].shape[3]:
+        stored = held.numpy('walks')
+        if walk_count > stored.shape[2] or hops > stored.shape[3]:
             raise ValueError('requested walks exceed the walks stored for this graph variant')
-        walks = held.numpy('walks')[first:last, :, :walk_count, :hops]
+        walks = stored[first:last, :, :walk_count, :hops]
         if enabled(cfg):
             extra = held.numpy('turn_walks')[first:last, :, :lookback(cfg), :walk_count, :hops]
             extra = extra.reshape(m, 2, lookback(cfg) * walk_count, hops)
@@ -391,9 +427,9 @@ def pack(bank, block, cfg, device):
             kinds = np.zeros(walks.shape, np.int64)
             kinds[:, :, walk_count:] = 1
             gaps = np.zeros(walks.shape + (3,), np.float32)
-            past = b['end_token_gaps'][:, :2].cpu().numpy()
+            past = b['end_token_gaps'][:, :2]
             gaps[:, :, walk_count:] = np.repeat(past, walk_count, axis=2)[:, :, :, None, :]
-            b.update(walk_turn_kind=hold(kinds, torch.long), walk_end_time=hold(gaps))
+            b.update(walk_turn_kind=kinds, walk_end_time=gaps)
         known = walks >= 0
         known &= held.column('events', 2)[np.maximum(walks, 0)] >= start * 2
         events = held.numpy('events')[np.maximum(walks, 0)]
@@ -405,11 +441,84 @@ def pack(bank, block, cfg, device):
             nodes[:, :, :, hop] = np.where(forward, events[:, :, :, hop, 1], events[:, :, :, hop, 0])
             observations[:, :, :, hop] = np.where(forward, events[:, :, :, hop, 5], events[:, :, :, hop, 4])
             current = nodes[:, :, :, hop]
-        known_index = tensor(known, device)
-        walk_features = torch.where(known_index[..., None], held.tensor('x')[tensor(observations, device, torch.long)].float(), 0.0)
         gap = moment[:, None, None, None] * 2 + 1 - events[..., 2]
-        b.update(walk_x=walk_features, walk_mask=known_index, walk_gap=hold(gap, torch.float32),
-                 walk_identity=hold(gather.walk_identities(nodes, known)))
-    b = bundle.flush(b)
-    LOG.debug('pack exit graph=%d start=%d stop=%d predictions=%d seconds=%.4f', graph, start, stop, m, time.perf_counter() - started)
+        b.update(walk_x=features(graph, known.shape, ('x', np.where(known, observations, -1), 1.0)), walk_mask=array(known), walk_gap=array(gap, torch.float32),
+                 walk_identity=array(gather.walk_identities(nodes, known)))
+    LOG.debug('recipe exit graph=%d start=%d stop=%d predictions=%d seconds=%.4f', graph, start, stop, m, time.perf_counter() - started)
     return b
+
+
+def prepare(value, bundle):
+    if isinstance(value, np.ndarray):
+        return bundle.hold(value)
+    if isinstance(value, Host):
+        return value
+    if isinstance(value, Gather):
+        return Gather([(graph, key, None if index is None else bundle.hold(index)) for graph, key, index in value.segments])
+    if isinstance(value, Features):
+        segments = [(graph, shape, [(key, index if isinstance(index, tuple) else bundle.hold(index), bundle.hold(weight) if isinstance(weight, np.ndarray) else weight)
+                                    for key, index, weight in pieces]) for graph, shape, pieces in value.segments]
+        return Features(segments, None if value.order is None else bundle.hold(value.order))
+    if isinstance(value, dict):
+        return {key: prepare(item, bundle) for key, item in value.items()}
+    if isinstance(value, list):
+        return [prepare(item, bundle) for item in value]
+    if isinstance(value, tuple):
+        return tuple(prepare(item, bundle) for item in value)
+    return value
+
+
+def resolve(value, bank, cfg, tensors, device):
+    if isinstance(value, Pending):
+        return tensors[value.index]
+    if isinstance(value, Host):
+        return value.value
+    if isinstance(value, Gather):
+        parts = []
+        for graph, key, index in value.segments:
+            source = bank.resident(graph, cfg, device).tensor(key)
+            parts.append(source if index is None else source[tensors[index.index]])
+        return parts[0] if len(parts) == 1 else torch.cat(parts)
+    if isinstance(value, Features):
+        parts = []
+        for graph, shape, pieces in value.segments:
+            held = bank.resident(graph, cfg, device)
+            out = None
+            for key, index, weight in pieces:
+                source = held.tensor(key)
+                if isinstance(index, tuple):
+                    values = source[index[0]:index[1]].float()
+                else:
+                    index = tensors[index.index]
+                    if weight is None:
+                        values = source[index].float()
+                    elif not len(source):
+                        continue
+                    else:
+                        scale = (index >= 0).float() * (tensors[weight.index] if isinstance(weight, Pending) else weight)
+                        values = source[index.clamp_min(0)].float() * scale[..., None]
+                out = values if out is None else out + values
+            parts.append(torch.zeros(shape + (bank.registry.features,), device=device) if out is None else out)
+        result = parts[0] if len(parts) == 1 else torch.cat(parts)
+        return result if value.order is None else result[tensors[value.order.index]]
+    if isinstance(value, dict):
+        return {key: resolve(item, bank, cfg, tensors, device) for key, item in value.items()}
+    if isinstance(value, list):
+        return [resolve(item, bank, cfg, tensors, device) for item in value]
+    if isinstance(value, tuple):
+        return tuple(resolve(item, bank, cfg, tensors, device) for item in value)
+    return value
+
+
+def materialise(bank, cfg, tree, device):
+    started = time.perf_counter()
+    bundle = Bundle(device)
+    prepared = prepare(tree, bundle)
+    buffer, spans = bundle.pack()
+    result = resolve(prepared, bank, cfg, views(torch.as_tensor(buffer, device=device), spans), device)
+    LOG.debug('materialise exit arrays=%d bytes=%d device=%s seconds=%.4f', len(spans), len(buffer), device, time.perf_counter() - started)
+    return result
+
+
+def pack(bank, block, cfg, device):
+    return materialise(bank, cfg, recipe(bank, block, cfg), device)
