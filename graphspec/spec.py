@@ -45,6 +45,8 @@ class Parameter:
             return self.options[int(rng.integers(len(self.options)))]
         if self.kind == 'int':
             return int(rng.integers(self.low, self.high + 1))
+        if self.low == self.high:
+            return float(self.low)
         if self.log:
             return float(math.exp(rng.uniform(math.log(self.low), math.log(self.high))))
         return float(rng.uniform(self.low, self.high))
