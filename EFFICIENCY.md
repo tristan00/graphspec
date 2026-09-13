@@ -70,3 +70,27 @@ Before a worker starts, the runner materialises the trial's variant for every gr
 **Verification**
 
 `tests/`: 24 tests in about 14 s, covering the spec space, every operator, the causal prefix property, seeds, protection, replay, representations, the kernels against numpy references, the bank and packing paths, variant preparation and pruning, the fact budget, and generated databases at all three target levels. `graph_tuning_infra`: 28 tests in 4 s including the boundary test. Two adversarial reviews of the diffs each ran their own equality checks and found issues that were fixed: a pool chunk size that defeated parallel builds, unguarded variant failures, fallbacks and dead code, missing timing logs, a rename race in the array store, ignored flags on resume, residual policy in the logic layer, a generator that produced unbuildable label schedules, and a misleading benchmark case.
+
+**13 September 2026: the Total War bank**
+
+Measured on the same workstation on the 100-campaign Total War bank (10,109 steps, 18.5M observations, 56.5M facts, 602 relation codes, 40 attributed relations, 128 features), history 16, 8,916 training windows in 272 batches per epoch. Before is commit `4358652`; after is `HEAD`. Equality was checked as before: the 69 preset model configurations, on the synthetic dev bank and a ten-campaign Total War bank, with and without turn context, pack bit-identical tensors and reproduce the reference forward outputs and gradients; the two antisymmetric memory presets differ in gradient by the same amount they differ from themselves between two runs on identical code.
+
+**Where the time went**
+
+Per batch of about 30 windows in steady state, before: the snapshot view packed in 1,320 ms and computed in 480 ms; the event graph packed in 57 ms and computed in 21 ms; the mixed view packed in 161 ms. Three causes. The attribute gather searched a sorted relation column with a query of another dtype, so numpy cast the whole column on each of the 80 calls per window: 27 of the snapshot view's 48 ms per window. The relational layer looped over the relation kinds present, copying the full edge-message tensor out of place at every kind and again for every attributed relation: roughly 20 GB of memory traffic per layer per batch. And packing ran on one core between GPU steps, re-running every epoch.
+
+**What changed**
+
+- The attribute gather searches once for all relation codes in the column's own dtype (`tuning/data.py`).
+- The relational layer gathers the source rows once in relation order, splits them per kind, multiplies each slice by its kind's matrix, and accumulates into a node buffer with one `index_add_`; nothing is copied per kind (`tuning/layers.py`). The align gather uses `index_select` so its backward is an index-add rather than a sort.
+- Packing produces a recipe: numpy arrays plus markers for the device work. `Features` names a resident matrix, row indices and per-row weights, so a masked gather, the mean of two rows, or the average of an observation and a query resolve as one device expression; `Frames` names the per-step edge ranges and the device slices the batch's edge table instead of receiving sixteen restated copies; `MixedEdges` sends a code and a gap per edge instead of sixteen floats. `recipe_batch` concatenates windows in numpy; `materialise` bundles every array of the batch into one buffer and resolves the markers on the device (`tuning/data.py`, `tuning/batching.py`, `tuning/turn_inputs.py`).
+- `packing.Packer` runs the recipes in `--workers` spawned processes that share the machine's cores between their numba kernels and hand each bundled batch to the training process through shared memory; the training process copies it through pinned memory and resolves it. The bundle stores every int64 array whose values fit as int32 and widens it on the device (`graph_tuning_infra.arrays`).
+- The trial budget is the runner's clock from parameter selection to the pruning after the worker exits, with the variant build inside it; no extension (`tuning/run.py`, `tuning/budget.py`).
+
+**Results**
+
+Second-epoch seconds per view (two-epoch fits, 8 packing processes): signal 2, walks 4, sequence 6, tree 7, event graph 9, projection 12, affinity 16, mixed 26, memory 33, snapshot 53. The runner's measurement of the same views before this work, on the first build of the bank: sequence 36, event graph 120, memory 254, snapshot about 560. The snapshot batch that computed in 480 ms computes in 92 ms; its main-process cost per batch is now 137 ms of transfer for 182 MB and 58 ms of device gathers, against a worker wait under 20 ms. The bundle of a snapshot batch fell from 397 MB to 182 MB and of a mixed batch from 231 MB to 49 MB.
+
+**Data**
+
+The first build of the Total War database carried NaN in the `side` attribute of every present `fought_with` fact of nine campaigns; the builder writes only 0 or 1 there and a rebuild from the corpus reproduced neither. `graphspec.truth.parse` now refuses a present fact whose attribute is not finite, so a bank cannot be built from such a database; the search runs on the rebuilt database, verified against the corpus on 2,884 checks.
