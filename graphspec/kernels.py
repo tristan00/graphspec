@@ -403,7 +403,7 @@ def combined(ids, values, groups):
 
 
 @njit(cache=True)
-def boundaries(source, target, ticks, member, turn_of, lookback, window, entities):
+def turn_index(source, target, ticks, member, turn_of, entities):
     events = len(ticks)
     stamp = np.full(entities, -1, np.int64)
     turn_count = np.zeros(entities, np.int64)
@@ -446,64 +446,108 @@ def boundaries(source, target, ticks, member, turn_of, lookback, window, entitie
             entries[entry_fill[who]] = row
             entry_fill[who] += 1
             turn_hi[turn_fill[who] - 1] = entry_fill[who]
-    capacity, stored, room = 1024, 0, 512
-    slots = np.zeros(capacity, np.int64)
-    keys_source = np.empty(room, np.int32)
-    keys_target = np.empty(room, np.int32)
-    keys_flag = np.empty(room, np.int32)
-    for who in range(entities):
-        base, count = turn_offset[who], turn_count[who]
-        for index in range(count):
-            destination_lo, destination_hi = turn_lo[base + index], turn_hi[base + index]
-            for lag in range(1, lookback + 1):
-                wanted = turn_value[base + index] - lag
-                low, high = 0, index
-                while low < high:
-                    middle = (low + high) // 2
-                    if turn_value[base + middle] < wanted:
-                        low = middle + 1
-                    else:
-                        high = middle
-                if low >= index or turn_value[base + low] != wanted:
+    return turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset
+
+
+@njit(cache=True)
+def turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, row):
+    lo, hi = entry_offset[who], entry_offset[who + 1]
+    while lo < hi:
+        middle = (lo + hi) // 2
+        if entries[middle] < row:
+            lo = middle + 1
+        else:
+            hi = middle
+    base, count = turn_offset[who], turn_offset[who + 1] - turn_offset[who]
+    low, high = 0, count
+    while low < high:
+        middle = (low + high) // 2
+        if turn_hi[base + middle] <= lo:
+            low = middle + 1
+        else:
+            high = middle
+    return base + low
+
+
+@njit(cache=True)
+def boundary_flag(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, ticks, who, anchor, destination, lookback, window):
+    if ticks[destination] // 2 - ticks[anchor] // 2 >= window:
+        return 0
+    prior = turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, anchor)
+    current = turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, destination)
+    lag = turn_value[current] - turn_value[prior]
+    if lag < 1 or lag > lookback:
+        return 0
+    flag = 0
+    if ticks[anchor] == ticks[entries[turn_lo[prior]]]:
+        flag |= 1
+    if ticks[anchor] == ticks[entries[turn_hi[prior] - 1]]:
+        flag |= 2
+    return flag
+
+
+@njit(cache=True)
+def boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, source, target, ticks, who, lookback, window, out_source, out_target, out_flag, start, write):
+    base, count = turn_offset[who], turn_offset[who + 1] - turn_offset[who]
+    total = 0
+    for index in range(count):
+        destination_lo, destination_hi = turn_lo[base + index], turn_hi[base + index]
+        for lag in range(1, lookback + 1):
+            wanted = turn_value[base + index] - lag
+            low, high = 0, index
+            while low < high:
+                middle = (low + high) // 2
+                if turn_value[base + middle] < wanted:
+                    low = middle + 1
+                else:
+                    high = middle
+            if low >= index or turn_value[base + low] != wanted:
+                continue
+            prior_lo, prior_hi = turn_lo[base + low], turn_hi[base + low]
+            first, last = ticks[entries[prior_lo]], ticks[entries[prior_hi - 1]]
+            for anchor in range(prior_lo, prior_hi):
+                a = entries[anchor]
+                flag = (1 if ticks[a] == first else 0) | (2 if ticks[a] == last else 0)
+                if flag == 0:
                     continue
-                prior_lo, prior_hi = turn_lo[base + low], turn_hi[base + low]
-                for which in range(2):
-                    edge = ticks[entries[prior_lo]] if which == 0 else ticks[entries[prior_hi - 1]]
-                    for anchor in range(prior_lo, prior_hi):
-                        if ticks[entries[anchor]] != edge:
+                other_a = target[a] if source[a] == who else source[a]
+                for destination in range(destination_lo, destination_hi):
+                    b = entries[destination]
+                    if ticks[b] // 2 - ticks[a] // 2 >= window:
+                        continue
+                    other_b = target[b] if source[b] == who else source[b]
+                    merged = flag
+                    if other_a == other_b and other_a != who:
+                        shared = boundary_flag(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, ticks, other_a, a, b, lookback, window)
+                        if other_a < who and shared != 0:
                             continue
-                        for destination in range(destination_lo, destination_hi):
-                            if ticks[entries[destination]] // 2 - ticks[entries[anchor]] // 2 >= window:
-                                continue
-                            a, b = entries[anchor], entries[destination]
-                            slot = np.int64(mix(mix(np.uint64(a)) ^ np.uint64(b)) & np.uint64(capacity - 1))
-                            while True:
-                                held = slots[slot]
-                                if held == 0:
-                                    if stored == room:
-                                        room *= 2
-                                        grown_source = np.empty(room, np.int32)
-                                        grown_target = np.empty(room, np.int32)
-                                        grown_flag = np.empty(room, np.int32)
-                                        grown_source[:stored] = keys_source[:stored]
-                                        grown_target[:stored] = keys_target[:stored]
-                                        grown_flag[:stored] = keys_flag[:stored]
-                                        keys_source, keys_target, keys_flag = grown_source, grown_target, grown_flag
-                                    slots[slot] = stored + 1
-                                    keys_source[stored] = a
-                                    keys_target[stored] = b
-                                    keys_flag[stored] = which + 1
-                                    stored += 1
-                                    break
-                                if keys_source[held - 1] == a and keys_target[held - 1] == b:
-                                    keys_flag[held - 1] |= which + 1
-                                    break
-                                slot = (slot + 1) & (capacity - 1)
-                            if 2 * stored > capacity:
-                                capacity *= 2
-                                slots = np.zeros(capacity, np.int64)
-                                rehash(slots, keys_source, keys_target, stored)
-    return keys_source[:stored], keys_target[:stored], keys_flag[:stored]
+                        merged |= shared
+                    if write:
+                        out_source[start + total] = a
+                        out_target[start + total] = b
+                        out_flag[start + total] = merged
+                    total += 1
+    return total
+
+
+@njit(cache=True, parallel=True)
+def boundaries(source, target, ticks, member, turn_of, lookback, window, entities):
+    turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset = turn_index(source, target, ticks, member, turn_of, entities)
+    counts = np.zeros(entities, np.int64)
+    empty = np.empty(0, np.int32)
+    for who in prange(entities):
+        counts[who] = boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, source, target, ticks, who, lookback, window,
+                                    empty, empty, empty, 0, False)
+    offsets = np.zeros(entities + 1, np.int64)
+    for who in range(entities):
+        offsets[who + 1] = offsets[who] + counts[who]
+    out_source = np.empty(offsets[entities], np.int32)
+    out_target = np.empty(offsets[entities], np.int32)
+    out_flag = np.empty(offsets[entities], np.int32)
+    for who in prange(entities):
+        boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, source, target, ticks, who, lookback, window,
+                      out_source, out_target, out_flag, offsets[who], True)
+    return out_source, out_target, out_flag
 
 
 @njit(cache=True)
