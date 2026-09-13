@@ -167,10 +167,9 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         raise ValueError('holdout predictions do not exactly cover the frozen partition')
     metrics = score(bank.targets[indices].astype(np.float64), values)
     np.savez_compressed(directory / 'predictions.npz', row_index=indices, prediction=values, target=bank.targets[indices])
-    baseline = float(np.mean((bank.targets[indices].astype(np.float64) - bank.split['reward_mean'])**2))
     budget.check()
     result = dict(status='complete', model=digest(cfg['model']), description=model, graph=graph, config=cfg, **metrics,
-        baseline_mse=baseline, seconds=time.perf_counter() - entered, timings=timing,
+        seconds=time.perf_counter() - entered, timings=timing,
         parameters=sum(p.numel() for p in net.parameters()), peak_cuda_bytes=torch.cuda.max_memory_allocated(),
         optimizer_updates=len(losses), epochs=completed_epochs, requested_epochs=epochs,
         epoch_seconds=budget.epoch_seconds, stop_reason='epoch_budget' if completed_epochs < epochs else 'requested_epochs',
@@ -219,49 +218,31 @@ def report(directory):
         result.update(trial=item['directory'], selector=item['selector'], graph=item['graph'], model=item['model'])
         results.append(result)
     completed = [r for r in results if r['status'] == 'complete']
-    baseline = None
-    if planned['baseline']:
-        baseline = read_json(planned['baseline'])
-        if baseline['supervision_sha256'] != planned['supervision_sha256']:
-            raise ValueError('reference baseline belongs to another split')
-        baseline = dict(baseline, trial='fixed_baseline', selector='fixed', graph=None)
-    for result in results:
-        if baseline:
-            result['reference_mse'] = baseline['raw_val_mse']
-            if result['status'] == 'complete':
-                result['mse_minus_reference'] = result['raw_val_mse'] - baseline['raw_val_mse']
-    table = ([baseline] if baseline else []) + results
-    columns = ['trial', 'view', 'description', 'model', 'graph', 'status', 'raw_val_mse', 'val_r2', 'baseline_mse', 'seconds',
+    columns = ['trial', 'view', 'description', 'model', 'graph', 'status', 'raw_val_mse', 'val_r2', 'seconds',
         'parameters', 'peak_cuda_bytes', 'optimizer_updates', 'train_unique_rows', 'holdout_rows',
-        'epochs', 'requested_epochs', 'stopped_early', 'stop_reason', 'budget_extended', 'training_coverage_complete', 'reference_mse', 'mse_minus_reference',
+        'epochs', 'requested_epochs', 'stopped_early', 'stop_reason', 'budget_extended', 'training_coverage_complete',
         'supervision_sha256', 'source_sha256', 'selector', 'config_json']
     rows = []
-    for result in table:
+    for result in results:
         row = {key: result.get(key) for key in columns}
-        reference = result['trial'] == 'fixed_baseline'
-        row.update(view='reference' if reference else result['config']['model']['view'],
-                   description='Reference' if reference else describe(result['config']['model']), config_json=json.dumps(result['config'], sort_keys=True))
+        row.update(view=result['config']['model']['view'], description=describe(result['config']['model']), config_json=json.dumps(result['config'], sort_keys=True))
         rows.append(row)
     write_csv(directory / 'results.csv', columns, rows)
-    write_jsonl(directory / 'results.jsonl', table)
+    write_jsonl(directory / 'results.jsonl', results)
     views = sorted({r['config']['model']['view'] for r in results})
     write_json(directory / 'coverage.json', dict(views={view: sum(r['config']['model']['view'] == view for r in completed) for view in views},
-        completed=len(completed), failed=len(results) - len(completed), planned=len(planned['trials']),
-        baseline_mse=baseline['raw_val_mse'] if baseline else None))
+        completed=len(completed), failed=len(results) - len(completed), planned=len(planned['trials'])))
     selection_text = ('TPE selects each model spec, its training parameters and its graph-transform spec from completed fits; recorded timeouts and crashes enter as failures.'
                       if planned['selector'] == 'tpe' else 'Each trial draws a uniform model spec, training parameters and graph-transform spec.')
     lines = ['**Graph transform and temporal model search**', '',
         'Updated ' + datetime.now(timezone.utc).isoformat() + '.', '',
         '%d completed fits; %d failed or timed out; %d planned so far. %s' % (len(completed), len(results) - len(completed), len(planned['trials']), selection_text), '']
-    if baseline:
-        lines.extend(['Fixed reference baseline: **MSE %.6f**, R² %.4f, %d training rows and %d holdout rows. Lower MSE is better.' % (baseline['raw_val_mse'], baseline['val_r2'], baseline['train_unique_rows'], baseline['holdout_rows']), ''])
-    lines.extend(['| View | Completed fits | Best MSE | Best model | Best graph | Difference from reference |', '|---|---:|---:|---|---|---:|'])
+    lines.extend(['| View | Completed fits | Best MSE | Best R² | Best model | Best graph |', '|---|---:|---:|---:|---|---|'])
     for view in views:
         subset = [r for r in completed if r['config']['model']['view'] == view]
         best = min(subset, key=lambda r: r['raw_val_mse']) if subset else None
-        lines.append('| %s | %d | %s | %s | %s | %s |' % (view, len(subset),
-            '%.6f' % best['raw_val_mse'] if best else 'Pending', describe(best['config']['model']) if best else '—', best['graph'][:10] if best else '—',
-            '%+.6f' % (best['raw_val_mse'] - baseline['raw_val_mse']) if best and baseline else '—'))
+        lines.append('| %s | %d | %s | %s | %s | %s |' % (view, len(subset), '%.6f' % best['raw_val_mse'] if best else 'Pending',
+            '%.4f' % best['val_r2'] if best else '—', describe(best['config']['model']) if best else '—', best['graph'][:10] if best else '—'))
     lines.extend(['', 'All trial configurations, failure records and individual scores: [results.csv](results.csv). Full records: [results.jsonl](results.jsonl).', ''])
     (directory / 'progress.md').write_text('\n'.join(lines), encoding='utf-8')
     emit('report', attempts=len(results), completed=len(completed), seconds=time.perf_counter() - started)
@@ -287,20 +268,16 @@ def run(args):
             raise ValueError('resume requested with a different bank')
         if plan['spec_sha256'] != bank.manifest['spec_sha256']:
             raise ValueError('resume requested under a different graph declaration')
-        if args.baseline and str(Path(args.baseline).resolve()) != plan['baseline']:
-            raise ValueError('resume requested with a different baseline')
         if plan['bank_manifest_sha256'] != sha256_file(Path(args.bank) / 'manifest.json'):
             raise ValueError('resume requested with a rebuilt bank')
         plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30)
     else:
         plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
-            batch_sequences=args.batch_sequences, baseline=str(Path(args.baseline).resolve()) if args.baseline else None,
+            batch_sequences=args.batch_sequences,
             workers=args.workers, variant_bytes=args.variant_gb << 30,
             seconds=args.seconds, train_rows=bank.manifest['train_rows'], holdout_rows=bank.manifest['validation_rows'],
             supervision_sha256=bank.manifest['supervision_sha256'], spec_sha256=bank.manifest['spec_sha256'],
             created=datetime.now(timezone.utc).isoformat())
-    if plan['baseline'] and read_json(plan['baseline'])['supervision_sha256'] != plan['supervision_sha256']:
-        raise ValueError('reference baseline belongs to another split')
     with Lock(directory / 'runner.lock'):
         running = directory / 'running.json'
         if running.exists():
@@ -402,7 +379,6 @@ def main():
     run_parser.add_argument('--seed', type=int, default=20260909)
     run_parser.add_argument('--batch-sequences', type=int, default=64)
     run_parser.add_argument('--continuous', action='store_true')
-    run_parser.add_argument('--baseline')
     run_parser.add_argument('--seconds', type=int, default=600)
     run_parser.add_argument('--resume', action='store_true')
     run_parser.add_argument('--selector', choices=('tpe', 'random'), default='tpe')

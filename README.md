@@ -266,10 +266,8 @@ python -m tuning.run report RUN
   `--seed` the proposal seed.
 - `--workers` (4) builds the trial's variant for every graph in parallel before the worker starts. `--variant-gb` (300)
   is the disk budget for `variants/`; the least recently used variants are removed first.
-- `--baseline result.json` adds a fixed reference score to every report. The file needs `config`,
-  `raw_val_mse`, `val_r2`, `train_unique_rows`, `holdout_rows`, and the bank's `supervision_sha256`.
 - `--resume` continues a run with its planned selector, seed, budget and batch size, and refuses a rebuilt or
-  different bank, declaration or baseline.
+  different bank or declaration.
 
 `python -m dashboard.server --directory RUN --port 8766` serves every attempt at http://127.0.0.1:8766/,
 sorted by validation MSE and refreshed every ten seconds. It only reads run files.

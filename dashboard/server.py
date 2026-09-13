@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import time
 
-from graph_tuning_infra.files import JsonCache, read_json
+from graph_tuning_infra.files import JsonCache
 from graph_tuning_infra.log import emit
 from graph_tuning_infra.processes import command
 from graph_tuning_infra.serve import serve
@@ -24,19 +24,14 @@ class Results:
         plan = self.read(self.directory / 'plan.json')
         if plan is None:
             emit('dashboard_snapshot', attempts=0, seconds=round(time.perf_counter() - started, 4))
-            return dict(updated=datetime.now(timezone.utc).isoformat(), rows=[], complete=0, unscored=0, baseline_mse=None, best_neural_mse=None,
-                        best_neural_model=None, train_rows=0, holdout_rows=0, stop_requested=False, running=None, directory=str(self.directory))
+            return dict(updated=datetime.now(timezone.utc).isoformat(), rows=[], complete=0, unscored=0, best_mse=None, best_r2=None, best_model=None,
+                        planned=0, train_rows=0, holdout_rows=0, stop_requested=False, running=None, directory=str(self.directory))
         running = self.read(self.directory / 'running.json') or {}
         live = False
         if running:
             invocation = command(running['worker_pid'])
             live = 'tuning.run' in invocation and 'worker' in invocation and str((self.directory / running['trial']).resolve()) in invocation
         rows = []
-        baseline = read_json(plan['baseline']) if plan['baseline'] else None
-        if baseline:
-            if baseline['supervision_sha256'] != plan['supervision_sha256']:
-                raise ValueError('Baseline uses a different split')
-            rows.append(self.row('REF', 'Reference', '—', 'Fixed', 'Complete', baseline['config'], {}, baseline))
         for item in plan['trials']:
             trial = self.directory / item['directory']
             logs = sorted(trial.glob('worker_*.log'))
@@ -74,16 +69,12 @@ class Results:
                 rows.append(row)
         rows.sort(key=lambda row: (row['mse'] is None, row['mse'] if row['mse'] is not None else 0, row['id']))
         scored = [row for row in rows if row['mse'] is not None]
-        neural = [row for row in scored if row['mode'] != 'Fixed']
         for rank, row in enumerate(scored, 1):
             row['rank'] = rank
-        for row in rows:
-            row['delta'] = row['mse'] - baseline['raw_val_mse'] if row['mse'] is not None and baseline else None
         output = dict(updated=datetime.now(timezone.utc).isoformat(), rows=rows,
-            complete=len(neural), unscored=sum(row['mse'] is None and row['status'] != 'Running' for row in rows),
-            baseline_mse=baseline['raw_val_mse'] if baseline else None,
-            best_neural_mse=neural[0]['mse'] if neural else None,
-            best_neural_model=neural[0]['model'] if neural else None,
+            complete=len(scored), unscored=sum(row['mse'] is None and row['status'] != 'Running' for row in rows),
+            best_mse=scored[0]['mse'] if scored else None, best_r2=scored[0]['r2'] if scored else None,
+            best_model=scored[0]['model'] if scored else None, planned=len(plan['trials']),
             train_rows=plan['train_rows'], holdout_rows=plan['holdout_rows'],
             stop_requested=(self.directory / 'STOP').exists(),
             running=running if live else None, directory=str(self.directory))
@@ -92,8 +83,8 @@ class Results:
 
     def row(self, identifier, model, graph, mode, status, config, summary, result=None):
         result = result or {}
-        spec = config['model'] if isinstance(config['model'], dict) else {}
-        return dict(id=identifier, model=model, view=spec.get('view', 'reference'), graph=graph, mode=mode, status=status, config=config,
+        spec = config['model']
+        return dict(id=identifier, model=model, view=spec['view'], graph=graph, mode=mode, status=status, config=config,
             model_params=spec, graph_params=summary, training={key: value for key, value in config.items() if key not in ('graph', 'model')},
             mse=result.get('raw_val_mse'), r2=result.get('val_r2'),
             seconds=result.get('seconds'), parameters=result.get('parameters'),

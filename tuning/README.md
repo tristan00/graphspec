@@ -109,7 +109,7 @@ A trial's configuration holds the model spec under `model`, the graph spec under
 | `trial_*/source/` | The `tuning`, `graphspec` and `graph_tuning_infra` sources the worker ran. |
 | `trial_*/result.json`, `predictions.npz`, `checkpoint.pt` | Scores, timings, parameter count, peak GPU memory and row hashes; validation predictions; weights. |
 | `trial_*/failure.json`, `timeout.json`, `fit_progress.json` | Failure records and the budget heartbeat. |
-| `results.csv`, `results.jsonl`, `progress.md`, `coverage.json` | Every attempt with its model description, including failures and the reference baseline; the best score, model and spec digest per view in `progress.md`; completed fits per view in `coverage.json`. |
+| `results.csv`, `results.jsonl`, `progress.md`, `coverage.json` | Every attempt with its model description, including failures; the best MSE, R², model and spec digest per view in `progress.md`; completed fits per view in `coverage.json`. |
 
 A file named `STOP` in the run directory stops the run after the current fit, and stops a resumed run before its first trial. The runner refuses to resume while the worker named in `running.json` is still alive.
 
