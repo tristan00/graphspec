@@ -35,8 +35,9 @@ class Results:
         for item in plan['trials']:
             trial = self.directory / item['directory']
             logs = sorted(trial.glob('worker_*.log'))
-            if not logs:
+            if not logs and not (trial / 'failure.json').exists():
                 continue
+            logs = logs or [None]
             config = self.read(trial / 'config.json')
             selection = self.read(trial / 'selection.json')
             mode = 'TPE' if item['selector'] == 'tpe' else 'Random'
@@ -60,7 +61,7 @@ class Results:
                     identifier += chr(97 + index)
                 row = self.row(identifier, describe(config['model']), item['graph'][:10], mode,
                     status, config, selection['graph_summary'], result if last and result else None)
-                row.update(trial=item['directory'], log=str(log), model_id=item['model'][:10])
+                row.update(trial=item['directory'], log=str(log) if log else None, model_id=item['model'][:10])
                 if last and not result:
                     row['error'] = failure
                     row['seconds'] = timeout['seconds'] if timeout else None
