@@ -24,6 +24,6 @@ def test_generated_databases_follow_the_contract_at_every_level(tmp_path):
             assert ('signal' in views(bank.registry)) == (level == 'query') and ('affinity' in views(bank.registry)) == (level != 'node')
             for values in ({'view': 'snapshot'}, {'view': 'event_graph'}, {'view': 'tree'}, {'view': 'sequence', 'sequence/operator': 'mixer'}):
                 cfg = config(bank.registry, values, {'time/history': 4})
-                block = bank.blocks(0, 4)[-1]
+                block = bank.blocks(0, 4, cfg)[-1]
                 b = pack(bank, block, cfg, 'cpu')
                 assert b['predictions'] >= 1 and int(b['selected'].sum()) >= 1, (level, values)

@@ -1,6 +1,7 @@
 import bisect
 import logging
 import math
+import re
 import time
 
 import numpy as np
@@ -102,8 +103,6 @@ class Campaign:
 
         def grants(source, granted):
             for row in granted:
-                if row['value'] is None or row['value'] == 0:
-                    continue
                 add('grants', source, effect(row['effect']), row['value'], ref.scope(row['effect_scope']), row.get('level'), row.get('value_damaged'), row.get('value_ruined'))
 
         techs = set()
@@ -125,16 +124,20 @@ class Campaign:
         for link in ref.tech_links.get(chosen, ()):
             if link['parent_key'] in techs and link['child_key'] in techs:
                 add('tech_prerequisite', self.entity('tech', link['parent_key']), self.entity('tech', link['child_key']))
-        owned = {self.key('agent_subtype', row['subtype_id']) for row in self.rows['characters'] + self.rows['armies']}
-        subtypes = owned | {self.key('agent_subtype', row['subtype_id']) for row in self.rows['lord_pools']}
+        by_technology = {ref.tech_nodes[key]['technology_key']: key for key in techs if key in ref.tech_nodes}
+        for key in techs:
+            for row in ref.tech_requires.get(ref.tech_nodes.get(key, {}).get('technology_key'), ()):
+                parent = by_technology.get(row['required_technology'])
+                if parent:
+                    add('tech_prerequisite', self.entity('tech', parent), self.entity('tech', key))
+        subtypes = {self.key('agent_subtype', row['subtype_id']) for row in self.rows['characters'] + self.rows['armies']}
+        subtypes |= {self.key('agent_subtype', row['subtype_id']) for row in self.rows['lord_pools']}
         subtypes |= {self.key('agent_subtype', row['cand_subtype_id']) for row in self.rows['candidates']}
         subtypes.discard(None)
         for subtype in subtypes:
             row = ref.subtypes.get(subtype, {})
             node = self.static(features, facts, 'subtype', subtype, dict(is_caster=row.get('is_caster'), cap=row.get('cap'), cost=row.get('cost'),
                                                                         recruitable=row.get('recruitable'), can_equip=row.get('can_equip_ancillaries')))
-            if subtype not in owned:
-                continue
             chosen_set = ref.skill_set(subtype, self.player)
             nodes = {item['key']: item for item in ref.skill_nodes.get(chosen_set, ())}
             for item in nodes.values():
@@ -158,6 +161,25 @@ class Campaign:
             self.trait(self.key('trait', row['trait_id']))
         for skill in [key for kind, key in self.entities if kind == 'skill']:
             grants(self.entity('skill', skill), ref.skill_effects.get(skill, ()))
+            for row in ref.skill_items.get(skill, ()):
+                if row['granted_ancillary'] in ref.items:
+                    add('grants_item', self.entity('skill', skill), self.item(row['granted_ancillary']), row['level'])
+        subculture = ref.factions.get(self.player, {}).get('subculture')
+        agents = {self.key('agent_type', row['agent_type_id']) for row in self.rows['characters'] + self.rows['armies']}
+        agents.discard(None)
+        for agent in agents:
+            for row in ref.agent_actions.get(agent, ()):
+                if row['subculture'] and row['subculture'] != subculture:
+                    continue
+                action = self.static(features, facts, 'action', self.action_name(row), dict(ability=row['ability'], attribute=row['attribute'], chance=row['chance_of_success']))
+                for outcome, success in (('success', 1), ('critical_success', 1), ('failure', 0), ('critical_failure', 0)):
+                    result = ref.action_results.get(row[outcome])
+                    if not result:
+                        continue
+                    for side, actor in (('actor', 1), ('target', 0)):
+                        bundle = result[side + '_effect_bundle']
+                        if bundle:
+                            add('action_result', action, self.bundle(bundle), success, actor, result[side + '_effect_bundle_turns'])
         for trait in [key for kind, key in self.entities if kind == 'trait']:
             grants(self.entity('trait', trait), ref.trait_effects.get(trait, ()))
         buildings = set()
@@ -166,8 +188,14 @@ class Campaign:
         buildings |= {self.key('building', row['queued_building_id']) for row in self.rows['slot_states']}
         buildings |= {self.key('building', row['building_id']) for row in self.rows['slot_states']}
         buildings.discard(None)
-        for key in list(buildings):
-            buildings |= {row['target'] for row in ref.building_upgrades.get(key, ())}
+        frontier = list(buildings)
+        while frontier:
+            key = frontier.pop()
+            for row in list(ref.building_upgrades.get(key, ())) + list(ref.building_requires.get(key, ())):
+                target = row.get('target') or row.get('required')
+                if target in ref.buildings and target not in buildings:
+                    buildings.add(target)
+                    frontier.append(target)
         for key in buildings:
             building = self.building(key)
             grants(building, ref.building_effects.get(key, ()))
@@ -263,10 +291,13 @@ class Campaign:
             faction=key, culture=row.get('culture'), subculture=row.get('subculture'), category=row.get('category'), is_rebel=row.get('is_rebel')))
 
     def character(self, cqi):
-        return self.entity('character', cqi)
+        return self.entity('character', '%s:%s' % (self.campaign['campaign_key'], cqi))
 
     def slot(self, owner, index):
         return self.entity('slot', '%s#%s' % (owner, 'new' if index is None else index))
+
+    def candidate(self, subtype, index):
+        return self.entity('candidate', '%s:%s@%s' % (self.campaign['campaign_key'], subtype, index))
 
     def world(self, snapshot, features, facts):
         ref, keys = self.ref, self.ref.keys
@@ -384,6 +415,11 @@ class Campaign:
                 fact('recruiting', character, self.unit(keys['unit'][unit]), None, position, tag=('pending', position))
             for skill in row['hidden_skill_ids'] or ():
                 fact('hidden_skill', character, self.skill(keys['skill'][skill]), None, None)
+            agent = self.key('agent_type', row['agent_type_id'])
+            for action in ref.agent_actions.get(agent, ()) if agent else ():
+                name = self.action_name(action)
+                if ('action', name) in self.entities:
+                    fact('can_act', character, self.entity('action', name), action['chance_of_success'], tag=name)
         for row in at('extensions'):
             character = characters[row['character_id']]
             data = {name: row.get(name) for name in ('xp', 'xp_next_level', 'subterfuge', 'zeal', 'authority', 'resurrection_turns', 'upkeep')}
@@ -430,7 +466,7 @@ class Campaign:
                 elif name in ('character_bundles', 'force_bundles'):
                     fact(relation, character, self.bundle(keys['effect_bundle'][row['effect_bundle_id']]), row['turns_remaining'], name == 'force_bundles', 0, tag=name)
                 else:
-                    slot = self.slot(row['character_id'], row['slot_index'])
+                    slot = self.slot('%s:%s' % (self.campaign['campaign_key'], row['character_id']), row['slot_index'])
                     features[slot] = dict(index=row['slot_index'], empty=row['empty'])
                     fact('has_slot', character, slot)
                     if not row['empty'] and row['building_id'] is not None:
@@ -502,7 +538,7 @@ class Campaign:
             fact('lord_pool', player, self.entity('subtype', keys['agent_subtype'][row['subtype_id']]), row['n'])
         for row in at('candidates'):
             subtype = keys['agent_subtype'][row['subtype_id']]
-            candidate = self.entity('candidate', '%s@%d' % (subtype, row['ord']))
+            candidate = self.candidate(subtype, row['ord'])
             features[candidate] = dict(candidate_index=row['ord'], is_agent=row['agent'], subtype=self.key('agent_subtype', row['cand_subtype_id']))
             fact('candidate_of', candidate, self.entity('subtype', subtype), row['can'], row['agent'])
             if row['bg_skill_id'] is not None:
@@ -518,6 +554,34 @@ class Campaign:
             features[mission] = dict(mission_type=info.get('mission_type'), event_category=info.get('event_category'), is_quest=info.get('quest_mission'),
                                      issuer=self.key('mission_issuer', row['issuer_id']), category=row['category'])
             fact('mission', player, mission, row['status_id'], row['turns_remaining'], row['is_quest'], row['is_victory'], row['completed'], row['cancelled'], row['pending'])
+            for payload in ref.mission_payloads.get(keys['mission'][row['mission_id']], ()):
+                self.payload(mission, payload, features[mission], fact)
+
+    @staticmethod
+    def action_name(row):
+        prefix = 'agent_action_%s_%s_' % (row['agent'], row['ability'])
+        return row['unique_id'].split(prefix, 1)[1] if prefix in row['unique_id'] else row['unique_id']
+
+    def payload(self, mission, payload, data, fact):
+        fields = dict(re.findall(r'([A-Z_]+)\[([^\]]*)\]', payload['value'] or ''))
+        success = payload['status_key'] == 'SUCCESS'
+        kind, amount = payload['payload_key'], fields.get('AMOUNT')
+        if kind == 'EFFECT_BUNDLE' and fields.get('KEY') in self.ref.bundles:
+            fact('mission_payload', mission, self.bundle(fields['KEY']), fields.get('DURATION'), success, tag=('bundle', fields['KEY']))
+        elif kind == 'ADD_ANCILLARY' and fields.get('ANCILLARY_KEY') in self.ref.items:
+            fact('mission_payload', mission, self.item(fields['ANCILLARY_KEY']), None, success, tag=('item', fields['ANCILLARY_KEY']))
+        elif kind in ('FACTION_POOLED_RESOURCE_TRANSACTION', 'FACTION_PROVINCE_POOLED_RESOURCE_TRANSACTION') and fields.get('RESOURCE'):
+            fact('mission_payload', mission, self.entity('resource', fields['RESOURCE']), amount, success, tag=('resource', fields['RESOURCE']))
+        elif kind == 'GIVE_TRAIT' and fields.get('TRAIT_LEVEL_KEY'):
+            trait = next((key for key in self.ref.traits if fields['TRAIT_LEVEL_KEY'].startswith(key)), None)
+            if trait:
+                fact('mission_payload', mission, self.trait(trait), None, success, tag=('trait', trait))
+        elif kind == 'TREASURY' and amount:
+            data['treasury'] = float(amount)
+        elif kind == 'DIPLOMATIC_STANDING' and amount:
+            data['standing'] = float(amount)
+        elif kind == 'INFLUENCE' and amount:
+            data['influence'] = float(amount)
 
     def consequences(self):
         keys, placed = self.ref.keys, {}
@@ -673,7 +737,7 @@ class Campaign:
         if action_type in ('recruit_lord', 'recruit_hero'):
             subtype, _, index = key.partition('@')
             data['candidate_index'] = int(index) if index.isdigit() else None
-            candidate = ('candidate', '%s@%s' % (subtype, index))
+            candidate = ('candidate', '%s:%s@%s' % (self.campaign['campaign_key'], subtype, index))
             return self.entities[candidate] if candidate in self.entities else (self.entity('subtype', subtype) if subtype in ids['agent_subtype'] else actor)
         if action_type == 'research':
             if key in ids['tech_node']:

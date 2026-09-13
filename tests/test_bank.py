@@ -83,16 +83,16 @@ def test_bank(book):
              {'view': 'event_graph'}, {'view': 'tree'}, {'view': 'sequence', 'sequence/operator': 'mixer'}, {'view': 'walks'})
     for values in views:
         cfg = config(bank.registry, values, {'time/history': 3, 'time/context': 1})
-        b = pack(bank, bank.blocks(0, 3)[-1], cfg, 'cpu')
+        b = pack(bank, bank.blocks(0, 3, cfg)[-1], cfg, 'cpu')
         assert b['predictions'] == 3 and int(b['selected'].sum()) == 3, values
     cfg = config(bank.registry, {'view': 'snapshot', 'snapshot/temporal': 'coupling_edges'}, {'time/history': 1, 'time/context': 1})
-    extended = turn_blocks(bank, bank.blocks(0, 1), cfg)
+    extended = turn_blocks(bank, bank.blocks(0, 1, cfg), cfg)
     batch, parts = pack_batch(bank, extended, cfg, 'cpu'), [pack(bank, block, cfg, 'cpu') for block in extended]
     assert (parts[0]['step'] < 0).any() and all(len(part['x']) == part['observations'] for part in parts)
     assert torch.equal(batch['x'][batch['context_index']], torch.cat([part['x'][part['context_index']] for part in parts]))
     assert torch.equal(batch['x'][batch['temporal_edges']], torch.cat([part['x'][part['temporal_edges']] for part in parts], 1))
     cfg = config(bank.registry, {'view': 'tree'}, {'time/history': 1, 'time/context': 1, 'time/periods': 'every', 'time/period_length': 2})
-    assert [block[1:3] for block in turn_blocks(bank, bank.blocks(0, 1), cfg)] == [(0, 3), (2, 6)]
+    assert [block[1:3] for block in turn_blocks(bank, bank.blocks(0, 1, cfg), cfg)] == [(0, 3), (2, 6)]
     arrays, spec = bank.arrays(0, cfg), cfg['graph']
     memory = config(bank.registry, {'view': 'memory'}, {'time/history': 5, 'time/context': 1, 'time/periods': 'every', 'time/period_length': 2, 'neighbors/order': 'uniform'})
     assert bank.variant(cfg)[0] == bank.variant(memory)[0]

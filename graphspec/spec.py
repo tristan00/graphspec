@@ -144,6 +144,9 @@ def space(registry, groups):
                   choice('time/unit', ('step', 'period'), 'step', lambda spec: spec['time/scheme'] == 'window' and periodic(spec)),
                   number('time/window', 1, 8, 1, lambda spec: spec['time/scheme'] == 'window' and spec.get('time/unit', 'step') == 'step'),
                   number('time/past_periods', 0, 3, 0, equals('time/unit', 'period')), number('time/context', 0, 3, 0)]
+    parameters += [choice('graphs/join', ('separate', 'single'), 'separate')]
+    parameters += [flag('graphs/connect/' + kind, True, equals('graphs/join', 'single')) for kind in nodes]
+    parameters.append(real('graphs/connect_fraction', 0.01, 1.0, 1.0, equals('graphs/join', 'single'), log=True))
     parameters += [flag('nodes/%s/keep' % kind, True) for kind in unprotected]
     parameters += [flag('nodes/untyped', False)] if len(nodes) > 1 else []
     for kind in unprotected:

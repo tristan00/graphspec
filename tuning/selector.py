@@ -128,13 +128,14 @@ def append_trial(directory, plan, registry):
     index = len(plan['trials'])
     rng = np.random.default_rng(np.random.SeedSequence([plan['seed'], index, 1]))
     selector_seed, training_seed = (int(v) for v in rng.integers(1, 2**31, size=2))
-    if plan['selector'] == 'random':
+    selector = 'random' if plan['selector'] == 'random' or index < plan['random_trials'] else 'tpe'
+    if selector == 'random':
         config, selection = random_suggest(registry, selector_seed, training_seed)
     else:
         failures, failure_history = load_failures(directory, plan)
         config, selection = suggest(registry, observations, failures, selector_seed, training_seed)
         selection['failure_history'] = failure_history
-    name = 'trial_%06d_%s_%s_%s' % (index, plan['selector'], selection['model_digest'][:10], selection['graph_digest'][:10])
+    name = 'trial_%06d_%s_%s_%s' % (index, selector, selection['model_digest'][:10], selection['graph_digest'][:10])
     trial = directory / name
     trial.mkdir(exist_ok=True)
     if (trial / 'config.json').exists() and read_json(trial / 'config.json') != config:
@@ -143,7 +144,7 @@ def append_trial(directory, plan, registry):
     write_json(trial / 'selection.json', dict(selection, history=history, bank_manifest_sha256=plan['bank_manifest_sha256'],
         supervision_sha256=plan['supervision_sha256'], spec_sha256=registry.fingerprint(), seconds=time.perf_counter() - started))
     plan['trials'].append(dict(directory=name, model=selection['model_digest'], description=selection['description'],
-                               graph=selection['graph_digest'], selector=plan['selector']))
+                               graph=selection['graph_digest'], selector=selector))
     write_json(directory / 'plan.json', plan)
     emit('parameter_selection', trial=name, observations=len(observations), model=selection['description'],
         graph=selection['graph_digest'][:10], phase=selection['phase'], seconds=time.perf_counter() - started)

@@ -81,6 +81,13 @@ class Reference:
         self.regions = keyed(read('SELECT region AS key, province, is_capital FROM ref.region_to_province_junctions'), 'key')
         self.dilemmas = keyed(read('SELECT key, event_category, is_large_dilemma AS is_large FROM ref.dilemmas'), 'key')
         self.incidents = keyed(read('SELECT key, event_category, is_large_incident AS is_large FROM ref.incidents'), 'key')
+        self.agent_actions = grouped(read('SELECT unique_id, agent, ability, attribute, chance_of_success, success, failure, critical_success, critical_failure, '
+                                          'subculture FROM ref.agent_actions'), 'agent')
+        self.action_results = keyed(read('SELECT key, actor_effect_bundle, target_effect_bundle, actor_effect_bundle_turns, target_effect_bundle_turns '
+                                         'FROM ref.action_results'), 'key')
+        self.tech_requires = grouped(read('SELECT technology, required_technology FROM ref.technology_required_technology_junctions'), 'technology')
+        self.skill_items = grouped(read('SELECT skill, granted_ancillary, level FROM ref.character_skill_level_to_ancillaries_junctions'), 'skill')
+        self.mission_payloads = grouped(read('SELECT mission_key, status_key, payload_key, value FROM ref.cdir_events_mission_payloads'), 'mission_key')
         self.scopes = {key: index for index, key in enumerate(sorted(row['key'] for row in read('SELECT key FROM ref.campaign_effect_scopes')))}
         LOG.info('reference exit seconds=%.3f tech_nodes=%d skill_sets=%d buildings=%d units=%d effects=%d', time.perf_counter() - started,
                  len(self.tech_nodes), len(self.skill_sets), len(self.buildings), len(self.units), len(self.effects))

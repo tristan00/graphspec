@@ -64,9 +64,9 @@ TABLES = dict(
 
 
 def campaigns(connection, count):
-    return records(connection, 'SELECT c.campaign_id, c.campaign_key, f.key AS faction, c.n_decisions, c.n_interrupts, c.turns FROM corpus.campaign c '
-                               'JOIN dict.faction f ON f.id = c.faction_id WHERE c.first_snapshot_id IS NOT NULL AND c.n_decisions > 0 '
-                               'ORDER BY c.first_snapshot_id DESC LIMIT %(count)s', dict(count=count))
+    return records(connection, 'SELECT * FROM (SELECT c.campaign_id, c.campaign_key, c.first_snapshot_id, f.key AS faction, c.n_decisions, c.n_interrupts, c.turns '
+                               'FROM corpus.campaign c JOIN dict.faction f ON f.id = c.faction_id WHERE c.first_snapshot_id IS NOT NULL AND c.n_decisions > 0 '
+                               'ORDER BY c.first_snapshot_id DESC LIMIT %(count)s) newest ORDER BY first_snapshot_id', dict(count=count))
 
 
 def members(connection, campaign, holder, column, table):

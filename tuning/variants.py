@@ -27,12 +27,12 @@ def prepare(bank_directory, cfg, workers):
     started = time.perf_counter()
     bank = Bank(bank_directory)
     root = bank.stamp(cfg)
-    missing = [graph['index'] for graph in bank.manifest['graphs'] if not (root / ('graph_%04d' % graph['index'])).exists()]
+    missing = [index for index in bank.graphs(cfg) if not (root / ('graph_%04d' % index)).exists()]
     seconds = 0.0
     if missing:
         seconds = sum(elapsed for _, elapsed in parallel(materialize, [(index, cfg) for index in missing], workers, attach, (str(bank_directory),)))
     os.utime(root / 'variant.json')
-    emit('variant_prepare', digest=root.name[:10], graphs=len(bank.manifest['graphs']), built=len(missing), workers=workers,
+    emit('variant_prepare', digest=root.name[:10], graphs=len(bank.graphs(cfg)), built=len(missing), workers=workers,
          build_seconds=round(seconds, 3), seconds=round(time.perf_counter() - started, 3))
     return root
 

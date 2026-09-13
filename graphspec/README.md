@@ -88,6 +88,9 @@ Every unprotected type has its own switch and filter.
 
 | Parameter | Range | Effect |
 |---|---|---|
+| `graphs/join` | separate, single | separate transforms every truth graph on its own. single merges all truth graphs of the bank into one graph before any stage: graphs follow each other in time, periods keep increasing across them, labels and splits keep their rows, and entities of connected types with the same key become one entity so campaigns meet through the catalogue they share. |
+| `graphs/connect/<type>` | on, off | Whether entities of the type are unified by key when joining. Offered for single. |
+| `graphs/connect_fraction` | 0.01–1, logarithmic | The share of keys that are unified, chosen by a hash of the key; the rest stay per graph. Offered for single. |
 | `nodes/<type>/keep` | on, off | Removes the entities of the type and every fact that touches them. |
 | `nodes/untyped` | on, off | Gives every entity one kind in the model inputs. The stages still read types, and features are untouched. Offered with more than one node type. |
 | `nodes/<type>/filter` | none, degree, total_degree, core, activity, sample | Removes observations of the type's entities that fail the filter, and the facts that lose an endpoint. Offered while the type is kept. |

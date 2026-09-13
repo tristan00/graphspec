@@ -8,6 +8,7 @@ import torch
 from graphspec import Registry
 from graphspec import spec as specs
 from graphspec.transform import SEED, SOURCE, materialize
+from graphspec import join
 from graphspec.truth import VERSION, Graph
 from graph_tuning_infra.arrays import Bundle, Residents, between
 from graph_tuning_infra.files import ArrayStore, load_arrays, read_json, write_json
@@ -73,6 +74,25 @@ class Bank:
     def truth(self, index):
         return self.directory / 'truth' / ('graph_%04d' % index)
 
+    def joining(self, cfg):
+        return self.variant(cfg)[1]['graphs/join'] == 'single'
+
+    def graphs(self, cfg):
+        return [0] if self.joining(cfg) else [graph['index'] for graph in self.manifest['graphs']]
+
+    def joined(self, cfg):
+        started = time.perf_counter()
+        spec = self.variant(cfg)[1]
+        graphs = [Graph.load(self.truth(graph['index'])) for graph in self.manifest['graphs']]
+        result = join.joined(graphs, self.registry, spec)
+        LOG.info('bank join exit seconds=%.3f graphs=%d', time.perf_counter() - started, len(graphs))
+        return result
+
+    def sizes(self, cfg):
+        if not self.joining(cfg):
+            return self.entities
+        return {0: len(self.arrays(0, cfg)['entity_kind'])}
+
     def variant(self, cfg):
         from .model_spec import groups
 
@@ -96,7 +116,8 @@ class Bank:
         def build():
             started = time.perf_counter()
             self.stamp(cfg)
-            arrays = materialize(Graph.load(self.truth(index)), self.registry, spec, chosen, self.categories)
+            truth = self.joined(cfg) if self.joining(cfg) else Graph.load(self.truth(index))
+            arrays = materialize(truth, self.registry, spec, chosen, self.categories)
             LOG.info('variant exit graph=%d seconds=%.3f arrays=%d', index, time.perf_counter() - started, len(arrays))
             return arrays
 
@@ -105,10 +126,13 @@ class Bank:
     def resident(self, index, cfg, device):
         return self.residents.get(self.variant(cfg)[0] / ('graph_%04d' % index), device, lambda: self.arrays(index, cfg))
 
-    def blocks(self, partition, history):
+    def blocks(self, partition, history, cfg):
         started = time.perf_counter()
         result = []
-        for graph in self.manifest['graphs']:
+        if self.joining(cfg):
+            rows, steps = join.layout([(graph['steps'], self.row_index[graph['index']], self.row_steps[graph['index']]) for graph in self.manifest['graphs']], self.level)
+            result = layout(0, rows, steps, self.partitions, partition, history, self.level)
+        for graph in ([] if self.joining(cfg) else self.manifest['graphs']):
             index = graph['index']
             result.extend(layout(index, self.row_index[index], self.row_steps[index], self.partitions, partition, history, self.level))
         LOG.info('bank blocks exit seconds=%.3f partition=%d history=%d blocks=%d', time.perf_counter() - started, partition, history, len(result))

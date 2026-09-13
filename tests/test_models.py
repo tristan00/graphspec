@@ -65,7 +65,7 @@ def offered(registry, values):
 
 def exercise(bank, values, history, context, device):
     cfg = config(bank.registry, dict(values, hidden=16), {'time/history': history, 'time/context': context})
-    block = turn_blocks(bank, [bank.blocks(0, history)[-1]], cfg)[0]
+    block = turn_blocks(bank, [bank.blocks(0, history, cfg)[-1]], cfg)[0]
     b = pack(bank, block, cfg, device)
     if enabled(cfg):
         capture_schedule(b)

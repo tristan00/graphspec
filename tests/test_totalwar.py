@@ -78,6 +78,13 @@ def reference():
     ref.agents = dict(general=dict(move_points=2000, faction_total_cap=-1))
     ref.regions = dict(north=dict(province='plain', is_capital=True), south=dict(province='plain', is_capital=False))
     ref.dilemmas, ref.incidents, ref.scopes = dict(plague=dict(event_category='d', is_large=False)), {}, dict(faction=0, character=1, region=2)
+    ref.agent_actions = dict(general=[dict(unique_id='agent_action_general_assist_army_training', agent='general', ability='assist_army', attribute='zeal',
+                                          chance_of_success=80, success='train_ok', failure=None, critical_success=None, critical_failure=None, subculture=None)])
+    ref.action_results = dict(train_ok=dict(actor_effect_bundle='blessing', target_effect_bundle=None, actor_effect_bundle_turns=2, target_effect_bundle_turns=None))
+    ref.tech_requires = dict(growth_2=[dict(technology='growth_2', required_technology='growth_1')])
+    ref.skill_items = dict(shield=[dict(skill='shield', granted_ancillary='axe', level=1)])
+    ref.mission_payloads = dict(quest=[dict(mission_key='quest', status_key='SUCCESS', payload_key='EFFECT_BUNDLE', value='KEY[blessing];DURATION[5]'),
+                                      dict(mission_key='quest', status_key='SUCCESS', payload_key='TREASURY', value='AMOUNT[800]')])
     return ref
 
 
@@ -203,7 +210,8 @@ def test_a_campaign_builds_a_contract_database_and_a_bank(tmp_path):
         assert set(tables[(TARGET, None, None)].column('split').to_pylist()) == {'validation' if held(key) else 'train'}
         present = {name[0]: table for name, table in tables.items() if name[0].startswith('edge_')}
         assert {'edge_skill', 'edge_tech_state', 'edge_tech_prerequisite', 'edge_grants', 'edge_adjacent', 'edge_holds', 'edge_can_build', 'edge_unit',
-                'edge_battle', 'edge_proposed', 'edge_gained_item', 'edge_battle_report', 'edge_trade', 'edge_at_war', 'edge_candidate_trait'} <= set(present)
+                'edge_battle', 'edge_proposed', 'edge_gained_item', 'edge_battle_report', 'edge_trade', 'edge_at_war', 'edge_candidate_trait',
+                'edge_can_act', 'edge_action_result', 'edge_mission_payload', 'edge_grants_item'} <= set(present)
         removed = {name: table.column('present').to_pylist().count(False) for name, table in present.items()}
         assert removed['edge_trade'] == 1 and removed['edge_at_war'] == 0
         stage.write(tables)
@@ -221,7 +229,7 @@ def test_a_campaign_builds_a_contract_database_and_a_bank(tmp_path):
     assert set(bank.registry.nodes) == set(name for name in bank.registry.nodes) and bank.registry.extras['queries'] and bank.registry.extras['signals'] == len(SIGNALS)
     for values in ({'view': 'snapshot'}, {'view': 'event_graph'}, {'view': 'sequence', 'sequence/operator': 'mixer'}):
         cfg = config(bank.registry, dict(values, hidden=16), {'time/history': 2})
-        block = turn_blocks(bank, [bank.blocks(0, 2)[-1]], cfg)[0]
+        block = turn_blocks(bank, [bank.blocks(0, 2, cfg)[-1]], cfg)[0]
         b = pack(bank, block, cfg, 'cuda')
         net = build(cfg, bank.registry, len(bank.categories)).to('cuda')
         output = net(b)

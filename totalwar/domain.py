@@ -1,5 +1,5 @@
 NODES = ('faction', 'character', 'region', 'province', 'slot', 'tech', 'skill', 'building', 'unit', 'item', 'trait', 'effect', 'bundle',
-         'rite', 'mission', 'edict', 'subtype', 'candidate', 'stance', 'resource', 'dilemma')
+         'rite', 'mission', 'edict', 'subtype', 'candidate', 'stance', 'resource', 'dilemma', 'action')
 TARGET = 'reward'
 SIGNALS = ('settlements', 'lord_level', 'allies', 'vassals', 'income', 'treasury', 'armies', 'power_rank')
 PARTS = dict(settlements=1.0, lord_level=1.0, allies=1.0, vassals=3.0)
@@ -51,6 +51,9 @@ RELATIONS = {
     'battle': ((('character', 'character'),), BATTLE), 'battle_at': ((('character', 'region'),), ()), 'fought_with': ((('character', 'unit'),), ('side',)),
     'battle_report': ((('character', 'character'),), ('victory', 'casualties')),
     'gained_item': ((('character', 'item'),), ()), 'faced': ((('faction', 'dilemma'),), ('choice',)),
+    'can_act': ((('character', 'action'),), ('chance',)), 'action_result': ((('action', 'bundle'),), ('success', 'actor', 'turns')),
+    'mission_payload': ((('mission', 'bundle'), ('mission', 'item'), ('mission', 'resource'), ('mission', 'trait')), ('value', 'success')),
+    'grants_item': ((('skill', 'item'),), ('level',)),
 }
 NUMBERS = ('turn', 'income', 'treasury', 'settlements', 'armies', 'lord_level', 'allies', 'vassals', 'power_rank', 'is_researching', 'll_wounded',
            'defeated', 'difficulty', 'research_points', 'net_income', 'expenditure', 'upkeep', 'trade_value', 'tax_level', 'influence',
@@ -74,7 +77,7 @@ NUMBERS = ('turn', 'income', 'treasury', 'settlements', 'armies', 'lord_level', 
            'n_enemy_armies', 'amount_offered', 'amount_demanded', 'attitude', 'settlements_offered', 'threshold_points', 'points', 'strength_pct')
 CATEGORIES = ('faction', 'culture', 'subculture', 'category', 'agent_type', 'subtype', 'stance', 'chain', 'superchain', 'class', 'caste',
               'type', 'subcategory', 'key', 'issuer', 'mission_type', 'event_category', 'bundle_target', 'armour', 'shield', 'weapon',
-              'action_type', 'term', 'option', 'action', 'result', 'battle_type', 'root', 'answer', 'race', 'reason', 'status', 'source')
+              'action_type', 'term', 'option', 'action', 'result', 'battle_type', 'root', 'answer', 'race', 'reason', 'status', 'source', 'ability', 'attribute')
 
 
 def declaration(features, signals):

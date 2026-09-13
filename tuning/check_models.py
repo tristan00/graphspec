@@ -60,7 +60,7 @@ def check(directory, output, device, graph=None, spec_path=None):
     results = []
     for model in models:
         cfg = configuration(bank.registry, model, given, 771)
-        candidates = sorted(block for partition in (0, 1) for block in bank.blocks(partition, cfg['graph']['time/history']) if block[0] == chosen)
+        candidates = sorted(block for partition in (0, 1) for block in bank.blocks(partition, cfg['graph']['time/history'], cfg) if block[0] == chosen)
         if not candidates:
             raise ValueError('graph %d has no labels to check' % chosen)
         block = candidates[-1]

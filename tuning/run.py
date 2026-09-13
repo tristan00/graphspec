@@ -18,7 +18,7 @@ from graph_tuning_infra.log import configure, emit
 from graph_tuning_infra.processes import WORKERS, Lock, command, stop
 
 
-VERSION = 8
+VERSION = 9
 REFERENCE_HISTORY = 16
 PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / 'graphspec', Path(graph_tuning_infra.__file__).parent)
 
@@ -65,14 +65,15 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     torch.cuda.reset_peak_memory_stats()
     timing = dict(setup=time.perf_counter() - entered, train_pack=0.0, train_compute=0.0, validation_pack=0.0, validation_compute=0.0)
     losses, trained_rows, epoch_losses = [], [], []
-    if sorted(map(tuple, training_blocks)) != sorted(bank.blocks(0, history)):
+    if sorted(map(tuple, training_blocks)) != sorted(bank.blocks(0, history, cfg)):
         raise ValueError('training blocks must cover the entire frozen training partition')
     epochs = cfg['epochs']
     if epochs < 1:
         raise ValueError('each fit requires at least one complete training epoch')
     context_blocks = turn_blocks(bank, training_blocks, cfg)
-    grouped = batches(context_blocks, batch_size, bank.entities, frame_budget=1024)
-    training = [(epoch, group) for epoch in range(epochs) for group in batches(context_blocks, batch_size, bank.entities, cfg['seed'] + epoch, frame_budget=1024)]
+    sizes = bank.sizes(cfg)
+    grouped = batches(context_blocks, batch_size, sizes, frame_budget=1024)
+    training = [(epoch, group) for epoch in range(epochs) for group in batches(context_blocks, batch_size, sizes, cfg['seed'] + epoch, frame_budget=1024)]
     emit('fit_enter', model=model, graph=graph[:10], updates=len(training), epochs=epochs,
         training_rows=len(bank.split['train_indices']), batch_sequences=batch_size, config=cfg)
     net.train()
@@ -135,7 +136,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         epochs=completed_epochs, requested_epochs=epochs, epoch_seconds=budget.epoch_seconds)
     torch.save(checkpoint, directory / 'checkpoint.pt')
     values, indices = [], []
-    validation = batches(turn_blocks(bank, bank.blocks(1, history), cfg), batch_size, bank.entities, frame_budget=1024)
+    validation = batches(turn_blocks(bank, bank.blocks(1, history, cfg), cfg), batch_size, sizes, frame_budget=1024)
     with torch.inference_mode():
         for index, blocks in enumerate(validation):
             budget.check()
@@ -271,10 +272,12 @@ def run(args):
         if plan['bank_manifest_sha256'] != sha256_file(Path(args.bank) / 'manifest.json'):
             raise ValueError('resume requested with a rebuilt bank')
         plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30)
+        if args.random_trials is not None and args.random_trials != plan['random_trials']:
+            raise ValueError('resume requested with a different random phase')
     else:
         plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
             batch_sequences=args.batch_sequences,
-            workers=args.workers, variant_bytes=args.variant_gb << 30,
+            workers=args.workers, variant_bytes=args.variant_gb << 30, random_trials=args.random_trials or 0,
             seconds=args.seconds, train_rows=bank.manifest['train_rows'], holdout_rows=bank.manifest['validation_rows'],
             supervision_sha256=bank.manifest['supervision_sha256'], spec_sha256=bank.manifest['spec_sha256'],
             created=datetime.now(timezone.utc).isoformat())
@@ -297,12 +300,14 @@ def training_layout(directory, plan, config):
 
     started = time.perf_counter()
     history = config['graph']['time/history']
-    path = directory / ('train_blocks_%d.json' % history)
+    from graphspec.join import parameters
+
+    path = directory / ('train_blocks_%s.json' % digest(dict(history=history, join=parameters(config['graph'])))[:12])
     if not path.exists():
         bank = Bank(plan['bank'])
         if bank.manifest['supervision_sha256'] != plan['supervision_sha256']:
             raise ValueError('training layout changed supervision')
-        blocks = bank.blocks(0, history)
+        blocks = bank.blocks(0, history, config)
         write_json(path, blocks)
         emit('training_layout_created', history=history, blocks=len(blocks),
             rows=len(bank.split['train_indices']), seconds=time.perf_counter() - started)
@@ -382,6 +387,7 @@ def main():
     run_parser.add_argument('--seconds', type=int, default=600)
     run_parser.add_argument('--resume', action='store_true')
     run_parser.add_argument('--selector', choices=('tpe', 'random'), default='tpe')
+    run_parser.add_argument('--random-trials', type=int)
     run_parser.add_argument('--workers', type=int, default=WORKERS)
     run_parser.add_argument('--variant-gb', type=int, default=BUDGET >> 30)
     worker_parser = subparsers.add_parser('worker')
