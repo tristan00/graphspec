@@ -105,10 +105,10 @@ def history_tokens(b, a, held, first, last, start, cfg, device, registry):
     n, depth = last - first, lookback(cfg)
     if cfg['model'] == 'M17':
         roots = np.stack((a['actor'][first:last], a['subject'][first:last]), 1)
-        roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1)
+        roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1).copy()
         ends = b['end_steps'].cpu().numpy() + start
-        cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1)
-        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['neighbors'], cfg['layers'], device, registry, cfg['graph'], SEED)
+        cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1).copy()
+        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['neighbors'], cfg['layers'], device, registry, cfg['graph'], SEED, lambda value, dtype=None: tensor(value, device, dtype))
         return
     original = b['history_mask'].shape[-1]
     valid = b['end_raw_mask'][:, :2]
