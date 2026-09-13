@@ -7,7 +7,7 @@ import numba
 import torch
 import torch.multiprocessing as multiprocessing
 
-from graph_tuning_infra.arrays import Bundle, views
+from graph_tuning_infra.arrays import RESIDENT, Bundle, views
 from graph_tuning_infra.log import configure
 
 from .batching import recipe_batch
@@ -17,11 +17,11 @@ from .data import Bank, prepare, resolve
 LOG = logging.getLogger(__name__)
 
 
-def serve(bank_directory, cfg, threads, jobs, results):
+def serve(bank_directory, cfg, threads, resident, jobs, results):
     configure(json_lines=True)
     numba.set_num_threads(threads)
     torch.set_num_threads(1)
-    bank = Bank(bank_directory)
+    bank = Bank(bank_directory, resident)
     while True:
         job = jobs.get()
         if job is None:
@@ -47,11 +47,12 @@ class Packer:
         context = multiprocessing.get_context('spawn')
         self.jobs, self.results = context.Queue(), context.Queue()
         threads = max(1, os.cpu_count() // workers)
-        self.processes = [context.Process(target=serve, args=(str(bank.directory), cfg, threads, self.jobs, self.results), daemon=True)
+        resident = max(4, RESIDENT // workers)
+        self.processes = [context.Process(target=serve, args=(str(bank.directory), cfg, threads, resident, self.jobs, self.results), daemon=True)
                           for _ in range(workers)]
         for process in self.processes:
             process.start()
-        LOG.info('packer enter workers=%d threads=%d seconds=%.3f', workers, threads, time.perf_counter() - started)
+        LOG.info('packer enter workers=%d threads=%d resident=%d seconds=%.3f', workers, threads, resident, time.perf_counter() - started)
 
     def stream(self, groups):
         ahead = 2 * len(self.processes)

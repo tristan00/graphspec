@@ -1,3 +1,4 @@
+import fnmatch
 import math
 import time
 
@@ -33,7 +34,7 @@ def spaces(registry, bounds):
 
 def check_bounds(registry, bounds):
     known = {parameter.name for parameter in model_space(registry) + TRAINING + specs.space(registry, specs.GROUPS)}
-    unknown = sorted(set(bounds) - known)
+    unknown = sorted(key for key in bounds if not (key in known if '*' not in key else any(fnmatch.fnmatchcase(name, key) for name in known)))
     if unknown:
         raise ValueError('bounds name unknown parameters: ' + ', '.join(unknown))
     specs.narrow(model_space(registry) + TRAINING + specs.space(registry, specs.GROUPS), bounds)

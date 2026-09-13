@@ -1,3 +1,4 @@
+import fnmatch
 import itertools
 import logging
 import math
@@ -211,13 +212,22 @@ def space(registry, groups):
     return tuple(parameters)
 
 
+def bound_for(name, bounds):
+    if name in bounds:
+        return bounds[name]
+    patterns = [key for key in bounds if '*' in key and fnmatch.fnmatchcase(name, key)]
+    if not patterns:
+        return None
+    return bounds[max(patterns, key=len)]
+
+
 def narrow(parameters, bounds):
     result = []
     for parameter in parameters:
-        if parameter.name not in bounds:
+        bound = bound_for(parameter.name, bounds)
+        if bound is None:
             result.append(parameter)
             continue
-        bound = bounds[parameter.name]
         if parameter.kind in ('bool', 'choice'):
             options = tuple(parameter.check(option) for option in (bound if isinstance(bound, list) else [bound]))
             default = parameter.default if parameter.default in options else options[0]

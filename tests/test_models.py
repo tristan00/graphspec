@@ -126,15 +126,19 @@ def test_bounds_narrow_every_space(banks):
 
     bank = banks[1]
     bounds = {'view': ['tree', 'walks'], 'hidden': [16, 24], 'epochs': {'low': 1, 'high': 2}, 'time/history': {'low': 2, 'high': 4},
-              'graphs/join': 'separate', 'derive/rewiring': 'none', 'lr': 0.002}
+              'graphs/join': 'separate', 'derive/rewiring': 'none', 'lr': 0.002, 'derive/complete*': False, 'edges/*/cap': 0, 'edges/*/drop': {'low': 0.0, 'high': 0.5}}
     check_bounds(bank.registry, bounds)
     for seed in range(12):
         config, selection = random_suggest(bank.registry, seed, 7, bounds)
         assert config['model']['view'] in ('tree', 'walks') and config['model']['hidden'] in (16, 24) and 1 <= config['epochs'] <= 2
         assert 2 <= config['graph']['time/history'] <= 4 and config['graph']['graphs/join'] == 'separate' and config['lr'] == 0.002
         assert config['graph'].get('derive/rewiring', 'none') == 'none' and selection['phase'] == 'random'
+        assert not any(value for name, value in config['graph'].items() if name.startswith('derive/complete'))
+        assert all(value <= 0.5 for name, value in config['graph'].items() if name.endswith('/drop')) and not any(value for name, value in config['graph'].items() if name.endswith('/cap'))
     with pytest.raises(ValueError):
         check_bounds(bank.registry, {'no/such': 1})
+    with pytest.raises(ValueError):
+        check_bounds(bank.registry, {'no/such*': 1})
     with pytest.raises(ValueError):
         check_bounds(bank.registry, {'time/history': {'low': 0, 'high': 4}})
     with pytest.raises(ValueError):

@@ -10,7 +10,7 @@ from graphspec import spec as specs
 from graphspec.transform import SEED, SOURCE, materialize
 from graphspec import join
 from graphspec.truth import VERSION, Graph
-from graph_tuning_infra.arrays import NUMPY, Bundle, Pending, Residents, between, views
+from graph_tuning_infra.arrays import NUMPY, RESIDENT, Bundle, Pending, Residents, between, views
 from graph_tuning_infra.files import ArrayStore, load_arrays, read_json, write_json
 from . import gather
 
@@ -41,7 +41,7 @@ def layout(index, rows, steps, partitions, partition, history, level):
 
 class Bank:
 
-    def __init__(self, directory):
+    def __init__(self, directory, resident=RESIDENT):
         started = time.perf_counter()
         self.directory = Path(directory)
         self.manifest = read_json(self.directory / 'manifest.json')
@@ -68,7 +68,7 @@ class Bank:
                 self.row_index[index][labels['label_step']] = labels['label_row']
                 self.row_steps[index] = np.arange(graph['steps'], dtype=np.int32)
             self.entities[index] = graph['entities']
-        self.variants, self.recent, self.store, self.residents = {}, {}, ArrayStore(), Residents(DTYPES)
+        self.variants, self.recent, self.store, self.residents = {}, {}, ArrayStore(), Residents(DTYPES, resident)
         LOG.info('bank exit seconds=%.3f graphs=%d rows=%d level=%s', time.perf_counter() - started, len(self.manifest['graphs']), len(self.rows), self.level)
 
     def truth(self, index):
