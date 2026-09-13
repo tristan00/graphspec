@@ -72,6 +72,8 @@ def window(graph, registry, spec, seed):
     later = np.r_[entity[1:] == entity[:-1], False]
     limit = np.where(later, np.r_[step[1:], 0], steps)
     counts = np.maximum(np.minimum(reach(graph, spec, step), limit - 1) - step, 0)
+    if counts.sum() > compute.FACTS:
+        raise ValueError('the time window of graph %s carries %d observation copies, over the budget of %d' % (graph.name, counts.sum(), compute.FACTS))
     origin = np.repeat(order, counts)
     copies = {name: np.concatenate((graph.arrays[name], graph.arrays[name][origin])) for name in OBSERVATIONS}
     copies['obs_step'][len(graph.obs_step):] += (counted(counts) + 1).astype(np.int32)
@@ -82,6 +84,8 @@ def window(graph, registry, spec, seed):
     present = np.flatnonzero(graph.fact_present)
     start = graph.fact_step[present].astype(np.int64)
     counts = np.maximum(np.minimum(reach(graph, spec, start), limit[present] - 1) - start, 0)
+    if counts.sum() > compute.FACTS:
+        raise ValueError('the time window of graph %s carries %d fact copies, over the budget of %d' % (graph.name, counts.sum(), compute.FACTS))
     origin = np.repeat(present, counts)
     return extend(graph, graph.fact_source[origin], graph.fact_target[origin], graph.fact_code[origin],
                   (graph.fact_step[origin].astype(np.int64) + counted(counts) + 1).astype(np.int32), np.ones(len(origin), bool), graph.fact_values[origin])
