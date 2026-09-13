@@ -10,7 +10,7 @@ A trial's configuration carries its spec under `graph`. `Bank.arrays` canonicali
 
 **Packing**
 
-`pack` turns one training window into model inputs. Every per-entity or per-event loop lives in a numba kernel in `gather.py`: the latest observation of an entity before a tick, neighbour sampling (recent, uniform or decay-weighted Gumbel top-k keyed by the seeded hash), the levels of a temporal-neighbour tree, interaction histories with their structural features, the events reachable from a prediction's entities, and walk identities. Feature rows are gathered on the device from the resident matrices, and edge tables are cut by binary search on their sorted columns. A block of graph 4 of the churn bank (156k entities, 9,441 steps) packs in 1 to 8 ms on the GPU for every family.
+`pack` turns one training window into model inputs. Every per-entity or per-event loop lives in a numba kernel in `gather.py`: the latest observation of an entity before a tick, neighbour sampling (recent, uniform or decay-weighted Gumbel top-k keyed by the seeded hash), the levels of a temporal-neighbour tree, interaction histories with their structural features, the events reachable from a prediction's entities, and walk identities. Feature rows are gathered on the device from the resident matrices, and edge tables are cut by binary search on their sorted columns. Every other array of a window travels in one bundled transfer, so a window costs a handful of copies rather than one per array. A block of graph 4 of the churn bank (156k entities, 9,441 steps) packs in 1 to 8 ms on the GPU for every family.
 
 **Models**
 
