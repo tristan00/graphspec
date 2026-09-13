@@ -88,12 +88,10 @@ class Results:
 
     def row(self, identifier, model, graph, mode, status, config, summary, result=None):
         result = result or {}
-        active = {key: value for key, value in config.items() if key not in ('graph', 'model')}
-        if isinstance(config['model'], dict):
-            active.update({'model/' + key: value for key, value in config['model'].items()})
-        active.update({'graph/' + key: value for key, value in summary.items()})
-        return dict(id=identifier, model=model, graph=graph, mode=mode, status=status, config=config,
-            active_params=active, mse=result.get('raw_val_mse'), r2=result.get('val_r2'),
+        spec = config['model'] if isinstance(config['model'], dict) else {}
+        return dict(id=identifier, model=model, view=spec.get('view', 'reference'), graph=graph, mode=mode, status=status, config=config,
+            model_params=spec, graph_params=summary, training={key: value for key, value in config.items() if key not in ('graph', 'model')},
+            mse=result.get('raw_val_mse'), r2=result.get('val_r2'),
             seconds=result.get('seconds'), parameters=result.get('parameters'),
             epochs=result.get('epochs'), requested_epochs=result.get('requested_epochs', config.get('epochs')),
             epoch_seconds=result.get('epoch_seconds'), stop_reason=result.get('stop_reason'),
