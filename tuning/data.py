@@ -271,9 +271,11 @@ def pack(bank, block, cfg, device):
         edges = spatial[:, :2].T - lo
         b.update(edges=hold(edges, torch.long), relation=hold(spatial[:, 2], torch.long))
         b['attributes'], b['attribute_edges'] = {}, {}
+        by_code = np.argsort(spatial[:, 2], kind='stable')
+        sorted_codes = spatial[by_code, 2]
         for name in registry.attributed:
             declared = registry.by_name[name]
-            chosen = np.flatnonzero(np.isin(spatial[:, 2], (declared.code, declared.reverse)))
+            chosen = np.sort(np.concatenate([by_code[slice(*np.searchsorted(sorted_codes, (code, code + 1)))] for code in dict.fromkeys((declared.code, declared.reverse))]))
             values = held.numpy('attributes_' + name)[attribute_rows[chosen]]
             b['attributes'][name] = hold(values.reshape(-1, len(declared.attributes)), torch.float32)
             b['attribute_edges'][name] = hold(chosen, torch.long)

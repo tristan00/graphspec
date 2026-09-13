@@ -71,9 +71,13 @@ class Spatial(nn.Module):
         source, destination = edges
         if self.mode == 'relational':
             messages = h.new_zeros(len(source), h.shape[-1])
-            for kind in relation.unique().tolist():
-                indices = torch.nonzero(relation == kind, as_tuple=True)[0]
+            order = torch.argsort(relation)
+            kinds, counts = torch.unique_consecutive(relation[order], return_counts=True)
+            offset = 0
+            for kind, count in zip(kinds.tolist(), counts.tolist()):
+                indices = order[offset:offset + count]
                 messages = messages.index_copy(0, indices, h[source[indices]] @ self.weights[kind])
+                offset += count
             if attributes:
                 for name, values in attributes.items():
                     if len(values):
