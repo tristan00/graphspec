@@ -22,6 +22,10 @@ class Results:
     def snapshot(self):
         started = time.perf_counter()
         plan = self.read(self.directory / 'plan.json')
+        if plan is None:
+            emit('dashboard_snapshot', attempts=0, seconds=round(time.perf_counter() - started, 4))
+            return dict(updated=datetime.now(timezone.utc).isoformat(), rows=[], complete=0, unscored=0, baseline_mse=None, best_neural_mse=None,
+                        best_neural_model=None, train_rows=0, holdout_rows=0, stop_requested=False, running=None, directory=str(self.directory))
         running = self.read(self.directory / 'running.json') or {}
         live = False
         if running:
