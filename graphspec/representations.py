@@ -155,8 +155,15 @@ def marked_edges(pieces, turn, codes):
     flags = kernels.combined(ids, values[:, 2], count)
     kept = kernels.first_rows(ids, count)
     source, destination = values[kept, 0], values[kept, 1]
-    output = np.column_stack((source, destination, codes[flags[ids[kept]]], turn[destination] - turn[source])).astype(np.int32)
-    return output[np.lexsort((output[:, 0], output[:, 1]))]
+    return ordered(source, destination, codes[flags[ids[kept]]], turn[destination] - turn[source], int(destination.max(initial=-1)) + 1)
+
+
+def ordered(source, destination, relation, gap, size):
+    order = kernels.by_target(np.asarray(source, np.int64), np.asarray(destination, np.int64), size)
+    output = np.empty((len(order), 4), np.int32)
+    for column, values in enumerate((source, destination, relation, gap)):
+        output[:, column] = np.asarray(values)[order]
+    return output
 
 
 def boundary_codes(registry):
@@ -229,8 +236,7 @@ def event_boundaries(arrays, registry, member, lookback, window):
     before, after, flags = kernels.boundaries(source, target, ticks, member, membership[moments].astype(np.int64), lookback, window,
                                               len(arrays['entity_kind']))
     turn = turns[moments]
-    output = np.column_stack((before, after, boundary_codes(registry)[flags], turn[after] - turn[before])).astype(np.int32).reshape(-1, 4)
-    return output[np.lexsort((output[:, 0], output[:, 1]))]
+    return ordered(before, after, boundary_codes(registry)[flags], turn[after] - turn[before], len(events))
 
 
 def neighbors(arrays, spec):
@@ -355,11 +361,7 @@ def validate(arrays, graph, registry, spec, groups):
         source, destination = arrays['event_dag'].T
         if np.any(events[source, 2] >= events[destination, 2]) or not (member[source].all() and member[destination].all()):
             raise ValueError('event graph of graph %s links a later, simultaneous or excluded event' % graph.name)
-        source, destination, relation, gaps = arrays['event_boundaries'].T
-        shared = (events[source, :2, None] == events[destination, None, :2]).any((1, 2))
-        ticks = events[:, 2] // 2
-        if (not shared.all() or np.any(turn[ticks[source]] >= turn[ticks[destination]]) or not (member[source].all() and member[destination].all())
-                or not np.array_equal(gaps, turn[ticks[destination]] - turn[ticks[source]])):
+        if kernels.check_boundaries(np.asarray(arrays['event_boundaries']), np.asarray(events), np.asarray(member), np.asarray(turn), boundary_codes(registry)[1:]):
             raise ValueError('event boundary edges of graph %s are invalid' % graph.name)
     if 'walks' in groups:
         query = np.asarray(arrays['query_step'], np.int64)

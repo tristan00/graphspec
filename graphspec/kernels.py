@@ -1294,3 +1294,42 @@ def forman(adjacency, sources, targets):
             value += squares / (gamma * largest)
         values[edge] = value
     return values
+
+
+@njit(cache=True, parallel=True)
+def by_target(before, after, size):
+    rows = len(after)
+    offsets = np.zeros(size + 1, np.int64)
+    for row in range(rows):
+        offsets[after[row] + 1] += 1
+    for slot in range(size):
+        offsets[slot + 1] += offsets[slot]
+    order = np.empty(rows, np.int64)
+    fill = offsets[:size].copy()
+    for row in range(rows):
+        order[fill[after[row]]] = row
+        fill[after[row]] += 1
+    for slot in prange(size):
+        lo, hi = offsets[slot], offsets[slot + 1]
+        if hi - lo > 1:
+            segment = order[lo:hi]
+            order[lo:hi] = segment[np.argsort(before[segment])]
+    return order
+
+
+@njit(cache=True, parallel=True)
+def check_boundaries(rows, events, member, turn, codes):
+    problems = 0
+    for index in prange(len(rows)):
+        source, destination, relation, gap = rows[index, 0], rows[index, 1], rows[index, 2], rows[index, 3]
+        shared = False
+        for i in range(2):
+            for j in range(2):
+                shared |= events[source, i] == events[destination, j]
+        before, after = turn[events[source, 2] // 2], turn[events[destination, 2] // 2]
+        known = False
+        for code in codes:
+            known |= relation == code
+        if not shared or before >= after or not member[source] or not member[destination] or gap != after - before or not known:
+            problems += 1
+    return problems
