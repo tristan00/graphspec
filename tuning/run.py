@@ -13,9 +13,9 @@ import numpy as np
 import graph_tuning_infra
 from graphspec.spec import digest
 from graph_tuning_infra import compute, sources
-from graph_tuning_infra.files import read_json, sha256_bytes, sha256_file, write_csv, write_json, write_jsonl
+from graph_tuning_infra.files import BUDGET, read_json, sha256_bytes, sha256_file, write_csv, write_json, write_jsonl
 from graph_tuning_infra.log import configure, emit
-from graph_tuning_infra.processes import Lock, command, stop
+from graph_tuning_infra.processes import WORKERS, Lock, command, stop
 
 
 VERSION = 7
@@ -49,10 +49,9 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     cfg, directory = config, Path(directory)
     graph, history = digest(cfg['graph']), cfg['graph']['time/history']
     budget = FitBudget(directory, deadline)
-    torch.set_num_threads(2)
     torch.manual_seed(cfg['seed'])
     np.random.seed(cfg['seed'])
-    device = 'cuda'
+    device = compute.DEVICE
     if not torch.cuda.is_available():
         raise RuntimeError('this research run requires the available CUDA GPU')
     compute.reserve()
@@ -404,8 +403,8 @@ def main():
     run_parser.add_argument('--seconds', type=int, default=600)
     run_parser.add_argument('--resume', action='store_true')
     run_parser.add_argument('--selector', choices=('tpe', 'random'), default='tpe')
-    run_parser.add_argument('--workers', type=int, default=4)
-    run_parser.add_argument('--variant-gb', type=int, default=300)
+    run_parser.add_argument('--workers', type=int, default=WORKERS)
+    run_parser.add_argument('--variant-gb', type=int, default=BUDGET >> 30)
     worker_parser = subparsers.add_parser('worker')
     worker_parser.add_argument('--bank', required=True)
     worker_parser.add_argument('--output', required=True)

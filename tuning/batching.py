@@ -40,7 +40,7 @@ def combine_tree(trees):
     return {key: combine_tree([tree[key] for tree in trees]) if key == 'child' else torch.cat([tree[key] for tree in trees]) for key in trees[0]}
 
 
-def pack_batch(bank, blocks, cfg, device='cuda'):
+def pack_batch(bank, blocks, cfg, device):
     started = time.perf_counter()
     parts = [pack(bank, block, cfg, device) for block in blocks]
     t, size = parts[0]['frames'], len(parts)

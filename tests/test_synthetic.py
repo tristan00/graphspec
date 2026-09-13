@@ -1,8 +1,5 @@
-from pathlib import Path
-import shutil
-import tempfile
-
 import numpy as np
+import pytest
 
 from graphspec.synthetic import generate
 from tuning.build import build
@@ -12,9 +9,13 @@ from tuning.roster import groups, models, sample
 from .support import configured
 
 
-def test_generated_databases_follow_the_contract_at_every_level():
-    root = Path(tempfile.mkdtemp())
-    try:
+def test_generated_databases_follow_the_contract_at_every_level(tmp_path):
+    root = tmp_path
+    with pytest.raises(ValueError):
+        generate(root / 'few', 'few', 3, 'graph', 5, entities=40, steps=10, features=8, signals=0, degree=2.0, max_degree=4, alive=0.8, lifetime=3.0, period=3)
+    with pytest.raises(ValueError):
+        generate(root / 'short', 'short', 5, 'node', 5, entities=40, steps=5, features=8, signals=0, degree=2.0, max_degree=4, alive=0.8, lifetime=3.0, period=4)
+    if True:
         for level in ('query', 'node', 'graph'):
             task = generate(root / level, level, 5, level, 5, entities=60, steps=10, features=8, signals=2 if level == 'query' else 0,
                             degree=2.0, max_degree=4, alive=0.8, lifetime=3.0, period=3)
@@ -28,5 +29,3 @@ def test_generated_databases_follow_the_contract_at_every_level():
                 block = bank.blocks(0, 4)[-1]
                 b = pack(bank, block, cfg, 'cpu')
                 assert b['predictions'] >= 1 and int(b['selected'].sum()) >= 1, (level, model)
-    finally:
-        shutil.rmtree(root, ignore_errors=True)

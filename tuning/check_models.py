@@ -46,9 +46,8 @@ def probe(bank, block, cfg, device):
                 peak_cuda_bytes=torch.cuda.max_memory_allocated() if device == 'cuda' else 0, ok=True)
 
 
-def check(directory, output, device='cuda', graph=None, spec_path=None):
+def check(directory, output, device, graph=None, spec_path=None):
     entered = time.perf_counter()
-    torch.set_num_threads(2)
     if device == 'cuda':
         compute.reserve()
     bank = Bank(directory)
@@ -88,7 +87,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('directory')
     parser.add_argument('--output', required=True)
-    parser.add_argument('--device', default='cuda')
+    parser.add_argument('--device', default=compute.DEVICE)
     parser.add_argument('--graph', type=int)
     parser.add_argument('--spec')
     args = parser.parse_args()

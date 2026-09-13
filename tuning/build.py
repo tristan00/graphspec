@@ -1,5 +1,4 @@
 import argparse
-from concurrent.futures import ProcessPoolExecutor
 import json
 import logging
 from pathlib import Path
@@ -12,6 +11,7 @@ from graphspec.truth import VERSION, parse
 from graph_tuning_infra.database import connect, query
 from graph_tuning_infra.files import read_json, sha256_file, write_json
 from graph_tuning_infra.log import configure
+from graph_tuning_infra.processes import WORKERS, parallel
 
 
 LOG = logging.getLogger(__name__)
@@ -131,13 +131,7 @@ def build(task_path, output, workers):
     (output / 'truth').mkdir(parents=True)
     write_json(output / 'supervision.json', rows)
     jobs = [(index, names[index], steps, ids, members) for index, steps, ids, members in groups]
-    metrics = []
-    with ProcessPoolExecutor(max_workers=workers, initializer=attach, initargs=(str(database), registry.declaration(), categories,
-                                                                              task['target'], str(output), LOG.getEffectiveLevel())) as pool:
-        for done, entry in enumerate(pool.map(graph, jobs, chunksize=4), 1):
-            metrics.append(entry)
-            if done % 100 == 0 or done == len(jobs):
-                LOG.info('bank progress graphs=%d/%d seconds=%.1f', done, len(jobs), time.perf_counter() - started)
+    metrics = parallel(graph, jobs, workers, attach, (str(database), registry.declaration(), categories, task['target'], str(output), LOG.getEffectiveLevel()))
     manifest = dict(version=VERSION, database=str(database), task=task, target=dict(table=task['target'], level=level),
                     spec=registry.declaration(), spec_sha256=registry.fingerprint(), categories=categories, signals=registry.extras['signals'],
                     graphs=metrics, rows=len(rows['rows']), train_rows=len(rows['split']['train_indices']),
@@ -152,7 +146,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--task', required=True)
     parser.add_argument('--output', required=True)
-    parser.add_argument('--workers', type=int, default=8)
+    parser.add_argument('--workers', type=int, default=WORKERS)
     args = parser.parse_args()
     configure()
     manifest = build(args.task, args.output, args.workers)

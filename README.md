@@ -56,7 +56,7 @@ python -m dashboard.server --directory artifacts/run_retention --port 8766
 
 **Synthetic data**
 
-Development and benchmarking use generated databases, never client data. `python -m graphspec.synthetic --output artifacts/graphdb --name dev --graphs 4 --entities 2000 --steps 48` writes `dev.lbug` and `dev.task.json` following the contract: four node types, five relations with bounded degrees (`--degree`, `--max-degree`), relations that persist for a geometric lifetime and end with a removal row (`--lifetime`), observation coverage `--alive`, one query per step with categories and `--signals` channels, periods of `--period` steps, and a target on queries, nodes or graphs (`--level`). Every run is fixed by `--seed`.
+Development and benchmarking use generated databases, never client data. `python -m graphspec.synthetic --output artifacts/graphdb --name dev --graphs 4 --entities 2000 --steps 48` writes `dev.lbug` and `dev.task.json` following the contract: four node types, five relations with bounded degrees (`--degree`, `--max-degree`), relations that persist for a geometric lifetime and end with a removal row (`--lifetime`), observation coverage `--alive`, one query per step with categories and `--signals` channels, periods of `--period` steps, and a target on queries, nodes or graphs (`--level`). Every run is fixed by `--seed`. The generator refuses settings that cannot give two training and two validation label groups: at least ten steps for query targets, labelled periods on both sides of the 80% split for node targets, four graphs for graph targets.
 
 **Why LadybugDB**
 

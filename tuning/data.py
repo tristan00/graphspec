@@ -172,7 +172,7 @@ def history_inputs(held, first, last, start, count, device, spec, stream, includ
     return result
 
 
-def pack(bank, block, cfg, device='cuda'):
+def pack(bank, block, cfg, device):
     from .roster import BLOCKS
     from .turns import enabled, lookback
 

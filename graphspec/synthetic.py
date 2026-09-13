@@ -95,9 +95,7 @@ def graph_rows(rng, index, name, settings, counter, level):
         stated[pair[both]] = True
         ended = stated & (begin + length < steps)
         absent = np.stack((source[ended], target[ended], (begin + length)[ended]), 1)
-        earlier = observed.cumsum(0) > 0
-        good = earlier[absent[:, 2], absent[:, 0]] & earlier[absent[:, 2], absent[:, 1]]
-        facts[relation] = (present, absent[good], attributes)
+        facts[relation] = (present, absent, attributes)
     obs_step, obs_entity = np.nonzero(observed)
     order = np.lexsort((obs_entity, obs_step))
     obs_step, obs_entity = obs_step[order], obs_entity[order]
@@ -173,8 +171,22 @@ def graph_rows(rng, index, name, settings, counter, level):
     return tables
 
 
+def labels(graphs, level, settings):
+    steps, period = settings['steps'], settings['period']
+    if level == 'query':
+        return steps - (steps + 4) // 5, (steps + 4) // 5
+    if level == 'node':
+        moments = np.arange(period - 1, steps, period)
+        return 2 * int((moments < steps * 0.8).sum()), 2 * int((moments >= steps * 0.8).sum())
+    return graphs - graphs // 2, graphs // 2
+
+
 def generate(output, name, graphs, level, seed, **settings):
     started = time.perf_counter()
+    train, validation = labels(graphs, level, settings)
+    if train < 2 or validation < 2:
+        raise ValueError('%s-level targets with %d graphs, %d steps and period %d give %d training and %d validation label groups; each needs two' % (
+            level, graphs, settings['steps'], settings['period'], train, validation))
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     database_path = output / (name + '.lbug')
