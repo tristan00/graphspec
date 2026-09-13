@@ -845,7 +845,7 @@ def replayed(entity, step, altered, present_source, present_target, present_code
 
 
 @njit(cache=True)
-def event_dag(source, target, ticks, member, lags, windowed, window, cap, entities):
+def group_index(source, target, ticks, member, entities):
     events = len(ticks)
     belongs = np.empty(events, np.int64)
     groups = 0
@@ -894,66 +894,80 @@ def event_dag(source, target, ticks, member, lags, windowed, window, cap, entiti
             entries[entry_fill[who]] = row
             entry_fill[who] += 1
             group_hi[group_fill[who] - 1] = entry_fill[who]
-    formed = np.zeros(entities, np.int64)
-    touched = np.full(events, -1, np.int64)
-    buffer = np.empty(1024, np.int64)
-    capacity, total = 1024, 0
-    out_source = np.empty(capacity, np.int32)
-    out_target = np.empty(capacity, np.int32)
+    return belongs, group_offset, group_lo, group_hi, group_tick, entries
+
+
+@njit(cache=True)
+def dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_hi, group_tick, entries, lags, windowed, window, cap, buffer):
+    fill = 0
+    for side in range(2):
+        who = source[row] if side == 0 else target[row]
+        if side == 1 and target[row] == source[row]:
+            continue
+        base, count = group_offset[who], group_offset[who + 1] - group_offset[who]
+        low, high = 0, count
+        while low < high:
+            middle = (low + high) // 2
+            if group_tick[base + middle] < belongs[row]:
+                low = middle + 1
+            else:
+                high = middle
+        available = low
+        step = 0
+        while True:
+            if windowed:
+                lag = step + 1
+            else:
+                if step >= len(lags):
+                    break
+                lag = lags[step]
+            if available < lag:
+                break
+            slot = base + available - lag
+            lo, hi = group_lo[slot], group_hi[slot]
+            if windowed and ticks[row] - ticks[entries[hi - 1]] > window:
+                break
+            start = lo if cap == 0 else max(lo, hi - cap)
+            for index in range(start, hi):
+                previous = entries[index]
+                if ticks[row] - ticks[previous] > window:
+                    continue
+                if fill == len(buffer):
+                    grown = np.empty(2 * len(buffer), np.int64)
+                    grown[:fill] = buffer[:fill]
+                    buffer = grown
+                buffer[fill] = previous
+                fill += 1
+            step += 1
+    if fill == 0:
+        return buffer, 0
+    ordered = np.unique(buffer[:fill])
+    buffer[:len(ordered)] = ordered
+    return buffer, len(ordered)
+
+
+@njit(cache=True, parallel=True)
+def event_dag(source, target, ticks, member, lags, windowed, window, cap, entities):
+    events = len(ticks)
+    belongs, group_offset, group_lo, group_hi, group_tick, entries = group_index(source, target, ticks, member, entities)
+    counts = np.zeros(events, np.int64)
+    for row in prange(events):
+        if member[row]:
+            buffer = np.empty(64, np.int64)
+            _, counts[row] = dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_hi, group_tick, entries, lags, windowed, window, cap, buffer)
+    offsets = np.zeros(events + 1, np.int64)
     for row in range(events):
-        if not member[row]:
-            continue
-        fill = 0
-        for side in range(2):
-            who = source[row] if side == 0 else target[row]
-            if side == 1 and target[row] == source[row]:
-                continue
-            while formed[who] < group_count[who] and group_tick[group_offset[who] + formed[who]] < belongs[row]:
-                formed[who] += 1
-            available = formed[who]
-            step = 0
-            while True:
-                if windowed:
-                    lag = step + 1
-                else:
-                    if step >= len(lags):
-                        break
-                    lag = lags[step]
-                if available < lag:
-                    break
-                slot = group_offset[who] + available - lag
-                lo, hi = group_lo[slot], group_hi[slot]
-                if windowed and ticks[row] - ticks[entries[hi - 1]] > window:
-                    break
-                start = lo if cap == 0 else max(lo, hi - cap)
-                for index in range(start, hi):
-                    previous = entries[index]
-                    if ticks[row] - ticks[previous] > window or touched[previous] == row:
-                        continue
-                    touched[previous] = row
-                    if fill == len(buffer):
-                        grown = np.empty(2 * len(buffer), np.int64)
-                        grown[:fill] = buffer
-                        buffer = grown
-                    buffer[fill] = previous
-                    fill += 1
-                step += 1
-        if fill == 0:
-            continue
-        ordered = np.sort(buffer[:fill])
-        if total + fill > capacity:
-            while capacity < total + fill:
-                capacity *= 2
-            grown_source = np.empty(capacity, np.int32)
-            grown_target = np.empty(capacity, np.int32)
-            grown_source[:total] = out_source[:total]
-            grown_target[:total] = out_target[:total]
-            out_source, out_target = grown_source, grown_target
-        for index in range(fill):
-            out_source[total] = ordered[index]
-            out_target[total] = row
-            total += 1
-    return out_source[:total], out_target[:total]
+        offsets[row + 1] = offsets[row] + counts[row]
+    out_source = np.empty(offsets[events], np.int32)
+    out_target = np.empty(offsets[events], np.int32)
+    for row in prange(events):
+        if member[row] and counts[row] > 0:
+            buffer = np.empty(max(64, counts[row]), np.int64)
+            buffer, fill = dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_hi, group_tick, entries, lags, windowed, window, cap, buffer)
+            for index in range(fill):
+                out_source[offsets[row] + index] = buffer[index]
+                out_target[offsets[row] + index] = row
+    return out_source, out_target
 
 
 @njit(cache=True)
