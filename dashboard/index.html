@@ -19,9 +19,9 @@
 </section>
 <div class="run" id="running">Reading the current fit…</div>
 <div class="error" role="status" id="error"></div>
-<div class="filters"><input id="search" type="search" aria-label="Search attempts" placeholder="Search anything in a row…"><input id="columns" type="search" aria-label="Filter columns by name" placeholder="Columns whose name contains…"><label><input type="checkbox" id="group-model" checked> Model</label><label><input type="checkbox" id="group-training" checked> Training</label><label><input type="checkbox" id="group-graph" checked> Graph</label><label><input type="checkbox" id="common" checked> Common columns only</label><label><input type="checkbox" id="varying"> Varying columns only</label><button id="clear">Clear filters</button><span id="count" class="count"></span></div>
+<div class="filters"><input id="search" type="search" aria-label="Search attempts" placeholder="Search anything in a row…"><input id="columns" type="search" aria-label="Filter columns by name" placeholder="Columns whose name contains…"><label><input type="checkbox" id="group-model" checked> Model</label><label><input type="checkbox" id="group-training" checked> Training</label><label><input type="checkbox" id="group-graph" checked> Graph</label><label><input type="checkbox" id="common" checked> Common graph columns only</label><label><input type="checkbox" id="varying"> Varying columns only</label><button id="clear">Clear filters</button><span id="count" class="count"></span></div>
 <div class="table-wrap"><table><thead id="head"></thead><tbody id="rows"></tbody></table><div id="empty">No matching attempts.</div></div>
-<footer><span id="split"></span><span>Updates every 10 seconds · Common columns: present in at least 60% of the attempts shown · Column filters: a value from the list matches exactly, other text matches as a substring, and numbers accept &lt; &gt; &lt;= &gt;= = != · Trial time is the whole trial from selection to pruning · Click a trial for the full configuration</span></footer>
+<footer><span id="split"></span><span>Updates every 10 seconds · Common graph columns: graph parameters present in at least 60% of the attempts shown; every model and training parameter is always a column · Column filters: a value from the list matches exactly, other text matches as a substring, and numbers accept &lt; &gt; &lt;= &gt;= = != · Trial time is the whole trial from selection to pruning · Click a trial for the full configuration</span></footer>
 <dialog id="detail"><button class="close" id="close">Close</button><h2 id="detail-title"></h2><p id="detail-sub"></p><pre id="detail-params"></pre><details><summary>Complete saved configuration and provenance</summary><pre id="detail-record"></pre></details></dialog>
 <script>
 const $=id=>document.getElementById(id);
@@ -45,7 +45,7 @@ const fixed=[
 {key:'graph',label:'Graph digest',group:'Trial',get:row=>row.graph,digest:true}];
 function union(rows,pick){const keys=[];const seen=new Set();for(const row of rows)for(const key of Object.keys(pick(row)||{}))if(!seen.has(key)){seen.add(key);keys.push(key);}return keys;}
 function buildColumns(){
-const model=union(data.rows,row=>row.model_params).map(key=>({key:'model:'+key,label:key,group:'Model',get:row=>row.model_params?.[key]}));
+const leading=['view','hidden','dropout'];const model=union(data.rows,row=>row.model_params).sort((a,b)=>(leading.includes(a)?leading.indexOf(a):leading.length)-(leading.includes(b)?leading.indexOf(b):leading.length)||a.localeCompare(b)).map(key=>({key:'model:'+key,label:key,group:'Model',get:row=>row.model_params?.[key]}));
 const training=union(data.rows,row=>row.training).map(key=>({key:'training:'+key,label:key,group:'Training',get:row=>row.training?.[key]}));
 const graph=union(data.rows,row=>row.config?.graph).map(key=>({key:'graph:'+key,label:key,group:'Graph',get:row=>row.config?.graph?.[key]}));
 columns=[...fixed,...model,...training,...graph];
@@ -67,7 +67,7 @@ function distinct(column){if(!distinctCache.has(column.key)){const values=new Se
 function visible(rows){
 const groups={Trial:true,Model:$('group-model').checked,Training:$('group-training').checked,Graph:$('group-graph').checked};
 const needle=$('columns').value.trim().toLowerCase();
-const common=$('common').checked;return columns.filter(column=>groups[column.group]&&(!common||column.group==='Trial'||rows.filter(row=>column.get(row)!=null).length>=rows.length*0.6)&&(!needle||column.label.toLowerCase().includes(needle)||column.group==='Trial'&&column.key==='id'||filters[column.key]));
+const common=$('common').checked;return columns.filter(column=>groups[column.group]&&(!common||column.group!=='Graph'||rows.filter(row=>column.get(row)!=null).length>=rows.length*0.6)&&(!needle||column.label.toLowerCase().includes(needle)||column.group==='Trial'&&column.key==='id'||filters[column.key]));
 }
 function cell(row,content,className=''){const td=document.createElement('td');if(typeof content==='string')td.textContent=content;else td.append(content);td.className=className;row.append(td);return td;}
 function openDetail(row){$('detail-title').textContent=`${row.id} · ${row.model}`;$('detail-sub').textContent=`${row.graph} · ${row.mode} · ${row.status} · MSE ${fmt(row.mse)}`;$('detail-params').textContent=sections(row);$('detail-record').textContent=JSON.stringify(row,null,2);$('detail').showModal();}
