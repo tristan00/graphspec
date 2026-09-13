@@ -1,65 +1,69 @@
 **Efficiency report**
 
-Measured on this workstation (24 cores, 63 GB RAM, RTX 5090) on 12 September 2026. Before is commit `baffe4d`; after is `HEAD`. Every change was checked for equality against the previous implementation before it was kept: the transform equality harness (576 specs over 24 synthetic graphs), an old-versus-new comparison of every packed tensor for every model on the toy bank and the churn bank (118 cases, plus 3600 blocks in the adversarial review, no differences apart from the two dead keys removed), and CPU-versus-CUDA packing equality.
+Measured on this workstation (24 cores, 63 GB RAM, RTX 5090) on 12 September 2026, on databases from `graphspec.synthetic`: `dev` (4 graphs, 2,000 entities, 48 steps), `medium` (20,000 entities, 24 steps, 375k facts) and `large` (200,000 entities, 24 steps, 3.4M observations, 3.8M facts), all with bounded degrees, persistent relations with removals, one query per step, two signal channels and a query-level target. Before is commit `baffe4d`; after is `HEAD`. Every change was checked for equality against the implementation it replaced: the transform equality harness, an old-versus-new comparison of every packed tensor for every model on two banks (120 cases here, 704 more in the independent review), and CPU-versus-CUDA packing equality. Client databases were removed from the machine; nothing below was measured on them.
+
+**Separation**
+
+Resource decisions live in `graph_tuning_infra` and nowhere else: `compute` chooses the device for dense linear algebra by matrix size, names the training device and thread count, reserves GPU memory and sets the budget of derived facts a variant may hold; `arrays` owns the resident cache of a graph's tensors and its eviction limit; `processes` owns the process-pool map and the default worker count; `files` owns the array store, its atomic rename and the size-bounded pruning of variant folders. `graphspec` imports no torch; `tuning` receives the device as an argument and holds no cache size, process count, disk budget or GPU fraction. The boundary test in the infra repository fails if it ever imports graphspec, tuning or dashboard.
 
 **Where the time went**
 
-The real runs recorded under `artifacts/` before this work spent 3 to 20 times longer packing model inputs than computing on the GPU, and packing repeats every epoch. On the churn bank (8 graphs, up to 164k entities, 47,856 query rows, 37,617 training windows at history 16) one window packed in 16 ms for snapshot models and 1.3 s for event models, so no family could finish an epoch inside a 600 s fit. Variant materialisation, by contrast, took 2 to 4 s per graph. The packing path was therefore the first target, the dense graph operators the second, and the transform stages the third.
+Real runs recorded before this work spent 3 to 20 times longer packing model inputs than computing on the GPU, and packing repeats every epoch. Variant materialisation took seconds per graph. Packing was therefore the first target, the dense graph operators the second, and the transform stages the third.
 
 **Packing** (`tuning/data.py`, `tuning/gather.py`, `tuning/batching.py`)
 
-Milliseconds per training window including batching, on CUDA, 60 windows each, churn bank.
+Milliseconds per training window including batching, on CUDA, 24 windows per case, history 16.
 
-| Model | Graph 0 (17k entities) before | after | Graph 4 (156k entities) before | after |
+| Model | dev (2k entities) before | after | large (200k entities, 1.4M observations per window) before | after |
 |---|---:|---:|---:|---:|
-| M01 Relational snapshot GRU | 4.4 | 4.0 | 26.0 | 4.0 |
-| M06 RGCN-GRU | 4.0 | 5.2 | 28.1 | 5.3 |
-| M13 Entity-coupling gated | 4.8 | 3.6 | 35.3 | 4.3 |
-| M15 Event-graph gated | 105.5 | 6.3 | 825.1 | 8.6 |
-| M17 TGAT | 23.5 | 1.8 | 68.6 | 2.8 |
-| M21 GraphMixer | 1.6 | 3.4 | 6.6 | 3.8 |
-| M23 HyperEvent | 3.2 | 1.9 | 11.2 | 4.3 |
-| M25 CAWN | 1.6 | 1.5 | 6.7 | 1.7 |
-| M12 MPNN over derived nodes | 6.5 | 4.7 | 39.3 | 7.2 |
-| M19 JODIE | 74.1 | 2.0 | 645.0 | 5.8 |
+| M01 Relational snapshot GRU | 7.3 | 2.9 | 661 | 238 |
+| M06 RGCN-GRU | 7.3 | 2.8 | 694 | 241 |
+| M13 Entity-coupling gated | 7.7 | 3.6 | 898 | 344 |
+| M15 Event-graph gated | 50.4 | 13.9 | 4,900 | 1,473 |
+| M17 TGAT | 22.5 | 1.5 | 49.2 | 4.7 |
+| M21 GraphMixer | 0.8 | 1.7 | 29.9 | 4.1 |
+| M23 HyperEvent | 1.9 | 1.6 | 30.4 | 5.0 |
+| M25 CAWN | 0.8 | 0.9 | 40.1 | 4.4 |
+| M12 MPNN over derived nodes | 45.0 | 12.3 | 3,700 | 1,708 |
+| M19 JODIE | 31.3 | 2.4 | 2,885 | 144 |
 
-What changed: every per-entity or per-event Python loop became a numba kernel (latest observation, neighbour sampling, tree levels, interaction histories with structural features, reachability, walk identities); each open graph keeps the arrays that packing searches in RAM and its feature matrices on the training device, so feature rows are gathered on the device; DAG and mixed edges are selected by binary search on a sorted column instead of masking the whole table (34M rows on graph 4); searches use the array's own dtype, which stops numpy copying a 34M-row column to int64 on every call. Two packed keys read by no model, `common_x` and `history_events`, were dropped. The remaining cost is a floor of 2 to 5 ms of Python per window; packing a whole batch in one pass would be the next step.
+What changed: every per-entity or per-event Python loop became a numba kernel (latest observation, neighbour sampling, tree levels, interaction histories with their structural features, reachability, walk identities); each open graph keeps the arrays that packing searches in RAM and its feature matrices on the training device, so feature rows are gathered on the device; DAG and mixed edges are selected by binary search on a sorted column instead of masking the whole table; frame edges are sliced by per-step bounds instead of sixteen scans; mixed edge features and DAG gaps are computed on the device; searches use the array's own dtype, which stops numpy copying a whole column to int64 on every call. Two packed keys read by no model, `common_x` and `history_events`, were dropped. What remains on the large graph is proportional to the data a window carries: 26M DAG edges and 1.4M observation rows per window for the event and snapshot families. A fixed floor of 1 to 3 ms of Python per window remains; packing a whole batch in one pass would be the next step.
 
-**Dense operators** (`graphspec/operators.py`, `graphspec/kernels.py`)
+**Dense operators** (`graphspec/operators.py`, `graphspec/kernels.py`, `graph_tuning_infra/compute.py`)
 
-Seconds for one transform of a single-step graph, the whole spec with the named operator.
+Seconds for one transform of the dev graph (48 steps of about 1,600 present entities) with the named operator.
 
-| Operator | 4,000 entities before | after | 8,000 entities before | after |
-|---|---:|---:|---:|---:|
-| ppr, top 8 | 1.8 | 0.7 | 7.2 | 1.5 |
-| heat, top 8 | 7.1 | 0.9 | 23.1 | 3.5 |
-| fosr, budget 4 | 11.5 | 2.0 | 98.5 | 10.8 |
-| sdrf, budget 4 | 23.6 | 2.8 | 140.5 | 9.9 |
+| Operator | Before | After |
+|---|---:|---:|
+| ppr, top 8 | 19.4 | 1.0 |
+| heat, top 8 | 26.3 | 1.1 |
+| fosr, budget 4 | 33.7 | 1.8 |
+| sdrf, budget 4 | 5.8 | 2.5 |
 
-What changed: connected components come from a union-find kernel; diffusion and the FoSR decomposition run per component in float64, on the GPU for components of at least 1024 entities; top-k uses a stable sort; FoSR reuses each component's decomposition until an added edge changes it; SDRF's balanced Forman curvature runs in a parallel numba kernel. Results are identical except at exact floating-point ties (score gaps of 1e-17 or an argmin over equal values), where either implementation's choice is arbitrary.
+What changed: connected components come from a union-find kernel; diffusion and the FoSR decomposition run per component in float64, on the device the infra layer picks by component size; top-k uses a stable sort; FoSR reuses each component's decomposition until an added edge changes it; SDRF's balanced Forman curvature runs in a parallel numba kernel. Results equal the previous implementation to float64 rounding; they differ only where two candidates tie to within 1e-17, where either choice is arbitrary.
 
 **Transform stages** (`graphspec/operators.py`, `graphspec/transform.py`)
 
-Seconds for the full transform of the benchmark graphs (200k entities and 24 steps for large, 20k and 24 for medium), 119 cases; median speedup 1.33x, 76 cases faster, 4 within noise slower, no case changed status.
+Seconds for the full transform, 107 cases; median speedup 1.33x, 81 cases faster, one within noise slower, every case completes on both sides. Peak memory after includes about 0.5 GB for torch loaded in the measuring process.
 
 | Case | Graph | Before | After |
 |---|---|---:|---:|
-| identity | large | 4.1 | 0.6 |
-| window 4 | large | 5.9 | 3.0 |
-| degree | large | 5.0 | 2.4 |
-| projection places | large | 10.5 | 6.9 |
-| completion | medium | 16.8 | 10.7 |
-| hops 2 | medium | 20.0 | 13.4 |
-| coupling ordinal | large | 11.0 | 7.8 |
-| mixed | large | 14.0 | 10.0 |
-| events next | large | 61.5 | 65.0 |
+| identity | large | 0.9 | 0.3 |
+| window 4 | large | 2.1 | 1.4 |
+| degree | large | 1.3 | 0.9 |
+| hops 2 | large | 7.7 | 5.4 |
+| completion of teams | medium | 14.0 | 8.6 |
+| coupling ordinal | large | 3.8 | 3.1 |
+| walks | large | 4.1 | 3.5 |
+| events periods | large | 53.5 | 49.2 |
+| mixed | large | 10.7 | 10.1 |
 
-What changed: a relation whose edge filters sit at their identity values is no longer filtered (2.7 s of the 4.1 s identity transform on large), and a stage that returns its input unchanged is not verified again. The event representation groups (`events next`, `events periods`, `events window`) did not change and dominate their cases; four cases (`hops 2` large, `hops 3` medium, `events periods` large, `events window capped` large) still exceed 16 GB because their output is that large (18M pairs per step for hops 2 on the large graph), before and after.
+What changed: a relation whose edge filters sit at their identity values is no longer filtered, and a stage that returns its input unchanged is not verified again. The event and mixed representation groups were not rewritten and dominate their cases. The earlier out-of-memory results were artefacts of the previous benchmark graphs, which used preferential attachment and so held hubs of thousands of neighbours; on bounded-degree graphs two-hop closure on 200k entities takes 5.4 s at 2.3 GB. One legal spec can still run away: completing a large node type into a clique produced 768M facts and 46 GB on the medium graph. Derivation now stops at the infra fact budget (200M facts) with a clear error, so such a trial fails instead of exhausting the machine.
 
 **Variants in the search** (`tuning/variants.py`, `tuning/run.py`)
 
-Before a worker starts, the runner materialises the trial's variant for every graph in a process pool (`--workers`, default 4), so the fit budget is spent training; on the churn bank a variant of all 8 graphs takes about 30 s serially. After each trial it prunes the least recently used variants until `variants/` fits `--variant-gb` (default 300 GB). A variant build that fails is recorded as the trial's failure and the search continues. A per-stage cache keyed by spec prefix was not built: the stages that dominate (derived relations, edge filters, representations) are the last ones, so trials only share work when the whole spec matches, which the variant store already covers.
+Before a worker starts, the runner materialises the trial's variant for every graph in a process pool and prunes the least recently used variants until `variants/` fits the disk budget, both with defaults from the infra layer (`--workers`, `--variant-gb`). A variant build that fails, including one that exceeds the fact budget, is recorded as the trial's failure and the search continues. A per-stage cache keyed by spec prefix was not built: the stages that dominate are the last ones, so trials only share work when the whole spec matches, which the variant store already covers.
 
 **Verification**
 
-`tests/`: 22 tests in about 8 s warm, covering the spec space, every operator, the causal prefix property, seeds, protection, replay, representations, the kernels against numpy references, the bank and packing paths, and variant preparation and pruning. `D:\graph_tuning_infra`: 22 tests in 3 s including the boundary test. An adversarial review of the diff found and led to fixes for a pool chunk size that defeated parallel builds, unguarded variant failures, three fallbacks, dead code, missing timing logs, one README figure, silently ignored runtime flags on resume, and a rename race in the array store when two processes build the same variant.
+`tests/`: 24 tests in about 14 s, covering the spec space, every operator, the causal prefix property, seeds, protection, replay, representations, the kernels against numpy references, the bank and packing paths, variant preparation and pruning, the fact budget, and generated databases at all three target levels. `graph_tuning_infra`: 27 tests in 4 s including the boundary test. Two adversarial reviews of the diffs each ran their own equality checks and found issues that were fixed: a pool chunk size that defeated parallel builds, unguarded variant failures, fallbacks and dead code, missing timing logs, a rename race in the array store, ignored flags on resume, residual policy in the logic layer, a generator that produced unbuildable label schedules, and a misleading benchmark case.
