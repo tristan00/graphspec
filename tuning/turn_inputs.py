@@ -7,7 +7,7 @@ from .data import tensor, tree
 from .turns import lookback
 
 
-def add(b, a, first, last, start, cfg, device):
+def add(b, a, first, last, start, cfg, hold):
     queries = np.asarray(a['query_step'][first:last], np.int64)
     membership = a['turn_membership'][queries]
     previous = membership[:, None] - np.arange(1, lookback(cfg) + 1)
@@ -28,11 +28,11 @@ def add(b, a, first, last, start, cfg, device):
     token_gaps = np.stack((queries[:, None, None] - a['step'][observed.clip(0)],
         np.broadcast_to(turn_gap[:, :, None], age.shape), age), -1).clip(0).astype(np.float32)
     local = observed - int(a['snapshot_offsets'][start])
-    b.update(end_steps=tensor(np.where(valid, ends - start, -1), device, torch.long),
-        end_mask=tensor(valid, device), end_gaps=tensor(gaps, device),
-        end_raw=tensor(raw.transpose(0, 2, 1, 3), device), end_raw_mask=tensor(mask.transpose(0, 2, 1), device),
-        end_token_gaps=tensor(token_gaps.transpose(0, 2, 1, 3), device),
-        end_observation_local=tensor(np.where(mask & (local >= 0), local, -1), device, torch.long))
+    b.update(end_steps=hold(np.where(valid, ends - start, -1), torch.long),
+        end_mask=hold(valid), end_gaps=hold(gaps),
+        end_raw=hold(raw.transpose(0, 2, 1, 3)), end_raw_mask=hold(mask.transpose(0, 2, 1)),
+        end_token_gaps=hold(token_gaps.transpose(0, 2, 1, 3)),
+        end_observation_local=hold(np.where(mask & (local >= 0), local, -1), torch.long))
     if cfg['model'] == 'M28':
         last = a['turn_actor_decision'][prior, roots[:, 0, None]]
         affinity = np.array(a['affinity'][last.clip(0)], np.float32)
@@ -42,10 +42,10 @@ def add(b, a, first, last, start, cfg, device):
         global_affinity = np.array(a['global_affinity'][ends], np.float32)
         global_affinity += np.eye(affinity.shape[-1], dtype=np.float32)[a['turn_action_category'][ends]]
         global_affinity[~valid] = 0
-        b.update(end_affinity=tensor(affinity, device), end_global_affinity=tensor(global_affinity, device))
+        b.update(end_affinity=hold(affinity), end_global_affinity=hold(global_affinity))
 
 
-def temporal_edges(b, a, lo, hi, device, registry):
+def temporal_edges(b, a, lo, hi, device, registry, hold):
     temporal, context = registry.code('temporal'), registry.marker('turn_context')
     nodes = np.arange(lo, hi)
     query = a['step'][nodes]
@@ -79,10 +79,10 @@ def temporal_edges(b, a, lo, hi, device, registry):
     original_ids = np.r_[np.arange(lo, hi), ghosts]
     steps = a['step'][original_ids]
     turns = a['turn'][original_ids]
-    b.update(temporal_edges=tensor(edges.T, device, torch.long),
-        temporal_relation=tensor(np.asarray(list(pairs.values())), device, torch.long),
-        temporal_gap=tensor(steps[edges[:, 1]] - steps[edges[:, 0]], device, torch.float32),
-        temporal_turn_gap=tensor(turns[edges[:, 1]] - turns[edges[:, 0]], device, torch.float32))
+    b.update(temporal_edges=hold(edges.T, torch.long),
+        temporal_relation=hold(np.asarray(list(pairs.values())), torch.long),
+        temporal_gap=hold(steps[edges[:, 1]] - steps[edges[:, 0]], torch.float32),
+        temporal_turn_gap=hold(turns[edges[:, 1]] - turns[edges[:, 0]], torch.float32))
 
 
 def mixed_edges(b, a, start, stop, device, features):
@@ -101,14 +101,14 @@ def mixed_edges(b, a, start, stop, device, features):
     mixed['edge'] = torch.cat((mixed['edge'], features))
 
 
-def history_tokens(b, a, held, first, last, start, cfg, device, registry):
+def history_tokens(b, a, held, first, last, start, cfg, device, registry, hold):
     n, depth = last - first, lookback(cfg)
     if cfg['model'] == 'M17':
         roots = np.stack((a['actor'][first:last], a['subject'][first:last]), 1)
         roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1).copy()
         ends = b['end_steps'].cpu().numpy() + start
         cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1).copy()
-        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['neighbors'], cfg['layers'], device, registry, cfg['graph'], SEED, lambda value, dtype=None: tensor(value, device, dtype))
+        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['neighbors'], cfg['layers'], device, registry, cfg['graph'], SEED, hold)
         return
     original = b['history_mask'].shape[-1]
     valid = b['end_raw_mask'][:, :2]

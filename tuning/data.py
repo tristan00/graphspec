@@ -110,7 +110,7 @@ class Bank:
 
 
 def tensor(value, device, dtype=None):
-    return torch.as_tensor(np.asarray(value), dtype=dtype, device=device)
+    return torch.as_tensor(np.require(value, requirements=('C', 'W')), dtype=dtype, device=device)
 
 
 def sampling(spec):
@@ -218,7 +218,8 @@ def pack(bank, block, cfg, device):
     if enabled(cfg):
         from .turn_inputs import add
 
-        add(b, a, first, last, start, cfg, device)
+        add(b, a, first, last, start, cfg, hold)
+        b = bundle.flush(b)
     if 'snapshot' in blocks:
         entity_index, step_index = tensor(entity, device, torch.long), tensor(step, device, torch.long)
         align = torch.full((n, size), hi - lo, dtype=torch.long, device=device)
@@ -269,7 +270,7 @@ def pack(bank, block, cfg, device):
                 from .turn_inputs import temporal_edges
 
                 b = bundle.flush(b)
-                temporal_edges(b, a, lo, hi, device, registry)
+                temporal_edges(b, a, lo, hi, device, registry, hold)
         if 'mixed' in blocks:
             mixed_ticks = held.numpy('mixed_tick')
             left, right = between(mixed_ticks, start * 2, stop * 2)
@@ -336,7 +337,7 @@ def pack(bank, block, cfg, device):
         from .turn_inputs import history_tokens
 
         b = bundle.flush(b)
-        history_tokens(b, a, held, first, last, start, cfg, device, registry)
+        history_tokens(b, a, held, first, last, start, cfg, device, registry, hold)
     if 'walks' in blocks:
         if cfg['walks'] > a['walks'].shape[2] or cfg['walk_hops'] > a['walks'].shape[3]:
             raise ValueError('requested walks exceed the walks stored for this graph variant')

@@ -1313,7 +1313,7 @@ def by_target(before, after, size):
         lo, hi = offsets[slot], offsets[slot + 1]
         if hi - lo > 1:
             segment = order[lo:hi]
-            order[lo:hi] = segment[np.argsort(before[segment])]
+            order[lo:hi] = segment[np.argsort(before[segment], kind='mergesort')]
     return order
 
 
