@@ -68,7 +68,7 @@ class Bank:
                 self.row_index[index][labels['label_step']] = labels['label_row']
                 self.row_steps[index] = np.arange(graph['steps'], dtype=np.int32)
             self.entities[index] = graph['entities']
-        self.variants, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES)
+        self.variants, self.recent, self.store, self.residents = {}, {}, ArrayStore(), Residents(DTYPES)
         LOG.info('bank exit seconds=%.3f graphs=%d rows=%d level=%s', time.perf_counter() - started, len(self.manifest['graphs']), len(self.rows), self.level)
 
     def truth(self, index):
@@ -96,11 +96,15 @@ class Bank:
     def variant(self, cfg):
         from .model_spec import groups
 
+        held = self.recent.get(id(cfg))
+        if held is not None and held[0] is cfg:
+            return held[1]
         chosen = groups(cfg['model'])
         key = (chosen, specs.digest(cfg['graph']))
         if key not in self.variants:
             spec = specs.canonical(specs.space(self.registry, chosen), cfg['graph'])
             self.variants[key] = (self.directory / 'variants' / specs.digest(dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE)), spec, chosen)
+        self.recent[id(cfg)] = (cfg, self.variants[key])
         return self.variants[key]
 
     def stamp(self, cfg):
@@ -273,9 +277,14 @@ def pack(bank, block, cfg, device):
         b['attributes'], b['attribute_edges'] = {}, {}
         by_code = np.argsort(spatial[:, 2], kind='stable')
         sorted_codes = spatial[by_code, 2]
-        for name in registry.attributed:
+        codes = [list(dict.fromkeys((registry.by_name[name].code, registry.by_name[name].reverse))) for name in registry.attributed]
+        bounds = np.searchsorted(sorted_codes, np.asarray([[code, code + 1] for group in codes for code in group], sorted_codes.dtype).reshape(-1)).reshape(-1, 2)
+        offset = 0
+        for name, group in zip(registry.attributed, codes):
             declared = registry.by_name[name]
-            chosen = np.sort(np.concatenate([by_code[slice(*np.searchsorted(sorted_codes, (code, code + 1)))] for code in dict.fromkeys((declared.code, declared.reverse))]))
+            pieces = [by_code[lo:hi] for lo, hi in bounds[offset:offset + len(group)]]
+            offset += len(group)
+            chosen = pieces[0] if len(pieces) == 1 else np.sort(np.concatenate(pieces))
             values = held.numpy('attributes_' + name)[attribute_rows[chosen]]
             b['attributes'][name] = hold(values.reshape(-1, len(declared.attributes)), torch.float32)
             b['attribute_edges'][name] = hold(chosen, torch.long)

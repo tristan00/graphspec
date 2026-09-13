@@ -275,7 +275,7 @@ python -m tuning.run report RUN
 - `--selector tpe`, the default, proposes the model, its parameters and its graph spec with Optuna TPE.
   `--selector random` samples all three uniformly. `--random-trials N` makes the first N trials of a TPE run
   uniform draws; TPE then starts from all of them.
-- `--seconds` sets each fit's budget (600), `--batch-sequences` the sequences per batch at history 16 (64), and
+- `--seconds` sets each trial's budget (600), covering everything from parameter selection to the variant pruning after the worker exits, `--batch-sequences` the sequences per batch at history 16 (64), and
   `--seed` the proposal seed.
 - `--workers` (4) builds the trial's variant for every graph in parallel before the worker starts. `--variant-gb` (300)
   is the disk budget for `variants/`; the least recently used variants are removed first.

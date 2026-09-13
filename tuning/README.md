@@ -45,7 +45,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 - Sequence and memory states reset at window boundaries. Event models start from the last features known before the window.
 - Targets are standardised with the training mean and sample standard deviation. Predictions are converted back before scoring raw MSE and R².
 - The saved checkpoint is reloaded and must reproduce the first validation batch.
-- Each fit runs in its own process with a 600-second deadline. At the deadline a fit may finish its current epoch only if its earlier complete epochs averaged strictly under 120 seconds; it is then scored. Otherwise it times out without a score. The supervisor applies the same rule, and stops an extended worker that reports no progress for 600 seconds.
+- Each trial runs in its own worker process with a 600-second deadline that covers everything the trial does: building its graph variant, packing, every requested epoch, and scoring the holdout. At the deadline the runner kills the worker and records a timeout; there is no extension. A fit that cannot complete its requested epochs in time scores nothing, so the search learns to propose epochs and structures that fit.
 
 **Search**
 

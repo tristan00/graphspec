@@ -15,7 +15,7 @@ from graphspec.spec import digest
 from graph_tuning_infra import compute, sources
 from graph_tuning_infra.files import BUDGET, read_json, sha256_bytes, sha256_file, write_csv, write_json, write_jsonl
 from graph_tuning_infra.log import configure, emit
-from graph_tuning_infra.processes import WORKERS, Lock, command, stop
+from graph_tuning_infra.processes import WORKERS, Lock, command
 
 
 VERSION = 9
@@ -36,20 +36,23 @@ def score(targets, predictions):
     return dict(raw_val_mse=mse, val_r2=1 - mse / float(targets.var()))
 
 
-def fit(bank_directory, directory, config, training_blocks, batch_size, deadline):
+def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, workers):
     import torch
     from .data import Bank
     from .batching import batches, pack_batch
+    from .variants import prepare
     from .models import build
     from .model_spec import describe
     from .turns import blocks as turn_blocks
     from .budget import FitBudget, POLICY
 
     entered = time.perf_counter()
+    budget = FitBudget(directory, deadline)
+    prepare(bank_directory, config, workers)
+    budget.check()
     revision = sources.digest(PACKAGES)
     cfg, directory = config, Path(directory)
     graph, history, model = digest(cfg['graph']), cfg['graph']['time/history'], describe(cfg['model'])
-    budget = FitBudget(directory, deadline)
     torch.manual_seed(cfg['seed'])
     np.random.seed(cfg['seed'])
     device = compute.DEVICE
@@ -63,7 +66,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     net = build(cfg, bank.registry, len(bank.categories)).to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=cfg['lr'], weight_decay=cfg['weight_decay'])
     torch.cuda.reset_peak_memory_stats()
-    timing = dict(setup=time.perf_counter() - entered, train_pack=0.0, train_compute=0.0, validation_pack=0.0, validation_compute=0.0)
+    timing = dict(prepare=time.perf_counter() - entered, train_pack=0.0, train_compute=0.0, validation_pack=0.0, validation_compute=0.0)
     losses, trained_rows, epoch_losses = [], [], []
     if sorted(map(tuple, training_blocks)) != sorted(bank.blocks(0, history, cfg)):
         raise ValueError('training blocks must cover the entire frozen training partition')
@@ -81,8 +84,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     epoch_started = time.perf_counter()
     budget.pulse('training')
     for update, (epoch, blocks) in enumerate(training):
-        if budget.check() and not epoch_rows:
-            break
+        budget.check()
         started = time.perf_counter()
         b = pack_batch(bank, blocks, cfg, device)
         timing['train_pack'] += time.perf_counter() - started
@@ -122,11 +124,9 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
             emit('training_progress', updates=update + 1, total_updates=len(training), epoch=epoch + 1,
                 epoch_rows=len(epoch_rows), loss=float(np.mean(losses[-16:])), seconds=time.perf_counter() - entered)
         del b, predictions, targets, loss
-        if not epoch_rows and budget.extended:
-            break
     completed_epochs = len(epoch_losses)
-    if epoch_rows or completed_epochs < 1:
-        raise ValueError('evaluation requires complete training epochs')
+    if epoch_rows or completed_epochs != epochs:
+        raise ValueError('evaluation requires every requested epoch to complete')
     budget.check()
     budget.pulse('evaluation')
     net.eval()
@@ -173,9 +173,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         seconds=time.perf_counter() - entered, timings=timing,
         parameters=sum(p.numel() for p in net.parameters()), peak_cuda_bytes=torch.cuda.max_memory_allocated(),
         optimizer_updates=len(losses), epochs=completed_epochs, requested_epochs=epochs,
-        epoch_seconds=budget.epoch_seconds, stop_reason='epoch_budget' if completed_epochs < epochs else 'requested_epochs',
-        stopped_early=completed_epochs < epochs,
-        budget_extended=budget.extended, grace_epoch_seconds=budget.grace_epoch_seconds, budget_policy=POLICY,
+        epoch_seconds=budget.epoch_seconds, budget_policy=POLICY,
         epoch_losses=epoch_losses, batch_sequences=batch_size,
         training_coverage_complete=True, training_examples_seen=len(trained_rows),
         train_unique_rows=len(set(trained_rows)), train_available_rows=len(bank.split['train_indices']),
@@ -194,7 +192,9 @@ def worker(args):
     config = read_json(directory / 'config.json')
     blocks = read_json(args.training_blocks)
     try:
-        fit(args.bank, directory, config, blocks, args.batch_sequences, args.deadline)
+        fit(args.bank, directory, config, blocks, args.batch_sequences, args.deadline, args.workers)
+    except TimeoutError:
+        raise
     except Exception as error:
         write_json(directory / 'failure.json', dict(model=digest(config['model']), graph=digest(config['graph']),
             error=repr(error), traceback=traceback.format_exc(), source_sha256=sources.digest(PACKAGES)))
@@ -216,12 +216,14 @@ def report(directory):
         result = read_json(path)
         result.setdefault('status', 'timeout' if path.name == 'timeout.json' else 'failed')
         result.setdefault('config', read_json(trial / 'config.json'))
-        result.update(trial=item['directory'], selector=item['selector'], graph=item['graph'], model=item['model'])
+        record = read_json(trial / 'trial.json') if (trial / 'trial.json').exists() else {}
+        result.update(trial=item['directory'], selector=item['selector'], graph=item['graph'], model=item['model'],
+                      trial_seconds=record.get('seconds'), phases=record.get('phases'))
         results.append(result)
     completed = [r for r in results if r['status'] == 'complete']
-    columns = ['trial', 'view', 'description', 'model', 'graph', 'status', 'raw_val_mse', 'val_r2', 'seconds',
+    columns = ['trial', 'view', 'description', 'model', 'graph', 'status', 'raw_val_mse', 'val_r2', 'trial_seconds', 'seconds',
         'parameters', 'peak_cuda_bytes', 'optimizer_updates', 'train_unique_rows', 'holdout_rows',
-        'epochs', 'requested_epochs', 'stopped_early', 'stop_reason', 'budget_extended', 'training_coverage_complete',
+        'epochs', 'requested_epochs', 'training_coverage_complete',
         'supervision_sha256', 'source_sha256', 'selector', 'config_json']
     rows = []
     for result in results:
@@ -316,59 +318,67 @@ def training_layout(directory, plan, config):
 
 def execute(directory, plan, continuous, registry):
     from .budget import wait_worker
+    from .data import Bank
     from .selector import append_trial
-    from .variants import prepare, prune
+    from .variants import prune
 
-    emit('run_enter', trials=len(plan['trials']), seconds_per_fit=plan['seconds'], continuous=continuous)
+    emit('run_enter', trials=len(plan['trials']), seconds_per_trial=plan['seconds'], continuous=continuous)
     index = 0
     while True:
         if (directory / 'STOP').exists():
-            emit('run_stopped', reason='STOP file; current fit finished')
+            emit('run_stopped', reason='STOP file; current trial finished')
             break
+        started, phases = time.perf_counter(), {}
+        opened = datetime.now(timezone.utc).isoformat()
         if index == len(plan['trials']):
             if not continuous:
                 break
             append_trial(directory, plan, registry)
+            phases['select'] = time.perf_counter() - started
         item = plan['trials'][index]
         index += 1
         trial = directory / item['directory']
         if any((trial / name).exists() for name in ('result.json', 'failure.json', 'timeout.json')):
             continue
+        deadline = started + plan['seconds']
         config = read_json(trial / 'config.json')
+        stage = time.perf_counter()
         blocks, batch_size = training_layout(directory, plan, config)
-        try:
-            root = prepare(plan['bank'], config, plan['workers'])
-            prune(plan['bank'], plan['variant_bytes'], root)
-        except Exception as error:
-            write_json(trial / 'failure.json', dict(model=item['model'], graph=item['graph'], error=repr(error), traceback=traceback.format_exc()))
-            report(directory)
-            emit('trial_failed', trial=item['directory'], stage='variant')
-            continue
+        phases['layout'] = time.perf_counter() - stage
         attempt = len(list(trial.glob('worker_*.log')))
         invocation = [sys.executable, '-u', '-m', 'tuning.run', 'worker', '--bank', plan['bank'],
-            '--output', str(trial.resolve()), '--training-blocks', str(blocks.resolve()), '--batch-sequences', str(batch_size)]
+            '--output', str(trial.resolve()), '--training-blocks', str(blocks.resolve()), '--batch-sequences', str(batch_size),
+            '--workers', str(plan['workers']), '--deadline', repr(deadline)]
         emit('trial_enter', index=index, total=len(plan['trials']), model=item['model'], graph=item['graph'][:10], attempt=attempt)
+        stage = time.perf_counter()
         sources.snapshot(PACKAGES, trial / 'source')
+        phases['snapshot'] = time.perf_counter() - stage
         with (trial / ('worker_%02d.log' % attempt)).open('w', encoding='utf-8') as stream:
-            started = time.perf_counter()
-            deadline = started + plan['seconds']
-            invocation.extend(['--deadline', repr(deadline)])
+            stage = time.perf_counter()
             process = subprocess.Popen(invocation, stdout=stream, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-            write_json(directory / 'running.json', dict(runner_pid=os.getpid(), worker_pid=process.pid, trial=item['directory'], started=datetime.now(timezone.utc).isoformat()))
+            write_json(directory / 'running.json', dict(runner_pid=os.getpid(), worker_pid=process.pid, trial=item['directory'], started=opened))
             try:
-                code = wait_worker(process, trial, deadline)
+                code = wait_worker(process, deadline)
             except subprocess.TimeoutExpired:
-                stop(process)
-                write_json(trial / 'timeout.json', dict(seconds=time.perf_counter() - started, model=item['model'], graph=item['graph']))
                 code = -1
-        if code:
-            if not any((trial / name).exists() for name in ('failure.json', 'timeout.json')):
-                write_json(trial / 'failure.json', dict(model=item['model'], graph=item['graph'], error='worker exited %s' % code))
-            report(directory)
-            emit('trial_failed', trial=item['directory'], exit_code=code)
-            continue
-        result = read_json(trial / 'result.json')
-        emit('trial_exit', index=index, model=item['model'], graph=item['graph'][:10], raw_mse=result['raw_val_mse'], seconds=result['seconds'])
+            phases['worker'] = time.perf_counter() - stage
+        stage = time.perf_counter()
+        prune(plan['bank'], plan['variant_bytes'], Bank(plan['bank']).stamp(config))
+        phases['prune'] = time.perf_counter() - stage
+        seconds = time.perf_counter() - started
+        if seconds > plan['seconds']:
+            if (trial / 'result.json').exists():
+                (trial / 'result.json').replace(trial / 'late_result.json')
+            if not (trial / 'failure.json').exists():
+                write_json(trial / 'timeout.json', dict(seconds=seconds, budget=plan['seconds'], phases=phases, model=item['model'], graph=item['graph']))
+        elif code and not (trial / 'failure.json').exists():
+            write_json(trial / 'failure.json', dict(model=item['model'], graph=item['graph'], error='worker exited %s' % code))
+        write_json(trial / 'trial.json', dict(seconds=seconds, budget=plan['seconds'], phases=phases, started=opened, completed=datetime.now(timezone.utc).isoformat()))
+        if (trial / 'result.json').exists():
+            result = read_json(trial / 'result.json')
+            emit('trial_exit', index=index, model=item['model'], graph=item['graph'][:10], raw_mse=result['raw_val_mse'], seconds=seconds, phases=phases)
+        else:
+            emit('trial_failed', trial=item['directory'], exit_code=code, seconds=seconds, phases=phases)
         report(directory)
     results = report(directory)
     completed = [r for r in results if r['status'] == 'complete']
@@ -396,6 +406,7 @@ def main():
     worker_parser.add_argument('--training-blocks', required=True)
     worker_parser.add_argument('--batch-sequences', type=int, required=True)
     worker_parser.add_argument('--deadline', type=float, required=True)
+    worker_parser.add_argument('--workers', type=int, required=True)
     report_parser = subparsers.add_parser('report')
     report_parser.add_argument('directory')
     args = parser.parse_args()

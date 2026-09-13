@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Spatial, TemporalEdges, mean
+from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Spatial, TemporalEdges, grouping, mean
 from .turns import EndContext, enabled, gather_end
 
 
@@ -76,7 +76,7 @@ class SnapshotNet(nn.Module):
         return self.final_spatial(h, b['edges'])
 
     def entity_sequence(self, h, b):
-        sequence = torch.cat((h, h.new_zeros(1, h.shape[-1])))[b['align']]
+        sequence = torch.cat((h, h.new_zeros(1, h.shape[-1]))).index_select(0, b['align'].reshape(-1)).reshape(b['align'].shape + (h.shape[-1],))
         present = b['present']
         if self.temporal_mode == 'entity_gru':
             state, output = h.new_zeros(b['entities'], h.shape[-1]), []
@@ -107,8 +107,9 @@ class SnapshotNet(nn.Module):
 
     def forward(self, b):
         h = self.input(b['x']) + self.kind(b['kind'])
+        relation = grouping(b['edges'][0], b['edges'][1], b['relation']) if self.spatial and self.spatial[0].mode == 'relational' else b['relation']
         for layer in self.spatial:
-            h = layer(h, b['edges'], b['relation'], b['attributes'], b['attribute_edges'])
+            h = layer(h, b['edges'], relation, b['attributes'], b['attribute_edges'])
         q = self.query(b['query'])
         width = h.shape[-1]
         if self.temporal_mode == 'graph_sequence':

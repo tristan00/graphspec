@@ -30,6 +30,19 @@ def masked_weights(score, mask):
     return weight / weight.sum(-1, keepdim=True).clamp_min(1e-8)
 
 
+def grouping(source, destination, relation):
+    order = torch.argsort(relation)
+    kinds, counts = torch.unique_consecutive(relation[order], return_counts=True)
+    return source[order], destination[order], kinds.tolist(), counts.tolist()
+
+
+def relational_messages(h, grouped, weights):
+    source, destination, kinds, counts = grouped
+    pieces = torch.split(h.index_select(0, source), counts)
+    messages = torch.cat([piece @ weights[kind] for kind, piece in zip(kinds, pieces)])
+    return h.new_zeros(h.shape).index_add_(0, destination, messages)
+
+
 def aggregate(h, edges, mode='mean'):
     source, destination = edges
     if mode == 'normalised':
@@ -70,19 +83,13 @@ class Spatial(nn.Module):
     def forward(self, h, edges, relation=None, attributes=None, attribute_edges=None):
         source, destination = edges
         if self.mode == 'relational':
-            messages = h.new_zeros(len(source), h.shape[-1])
-            order = torch.argsort(relation)
-            kinds, counts = torch.unique_consecutive(relation[order], return_counts=True)
-            offset = 0
-            for kind, count in zip(kinds.tolist(), counts.tolist()):
-                indices = order[offset:offset + count]
-                messages = messages.index_copy(0, indices, h[source[indices]] @ self.weights[kind])
-                offset += count
+            update = relational_messages(h, relation, self.weights)
             if attributes:
                 for name, values in attributes.items():
                     if len(values):
-                        messages = messages.index_add(0, attribute_edges[name], self.attributes[name](values.sign() * values.abs().log1p()))
-            update = mean(messages, destination, len(h))
+                        update.index_add_(0, destination[attribute_edges[name]], self.attributes[name](values.sign() * values.abs().log1p()))
+            count = h.new_zeros(len(h)).index_add_(0, destination, h.new_ones(len(destination)))
+            update = update / count.clamp_min(1)[:, None]
         elif self.mode == 'attention':
             score = (self.query(h)[destination] * self.key(h)[source]).sum(-1) / math.sqrt(h.shape[-1])
             weight = segment_softmax(score, destination, len(h))

@@ -44,12 +44,13 @@ class Results:
             result = self.read(trial / 'result.json')
             failure = self.read(trial / 'failure.json')
             timeout = self.read(trial / 'timeout.json')
+            record = self.read(trial / 'trial.json') or {}
             for index, log in enumerate(logs):
                 last = index == len(logs) - 1
                 status = 'Interrupted'
                 if last:
                     if result:
-                        status = 'Complete · budget stop' if result.get('stop_reason') == 'epoch_budget' else 'Complete'
+                        status = 'Complete'
                     elif timeout:
                         status = 'Timeout'
                     elif failure:
@@ -62,9 +63,11 @@ class Results:
                 row = self.row(identifier, describe(config['model']), item['graph'][:10], mode,
                     status, config, selection['graph_summary'], result if last and result else None)
                 row.update(trial=item['directory'], log=str(log) if log else None, model_id=item['model'][:10])
+                if last and record:
+                    row.update(seconds=record['seconds'], phases=record['phases'])
                 if last and not result:
                     row['error'] = failure
-                    row['seconds'] = timeout['seconds'] if timeout else None
+                    row['seconds'] = timeout['seconds'] if timeout else row.get('seconds')
                     if status == 'Running':
                         row['seconds'] = (datetime.now(timezone.utc) - datetime.fromisoformat(running['started'])).total_seconds()
                 rows.append(row)
@@ -90,9 +93,7 @@ class Results:
             mse=result.get('raw_val_mse'), r2=result.get('val_r2'),
             seconds=result.get('seconds'), parameters=result.get('parameters'),
             epochs=result.get('epochs'), requested_epochs=result.get('requested_epochs', config.get('epochs')),
-            epoch_seconds=result.get('epoch_seconds'), stop_reason=result.get('stop_reason'),
-            stopped_early=result.get('stopped_early', False),
-            budget_extended=result.get('budget_extended'), completed=result.get('completed'),
+            epoch_seconds=result.get('epoch_seconds'), completed=result.get('completed'),
             train_rows=result.get('train_unique_rows'), holdout_rows=result.get('holdout_rows'),
             timings=result.get('timings'), source_sha256=result.get('source_sha256'),
             supervision_sha256=result.get('supervision_sha256'))
