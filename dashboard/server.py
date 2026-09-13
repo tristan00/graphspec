@@ -7,7 +7,7 @@ from graph_tuning_infra.files import JsonCache, read_json
 from graph_tuning_infra.log import emit
 from graph_tuning_infra.processes import command
 from graph_tuning_infra.serve import serve
-from tuning.roster import NAMES
+from tuning.model_spec import describe
 
 
 class Results:
@@ -59,9 +59,9 @@ class Results:
                 identifier = str(int(item['directory'].split('_')[1])).zfill(3)
                 if len(logs) > 1:
                     identifier += chr(97 + index)
-                row = self.row(identifier, NAMES[int(config['model'][1:]) - 1], item['graph'][:10], mode,
+                row = self.row(identifier, describe(config['model']), item['graph'][:10], mode,
                     status, config, selection['graph_summary'], result if last and result else None)
-                row.update(trial=item['directory'], log=str(log), model_id=config['model'])
+                row.update(trial=item['directory'], log=str(log), model_id=item['model'][:10])
                 if last and not result:
                     row['error'] = failure
                     row['seconds'] = timeout['seconds'] if timeout else None
@@ -88,7 +88,9 @@ class Results:
 
     def row(self, identifier, model, graph, mode, status, config, summary, result=None):
         result = result or {}
-        active = {key: value for key, value in config.items() if key != 'graph'}
+        active = {key: value for key, value in config.items() if key not in ('graph', 'model')}
+        if isinstance(config['model'], dict):
+            active.update({'model/' + key: value for key, value in config['model'].items()})
         active.update({'graph/' + key: value for key, value in summary.items()})
         return dict(id=identifier, model=model, graph=graph, mode=mode, status=status, config=config,
             active_params=active, mse=result.get('raw_val_mse'), r2=result.get('val_r2'),

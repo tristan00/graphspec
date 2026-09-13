@@ -7,45 +7,12 @@ from graphspec import spec as specs
 from graph_tuning_infra import search
 from graph_tuning_infra.files import read_json, sha256_file, write_json
 from graph_tuning_infra.log import emit
-from .roster import groups, models, sample
+from .model_spec import TRAINING, describe, groups, space as model_space
 
 
 SETTINGS = dict(n_startup_trials=10, n_ei_candidates=64, multivariate=True, group=True)
 FAILURE_POLICY = dict(version=1, outcomes=['timeout', 'failed'], objective='positive_infinity',
     interpretation='Failure ranks worse than every finite completed score; no prediction metric is assigned.')
-
-
-def model_space(model):
-    family = int(model[1:])
-    result = dict(hidden=search.categorical([16, 24, 32, 48, 64]), epochs=search.integer(2, 12),
-        clip=search.real(0.5, 2.0), lr=search.real(0.0001, 0.005, log=True),
-        weight_decay=search.real(1e-7, 1e-2, log=True))
-    if family in (*range(1, 18), 21, 22, 23, 27, 30):
-        result['layers'] = search.categorical([1, 2] if family == 17 else [1, 2, 3])
-    if family in (3, 11, 22, 23):
-        result['heads'] = search.categorical([1, 2, 4])
-    if family in (*range(1, 8), 11, 12, 13, 14, 15, 16, 22, 23):
-        result['dropout'] = search.real(0.0, 0.5)
-    if family in (17, 18, 20, 21, 22, 23, 24, 26, 27):
-        result['neighbors'] = search.categorical([4, 8, 12, 16, 20] if family == 17 else [4, 8, 10, 12, 16, 20, 30, 32, 64])
-    if family in (9, 30):
-        result['diffusion_hops'] = search.integer(1, 4)
-    if family == 22:
-        result['patch'] = search.categorical([1, 2, 4, 8, 16])
-    if family == 24:
-        result.update(projection_hops=search.integer(1, 4),
-            projection_width=search.categorical([16, 32, 64, 128, 256]), decay=search.real(1e-7, 1.0, log=True))
-    if family == 25:
-        result.update(walks=search.categorical([1, 2, 4, 8, 16, 32]), walk_hops=search.integer(1, 4))
-    if family == 27:
-        result['state_size'] = search.categorical([4, 8, 16, 32, 64])
-    if family == 28:
-        result['affinity_buffer'] = search.categorical([1, 2, 4, 8, 16, 32])
-    if family == 29:
-        result.update(integration_steps=search.integer(1, 16), damping=search.real(0.001, 1.0, log=True))
-    if family == 30:
-        result['signal_topk'] = search.integer(1, 20)
-    return result
 
 
 def distribution(parameter):
@@ -60,22 +27,37 @@ def graph_space(registry, model):
     return specs.space(registry, groups(model))
 
 
+def training(config):
+    return {parameter.name: config[parameter.name] for parameter in TRAINING}
+
+
 def observation(registry, config, value, **attrs):
-    model = config['model']
-    params, distributions = dict(model=model), dict(model=search.categorical(models(registry)))
-    for name, domain in model_space(model).items():
-        key = model + '/' + name
-        params[key], distributions[key] = config[name], domain
-    parameters = {parameter.name: parameter for parameter in graph_space(registry, model)}
-    for name, setting in specs.canonical(tuple(parameters.values()), config['graph']).items():
-        params['graph/' + name], distributions['graph/' + name] = setting, distribution(parameters[name])
+    params, distributions = {}, {}
+
+    def enter(prefix, parameters, spec):
+        lookup = {parameter.name: parameter for parameter in parameters}
+        for name, setting in specs.canonical(parameters, spec).items():
+            params[prefix + name], distributions[prefix + name] = setting, distribution(lookup[name])
+
+    enter('model/', model_space(registry), config['model'])
+    enter('', TRAINING, training(config))
+    enter('graph/', graph_space(registry, config['model']), config['graph'])
     return search.record(value, params, distributions, config=config, **attrs)
 
 
 def metadata(registry, config, seed, training_seed, **extra):
-    parameters = graph_space(registry, config['model'])
-    return dict(extra, graph_digest=specs.digest(config['graph']), graph_summary=specs.summary(parameters, config['graph']),
-                graph_space=[parameter.declaration() for parameter in parameters], selector_seed=seed, training_seed=training_seed)
+    model, graph = model_space(registry), graph_space(registry, config['model'])
+    return dict(extra, model_digest=specs.digest(config['model']), description=describe(config['model']),
+                model_summary=specs.summary(model, config['model']), model_space=[parameter.declaration() for parameter in model],
+                graph_digest=specs.digest(config['graph']), graph_summary=specs.summary(graph, config['graph']),
+                graph_space=[parameter.declaration() for parameter in graph], selector_seed=seed, training_seed=training_seed)
+
+
+def configuration(registry, choose, training_seed):
+    model = specs.draw(model_space(registry), lambda parameter: choose('model/', parameter))
+    config = dict(seed=training_seed, model=model, **specs.draw(TRAINING, lambda parameter: choose('', parameter)))
+    config['graph'] = specs.draw(graph_space(registry, model), lambda parameter: choose('graph/', parameter))
+    return config
 
 
 def suggest(registry, observations, failures, seed, training_seed):
@@ -84,11 +66,7 @@ def suggest(registry, observations, failures, seed, training_seed):
     records += [observation(registry, entry['config'], math.inf, outcome=entry['status']) for entry in failures]
     study = search.study(seed, SETTINGS, records)
     trial = study.ask()
-    model = trial.suggest_categorical('model', list(models(registry)))
-    config = sample(model, np.random.default_rng(training_seed), training_seed)
-    for name, domain in model_space(model).items():
-        config[name] = search.propose(trial, model + '/' + name, domain)
-    config['graph'] = specs.draw(graph_space(registry, model), lambda parameter: search.propose(trial, 'graph/' + parameter.name, distribution(parameter)))
+    config = configuration(registry, lambda prefix, parameter: search.propose(trial, prefix + parameter.name, distribution(parameter)), training_seed)
     total = len(observations) + len(failures)
     return config, metadata(registry, config, seed, training_seed, sampler='TPESampler', settings=SETTINGS, params=trial.params,
                             failure_policy=FAILURE_POLICY, observations=len(observations), failed_observations=len(failures),
@@ -97,13 +75,10 @@ def suggest(registry, observations, failures, seed, training_seed):
 
 
 def random_suggest(registry, seed, training_seed):
+    started = time.perf_counter()
     rng = np.random.default_rng(seed)
-    model = str(rng.choice(list(models(registry))))
-    config = sample(model, np.random.default_rng(training_seed), training_seed)
-    for name, domain in model_space(model).items():
-        config[name] = search.draw(domain, rng)
-    config['graph'] = specs.draw(graph_space(registry, model), lambda parameter: parameter.uniform(rng))
-    return config, metadata(registry, config, seed, training_seed, sampler='numpy.random.Generator', phase='random')
+    config = configuration(registry, lambda prefix, parameter: parameter.uniform(rng), training_seed)
+    return config, metadata(registry, config, seed, training_seed, sampler='numpy.random.Generator', phase='random', seconds=time.perf_counter() - started)
 
 
 def load_observations(directory, plan):
@@ -138,7 +113,7 @@ def load_failures(directory, plan):
             continue
         config_path = trial / 'config.json'
         config = read_json(config_path)
-        if config['model'] != item['model']:
+        if specs.digest(config['model']) != item['model']:
             raise ValueError('failure configuration differs from its saved plan: ' + str(path))
         status = 'timeout' if path.name == 'timeout.json' else 'failed'
         failures.append(dict(config=config, status=status))
@@ -159,7 +134,7 @@ def append_trial(directory, plan, registry):
         failures, failure_history = load_failures(directory, plan)
         config, selection = suggest(registry, observations, failures, selector_seed, training_seed)
         selection['failure_history'] = failure_history
-    name = 'trial_%06d_%s_%s_%s' % (index, plan['selector'], config['model'], selection['graph_digest'][:10])
+    name = 'trial_%06d_%s_%s_%s' % (index, plan['selector'], selection['model_digest'][:10], selection['graph_digest'][:10])
     trial = directory / name
     trial.mkdir(exist_ok=True)
     if (trial / 'config.json').exists() and read_json(trial / 'config.json') != config:
@@ -167,7 +142,8 @@ def append_trial(directory, plan, registry):
     write_json(trial / 'config.json', config)
     write_json(trial / 'selection.json', dict(selection, history=history, bank_manifest_sha256=plan['bank_manifest_sha256'],
         supervision_sha256=plan['supervision_sha256'], spec_sha256=registry.fingerprint(), seconds=time.perf_counter() - started))
-    plan['trials'].append(dict(directory=name, model=config['model'], graph=selection['graph_digest'], selector=plan['selector']))
+    plan['trials'].append(dict(directory=name, model=selection['model_digest'], description=selection['description'],
+                               graph=selection['graph_digest'], selector=plan['selector']))
     write_json(directory / 'plan.json', plan)
-    emit('parameter_selection', trial=name, observations=len(observations), model=config['model'],
+    emit('parameter_selection', trial=name, observations=len(observations), model=selection['description'],
         graph=selection['graph_digest'][:10], phase=selection['phase'], seconds=time.perf_counter() - started)

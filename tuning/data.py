@@ -74,22 +74,28 @@ class Bank:
         return self.directory / 'truth' / ('graph_%04d' % index)
 
     def variant(self, cfg):
-        from .roster import groups
+        from .model_spec import groups
 
-        key = (cfg['model'], specs.digest(cfg['graph']))
+        chosen = groups(cfg['model'])
+        key = (chosen, specs.digest(cfg['graph']))
         if key not in self.variants:
-            chosen = groups(cfg['model'])
             spec = specs.canonical(specs.space(self.registry, chosen), cfg['graph'])
             self.variants[key] = (self.directory / 'variants' / specs.digest(dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE)), spec, chosen)
         return self.variants[key]
+
+    def stamp(self, cfg):
+        root, spec, chosen = self.variant(cfg)
+        root.mkdir(parents=True, exist_ok=True)
+        if not (root / 'variant.json').exists():
+            write_json(root / 'variant.json', dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE))
+        return root
 
     def arrays(self, index, cfg):
         root, spec, chosen = self.variant(cfg)
 
         def build():
             started = time.perf_counter()
-            root.mkdir(parents=True, exist_ok=True)
-            write_json(root / 'variant.json', dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE))
+            self.stamp(cfg)
             arrays = materialize(Graph.load(self.truth(index)), self.registry, spec, chosen, self.categories)
             LOG.info('variant exit graph=%d seconds=%.3f arrays=%d', index, time.perf_counter() - started, len(arrays))
             return arrays
@@ -173,7 +179,7 @@ def history_inputs(held, first, last, start, count, device, spec, stream, includ
 
 
 def pack(bank, block, cfg, device):
-    from .roster import BLOCKS
+    from .model_spec import blocks as model_blocks, neighbors
     from .turns import enabled, lookback
 
     started = time.perf_counter()
@@ -184,9 +190,9 @@ def pack(bank, block, cfg, device):
     hold = bundle.hold
     registry, spec, stream = bank.registry, cfg['graph'], SEED
     node = registry.extras['level'] == 'node'
-    blocks = BLOCKS[cfg['model']]
+    blocks = model_blocks(cfg['model'])
     lo, hi = (int(value) for value in held.numpy('snapshot_offsets')[[start, stop]])
-    n, count = stop - start, cfg['neighbors']
+    n = stop - start
     entity = held.numpy('entity')[lo:hi]
     step = held.numpy('step')[lo:hi] - start
     size = len(a['entity_kind'])
@@ -271,31 +277,31 @@ def pack(bank, block, cfg, device):
 
                 b = bundle.flush(b)
                 temporal_edges(b, a, lo, hi, device, registry, hold)
-        if 'mixed' in blocks:
-            mixed_ticks = held.numpy('mixed_tick')
-            left, right = between(mixed_ticks, start * 2, stop * 2)
-            mixed_edges = held.numpy('mixed_edges')[held.rows_by('mixed_edges', 1, left, right)]
-            mixed_edges = mixed_edges[(mixed_edges[:, 0] >= left) & (mixed_edges[:, 0] < right)]
-            ticks = mixed_ticks[left:right]
-            mk = np.r_[held.numpy('mixed_kind')[left:right], np.full(m, 5)].astype(np.int64)
-            qi = np.arange(right - left, right - left + m)
-            roots = np.stack((actors, subjects, np.full(m, -1)), 1).astype(np.int64)
-            sources, offsets = gather.reachable(held.numpy('mixed_entity')[left:right].astype(np.int64), np.arange(right - left), ticks, roots, moment * 2)
-            extra = np.column_stack((sources, np.repeat(qi, np.diff(offsets)), np.full(len(sources), 2048))).astype(np.int64)
-            edge = np.concatenate((np.column_stack((mixed_edges[:, :2] - left, mixed_edges[:, 2])), extra))
-            all_ticks = np.r_[ticks, moment * 2]
-            edge_index = hold(edge[:, :2].T, torch.long)
-            feature = torch.zeros((len(edge), 16), device=device)
-            feature[:, :13] = ((tensor(edge[:, 2], device, torch.long)[:, None] & (1 << torch.arange(13, device=device))) != 0).float()
-            feature[:, 13] = 1
-            feature[:, 14] = tensor(np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2), device, torch.float32)
-            b['mixed'] = dict(x=torch.cat((held.tensor('mixed_x')[left:right].float(), features)), kind=hold(mk),
-                              edge_index=edge_index, edge=feature, query=hold(qi, torch.long))
-            if enabled(cfg):
-                from .turn_inputs import mixed_edges as extend_mixed
+    if 'mixed' in blocks:
+        mixed_ticks = held.numpy('mixed_tick')
+        left, right = between(mixed_ticks, start * 2, stop * 2)
+        mixed_edges = held.numpy('mixed_edges')[held.rows_by('mixed_edges', 1, left, right)]
+        mixed_edges = mixed_edges[(mixed_edges[:, 0] >= left) & (mixed_edges[:, 0] < right)]
+        ticks = mixed_ticks[left:right]
+        mk = np.r_[held.numpy('mixed_kind')[left:right], np.full(m, 5)].astype(np.int64)
+        qi = np.arange(right - left, right - left + m)
+        roots = np.stack((actors, subjects, np.full(m, -1)), 1).astype(np.int64)
+        sources, offsets = gather.reachable(held.numpy('mixed_entity')[left:right].astype(np.int64), np.arange(right - left), ticks, roots, moment * 2)
+        extra = np.column_stack((sources, np.repeat(qi, np.diff(offsets)), np.full(len(sources), 2048))).astype(np.int64)
+        edge = np.concatenate((np.column_stack((mixed_edges[:, :2] - left, mixed_edges[:, 2])), extra))
+        all_ticks = np.r_[ticks, moment * 2]
+        edge_index = hold(edge[:, :2].T, torch.long)
+        feature = torch.zeros((len(edge), 16), device=device)
+        feature[:, :13] = ((tensor(edge[:, 2], device, torch.long)[:, None] & (1 << torch.arange(13, device=device))) != 0).float()
+        feature[:, 13] = 1
+        feature[:, 14] = tensor(np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2), device, torch.float32)
+        b['mixed'] = dict(x=torch.cat((held.tensor('mixed_x')[left:right].float(), features)), kind=hold(mk),
+                          edge_index=edge_index, edge=feature, query=hold(qi, torch.long))
+        if enabled(cfg):
+            from .turn_inputs import mixed_edges as extend_mixed
 
-                b = bundle.flush(b)
-                extend_mixed(b, a, start, stop, device, registry.features)
+            b = bundle.flush(b)
+            extend_mixed(b, a, start, stop, device, registry.features)
     if 'events' in blocks:
         left, right = between(held.column('events', 2), start * 2, stop * 2)
         events = held.numpy('events')[left:right]
@@ -330,27 +336,28 @@ def pack(bank, block, cfg, device):
     if 'tree' in blocks:
         roots = np.stack((actors, subjects), 1).reshape(-1).astype(np.int64)
         cutoffs = np.repeat(moment * 2 + 1, 2)
-        b['tree'] = tree(held, roots, cutoffs, start * 2, count, cfg['layers'], device, registry, spec, stream, hold)
+        b['tree'] = tree(held, roots, cutoffs, start * 2, neighbors(cfg['model']), cfg['model']['tree/depth'], device, registry, spec, stream, hold)
     if 'history' in blocks:
-        b.update(history_inputs(held, first, last, start, count, device, spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None, hold))
+        b.update(history_inputs(held, first, last, start, neighbors(cfg['model']), device, spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None, hold))
     if enabled(cfg) and 'turn_history' in blocks:
         from .turn_inputs import history_tokens
 
         b = bundle.flush(b)
         history_tokens(b, a, held, first, last, start, cfg, device, registry, hold)
     if 'walks' in blocks:
-        if cfg['walks'] > a['walks'].shape[2] or cfg['walk_hops'] > a['walks'].shape[3]:
+        walk_count, hops = cfg['model']['walks/count'], cfg['model']['walks/hops']
+        if walk_count > a['walks'].shape[2] or hops > a['walks'].shape[3]:
             raise ValueError('requested walks exceed the walks stored for this graph variant')
-        walks = held.numpy('walks')[first:last, :, :cfg['walks'], :cfg['walk_hops']]
+        walks = held.numpy('walks')[first:last, :, :walk_count, :hops]
         if enabled(cfg):
-            extra = held.numpy('turn_walks')[first:last, :, :lookback(cfg), :cfg['walks'], :cfg['walk_hops']]
-            extra = extra.reshape(m, 2, lookback(cfg) * cfg['walks'], cfg['walk_hops'])
+            extra = held.numpy('turn_walks')[first:last, :, :lookback(cfg), :walk_count, :hops]
+            extra = extra.reshape(m, 2, lookback(cfg) * walk_count, hops)
             walks = np.concatenate((walks, extra), 2)
             kinds = np.zeros(walks.shape, np.int64)
-            kinds[:, :, cfg['walks']:] = 1
+            kinds[:, :, walk_count:] = 1
             gaps = np.zeros(walks.shape + (3,), np.float32)
             past = b['end_token_gaps'][:, :2].cpu().numpy()
-            gaps[:, :, cfg['walks']:] = np.repeat(past, cfg['walks'], axis=2)[:, :, :, None, :]
+            gaps[:, :, walk_count:] = np.repeat(past, walk_count, axis=2)[:, :, :, None, :]
             b.update(walk_turn_kind=hold(kinds, torch.long), walk_end_time=hold(gaps))
         known = walks >= 0
         known &= held.column('events', 2)[np.maximum(walks, 0)] >= start * 2
@@ -358,7 +365,7 @@ def pack(bank, block, cfg, device):
         nodes = np.empty(walks.shape, np.int32)
         observations = np.empty_like(nodes)
         current = np.broadcast_to(np.stack((actors, subjects), 1)[:, :, None], walks.shape[:3]).copy()
-        for hop in range(cfg['walk_hops']):
+        for hop in range(hops):
             forward = events[:, :, :, hop, 0] == current
             nodes[:, :, :, hop] = np.where(forward, events[:, :, :, hop, 1], events[:, :, :, hop, 0])
             observations[:, :, :, hop] = np.where(forward, events[:, :, :, hop, 5], events[:, :, :, hop, 4])

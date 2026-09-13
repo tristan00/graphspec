@@ -1,12 +1,11 @@
-import numpy as np
 import pytest
 
 from graphspec.synthetic import generate
 from tuning.build import build
 from tuning.data import Bank, pack
-from tuning.roster import groups, models, sample
+from tuning.model_spec import views
 
-from .support import configured
+from .support import config
 
 
 def test_generated_databases_follow_the_contract_at_every_level(tmp_path):
@@ -22,10 +21,9 @@ def test_generated_databases_follow_the_contract_at_every_level(tmp_path):
             manifest = build(task, root / level / 'bank', 1)
             bank = Bank(root / level / 'bank')
             assert manifest['target']['level'] == level and len(manifest['graphs']) == 5 and manifest['rows'] >= 3
-            assert ('M30' in models(bank.registry)) == (level == 'query') and ('M19' in models(bank.registry))
-            for model in ('M01', 'M15', 'M17', 'M21'):
-                cfg = sample(model, np.random.default_rng(0), 5)
-                cfg['graph'] = configured(bank.registry, {'time/history': 4}, groups(model))
+            assert ('signal' in views(bank.registry)) == (level == 'query') and ('affinity' in views(bank.registry)) == (level != 'node')
+            for values in ({'view': 'snapshot'}, {'view': 'event_graph'}, {'view': 'tree'}, {'view': 'sequence', 'sequence/operator': 'mixer'}):
+                cfg = config(bank.registry, values, {'time/history': 4})
                 block = bank.blocks(0, 4)[-1]
                 b = pack(bank, block, cfg, 'cpu')
-                assert b['predictions'] >= 1 and int(b['selected'].sum()) >= 1, (level, model)
+                assert b['predictions'] >= 1 and int(b['selected'].sum()) >= 1, (level, values)

@@ -2,7 +2,6 @@ import argparse
 from pathlib import Path
 import time
 
-import numpy as np
 import torch
 
 from graphspec import spec as specs
@@ -10,7 +9,8 @@ from graph_tuning_infra import compute
 from graph_tuning_infra.files import read_json, write_json
 from graph_tuning_infra.log import configure, emit
 from .data import Bank, pack
-from .roster import create, groups, models, sample
+from .model_spec import configuration, describe, groups, samples
+from .models import build
 
 
 def probe(bank, block, cfg, device):
@@ -23,7 +23,7 @@ def probe(bank, block, cfg, device):
     if enabled(cfg):
         capture_schedule(b)
     packed = time.perf_counter()
-    net = create(cfg, bank.registry, len(bank.categories)).to(device)
+    net = build(cfg, bank.registry, len(bank.categories)).to(device)
     if device == 'cuda':
         torch.cuda.reset_peak_memory_stats()
     values = net(b)
@@ -38,7 +38,7 @@ def probe(bank, block, cfg, device):
     net.eval()
     with torch.no_grad():
         before = net(b)
-        clone = create(cfg, bank.registry, len(bank.categories)).to(device).eval()
+        clone = build(cfg, bank.registry, len(bank.categories)).to(device).eval()
         clone.load_state_dict(net.state_dict(), strict=True)
         torch.testing.assert_close(before, clone(b))
     return dict(rows=len(target), pack_seconds=packed - started, total_seconds=time.perf_counter() - started,
@@ -53,16 +53,14 @@ def check(directory, output, device, graph=None, spec_path=None):
     bank = Bank(directory)
     chosen = max(bank.manifest['graphs'], key=lambda entry: entry['observations'])['index'] if graph is None else graph
     given = read_json(spec_path) if spec_path else {}
-    unknown = sorted(set(given) - {parameter.name for model in models(bank.registry) for parameter in specs.space(bank.registry, groups(model))})
+    models = samples(bank.registry)
+    unknown = sorted(set(given) - {parameter.name for model in models for parameter in specs.space(bank.registry, groups(model))})
     if unknown:
         raise ValueError('spec file names unknown parameters: ' + ', '.join(unknown))
     results = []
-    for model in models(bank.registry):
-        parameters = specs.space(bank.registry, groups(model))
-        spec = specs.canonical(parameters, specs.draw(parameters, lambda parameter: given.get(parameter.name, parameter.default)))
-        cfg = sample(model, np.random.default_rng(871), 771)
-        cfg.update(hidden=16, layers=2, dropout=0.0, graph=spec)
-        candidates = sorted(block for partition in (0, 1) for block in bank.blocks(partition, spec['time/history']) if block[0] == chosen)
+    for model in models:
+        cfg = configuration(bank.registry, model, given, 771)
+        candidates = sorted(block for partition in (0, 1) for block in bank.blocks(partition, cfg['graph']['time/history']) if block[0] == chosen)
         if not candidates:
             raise ValueError('graph %d has no labels to check' % chosen)
         block = candidates[-1]
@@ -73,14 +71,14 @@ def check(directory, output, device, graph=None, spec_path=None):
             outcome = dict(ok=False, error='out of memory', total_seconds=time.perf_counter() - started)
         if device == 'cuda':
             torch.cuda.empty_cache()
-        result = dict(model=model, graph=specs.digest(spec), config=cfg, block=list(block), **outcome)
+        result = dict(model=describe(model), graph=specs.digest(cfg['graph']), config=cfg, block=list(block), **outcome)
         results.append(result)
         emit('check_model', **{k: v for k, v in result.items() if k not in ('config', 'unused_parameters')})
     write_json(Path(output), dict(check='forward_backward_checkpoint_reload', graph=chosen, results=results))
     failed = [result['model'] for result in results if not result['ok']]
     emit('check_exit', models=len(results), failed=len(failed), seconds=time.perf_counter() - entered)
     if failed:
-        raise SystemExit('%d models ran out of GPU memory: %s' % (len(failed), ', '.join(failed)))
+        raise SystemExit('%d models ran out of GPU memory: %s' % (len(failed), '; '.join(failed)))
 
 
 def main():

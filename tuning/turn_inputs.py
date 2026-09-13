@@ -33,7 +33,7 @@ def add(b, a, first, last, start, cfg, hold):
         end_raw=hold(raw.transpose(0, 2, 1, 3)), end_raw_mask=hold(mask.transpose(0, 2, 1)),
         end_token_gaps=hold(token_gaps.transpose(0, 2, 1, 3)),
         end_observation_local=hold(np.where(mask & (local >= 0), local, -1), torch.long))
-    if cfg['model'] == 'M28':
+    if cfg['model']['view'] == 'affinity':
         last = a['turn_actor_decision'][prior, roots[:, 0, None]]
         affinity = np.array(a['affinity'][last.clip(0)], np.float32)
         categories = a['turn_action_category'][last.clip(0)]
@@ -103,12 +103,12 @@ def mixed_edges(b, a, start, stop, device, features):
 
 def history_tokens(b, a, held, first, last, start, cfg, device, registry, hold):
     n, depth = last - first, lookback(cfg)
-    if cfg['model'] == 'M17':
+    if cfg['model']['view'] == 'tree':
         roots = np.stack((a['actor'][first:last], a['subject'][first:last]), 1)
         roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1).copy()
         ends = b['end_steps'].cpu().numpy() + start
         cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1).copy()
-        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['neighbors'], cfg['layers'], device, registry, cfg['graph'], SEED, hold)
+        b['end_tree'] = tree(held, roots, cutoffs, start * 2, cfg['model']['tree/neighbors'], cfg['model']['tree/depth'], device, registry, cfg['graph'], SEED, hold)
         return
     original = b['history_mask'].shape[-1]
     valid = b['end_raw_mask'][:, :2]

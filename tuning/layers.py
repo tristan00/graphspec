@@ -20,9 +20,19 @@ def segment_softmax(scores, index, size):
     return weights / total[index].clamp_min(1e-8)
 
 
+def masked_mean(x, mask, dim):
+    return (x * mask[..., None]).sum(dim) / mask.sum(dim).clamp_min(1)[..., None]
+
+
+def masked_weights(score, mask):
+    score = score.masked_fill(~mask, -1e4)
+    weight = score.softmax(-1) * mask
+    return weight / weight.sum(-1, keepdim=True).clamp_min(1e-8)
+
+
 def aggregate(h, edges, mode='mean'):
     source, destination = edges
-    if mode == 'gcn':
+    if mode == 'normalised':
         degree = h.new_ones(len(h)).index_add_(0, destination, h.new_ones(len(destination)))
         scale = degree.rsqrt()
         result = h * scale[:, None].square()
@@ -74,7 +84,7 @@ class Spatial(nn.Module):
             weight = segment_softmax(score, destination, len(h))
             update = h.new_zeros(h.shape).index_add_(0, destination, self.message(h)[source] * weight[:, None])
         else:
-            update = self.message(aggregate(h, edges, 'gcn' if self.mode == 'gcn' else 'mean'))
+            update = self.message(aggregate(h, edges, self.mode))
         return self.norm(h + F.dropout(F.silu(self.root(h) + update), self.dropout, self.training))
 
 
@@ -121,17 +131,17 @@ class GatedTCN(nn.Module):
 
 class GraphCell(nn.Module):
 
-    def __init__(self, hidden, diffusion=False, hops=2):
+    def __init__(self, hidden, hops):
         super().__init__()
-        self.diffusion, self.hops = diffusion, hops
-        factor = 1 + 2 * hops if diffusion else 1
+        self.hops = hops
+        factor = 1 + 2 * hops
         self.gates = nn.Linear(2 * hidden * factor, 2 * hidden)
         self.candidate = nn.Linear(2 * hidden * factor, hidden)
         nn.init.ones_(self.gates.bias)
 
     def support(self, x, edges, directed):
-        if not self.diffusion:
-            return aggregate(x, edges, 'gcn')
+        if not self.hops:
+            return aggregate(x, edges, 'normalised')
         values = [x]
         for support in (directed, directed.flip(0)):
             current = x
@@ -178,7 +188,7 @@ class EvolvingLayer(nn.Module):
         summary = F.pad((visible * torch.where(values.isfinite(), values.tanh(), 0)[:, :, None]).transpose(1, 2), (0, x.shape[-1] - indices.shape[1]))
         reset, keep = self.reset(summary, state).sigmoid(), self.keep(summary, state).sigmoid()
         state = keep * state + (1 - keep) * self.candidate(summary, reset * state).tanh()
-        update = torch.bmm(aggregate(x, edges, 'gcn')[:, None], state[entity_batch]).squeeze(1)
+        update = torch.bmm(aggregate(x, edges, 'normalised')[:, None], state[entity_batch]).squeeze(1)
         return self.norm(x + F.silu(update)) * present[:, None], state
 
 

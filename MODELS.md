@@ -114,3 +114,37 @@ Every parameter is read by the component it conditions; the dead parameters of t
 5.9 Order of work and gates. (1) Write the model space and `describe` with the anchors as tests of the space alone, no models yet. (2) Extract components without changing behaviour, verified by identical outputs for all thirty models under copied weights. (3) Replace the three model files with the builder; verify anchors. (4) Switch packing to spec-derived blocks; verify with the packing equality harness. (5) Switch the selector, reports and dashboard to the model spec; run a short search on the synthetic banks. (6) Rewrite `tuning/README.md` Models into component tables with cited deviations, and delete the names. Each step is a commit; nothing is deleted before its replacement is verified.
 
 5.10 Decisions this plan leaves to you. Whether to keep the house designs (frame-level sequence with query feedback, coupling and event-DAG message passing) as views: they are honest and cheap, and their audits found no defects. Whether the regression head stays the only task, which removes the paper losses (ranking, link classification, survival) from scope. Whether the fixed-time-encoding variants and linear time are worth their extra parameters, or whether the log-learnable form should stay the only one.
+
+**6. Status after the rebuild**
+
+The thirty named models are gone. `tuning/model_spec.py` holds the parameter space (`view` at the root, one conditional switch per component, described in `tuning/README.md`), `tuning/models.py` builds a network from a spec, and the components live in `snapshot.py`, `message_net.py`, `events.py`, `neighbors.py`, `affinity.py` and `signal.py` without family branches. Packing derives the blocks it fills from the spec, the graph space derives its representation groups from the blocks, the selector draws `model/...`, training and `graph/...` parameters through the same conditional machinery, and every trial, result row and dashboard row is named by `describe(spec)`. No new component was added; every switch selects code that the old models already ran.
+
+Every old model is one point of the space. Verified on the synthetic dev bank with the old implementation held in a scratch copy: parameter counts equal, and with the old weights copied into the new network the outputs on a four-graph batch are equal to float tolerance, for all thirty configurations, with and without period context (60 of 60 cases). The coverage check `tuning.check_models` ran 69 configurations (one per structural switch setting, including the switches that only appear under another switch) on the dev bank with and without period context: all forward, backward and reload, and no parameter is left without a gradient. Two adversarial reviews of the diff each ran their own checks: the presets also agree in training mode with dropout active and on a node-level bank with many rows per window; the review found and the code now fixes a pair-term configuration that packed no neighbours, a dashboard crash on a baseline without a model spec, and documentation that overstated where time encodings and the projected query are used.
+
+| Old id | Spec |
+|---|---|
+| M01, M02, M03 | `snapshot` spatial relational, temporal graph_sequence, sequence gru / lstm / attention |
+| M04, M05, M06 | `snapshot` spatial normalised / mean / relational, temporal entity_gru |
+| M07 | `snapshot` spatial relational, temporal entity_tcn, temporal_layers = old layers + 1 |
+| M08, M09 | `snapshot` spatial none, temporal graph_cell, diffusion_hops 0 / K |
+| M10 | `snapshot` spatial none, temporal evolving |
+| M11 | `snapshot` spatial attention, temporal entity_attention |
+| M12 | `mixed` aggregation mean, update gru |
+| M13, M14 | `snapshot` spatial relational, temporal coupling_edges, message gated / attention |
+| M15, M16 | `event_graph` message gated / attention |
+| M17 | `tree` |
+| M18, M26 | `memory` update mailbox_gru, embedding attention, pair_terms off / on |
+| M19 | `memory` update mutual_rnn |
+| M20 | `memory` update intensity, embedding attention |
+| M21 | `sequence` operator mixer, structure none |
+| M22, M23 | `sequence` operator transformer, structure occurrence with patch 2 / overlap with patch 1 |
+| M24 | `projection` |
+| M25 | `walks` |
+| M27 | `sequence` operator ssm, structure none |
+| M28 | `affinity` |
+| M29 | `memory` update antisymmetric, embedding state |
+| M30 | `signal` |
+
+Two behaviours changed deliberately. `sequence/patch` 1 now means no patch projection, where the old M22 with patch 1 still applied a square linear map. The `mixed` and `event_graph` views no longer pack the snapshot block they never read. Combinations the old roster could not express are now reachable, for example a relational spatial stack before the graph cell, attention embedding on the antisymmetric memory, structural features on the mixer, or attention aggregation with a residual update on the derived-node graph; the coverage check exercises one configuration per switch setting, so each of those runs, but none has been trained.
+
+The random selector draws views uniformly, so the snapshot view's thirty-five spatial and temporal combinations share one tenth of the random trials where the old roster gave them fourteen thirtieths; TPE conditions on the drawn view and is unaffected.

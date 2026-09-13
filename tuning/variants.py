@@ -26,7 +26,7 @@ def materialize(job):
 def prepare(bank_directory, cfg, workers):
     started = time.perf_counter()
     bank = Bank(bank_directory)
-    root = bank.variant(cfg)[0]
+    root = bank.stamp(cfg)
     missing = [graph['index'] for graph in bank.manifest['graphs'] if not (root / ('graph_%04d' % graph['index'])).exists()]
     seconds = 0.0
     if missing:

@@ -15,7 +15,7 @@ model trains on that variant on a CUDA GPU.
   - the graph operators and model representations (`operators.py`, `representations.py`, `transform.py`)
 
   See [graphspec/README.md](graphspec/README.md).
-- `tuning/` — bank building, the model roster, batching and the search runner. See
+- `tuning/` — bank building, the model space and its components, batching and the search runner. See
   [tuning/README.md](tuning/README.md).
 - `dashboard/` — a read-only results server for a running search.
 

@@ -1,6 +1,7 @@
 import numpy as np
 
 from graphspec import operators, spec as specs, transform
+from tuning import model_spec
 
 from . import graphs
 from .graphs import WIDTH, categories, chain, gapped, layered, line, links, mesh, periodic, random_graph, relation, tiny, vector, weighted
@@ -9,6 +10,10 @@ from .graphs import WIDTH, categories, chain, gapped, layered, line, links, mesh
 def configured(registry, values, groups=specs.GROUPS):
     parameters = specs.space(registry, groups)
     return specs.canonical(parameters, specs.draw(parameters, lambda parameter: values.get(parameter.name, parameter.default)))
+
+
+def config(registry, model_values, graph_values, seed=5):
+    return model_spec.configuration(registry, model_values, graph_values, seed)
 
 
 def derived(graph, registry, values):

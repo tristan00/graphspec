@@ -2,30 +2,22 @@ import math
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
-from .layers import CausalAttention, SelectiveSSM, TimeEncoding
+from .layers import CausalAttention, SelectiveSSM, TimeEncoding, masked_mean, masked_weights
 from .turns import EndContext, enabled, lookback
 
 
-def masked_mean(x, mask, dim):
-    return (x * mask[..., None]).sum(dim) / mask.sum(dim).clamp_min(1)[..., None]
+class TreeNet(nn.Module):
 
-
-def masked_weights(score, mask):
-    score = score.masked_fill(~mask, -1e4)
-    weight = score.softmax(-1) * mask
-    return weight / weight.sum(-1, keepdim=True).clamp_min(1e-8)
-
-
-class TemporalAttention(nn.Module):
-
-    def __init__(self, cfg, registry):
+    def __init__(self, cfg, registry, categories):
         super().__init__()
-        hidden = cfg['hidden']
+        spec = cfg['model']
+        hidden = spec['hidden']
         self.has_turns = enabled(cfg)
         if self.has_turns:
             self.turns = EndContext(hidden * 2)
-        self.depth = cfg['layers']
+        self.depth = spec['tree/depth']
         self.input = nn.Linear(registry.features, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.time = TimeEncoding(hidden)
@@ -70,32 +62,78 @@ class MixerLayer(nn.Module):
         return (x + self.channel(self.norm2(x))) * mask[..., None]
 
 
-class HistoryModel(nn.Module):
+class SequenceNet(nn.Module):
 
-    def __init__(self, cfg, registry):
+    def __init__(self, cfg, registry, categories):
         super().__init__()
-        self.family, self.cfg = int(cfg['model'][1:]), cfg
-        hidden, depth = cfg['hidden'], cfg['layers']
+        spec = cfg['model']
+        self.cfg = cfg
+        self.operator, self.structure_mode = spec['sequence/operator'], spec['sequence/structure']
+        hidden, depth = spec['hidden'], spec['sequence/layers']
         if enabled(cfg):
             self.turn_time = nn.Linear(3, hidden)
             self.turn_kind = nn.Embedding(2, hidden)
         self.input = nn.Linear(registry.features, hidden)
         self.time = TimeEncoding(hidden)
         self.norm = nn.LayerNorm(hidden)
-        if self.family == 21:
-            tokens = cfg['neighbors'] + (lookback(cfg) if enabled(cfg) else 0)
+        if self.structure_mode != 'none':
+            self.structure = nn.Sequential(nn.Linear(2 if self.structure_mode == 'occurrence' else 12, hidden), nn.ReLU(), nn.Linear(hidden, hidden))
+        if self.operator == 'mixer':
+            tokens = spec['sequence/neighbors'] + (lookback(cfg) if enabled(cfg) else 0)
             self.layers = nn.ModuleList(MixerLayer(hidden, tokens) for _ in range(depth))
             self.node = nn.Linear(hidden * 2, hidden)
-        elif self.family in (22, 23):
-            self.structure = nn.Sequential(nn.Linear(2 if self.family == 22 else 12, hidden), nn.ReLU(), nn.Linear(hidden, hidden))
-            self.patch = nn.Linear(hidden * cfg['patch'], hidden) if self.family == 22 else nn.Identity()
-            self.layers = nn.ModuleList(CausalAttention(hidden, cfg['heads'], cfg['dropout']) for _ in range(depth))
-        elif self.family == 27:
-            self.node_layers = nn.ModuleList(SelectiveSSM(hidden, cfg['state_size']) for _ in range(depth))
-            self.time_layers = nn.ModuleList(SelectiveSSM(hidden, cfg['state_size']) for _ in range(depth))
+        elif self.operator == 'transformer':
+            self.patch_size = spec['sequence/patch']
+            self.patch = nn.Linear(hidden * self.patch_size, hidden) if self.patch_size > 1 else nn.Identity()
+            self.layers = nn.ModuleList(CausalAttention(hidden, spec['sequence/heads'], spec['dropout']) for _ in range(depth))
+        else:
+            self.node_layers = nn.ModuleList(SelectiveSSM(hidden, spec['sequence/state']) for _ in range(depth))
+            self.time_layers = nn.ModuleList(SelectiveSSM(hidden, spec['sequence/state']) for _ in range(depth))
             self.opposite = nn.Linear(hidden, hidden)
             self.temporal_select = nn.Linear(hidden, hidden)
         self.reward = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+
+    def mixer(self, x, raw, mask, roots, b):
+        for layer in self.layers:
+            x = layer(x, mask)
+        temporal = masked_mean(x, mask, 2)
+        spatial = masked_mean(raw, mask, 2)
+        return self.node(torch.cat((temporal, spatial + roots), -1)).flatten(1)
+
+    def transformer(self, x, mask, roots):
+        n, sides, tokens, hidden = x.shape
+        patch = self.patch_size
+        padding = (-tokens) % patch
+        if padding:
+            x = F.pad(x, (0, 0, 0, padding))
+            mask = F.pad(mask, (0, padding))
+            tokens += padding
+        if patch > 1:
+            x = self.patch(x.reshape(n, sides, tokens // patch, hidden * patch))
+            mask = mask.reshape(n, sides, tokens // patch, patch).any(-1)
+        x, mask = x.flatten(1, 2), mask.flatten(1)
+        x = torch.cat((x, roots), 1)
+        mask = torch.cat((mask, torch.ones(n, 2, device=x.device, dtype=torch.bool)), 1)
+        for layer in self.layers:
+            x = layer(x, mask, causal=False)
+        return x[:, -2:].flatten(1)
+
+    def ssm(self, x, mask, roots, b):
+        n, sides, tokens, hidden = x.shape
+        x = torch.cat((x, roots[:, :, None]), 2).reshape(n * 2, tokens + 1, hidden)
+        mask = torch.cat((mask, torch.ones(n, 2, 1, device=x.device, dtype=torch.bool)), 2).reshape(n * 2, tokens + 1)
+        for layer in self.node_layers:
+            x = layer(x, mask)
+        times = self.time(b['pair_gap'])
+        for layer in self.time_layers:
+            times = layer(times, b['pair_mask'])
+        pattern = self.temporal_select(masked_mean(times, b['pair_mask'], 1))
+        sequence = x.reshape(n, 2, tokens + 1, hidden)
+        mask = mask.reshape(n, 2, tokens + 1)
+        other = self.opposite(masked_mean(sequence, mask, 2).flip(1))
+        key = other * pattern[:, None]
+        weights = masked_weights((sequence * key[:, :, None]).sum(-1), mask)
+        return (sequence * weights[..., None]).sum(2).flatten(1)
 
     def forward(self, b):
         keys = ('context', 'query', 'history_x', 'history_mask', 'history_gap', 'occurrence', 'structure', 'pair_gap', 'pair_mask')
@@ -108,60 +146,30 @@ class HistoryModel(nn.Module):
         x = self.norm(raw + self.time(b['history_gap'])) * mask[..., None]
         if enabled(self.cfg):
             x = (x + self.turn_time(b['history_end_time'].log1p()) + self.turn_kind(b['history_turn_kind'])) * mask[..., None]
-        n, sides, tokens, hidden = x.shape
-        if self.family == 21:
-            for layer in self.layers:
-                x = layer(x, mask)
-            temporal = masked_mean(x, mask, 2)
-            spatial = masked_mean(raw, mask, 2)
-            summary = self.node(torch.cat((temporal, spatial + roots), -1)).flatten(1)
-        elif self.family in (22, 23):
-            structure = b['occurrence'].log1p() if self.family == 22 else b['structure']
+        if self.structure_mode != 'none':
+            structure = b['occurrence'].log1p() if self.structure_mode == 'occurrence' else b['structure']
             x = (x + self.structure(structure)) * mask[..., None]
-            if self.family == 22:
-                patch = self.cfg['patch']
-                padding = (-tokens) % patch
-                if padding:
-                    x = torch.nn.functional.pad(x, (0, 0, 0, padding))
-                    mask = torch.nn.functional.pad(mask, (0, padding))
-                    tokens += padding
-                x = self.patch(x.reshape(n, sides, tokens // patch, hidden * patch))
-                mask = mask.reshape(n, sides, tokens // patch, patch).any(-1)
-            x, mask = x.flatten(1, 2), mask.flatten(1)
-            x = torch.cat((x, roots), 1)
-            mask = torch.cat((mask, torch.ones(n, 2, device=x.device, dtype=torch.bool)), 1)
-            for layer in self.layers:
-                x = layer(x, mask, causal=False)
-            summary = x[:, -2:].flatten(1)
-        elif self.family == 27:
-            x = torch.cat((x, roots[:, :, None]), 2).reshape(n * 2, tokens + 1, hidden)
-            mask = torch.cat((mask, torch.ones(n, 2, 1, device=x.device, dtype=torch.bool)), 2).reshape(n * 2, tokens + 1)
-            for layer in self.node_layers:
-                x = layer(x, mask)
-            times = self.time(b['pair_gap'])
-            for layer in self.time_layers:
-                times = layer(times, b['pair_mask'])
-            pattern = self.temporal_select(masked_mean(times, b['pair_mask'], 1))
-            sequence = x.reshape(n, 2, tokens + 1, hidden)
-            mask = mask.reshape(n, 2, tokens + 1)
-            other = self.opposite(masked_mean(sequence, mask, 2).flip(1))
-            key = other * pattern[:, None]
-            weights = masked_weights((sequence * key[:, :, None]).sum(-1), mask)
-            summary = (sequence * weights[..., None]).sum(2).flatten(1)
+        if self.operator == 'mixer':
+            summary = self.mixer(x, raw, mask, roots, b)
+        elif self.operator == 'transformer':
+            summary = self.transformer(x, mask, roots)
+        else:
+            summary = self.ssm(x, mask, roots, b)
         return self.reward(torch.cat((summary, self.input(b['query'])), -1)).squeeze(-1)
 
 
-class AnonymousWalk(nn.Module):
+class WalkNet(nn.Module):
 
-    def __init__(self, cfg, registry):
+    def __init__(self, cfg, registry, categories):
         super().__init__()
-        hidden = cfg['hidden']
+        spec = cfg['model']
+        hidden = spec['hidden']
         self.has_turns = enabled(cfg)
         if self.has_turns:
             self.turn_time = nn.Linear(3, hidden)
             self.turn_kind = nn.Embedding(2, hidden)
         self.input = nn.Linear(registry.features, hidden)
-        self.anonymous = nn.Sequential(nn.Linear(2 * cfg['walk_hops'], hidden), nn.ReLU(), nn.Linear(hidden, hidden))
+        self.anonymous = nn.Sequential(nn.Linear(2 * spec['walks/hops'], hidden), nn.ReLU(), nn.Linear(hidden, hidden))
         self.time = TimeEncoding(hidden)
         self.walk = nn.LSTM(hidden, hidden // 2, batch_first=True, bidirectional=True)
         self.score = nn.Linear(hidden, 1)

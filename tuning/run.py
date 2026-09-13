@@ -18,7 +18,7 @@ from graph_tuning_infra.log import configure, emit
 from graph_tuning_infra.processes import WORKERS, Lock, command, stop
 
 
-VERSION = 7
+VERSION = 8
 REFERENCE_HISTORY = 16
 PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / 'graphspec', Path(graph_tuning_infra.__file__).parent)
 
@@ -40,14 +40,15 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     import torch
     from .data import Bank
     from .batching import batches, pack_batch
-    from .roster import create
+    from .models import build
+    from .model_spec import describe
     from .turns import blocks as turn_blocks
     from .budget import FitBudget, POLICY
 
     entered = time.perf_counter()
     revision = sources.digest(PACKAGES)
     cfg, directory = config, Path(directory)
-    graph, history = digest(cfg['graph']), cfg['graph']['time/history']
+    graph, history, model = digest(cfg['graph']), cfg['graph']['time/history'], describe(cfg['model'])
     budget = FitBudget(directory, deadline)
     torch.manual_seed(cfg['seed'])
     np.random.seed(cfg['seed'])
@@ -59,8 +60,8 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     actual_hash = sha256_file(Path(bank_directory) / 'supervision.json')
     if actual_hash != bank.manifest['supervision_sha256']:
         raise ValueError('frozen supervision changed')
-    model = create(cfg, bank.registry, len(bank.categories)).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg['lr'], weight_decay=cfg['weight_decay'])
+    net = build(cfg, bank.registry, len(bank.categories)).to(device)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=cfg['lr'], weight_decay=cfg['weight_decay'])
     torch.cuda.reset_peak_memory_stats()
     timing = dict(setup=time.perf_counter() - entered, train_pack=0.0, train_compute=0.0, validation_pack=0.0, validation_compute=0.0)
     losses, trained_rows, epoch_losses = [], [], []
@@ -72,9 +73,9 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     context_blocks = turn_blocks(bank, training_blocks, cfg)
     grouped = batches(context_blocks, batch_size, bank.entities, frame_budget=1024)
     training = [(epoch, group) for epoch in range(epochs) for group in batches(context_blocks, batch_size, bank.entities, cfg['seed'] + epoch, frame_budget=1024)]
-    emit('fit_enter', model=cfg['model'], graph=graph[:10], updates=len(training), epochs=epochs,
+    emit('fit_enter', model=model, graph=graph[:10], updates=len(training), epochs=epochs,
         training_rows=len(bank.split['train_indices']), batch_sequences=batch_size, config=cfg)
-    model.train()
+    net.train()
     epoch_rows, epoch_sum = [], 0.0
     epoch_started = time.perf_counter()
     budget.pulse('training')
@@ -90,13 +91,13 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         epoch_rows.extend(b['rows'].tolist())
         started = time.perf_counter()
         optimizer.zero_grad(set_to_none=True)
-        predictions = model(b)
+        predictions = net(b)
         targets = (b['target'] - bank.split['reward_mean']) / bank.split['reward_sd']
         loss = (predictions - targets).square().mean()
         if not torch.isfinite(loss):
             raise FloatingPointError('nonfinite training loss')
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), cfg['clip'], error_if_nonfinite=True)
+        torch.nn.utils.clip_grad_norm_(net.parameters(), cfg['clip'], error_if_nonfinite=True)
         optimizer.step()
         torch.cuda.synchronize()
         timing['train_compute'] += time.perf_counter() - started
@@ -127,8 +128,8 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         raise ValueError('evaluation requires complete training epochs')
     budget.check()
     budget.pulse('evaluation')
-    model.eval()
-    checkpoint = dict(config=cfg, state_dict=model.state_dict(), reward_mean=bank.split['reward_mean'],
+    net.eval()
+    checkpoint = dict(config=cfg, state_dict=net.state_dict(), reward_mean=bank.split['reward_mean'],
         reward_sd=bank.split['reward_sd'], supervision_sha256=actual_hash, source_sha256=revision,
         train_blocks=training_blocks, train_rows=sorted(set(trained_rows)),
         epochs=completed_epochs, requested_epochs=epochs, epoch_seconds=budget.epoch_seconds)
@@ -142,10 +143,10 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
             b = pack_batch(bank, blocks, cfg, device)
             timing['validation_pack'] += time.perf_counter() - started
             started = time.perf_counter()
-            predictions = model(b)
+            predictions = net(b)
             if index == 0:
                 loaded = torch.load(directory / 'checkpoint.pt', map_location=device, weights_only=False)
-                clone = create(loaded['config'], bank.registry, len(bank.categories)).to(device).eval()
+                clone = build(loaded['config'], bank.registry, len(bank.categories)).to(device).eval()
                 clone.load_state_dict(loaded['state_dict'], strict=True)
                 torch.testing.assert_close(predictions, clone(b), atol=2e-5, rtol=2e-5)
                 del loaded, clone
@@ -168,9 +169,9 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     np.savez_compressed(directory / 'predictions.npz', row_index=indices, prediction=values, target=bank.targets[indices])
     baseline = float(np.mean((bank.targets[indices].astype(np.float64) - bank.split['reward_mean'])**2))
     budget.check()
-    result = dict(status='complete', model=cfg['model'], graph=graph, config=cfg, **metrics,
+    result = dict(status='complete', model=digest(cfg['model']), description=model, graph=graph, config=cfg, **metrics,
         baseline_mse=baseline, seconds=time.perf_counter() - entered, timings=timing,
-        parameters=sum(p.numel() for p in model.parameters()), peak_cuda_bytes=torch.cuda.max_memory_allocated(),
+        parameters=sum(p.numel() for p in net.parameters()), peak_cuda_bytes=torch.cuda.max_memory_allocated(),
         optimizer_updates=len(losses), epochs=completed_epochs, requested_epochs=epochs,
         epoch_seconds=budget.epoch_seconds, stop_reason='epoch_budget' if completed_epochs < epochs else 'requested_epochs',
         stopped_early=completed_epochs < epochs,
@@ -184,7 +185,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         completed=datetime.now(timezone.utc).isoformat())
     write_json(directory / 'result.json', result)
     budget.pulse('complete')
-    emit('fit_exit', model=cfg['model'], graph=graph[:10], raw_mse=metrics['raw_val_mse'], seconds=result['seconds'], train_rows=result['train_unique_rows'])
+    emit('fit_exit', model=model, graph=graph[:10], raw_mse=metrics['raw_val_mse'], seconds=result['seconds'], train_rows=result['train_unique_rows'])
     return result
 
 
@@ -195,13 +196,13 @@ def worker(args):
     try:
         fit(args.bank, directory, config, blocks, args.batch_sequences, args.deadline)
     except Exception as error:
-        write_json(directory / 'failure.json', dict(model=config['model'], graph=digest(config['graph']),
+        write_json(directory / 'failure.json', dict(model=digest(config['model']), graph=digest(config['graph']),
             error=repr(error), traceback=traceback.format_exc(), source_sha256=sources.digest(PACKAGES)))
         raise
 
 
 def report(directory):
-    from .roster import NAMES
+    from .model_spec import describe
 
     started = time.perf_counter()
     directory = Path(directory)
@@ -230,34 +231,36 @@ def report(directory):
             if result['status'] == 'complete':
                 result['mse_minus_reference'] = result['raw_val_mse'] - baseline['raw_val_mse']
     table = ([baseline] if baseline else []) + results
-    columns = ['trial', 'model', 'name', 'graph', 'status', 'raw_val_mse', 'val_r2', 'baseline_mse', 'seconds',
+    columns = ['trial', 'view', 'description', 'model', 'graph', 'status', 'raw_val_mse', 'val_r2', 'baseline_mse', 'seconds',
         'parameters', 'peak_cuda_bytes', 'optimizer_updates', 'train_unique_rows', 'holdout_rows',
         'epochs', 'requested_epochs', 'stopped_early', 'stop_reason', 'budget_extended', 'training_coverage_complete', 'reference_mse', 'mse_minus_reference',
         'supervision_sha256', 'source_sha256', 'selector', 'config_json']
     rows = []
     for result in table:
         row = {key: result.get(key) for key in columns}
-        row.update(name='Reference' if result['trial'] == 'fixed_baseline' else NAMES[int(result['model'][1:]) - 1], config_json=json.dumps(result['config'], sort_keys=True))
+        reference = result['trial'] == 'fixed_baseline'
+        row.update(view='reference' if reference else result['config']['model']['view'],
+                   description='Reference' if reference else describe(result['config']['model']), config_json=json.dumps(result['config'], sort_keys=True))
         rows.append(row)
     write_csv(directory / 'results.csv', columns, rows)
     write_jsonl(directory / 'results.jsonl', table)
-    models = sorted({r['model'] for r in results})
-    write_json(directory / 'coverage.json', dict(models={model: sum(r['model'] == model for r in completed) for model in models},
+    views = sorted({r['config']['model']['view'] for r in results})
+    write_json(directory / 'coverage.json', dict(views={view: sum(r['config']['model']['view'] == view for r in completed) for view in views},
         completed=len(completed), failed=len(results) - len(completed), planned=len(planned['trials']),
         baseline_mse=baseline['raw_val_mse'] if baseline else None))
-    selection_text = ('TPE selects each model, its parameters and its graph-transform spec from completed fits; recorded timeouts and crashes enter as failures.'
-                      if planned['selector'] == 'tpe' else 'Each trial draws a uniform model, model parameters and graph-transform spec.')
+    selection_text = ('TPE selects each model spec, its training parameters and its graph-transform spec from completed fits; recorded timeouts and crashes enter as failures.'
+                      if planned['selector'] == 'tpe' else 'Each trial draws a uniform model spec, training parameters and graph-transform spec.')
     lines = ['**Graph transform and temporal model search**', '',
         'Updated ' + datetime.now(timezone.utc).isoformat() + '.', '',
         '%d completed fits; %d failed or timed out; %d planned so far. %s' % (len(completed), len(results) - len(completed), len(planned['trials']), selection_text), '']
     if baseline:
         lines.extend(['Fixed reference baseline: **MSE %.6f**, R² %.4f, %d training rows and %d holdout rows. Lower MSE is better.' % (baseline['raw_val_mse'], baseline['val_r2'], baseline['train_unique_rows'], baseline['holdout_rows']), ''])
-    lines.extend(['| Model | Completed fits | Best MSE | Best graph | Difference from reference |', '|---|---:|---:|---|---:|'])
-    for model in models:
-        subset = [r for r in completed if r['model'] == model]
+    lines.extend(['| View | Completed fits | Best MSE | Best model | Best graph | Difference from reference |', '|---|---:|---:|---|---|---:|'])
+    for view in views:
+        subset = [r for r in completed if r['config']['model']['view'] == view]
         best = min(subset, key=lambda r: r['raw_val_mse']) if subset else None
-        lines.append('| %s %s | %d | %s | %s | %s |' % (model, NAMES[int(model[1:]) - 1], len(subset),
-            '%.6f' % best['raw_val_mse'] if best else 'Pending', best['graph'][:10] if best else '—',
+        lines.append('| %s | %d | %s | %s | %s | %s |' % (view, len(subset),
+            '%.6f' % best['raw_val_mse'] if best else 'Pending', describe(best['config']['model']) if best else '—', best['graph'][:10] if best else '—',
             '%+.6f' % (best['raw_val_mse'] - baseline['raw_val_mse']) if best and baseline else '—'))
     lines.extend(['', 'All trial configurations, failure records and individual scores: [results.csv](results.csv). Full records: [results.jsonl](results.jsonl).', ''])
     (directory / 'progress.md').write_text('\n'.join(lines), encoding='utf-8')
@@ -387,7 +390,7 @@ def execute(directory, plan, continuous, registry):
         report(directory)
     results = report(directory)
     completed = [r for r in results if r['status'] == 'complete']
-    emit('run_exit', completed=len(completed), failed=len(results) - len(completed), model_families=len({r['model'] for r in completed}))
+    emit('run_exit', completed=len(completed), failed=len(results) - len(completed), views=len({r['config']['model']['view'] for r in completed}))
 
 
 def main():

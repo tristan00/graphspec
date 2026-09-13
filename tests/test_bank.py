@@ -1,7 +1,4 @@
-import json
-from pathlib import Path
 import shutil
-import tempfile
 
 import numpy as np
 import pyarrow as pa
@@ -10,7 +7,7 @@ from graph_tuning_infra import database as db
 from tuning.gather import neighbor_table
 
 from .graphs import WIDTH, vector
-from .support import configured, equal
+from .support import config, equal
 
 
 def neighbors(arrays, entity, cutoff, floor, count, spec, stream):
@@ -72,53 +69,44 @@ def database(path):
     shutil.rmtree(stage.directory)
 
 
-def test_bank():
+def test_bank(book):
     import torch
 
     from tuning.batching import pack_batch
-    from tuning.build import build
     from tuning.data import Bank, pack
-    from tuning.roster import groups, sample
     from tuning.turns import blocks as turn_blocks
 
-    root = Path(tempfile.mkdtemp())
-    try:
-        database(root / 'book.lbug')
-        (root / 'book.task.json').write_text(json.dumps(dict(name='book', database='book.lbug', target='label')))
-        manifest = build(root / 'book.task.json', root / 'bank', 1)
-        assert manifest['rows'] == 8 and manifest['validation_rows'] == 2
-        bank = Bank(root / 'bank')
-        assert bank.registry.extras['protected'] == ['customer']
-        for model in ('M04', 'M12', 'M13', 'M15', 'M17', 'M21', 'M25'):
-            cfg = sample(model, np.random.default_rng(0), 5)
-            cfg['graph'] = configured(bank.registry, {'time/history': 3, 'time/context': 1}, groups(model))
-            b = pack(bank, bank.blocks(0, 3)[-1], cfg, 'cpu')
-            assert b['predictions'] == 3 and int(b['selected'].sum()) == 3, model
-        cfg = sample('M13', np.random.default_rng(0), 5)
-        cfg['graph'] = configured(bank.registry, {'time/history': 1, 'time/context': 1}, groups('M13'))
-        extended = turn_blocks(bank, bank.blocks(0, 1), cfg)
-        batch, parts = pack_batch(bank, extended, cfg, 'cpu'), [pack(bank, block, cfg, 'cpu') for block in extended]
-        assert (parts[0]['step'] < 0).any() and all(len(part['x']) == part['observations'] for part in parts)
-        assert torch.equal(batch['x'][batch['context_index']], torch.cat([part['x'][part['context_index']] for part in parts]))
-        assert torch.equal(batch['x'][batch['temporal_edges']], torch.cat([part['x'][part['temporal_edges']] for part in parts], 1))
-        cfg = sample('M17', np.random.default_rng(0), 5)
-        cfg['graph'] = configured(bank.registry, {'time/history': 1, 'time/context': 1, 'time/periods': 'every', 'time/period_length': 2}, groups('M17'))
-        assert [block[1:3] for block in turn_blocks(bank, bank.blocks(0, 1), cfg)] == [(0, 3), (2, 6)]
-        arrays, spec = bank.arrays(0, cfg), cfg['graph']
-        assert bank.variant(cfg)[0] == bank.variant(dict(cfg, model='M18', graph=dict(spec, **{'time/history': 5, 'neighbors/order': 'uniform'})))[0]
-        ids = arrays['neighbor_ids'][arrays['neighbor_offsets'][0]:arrays['neighbor_offsets'][1]]
-        window = ids[:np.searchsorted(arrays['events'][ids, 2], 12)]
-        assert len(window) == 2 and equal(neighbors(arrays, 0, 12, 0, 1, spec, 7), window[-1:])
-        assert equal(neighbors(arrays, 0, 12, 0, 4, dict(spec, **{'neighbors/order': 'uniform'}), 7), window)
-        events = np.zeros((4, 9), np.int64)
-        events[:, 1], events[:, 2] = 1, [0, 2, 4, 6]
-        toy = dict(neighbor_ids=np.arange(4), neighbor_offsets=np.array([0, 4, 4]), events=events)
-        for order in ('uniform', 'decay'):
-            settings = dict(spec, **{'neighbors/order': order, 'neighbors/decay': 0.5})
-            for stream in range(16):
-                wide, same_floor, narrow = (neighbors(toy, 0, 8, floor, 2, settings, stream) for floor in (0, -4, 1))
-                assert len(wide) == 2 and equal(wide, same_floor) and set(wide[wide >= 1].tolist()) <= set(narrow.tolist())
-            chosen = neighbors(arrays, 0, 12, 0, 1, settings, 7)
-            assert len(chosen) == 1 and np.isin(chosen, window).all() and equal(chosen, neighbors(arrays, 0, 12, 0, 1, settings, 7))
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
+    bank = Bank(book)
+    assert bank.manifest['rows'] == 8 and bank.manifest['validation_rows'] == 2
+    assert bank.registry.extras['protected'] == ['customer']
+    views = ({'view': 'snapshot', 'snapshot/spatial': 'normalised'}, {'view': 'mixed'}, {'view': 'snapshot', 'snapshot/temporal': 'coupling_edges'},
+             {'view': 'event_graph'}, {'view': 'tree'}, {'view': 'sequence', 'sequence/operator': 'mixer'}, {'view': 'walks'})
+    for values in views:
+        cfg = config(bank.registry, values, {'time/history': 3, 'time/context': 1})
+        b = pack(bank, bank.blocks(0, 3)[-1], cfg, 'cpu')
+        assert b['predictions'] == 3 and int(b['selected'].sum()) == 3, values
+    cfg = config(bank.registry, {'view': 'snapshot', 'snapshot/temporal': 'coupling_edges'}, {'time/history': 1, 'time/context': 1})
+    extended = turn_blocks(bank, bank.blocks(0, 1), cfg)
+    batch, parts = pack_batch(bank, extended, cfg, 'cpu'), [pack(bank, block, cfg, 'cpu') for block in extended]
+    assert (parts[0]['step'] < 0).any() and all(len(part['x']) == part['observations'] for part in parts)
+    assert torch.equal(batch['x'][batch['context_index']], torch.cat([part['x'][part['context_index']] for part in parts]))
+    assert torch.equal(batch['x'][batch['temporal_edges']], torch.cat([part['x'][part['temporal_edges']] for part in parts], 1))
+    cfg = config(bank.registry, {'view': 'tree'}, {'time/history': 1, 'time/context': 1, 'time/periods': 'every', 'time/period_length': 2})
+    assert [block[1:3] for block in turn_blocks(bank, bank.blocks(0, 1), cfg)] == [(0, 3), (2, 6)]
+    arrays, spec = bank.arrays(0, cfg), cfg['graph']
+    memory = config(bank.registry, {'view': 'memory'}, {'time/history': 5, 'time/context': 1, 'time/periods': 'every', 'time/period_length': 2, 'neighbors/order': 'uniform'})
+    assert bank.variant(cfg)[0] == bank.variant(memory)[0]
+    ids = arrays['neighbor_ids'][arrays['neighbor_offsets'][0]:arrays['neighbor_offsets'][1]]
+    window = ids[:np.searchsorted(arrays['events'][ids, 2], 12)]
+    assert len(window) == 2 and equal(neighbors(arrays, 0, 12, 0, 1, spec, 7), window[-1:])
+    assert equal(neighbors(arrays, 0, 12, 0, 4, dict(spec, **{'neighbors/order': 'uniform'}), 7), window)
+    events = np.zeros((4, 9), np.int64)
+    events[:, 1], events[:, 2] = 1, [0, 2, 4, 6]
+    toy = dict(neighbor_ids=np.arange(4), neighbor_offsets=np.array([0, 4, 4]), events=events)
+    for order in ('uniform', 'decay'):
+        settings = dict(spec, **{'neighbors/order': order, 'neighbors/decay': 0.5})
+        for stream in range(16):
+            wide, same_floor, narrow = (neighbors(toy, 0, 8, floor, 2, settings, stream) for floor in (0, -4, 1))
+            assert len(wide) == 2 and equal(wide, same_floor) and set(wide[wide >= 1].tolist()) <= set(narrow.tolist())
+        chosen = neighbors(arrays, 0, 12, 0, 1, settings, 7)
+        assert len(chosen) == 1 and np.isin(chosen, window).all() and equal(chosen, neighbors(arrays, 0, 12, 0, 1, settings, 7))
