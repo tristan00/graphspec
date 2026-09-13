@@ -54,6 +54,10 @@ python -m dashboard.server --directory artifacts/run_retention --port 8766
 
 `retention` is the example used throughout this page.
 
+**Synthetic data**
+
+Development and benchmarking use generated databases, never client data. `python -m graphspec.synthetic --output artifacts/graphdb --name dev --graphs 4 --entities 2000 --steps 48` writes `dev.lbug` and `dev.task.json` following the contract: four node types, five relations with bounded degrees (`--degree`, `--max-degree`), relations that persist for a geometric lifetime and end with a removal row (`--lifetime`), observation coverage `--alive`, one query per step with categories and `--signals` channels, periods of `--period` steps, and a target on queries, nodes or graphs (`--level`). Every run is fixed by `--seed`.
+
 **Why LadybugDB**
 
 Graphs live in [LadybugDB](https://github.com/LadybugDB/ladybug), an embedded Cypher property-graph database
