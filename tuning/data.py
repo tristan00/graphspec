@@ -230,8 +230,10 @@ def pack(bank, block, cfg, device='cuda'):
             b.update(decision_query=held.tensor('query')[start:stop].float(), decision_context=tensor(choices[:, 4:6] - lo, device, torch.long))
         else:
             b.update(decision_query=torch.zeros(n, registry.features, device=device), decision_context=torch.full((n, 2), -1, dtype=torch.long, device=device))
-        first_edge, last_edge = between(held.numpy('spatial_step'), start, stop)
+        spatial_steps = held.numpy('spatial_step')
+        first_edge, last_edge = between(spatial_steps, start, stop)
         spatial = held.numpy('spatial')[first_edge:last_edge]
+        edge_bounds = np.searchsorted(spatial_steps[first_edge:last_edge], np.arange(start, stop + 1, dtype=spatial_steps.dtype))
         attribute_rows = held.numpy('spatial_attribute_row')[first_edge:last_edge]
         edges = spatial[:, :2].T - lo
         b.update(edges=tensor(edges, device, torch.long), relation=tensor(spatial[:, 2], device, torch.long))
@@ -242,12 +244,12 @@ def pack(bank, block, cfg, device='cuda'):
             values = held.numpy('attributes_' + name)[attribute_rows[chosen]]
             b['attributes'][name] = tensor(values.reshape(-1, len(declared.attributes)), device, torch.float32)
             b['attribute_edges'][name] = tensor(chosen, device, torch.long)
-        b['frame_edges'], b['frame_directed'] = [], []
         directed = registry.canonical[spatial[:, 2]]
-        for t in range(n):
-            use = step[edges[1]] == t
-            b['frame_edges'].append(tensor(entity[edges[:, use]], device, torch.long))
-            b['frame_directed'].append(tensor(entity[edges[:, use & directed]], device, torch.long))
+        endpoints = tensor(entity[edges], device, torch.long)
+        canonical = tensor(entity[edges[:, directed]], device, torch.long)
+        canonical_bounds = np.r_[0, np.cumsum(directed)][edge_bounds]
+        b['frame_edges'] = [endpoints[:, edge_bounds[t]:edge_bounds[t + 1]] for t in range(n)]
+        b['frame_directed'] = [canonical[:, canonical_bounds[t]:canonical_bounds[t + 1]] for t in range(n)]
         if 'lifted' in blocks:
             left, right = between(held.column('coupling', 1), lo, hi)
             coupled = held.numpy('coupling')[left:right]
@@ -278,12 +280,13 @@ def pack(bank, block, cfg, device='cuda'):
             extra = np.column_stack((sources, np.repeat(qi, np.diff(offsets)), np.full(len(sources), 2048))).astype(np.int64)
             edge = np.concatenate((np.column_stack((mixed_edges[:, :2] - left, mixed_edges[:, 2])), extra))
             all_ticks = np.r_[ticks, moment * 2]
-            feature = np.zeros((len(edge), 16), np.float32)
-            feature[:, :13] = (edge[:, 2, None] & (1 << np.arange(13))) != 0
+            edge_index = tensor(edge[:, :2].T, device, torch.long)
+            feature = torch.zeros((len(edge), 16), device=device)
+            feature[:, :13] = ((tensor(edge[:, 2], device, torch.long)[:, None] & (1 << torch.arange(13, device=device))) != 0).float()
             feature[:, 13] = 1
-            feature[:, 14] = np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2)
+            feature[:, 14] = tensor(np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2), device, torch.float32)
             b['mixed'] = dict(x=torch.cat((held.tensor('mixed_x')[left:right].float(), features)), kind=tensor(mk, device),
-                              edge_index=tensor(edge[:, :2].T, device, torch.long), edge=tensor(feature, device), query=tensor(qi, device, torch.long))
+                              edge_index=edge_index, edge=feature, query=tensor(qi, device, torch.long))
             if enabled(cfg):
                 from .turn_inputs import mixed_edges as extend_mixed
 
@@ -312,9 +315,9 @@ def pack(bank, block, cfg, device='cuda'):
             extra = held.numpy('event_boundaries')[low:high]
             extra = extra[extra[:, 0] >= left]
             boundary = position[extra[:, :2] - left]
-            b.update(dag_edges=tensor(np.concatenate((linked, boundary)).T, device, torch.long),
-                dag_relation=tensor(np.r_[events[linked[:, 1], 3], extra[:, 2]], device, torch.long),
-                dag_gap=tensor(np.r_[events[linked[:, 1], 2] - events[linked[:, 0], 2], events[boundary[:, 1], 2] - events[boundary[:, 0], 2]], device, torch.float32))
+            dag = tensor(np.concatenate((linked, boundary)).T, device, torch.long)
+            b.update(dag_edges=dag, dag_relation=torch.cat((b['events'][dag[1, :len(linked)], 3], tensor(extra[:, 2], device, torch.long))),
+                dag_gap=(b['events'][dag[1], 2] - b['events'][dag[0], 2]).float())
             positions = np.r_[np.arange(len(events)), np.arange(len(events))]
             reached, offsets = gather.reachable(np.r_[events[:, 0], events[:, 1]].astype(np.int64), positions, events[:, 2].astype(np.int64),
                                                 np.stack((actors, subjects), 1).astype(np.int64), moment * 2)
