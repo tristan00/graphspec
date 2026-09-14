@@ -288,7 +288,7 @@ python -m tuning.run report RUN
   is the disk budget for `variants/`; the least recently used variants are removed first.
 - Running with an existing `--output` continues that run with its seed, budget and batch size; `--selector`,
   `--random-trials`, `--bounds`, `--trials` and `--workers` may change and the log records each replacement. A run
-  belongs to its bank and declaration; a rebuilt or different bank is an error.
+  belongs to its bank; a bank with a different manifest is an error.
 
 `python -m dashboard.server --root artifacts --port 8766` lists every run under the root, with its bank and graph count, in a selector at the top of http://127.0.0.1:8766/ and serves the chosen run's attempts (the newest by default; the choice is in the page address),
 sorted by validation MSE and refreshed every ten seconds. It only reads run files.

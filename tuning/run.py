@@ -277,12 +277,9 @@ def run(args):
         plan = read_json(path)
         if plan.get('version') != VERSION:
             raise ValueError('this run was written by another plan version; choose a new output')
-        if Path(plan['bank']).resolve() != Path(args.bank).resolve():
-            raise ValueError('this run belongs to a different bank')
-        if plan['spec_sha256'] != bank.manifest['spec_sha256']:
-            raise ValueError('this run was declared under a different graph declaration')
         if plan['bank_manifest_sha256'] != sha256_file(Path(args.bank) / 'manifest.json'):
-            raise ValueError('this run was built on a bank that has since been rebuilt')
+            raise ValueError('this run belongs to a different bank')
+        plan['bank'] = str(Path(args.bank).resolve())
         plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30, limit=args.trials)
         for name, value in (('selector', args.selector), ('random_trials', args.random_trials), ('bounds', bounds if args.bounds else None)):
             if value is not None and value != plan[name]:
