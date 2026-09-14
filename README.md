@@ -64,7 +64,7 @@ python -m totalwar.verify artifacts/graphdb_totalwar/totalwar.task.json --sample
 python -m tuning.build --task artifacts/graphdb_totalwar/totalwar.task.json --output artifacts/bank_totalwar --workers 8
 ```
 
-`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.staging/` (the parquet tables with their mapping, kept), `<name>.lbug`, `<name>.task.json` and `<name>.build.json` with per-campaign sizes; `--staging-only` stops after the staging and writes a task without a database, which is all `tuning.build` needs; `--staged` loads the database from a staging that already exists; `verify` samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
+`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.staging/` (the parquet tables with their mapping, kept), `<name>.lbug`, `<name>.task.json` and `<name>.build.json` with per-campaign sizes; `--staged` loads the database from a staging that already exists; `verify` samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
 
 **Synthetic data**
 
