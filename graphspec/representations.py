@@ -340,11 +340,13 @@ def validate(arrays, graph, registry, spec, groups):
     if not np.isfinite(x).all():
         raise ValueError('nonfinite observation features in graph %s' % graph.name)
     codes, rows = arrays['spatial'][:, 2], arrays['spatial_attribute_row']
+    by_code = np.argsort(codes, kind='stable')
+    sorted_codes, sorted_rows = codes[by_code], rows[by_code]
     for edge in registry.edges:
-        use = (codes == edge.code) | (codes == edge.reverse)
-        if not edge.attributes and np.any(rows[use] != -1):
+        use = np.concatenate([sorted_rows[lo:hi] for lo, hi in np.searchsorted(sorted_codes, np.asarray([[code, code + 1] for code in (edge.code, edge.reverse)], sorted_codes.dtype))])
+        if not edge.attributes and np.any(use != -1):
             raise ValueError('relation %s carries attribute rows without attributes' % edge.name)
-        if edge.attributes and (np.any(rows[use] < 0) or np.any(rows[use] >= len(arrays['attributes_' + edge.name]))):
+        if edge.attributes and (np.any(use < 0) or np.any(use >= len(arrays['attributes_' + edge.name]))):
             raise ValueError('attribute row out of range for relation %s' % edge.name)
     turn = arrays['period']
     if 'coupling' in groups:
