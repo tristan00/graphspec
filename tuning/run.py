@@ -284,7 +284,7 @@ def run(args):
             raise ValueError('resume requested under a different graph declaration')
         if plan['bank_manifest_sha256'] != sha256_file(Path(args.bank) / 'manifest.json'):
             raise ValueError('resume requested with a rebuilt bank')
-        plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30)
+        plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30, limit=args.trials)
         if args.random_trials is not None and args.random_trials != plan['random_trials']:
             raise ValueError('resume requested with a different random phase')
         if args.bounds and bounds != plan['bounds']:
@@ -292,7 +292,7 @@ def run(args):
     else:
         plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
             batch_sequences=args.batch_sequences,
-            workers=args.workers, variant_bytes=args.variant_gb << 30, random_trials=args.random_trials or 0, bounds=bounds,
+            workers=args.workers, variant_bytes=args.variant_gb << 30, random_trials=args.random_trials or 0, bounds=bounds, limit=args.trials,
             seconds=args.seconds, train_rows=bank.manifest['train_rows'], holdout_rows=bank.manifest['validation_rows'],
             supervision_sha256=bank.manifest['supervision_sha256'], spec_sha256=bank.manifest['spec_sha256'],
             created=datetime.now(timezone.utc).isoformat())
@@ -335,7 +335,7 @@ def execute(directory, plan, continuous, registry):
     from .selector import append_trial
     from .variants import prune
 
-    emit('run_enter', trials=len(plan['trials']), seconds_per_trial=plan['seconds'], continuous=continuous)
+    emit('run_enter', trials=len(plan['trials']), limit=plan['limit'], seconds_per_trial=plan['seconds'], continuous=continuous)
     index = 0
     while True:
         if (directory / 'STOP').exists():
@@ -344,7 +344,7 @@ def execute(directory, plan, continuous, registry):
         started, phases = time.perf_counter(), {}
         opened = datetime.now(timezone.utc).isoformat()
         if index == len(plan['trials']):
-            if not continuous:
+            if not continuous or index == plan['limit']:
                 break
             append_trial(directory, plan, registry)
             phases['select'] = time.perf_counter() - started
@@ -407,6 +407,7 @@ def main():
     run_parser.add_argument('--seed', type=int, default=20260909)
     run_parser.add_argument('--batch-sequences', type=int, default=64)
     run_parser.add_argument('--continuous', action='store_true')
+    run_parser.add_argument('--trials', type=int)
     run_parser.add_argument('--seconds', type=int, default=600)
     run_parser.add_argument('--resume', action='store_true')
     run_parser.add_argument('--selector', choices=('tpe', 'random'), default='tpe')

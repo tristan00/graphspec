@@ -114,7 +114,7 @@ A trial's configuration holds the model spec under `model`, the graph spec under
 | `trial_*/trial.json`, `late_result.json` | The runner's phase timings for the whole trial, and a result that arrived after the budget. |
 | `results.csv`, `results.jsonl`, `progress.md`, `coverage.json` | Every attempt with its model description, including failures; the best MSE, R², model and spec digest per view in `progress.md`; completed fits per view in `coverage.json`. |
 
-A file named `STOP` in the run directory stops the run after the current fit, and stops a resumed run before its first trial. The runner refuses to resume while the worker named in `running.json` is still alive.
+`--trials N` ends a continuous run once N trials are recorded; a resumed run takes the limit given on resume. A file named `STOP` in the run directory stops the run after the current fit, and stops a resumed run before its first trial. The runner refuses to resume while the worker named in `running.json` is still alive.
 
 **Verification**
 
