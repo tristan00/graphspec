@@ -1,5 +1,7 @@
+from collections import deque
 import logging
 import os
+import queue
 import threading
 import time
 import traceback
@@ -8,7 +10,7 @@ import numba
 import torch
 import torch.multiprocessing as multiprocessing
 
-from graph_tuning_infra.arrays import RESIDENT, Bundle, views
+from graph_tuning_infra.arrays import RESIDENT, Bundle, Slot, shared, slot_bytes, views
 from graph_tuning_infra.log import configure
 
 from .batching import recipe_batch
@@ -23,20 +25,26 @@ def serve(bank_directory, cfg, threads, resident, jobs, results):
     numba.set_num_threads(threads)
     torch.set_num_threads(1)
     bank = Bank(bank_directory, resident)
+    slots = {}
     while True:
         job = jobs.get()
         if job is None:
             break
-        index, blocks = job
+        index, blocks, number, slot = job
         started = time.perf_counter()
         try:
             bundle = Bundle('cpu')
             tree = prepare(recipe_batch(bank, blocks, cfg), bundle)
-            buffer, spans = bundle.pack()
-            results.put((index, torch.from_numpy(buffer), spans, tree, None))
+            arrays, spans, nbytes = bundle.layout()
+            fresh = None
+            if slot is None or slot.numel() < nbytes:
+                fresh = slot = shared(slot_bytes(nbytes))
+            slots[number] = slot
+            bundle.write(slot.numpy(), arrays)
+            results.put((index, number, fresh, nbytes, spans, tree, None))
         except Exception:
-            results.put((index, None, None, None, traceback.format_exc()))
-        LOG.debug('serve batch exit index=%d blocks=%d seconds=%.4f', index, len(blocks), time.perf_counter() - started)
+            results.put((index, number, None, 0, None, None, traceback.format_exc()))
+        LOG.debug('serve batch exit index=%d blocks=%d slot=%d seconds=%.4f', index, len(blocks), number, time.perf_counter() - started)
 
 
 class Packer:
@@ -45,7 +53,7 @@ class Packer:
         started = time.perf_counter()
         self.bank, self.cfg, self.device = bank, cfg, device
         self.position, self.closed = 0, False
-        self.pinned = torch.empty(0, dtype=torch.uint8, pin_memory=True)
+        self.slots, self.free = {}, deque(range(2 * workers))
         context = multiprocessing.get_context('spawn')
         self.jobs, self.results = context.Queue(), context.Queue()
         threads = max(1, os.cpu_count() // workers)
@@ -54,7 +62,7 @@ class Packer:
                           for _ in range(workers)]
         for process in self.processes:
             process.start()
-        LOG.info('packer enter workers=%d threads=%d resident=%d seconds=%.3f', workers, threads, resident, time.perf_counter() - started)
+        LOG.info('packer enter workers=%d threads=%d resident=%d slots=%d seconds=%.3f', workers, threads, resident, len(self.free), time.perf_counter() - started)
 
     def prefetch(self, groups, wanted):
         started, loaded = time.perf_counter(), 0
@@ -73,36 +81,45 @@ class Packer:
                 loaded += 1
         LOG.info('prefetch exit groups=%d graphs=%d keys=%s seconds=%.3f', len(groups), loaded, ','.join(sorted(wanted)), time.perf_counter() - started)
 
+    def submit(self, index, groups):
+        number = self.free.popleft()
+        slot = self.slots.get(number)
+        self.jobs.put((index, groups[index], number, None if slot is None else slot.tensor))
+
     def stream(self, groups):
-        ahead = 2 * len(self.processes)
         submitted, held, loader = 0, {}, None
-        while submitted < min(ahead, len(groups)):
-            self.jobs.put((submitted, groups[submitted]))
+        while submitted < len(groups) and self.free:
+            self.submit(submitted, groups)
             submitted += 1
         for index in range(len(groups)):
             self.position = index
             while index not in held:
-                received = self.results.get()
+                try:
+                    received = self.results.get(timeout=5)
+                except queue.Empty:
+                    if not all(process.is_alive() for process in self.processes):
+                        raise RuntimeError('a packing process died') from None
+                    continue
                 held[received[0]] = received
-            _, buffer, spans, tree, failure = held.pop(index)
+            _, number, fresh, nbytes, spans, tree, failure = held.pop(index)
             if failure is not None:
                 raise RuntimeError('packing failed in a worker process:\n' + failure)
+            if fresh is not None:
+                if number in self.slots:
+                    self.slots[number].release()
+                self.slots[number] = Slot(fresh, self.device)
+            started = time.perf_counter()
+            buffer = self.slots[number].transfer(nbytes, self.device)
+            moved = time.perf_counter()
+            self.free.append(number)
             if submitted < len(groups):
-                self.jobs.put((submitted, groups[submitted]))
+                self.submit(submitted, groups)
                 submitted += 1
             if loader is None:
                 loader = threading.Thread(target=self.prefetch, args=(groups, keys(tree, set())), daemon=True)
                 loader.start()
-            started = time.perf_counter()
-            if len(self.pinned) < len(buffer):
-                self.pinned = torch.empty(max(len(buffer), 2 * len(self.pinned)), dtype=torch.uint8, pin_memory=True)
-            staged = self.pinned[:len(buffer)]
-            staged.copy_(buffer)
-            copied = time.perf_counter()
-            tensors = views(staged.to(self.device), spans)
-            moved = time.perf_counter()
-            batch = resolve(tree, self.bank, self.cfg, tensors, self.device)
-            LOG.debug('packer batch exit index=%d bytes=%d copy=%.4f transfer=%.4f resolve=%.4f', index, len(buffer), copied - started, moved - copied, time.perf_counter() - moved)
+            batch = resolve(tree, self.bank, self.cfg, views(buffer, spans), self.device)
+            LOG.debug('packer batch exit index=%d bytes=%d slot=%d transfer=%.4f resolve=%.4f', index, nbytes, number, moved - started, time.perf_counter() - moved)
             yield batch
 
     def close(self):
@@ -115,4 +132,6 @@ class Packer:
         for process in self.processes:
             if process.is_alive():
                 process.kill()
-        LOG.info('packer exit workers=%d seconds=%.3f', len(self.processes), time.perf_counter() - started)
+        for slot in self.slots.values():
+            slot.release()
+        LOG.info('packer exit workers=%d slots=%d bytes=%d seconds=%.3f', len(self.processes), len(self.slots), sum(slot.tensor.numel() for slot in self.slots.values()), time.perf_counter() - started)

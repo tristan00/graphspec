@@ -120,3 +120,25 @@ An event-graph epoch took 91 s: 11 s of GPU compute, 80 s in the training proces
 **Results**
 
 Seconds per epoch, one epoch, history 8, hidden 32: event graph 91 → 26, tree 84 → 26, sequence 53 → 19; the other views were not measured on this bank before this work: signal 15, walks 23, projection 31, affinity 35, memory 79 (64 s of it GPU compute), mixed 99 (61 s GPU compute), snapshot 187 (81 s GPU compute and 64 s copying its 180 MB batches out of shared memory). The event-graph training process now spends 2 s copying, 3 s transferring and 7 s resolving per epoch beside 12 s of GPU compute. The variant build for 1,000 graphs fell from 184 s to 52 s wall on 8 processes and writes 19 GB instead of 46 GB. Every source change still rebuilds the variants of the trials that follow it.
+
+**14 September 2026: the packer's transport and the prune step**
+
+Measured on the same workstation and bank, history 8, hidden 32, one epoch with 8 packing processes, each fit alone on the machine. Before is commit `948ae6b`; after is `HEAD`. Every view's packed batches were checked for bit-identity against the single-process `materialise` path on the synthetic dev bank and the 10-campaign bank, twenty batches per view over four slots, so every slot was reused and regrown.
+
+**Where the time went**
+
+The snapshot epoch spent 64 of its 187 s in the training process copying batches: a worker concatenated its bundle into a fresh array, `torch.multiprocessing` copied that into a fresh shared-memory section for the queue, the training process faulted that section in while copying it into pinned memory, and only then moved it to the device. Four passes over 147 MB per batch, 1,198 batches, under memory contention from eight processes doing the same. The runner's prune step walked every file of the variant store after every trial, 19 s at ten variants, and deleted a 19 GB variant inside the trial budget, about 100 s each time.
+
+**What changed**
+
+- Each worker writes its bundle straight into one of a fixed set of shared-memory slots, two per worker, that the training process registers with CUDA (`cudaHostRegister`) and keeps for the whole fit; a slot grows to a quarter more than the largest batch it has seen. A batch is one device copy from the slot, 164 GB in 5.3 s over the epoch, and the slot is free again as soon as that copy returns. Two 180 MB copies per batch are gone from the worker and one from the training process (`graph_tuning_infra/arrays.py`, `tuning/packing.py`).
+- Pruning sizes a variant by a `scandir` walk only when its entry count changes, renames a doomed variant into `trash/` beside the store and deletes it from a daemon thread; the trial clock sees the rename (`graph_tuning_infra/files.py`).
+- A relational spatial layer given a batch without edges returns zero messages instead of raising in `torch.cat` (`tuning/layers.py`); the seventh trial of the 1,000-campaign search failed on such a batch.
+
+**Results**
+
+Snapshot epoch 187 s → 111 s; the training process's time waiting on packed batches fell from 105 s to 27 s per epoch (5 s of device copies, 13 s resolving markers, 9 s waiting on workers), against 83 s of GPU compute, so the view is now compute bound. The holdout score is unchanged (R² 0.232; the loss agrees to nine digits, the residual being the CUDA `index_add_` atomics). Prune sizing of the 16-variant, 226 GB store fell from 19 s to 4.5 s on a cold cache and to milliseconds on a warm one; deletion no longer counts against the trial. The configuration of the trial that failed on an edgeless batch now completes in 227 s of its 600 s budget with R² 0.482. Forty snapshot batches of this bank streamed through 16 slots are bit-identical to the single-process path.
+
+**Verification**
+
+`tests/`: 9 tests in 6 s, covering the bundle layout against the packed buffer, slot transfer and growth, the packer against `materialise` for the snapshot and event-graph views on a generated bank, prune's trash and sweeper, the size cache and the stamp check, and the relational layer with and without edges.

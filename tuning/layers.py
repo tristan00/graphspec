@@ -38,9 +38,11 @@ def grouping(source, destination, relation):
 
 def relational_messages(h, grouped, weights):
     source, destination, kinds, counts = grouped
-    pieces = torch.split(h.index_select(0, source), counts)
-    messages = torch.cat([piece @ weights[kind] for kind, piece in zip(kinds, pieces)])
-    return h.new_zeros(h.shape).index_add_(0, destination, messages)
+    result = h.new_zeros(h.shape)
+    if kinds:
+        pieces = torch.split(h.index_select(0, source), counts)
+        result.index_add_(0, destination, torch.cat([piece @ weights[kind] for kind, piece in zip(kinds, pieces)]))
+    return result
 
 
 def aggregate(h, edges, mode='mean'):
