@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from graph_tuning_infra.database import Stage, connect, copy
+from graph_tuning_infra.database import LOAD_POOL, Stage, connect, copy
 from graph_tuning_infra.features import encoder
 from graph_tuning_infra.files import write_json
 from graph_tuning_infra.log import configure
@@ -59,7 +59,7 @@ def build(output, name, host, port, database, user, campaigns, features):
         LOG.info('campaign exit index=%d key=%s seconds=%.2f', index, campaign['campaign_key'], summary[-1]['seconds'])
     stage.close()
     connection.close()
-    store, ladybug = connect(database_path, read_only=False)
+    store, ladybug = connect(database_path, read_only=False, buffer_pool_size=LOAD_POOL)
     for statement in declaration(features, len(SIGNALS)):
         ladybug.execute(statement)
     copy(ladybug, stage)
