@@ -4,6 +4,8 @@ import time
 
 import numpy as np
 
+from graph_tuning_infra.features import token
+
 from . import kernels
 from .operators import enabled
 from .vocabulary import BOUNDARIES
@@ -101,7 +103,8 @@ def base(graph, registry, spec, categories):
     events = replay(entity, step, altered, np.stack((source, target, codes), 1), fact_step,
                     np.stack((graph.fact_source[absent], graph.fact_target[absent], graph.fact_code[absent]), 1), graph.fact_step[absent], steps,
                     (decision_actor, decision_subject, decision_context, category) if decided else None, graph.name, len(kinds))
-    arrays.update(x=x.astype(np.float16, copy=False), entity=entity.astype(np.int32), step=step.astype(np.int32), turn=graph.period[step].astype(np.int32),
+    arrays.update(x=x.astype(np.float16, copy=False), entity=entity.astype(np.int32),
+                  entity_token=np.asarray([token(registry.nodes[kind] + ':' + key) & ((1 << 62) - 1) for kind, key in zip(kinds.tolist(), graph.keys)], np.int64), step=step.astype(np.int32), turn=graph.period[step].astype(np.int32),
                   snapshot_offsets=np.searchsorted(step, np.arange(steps + 1)).astype(np.int64),
                   entity_kind=(np.zeros_like(kinds) if enabled(spec, 'nodes/untyped') else kinds).astype(np.int8),
                   spatial=spatial, spatial_attribute_row=attribute_row[index], spatial_step=fact_step[index].astype(np.int32),

@@ -74,7 +74,8 @@ def recipe_batch(bank, blocks, cfg):
         'history_gap', 'occurrence', 'structure', 'common_stats',
         'common_frequency', 'pair_gap', 'pair_mask', 'walk_x', 'walk_mask', 'walk_gap', 'walk_identity', 'dag_gap',
         'end_gaps', 'end_mask', 'end_raw', 'end_raw_mask', 'end_token_gaps', 'temporal_relation', 'temporal_turn_gap', 'dag_relation',
-        'history_turn_kind', 'history_end_time', 'end_affinity', 'end_global_affinity', 'walk_turn_kind', 'walk_end_time', 'decision_query')
+        'history_turn_kind', 'history_end_time', 'end_affinity', 'end_global_affinity', 'walk_turn_kind', 'walk_end_time', 'decision_query',
+        'entity_token', 'root_token', 'token', 'history_token', 'walk_token')
     for key in direct:
         if key in parts[0]:
             b[key] = joined([p[key] for p in parts])
@@ -111,7 +112,7 @@ def recipe_batch(bank, blocks, cfg):
         b['end_tree'] = combine_tree([p['end_tree'] for p in parts])
     if 'mixed' in parts[0]:
         offsets = np.r_[0, np.cumsum([length(p['mixed']['x']) for p in parts])]
-        b['mixed'] = {key: joined([p['mixed'][key] for p in parts]) for key in ('x', 'kind', 'edge_code', 'edge_gap')}
+        b['mixed'] = {key: joined([p['mixed'][key] for p in parts]) for key in ('x', 'kind', 'edge_code', 'edge_gap') + (('token',) if 'token' in parts[0]['mixed'] else ())}
         b['mixed']['edge_index'] = np.concatenate([p['mixed']['edge_index'] + int(offset) for p, offset in zip(parts, offsets)], 1)
         b['mixed']['query'] = np.concatenate([p['mixed']['query'] + int(offset) for p, offset in zip(parts, offsets)])
     if 'events' in parts[0]:

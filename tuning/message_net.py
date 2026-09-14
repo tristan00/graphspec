@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .layers import segment_softmax
+from .layers import keys_of, segment_softmax
 
 
 CODE_BITS = 14
@@ -46,6 +46,7 @@ class MixedNet(nn.Module):
         hidden = spec['hidden']
         self.input = nn.Sequential(nn.Linear(registry.features, hidden), nn.LayerNorm(hidden), nn.SiLU())
         self.kind = nn.Embedding(7, hidden)
+        self.keys = keys_of(spec, hidden)
         self.layers = nn.ModuleList(MessageLayer(hidden, spec['mixed/aggregation'], spec['mixed/update'], spec['dropout'])
                                     for _ in range(spec['mixed/layers']))
         self.reward = nn.Sequential(nn.Linear(hidden, hidden), nn.SiLU(), nn.Linear(hidden, 1))
@@ -54,6 +55,8 @@ class MixedNet(nn.Module):
     def forward(self, b):
         mixed = b['mixed']
         h = self.input(mixed['x']) + self.kind(mixed['kind'])
+        if self.keys is not None:
+            h = h + self.keys(mixed['token'])
         edge = torch.cat((((mixed['edge_code'][:, None] >> self.shifts) & 1).float(), mixed['edge_gap']), 1)
         for layer in self.layers:
             h = layer(h, mixed['edge_index'], edge)

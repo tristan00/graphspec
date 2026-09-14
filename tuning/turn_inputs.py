@@ -97,6 +97,9 @@ def mixed_edges(b, graph):
     mixed['edge_index'] = np.concatenate((mixed['edge_index'], np.stack((source, destination))), 1)
     mixed['edge_code'] = np.concatenate((mixed['edge_code'], np.full(len(chosen), (1 << 12) | (1 << 13), np.int64)))
     mixed['edge_gap'] = np.concatenate((mixed['edge_gap'], np.log1p(gaps[:, :2]).astype(np.float32)))
+    if 'token' in mixed:
+        roots = np.broadcast_to(b['root_token'][:, :, None], b['end_raw_mask'][:, :2].shape)
+        mixed['token'] = np.concatenate((mixed['token'], np.concatenate((roots, np.full((len(roots), 1, roots.shape[2]), -1, np.int64)), 1).reshape(-1)[mask]))
 
 
 def history_tokens(b, graph, held, first, last, start, cfg, registry):
@@ -123,8 +126,10 @@ def history_tokens(b, graph, held, first, last, start, cfg, registry):
     b['history_turn_kind'] = np.concatenate((np.zeros((n, 2, original), np.int64), np.ones((n, 2, depth), np.int64)), 2)
     for key, width in (('occurrence', 2), ('structure', 12)):
         b[key] = np.concatenate((b[key], np.zeros((n, 2, depth, width), np.float32)), 2)
+    if 'history_token' in b:
+        b['history_token'] = np.concatenate((b['history_token'], np.repeat(b['root_token'][:, :, None], depth, 2)), 2)
     order = np.argsort(-np.where(b['history_mask'], b['history_gap'], np.inf), axis=-1, kind='stable')
-    for key in ('history_mask', 'history_gap', 'history_end_time', 'history_turn_kind', 'occurrence', 'structure'):
+    for key in ('history_mask', 'history_gap', 'history_end_time', 'history_turn_kind', 'occurrence', 'structure') + (('history_token',) if 'history_token' in b else ()):
         value = b[key]
         b[key] = np.take_along_axis(value, order if value.ndim == 3 else order[..., None], 2)
     pieces = [(key, np.take_along_axis(index, order, 2), np.take_along_axis(weight, order, 2) if isinstance(weight, np.ndarray) else weight)

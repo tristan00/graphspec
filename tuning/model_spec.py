@@ -7,7 +7,9 @@ from graphspec.spec import GROUPS, among, choice, draw, equals, flag, number, re
 
 LOG = logging.getLogger(__name__)
 VIEWS = ('snapshot', 'mixed', 'event_graph', 'memory', 'projection', 'sequence', 'tree', 'walks', 'affinity', 'signal')
-SPATIAL = ('none', 'mean', 'normalised', 'relational', 'attention')
+SPATIAL = ('none', 'mean', 'normalised', 'relational', 'attention', 'chebyshev', 'relational_attention')
+ENCODINGS = ('log_cosine', 'cosine', 'log_linear')
+EMBEDDING = ('snapshot', 'mixed', 'event_graph', 'memory', 'projection', 'sequence', 'tree', 'walks')
 TEMPORAL = ('graph_sequence', 'entity_gru', 'entity_tcn', 'entity_attention', 'graph_cell', 'evolving', 'coupling_edges')
 MESSAGES = ('gated', 'attention')
 UPDATES = ('mailbox_gru', 'mutual_rnn', 'intensity', 'antisymmetric')
@@ -43,6 +45,14 @@ def memory_state(spec):
     return spec.get('view') == 'memory' and spec['memory/update'] != 'mutual_rnn'
 
 
+def reads_time(spec):
+    return spec['view'] in ('event_graph', 'memory', 'projection', 'sequence', 'tree', 'walks') or spec.get('snapshot/temporal') == 'coupling_edges'
+
+
+def embeds_keys(spec):
+    return spec['view'] in EMBEDDING
+
+
 def reads_dropout(spec):
     if spec['view'] == 'snapshot':
         return spec['snapshot/spatial'] != 'none' or attends(spec) or spec['snapshot/temporal'] == 'coupling_edges'
@@ -56,6 +66,7 @@ def space(registry):
     parameters = [choice('view', offered, offered[0]), choice('hidden', HIDDEN, 32),
                   choice('snapshot/spatial', SPATIAL, 'relational', view('snapshot')),
                   number('snapshot/layers', 1, 3, 2, lambda spec: spec.get('view') == 'snapshot' and spec['snapshot/spatial'] != 'none'),
+                  number('snapshot/chebyshev_order', 1, 4, 2, equals('snapshot/spatial', 'chebyshev')),
                   choice('snapshot/temporal', TEMPORAL, 'entity_gru', view('snapshot')),
                   choice('snapshot/sequence', ('gru', 'lstm', 'attention'), 'gru', equals('snapshot/temporal', 'graph_sequence')),
                   number('snapshot/temporal_layers', 1, 4, 2, among('snapshot/temporal', ('entity_tcn', 'graph_cell', 'evolving', 'coupling_edges'))),
@@ -92,7 +103,10 @@ def space(registry):
                   number('signal/topk', 1, 20, 3, view('signal')),
                   number('signal/hops', 1, 4, 1, view('signal')),
                   number('signal/layers', 1, 3, 2, view('signal')),
-                  real('dropout', 0.0, 0.5, 0.0, reads_dropout)]
+                  real('dropout', 0.0, 0.5, 0.0, reads_dropout),
+                  choice('time/encoding', ENCODINGS, 'log_cosine', reads_time),
+                  flag('keys/embedding', False, embeds_keys),
+                  choice('keys/table', (4096, 16384, 65536), 16384, lambda spec: spec.get('keys/embedding') is True)]
     LOG.debug('model space exit seconds=%.4f parameters=%d views=%d', time.perf_counter() - started, len(parameters), len(offered))
     return tuple(parameters)
 

@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .layers import Spatial, TemporalEdges, TimeEncoding, aggregate, masked_mean, masked_weights, mean
+from .layers import Spatial, TemporalEdges, TimeEncoding, aggregate, keys_of, masked_mean, masked_weights, mean
 from .turns import EndContext, enabled, lookback
 
 
@@ -20,13 +20,18 @@ class EventGraphNet(nn.Module):
             self.turn_time = nn.Linear(3, hidden)
         self.input = nn.Linear(registry.features, hidden)
         self.kind = nn.Embedding(5 if self.has_turns else 4, hidden)
-        self.layers = nn.ModuleList(TemporalEdges(hidden, spec['event_graph/message'] == 'attention', registry.relation_slots, spec['dropout'])
-                                    for _ in range(spec['event_graph/layers']))
+        self.keys = keys_of(spec, hidden)
+        self.layers = nn.ModuleList(TemporalEdges(hidden, spec['event_graph/message'] == 'attention', registry.relation_slots, spec['dropout'],
+                                                  spec.get('time/encoding', 'log_cosine')) for _ in range(spec['event_graph/layers']))
         self.reward = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, 1))
 
     def forward(self, b):
         event = self.input(b['event_x']) + self.kind(b['events'][:, 3])
         initial = self.input(b['initial']) + self.kind.weight[3]
+        if self.keys is not None:
+            token = b['entity_token']
+            event = event + 0.5 * (self.keys(token[b['events'][:, 0]]) + self.keys(token[b['events'][:, 1]]))
+            initial = initial + self.keys(token)
         count = len(event)
         x = torch.cat((event, initial))
         roots = b['events'][:, :2].T.reshape(-1) + count
@@ -202,8 +207,9 @@ class MemoryNet(nn.Module):
             self.turns = EndContext(hidden * 2)
         self.input = nn.Linear(registry.features, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
+        self.keys = keys_of(spec, hidden)
         if update != 'antisymmetric' or self.attention:
-            self.time = TimeEncoding(hidden)
+            self.time = TimeEncoding(hidden, spec.get('time/encoding', 'log_cosine'))
         if update == 'mailbox_gru':
             self.rule = MailboxGRU(hidden, registry)
         elif update == 'mutual_rnn':
@@ -236,6 +242,8 @@ class MemoryNet(nn.Module):
 
     def forward(self, b):
         state = self.input(b['initial']) + self.kind(b['entity_kind'])
+        if self.keys is not None:
+            state = state + self.keys(b['entity_token'])
         hidden = state.shape[-1]
         memory = self.rule.initial(state, self.input(b['initial']), b['initial'][:, self.width:].any(-1))
         last = state.new_full((b['entities'],), float(b['start'] * 2 - 1))
@@ -302,7 +310,8 @@ class ProjectionNet(nn.Module):
         if enabled(cfg):
             self.turns = EndContext(hidden)
         self.input = nn.Linear(registry.features, hidden)
-        self.time = TimeEncoding(hidden)
+        self.keys = keys_of(spec, hidden)
+        self.time = TimeEncoding(hidden, spec.get('time/encoding', 'log_cosine'))
         self.projection = nn.Sequential(nn.Linear((2 * (hops + 1))**2, hidden), nn.SiLU(), nn.LayerNorm(hidden))
         self.reward = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, 1))
 
@@ -361,4 +370,6 @@ class ProjectionNet(nn.Module):
             structural = self.projection(values)
         history = self.input(b['history_x']) + self.time(b['history_gap'])
         roots = self.input(b['context'][:, :2]) + masked_mean(history, b['history_mask'], 2)
+        if self.keys is not None:
+            roots = roots + self.keys(b['entity_token'][torch.stack((b['actor'], b['subject']), 1)])
         return self.reward(torch.cat((roots.reshape(b['predictions'], -1), structural, self.input(b['query'])), -1)).squeeze(-1)[b['selected']]

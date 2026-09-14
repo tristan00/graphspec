@@ -104,22 +104,61 @@ def aggregate(h, edges, mode='mean'):
 
 class TimeEncoding(nn.Module):
 
-    def __init__(self, width):
+    def __init__(self, width, mode='log_cosine'):
         super().__init__()
-        self.frequency = nn.Parameter(torch.logspace(0, -3, width))
-        self.phase = nn.Parameter(torch.zeros(width))
+        self.mode = mode
+        if mode == 'log_linear':
+            self.linear = nn.Linear(1, width)
+        else:
+            self.frequency = nn.Parameter(torch.logspace(0, -3 if mode == 'log_cosine' else -4, width))
+            self.phase = nn.Parameter(torch.zeros(width))
 
     def forward(self, gap):
-        return torch.cos(torch.log1p(gap.clamp_min(0))[..., None] * self.frequency + self.phase)
+        gap = gap.clamp_min(0)
+        if self.mode == 'log_linear':
+            return self.linear(torch.log1p(gap)[..., None])
+        return torch.cos((torch.log1p(gap) if self.mode == 'log_cosine' else gap)[..., None] * self.frequency + self.phase)
+
+
+class KeyEmbedding(nn.Module):
+
+    def __init__(self, hidden, table):
+        super().__init__()
+        self.table = table
+        self.embedding = nn.Embedding(table, hidden)
+        nn.init.normal_(self.embedding.weight, std=hidden ** -0.5)
+
+    def forward(self, token):
+        return self.embedding(token.clamp_min(0) % self.table) * (token >= 0)[..., None]
+
+
+def keys_of(spec, hidden):
+    return KeyEmbedding(hidden, spec['keys/table']) if spec.get('keys/embedding') else None
+
+
+def chebyshev(h, edges, weights):
+    source, destination = edges
+    scale = h.new_zeros(len(h)).index_add_(0, destination, h.new_ones(len(destination))).clamp_min_(1).rsqrt()
+    factor = (scale[source] * scale[destination])[:, None]
+
+    def laplacian(x):
+        return -x.new_zeros(x.shape).index_add_(0, destination, x[source] * factor)
+
+    previous, current = h, laplacian(h)
+    result = h @ weights[0] + current @ weights[1]
+    for order in range(2, len(weights)):
+        previous, current = current, 2 * laplacian(current) - previous
+        result = result + current @ weights[order]
+    return result
 
 
 class Spatial(nn.Module):
 
-    def __init__(self, hidden, mode, relations, attributes, dropout=0.0):
+    def __init__(self, hidden, mode, relations, attributes, dropout=0.0, order=2, slots=0):
         super().__init__()
         self.mode, self.dropout = mode, dropout
         self.root = nn.Linear(hidden, hidden)
-        if mode != 'relational':
+        if mode not in ('relational', 'chebyshev'):
             self.message = nn.Linear(hidden, hidden, bias=False)
         self.norm = nn.LayerNorm(hidden)
         if mode == 'relational':
@@ -130,8 +169,13 @@ class Spatial(nn.Module):
                 self.attribute_weights = nn.Parameter(torch.zeros(len(widths), max(widths), hidden))
                 for slot, width in enumerate(widths):
                     self.attribute_weights.data[slot, :width] = nn.init.kaiming_uniform_(torch.empty(hidden, width), a=math.sqrt(5)).T
-        elif mode == 'attention':
+        elif mode == 'chebyshev':
+            self.weights = nn.Parameter(torch.empty(order + 1, hidden, hidden))
+            nn.init.xavier_uniform_(self.weights)
+        elif mode in ('attention', 'relational_attention'):
             self.query, self.key = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
+            if mode == 'relational_attention':
+                self.relation = nn.Embedding(slots, hidden)
 
     def forward(self, h, edges, groups=None):
         source, destination = edges
@@ -141,10 +185,17 @@ class Spatial(nn.Module):
             if groups.attributes is not None:
                 update.index_add_(0, groups.attributes.targets, segment_matmul(groups.inputs, self.attribute_weights, groups.attributes))
             update = update[:len(h)] / groups.degree[:, None]
+        elif self.mode == 'chebyshev':
+            update = chebyshev(h, edges, self.weights)
         elif self.mode == 'attention':
             score = (self.query(h)[destination] * self.key(h)[source]).sum(-1) / math.sqrt(h.shape[-1])
             weight = segment_softmax(score, destination, len(h))
             update = h.new_zeros(h.shape).index_add_(0, destination, self.message(h)[source] * weight[:, None])
+        elif self.mode == 'relational_attention':
+            relation = self.relation(groups)
+            score = (self.query(h)[destination] * (self.key(h)[source] + relation)).sum(-1) / math.sqrt(h.shape[-1])
+            weight = segment_softmax(score, destination, len(h))
+            update = h.new_zeros(h.shape).index_add_(0, destination, (self.message(h)[source] + relation) * weight[:, None])
         else:
             update = self.message(aggregate(h, edges, self.mode))
         return self.norm(h + F.dropout(F.silu(self.root(h) + update), self.dropout, self.training))
@@ -256,10 +307,10 @@ class EvolvingLayer(nn.Module):
 
 class TemporalEdges(nn.Module):
 
-    def __init__(self, hidden, attention, relation_slots, dropout=0.0):
+    def __init__(self, hidden, attention, relation_slots, dropout=0.0, encoding='log_cosine'):
         super().__init__()
         self.attention, self.dropout = attention, dropout
-        self.time = TimeEncoding(hidden)
+        self.time = TimeEncoding(hidden, encoding)
         self.relation = nn.Embedding(relation_slots, hidden)
         self.value = nn.Linear(hidden, hidden)
         if attention:

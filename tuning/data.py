@@ -74,6 +74,27 @@ class Bank:
     def truth(self, index):
         return self.directory / 'truth' / ('graph_%04d' % index)
 
+    def shared_kinds(self):
+        path = self.directory / 'shared_kinds.json'
+        if not path.exists():
+            started = time.perf_counter()
+            seen = {}
+            for graph in self.manifest['graphs']:
+                folder = self.truth(graph['index'])
+                for kind, key in zip(load_arrays(folder, ('kinds',))['kinds'].tolist(), read_json(folder / 'graph.json')['keys']):
+                    seen.setdefault((kind, key), set()).add(graph['index'])
+            counts = {kind: [0, 0] for kind in range(len(self.registry.nodes))}
+            for (kind, _), graphs in seen.items():
+                counts[kind][0] += 1
+                counts[kind][1] += len(graphs) > 1
+            shared = [len(self.manifest['graphs']) > 1 and counts[kind][0] > 0 and counts[kind][1] * 2 >= counts[kind][0] for kind in range(len(self.registry.nodes))]
+            write_json(path, shared)
+            LOG.info('shared kinds exit seconds=%.3f shared=%s', time.perf_counter() - started, ','.join(self.registry.nodes[kind] for kind in range(len(shared)) if shared[kind]))
+        return np.asarray(read_json(path), bool)
+
+    def tokens(self, held):
+        return np.where(self.shared_kinds()[held.numpy('entity_kind')], held.numpy('entity_token'), -1)
+
     def joining(self, cfg):
         return self.variant(cfg)[1]['graphs/join'] == 'single'
 
@@ -219,7 +240,7 @@ def sampling(spec):
     return ORDERS[order], spec['neighbors/decay'] if order == 'decay' else 0.0
 
 
-def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, stream):
+def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, stream, tokens=None):
     started = time.perf_counter()
     mode, decay = sampling(spec)
     events, ticks = held.numpy('events'), held.column('events', 2)
@@ -234,7 +255,10 @@ def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, st
 
     def node(members, moments):
         observations = gather.latest(observation_ids, observation_offsets, step, members, moments)
-        return dict(x=features_at(graph, observations), kind=gathered(graph, 'entity_kind', members))
+        result = dict(x=features_at(graph, observations), kind=gathered(graph, 'entity_kind', members))
+        if tokens is not None:
+            result['token'] = array(tokens[members])
+        return result
 
     result = node(entities, cutoffs)
     for entities, cutoffs, mask, gaps, relation in reversed(levels):
@@ -275,6 +299,7 @@ def recipe(bank, block, cfg):
     registry, spec, stream = bank.registry, cfg['graph'], SEED
     node = registry.extras['level'] == 'node'
     blocks = model_blocks(cfg['model'])
+    tokens = bank.tokens(held) if cfg['model'].get('keys/embedding') else None
     lo, hi = (int(value) for value in held.numpy('snapshot_offsets')[[start, stop]])
     n = stop - start
     entity = held.numpy('entity')[lo:hi]
@@ -305,6 +330,9 @@ def recipe(bank, block, cfg):
         entity_kind=gathered(graph, 'entity_kind'),
         signal=array(held.numpy('signals')[first:last]), affinity=array(held.numpy('affinity')[first:last]),
         global_affinity=array(held.numpy('global_affinity')[first:last]))
+    if tokens is not None:
+        b['entity_token'] = array(tokens)
+        b['root_token'] = array(tokens[np.stack((actors, subjects), 1)])
     if enabled(cfg):
         from .turn_inputs import add
 
@@ -314,6 +342,8 @@ def recipe(bank, block, cfg):
         align[step, entity] = np.arange(hi - lo)
         b.update(x=features(graph, (hi - lo,), ('x', (lo, hi), None)), kind=gathered(graph, 'entity_kind', entity), entity=array(entity, torch.long),
                  step=array(step, torch.long), align=align, present=align < hi - lo)
+        if tokens is not None:
+            b['token'] = array(tokens[entity])
         if registry.extras['queries']:
             left, right = between(held.column('events', 2), start * 2, stop * 2)
             choices = held.numpy('events')[left:right]
@@ -380,6 +410,8 @@ def recipe(bank, block, cfg):
         b['mixed'] = dict(x=joined([features(graph, (right - left,), ('mixed_x', (left, right), None)), b['query']]), kind=mk,
                           edge_index=array(edge[:, :2].T, torch.long), edge_code=array(edge[:, 2] | (1 << 13), torch.long),
                           edge_gap=array(np.stack((gaps, np.zeros_like(gaps)), 1)), query=array(qi, torch.long))
+        if tokens is not None:
+            b['mixed']['token'] = np.r_[tokens[held.numpy('mixed_entity')[left:right]], np.full(m, -1, np.int64)]
         if enabled(cfg):
             from .turn_inputs import mixed_edges as extend_mixed
 
@@ -417,9 +449,11 @@ def recipe(bank, block, cfg):
     if 'tree' in blocks:
         roots = np.stack((actors, subjects), 1).reshape(-1).astype(np.int64)
         cutoffs = np.repeat(moment * 2 + 1, 2)
-        b['tree'] = tree(graph, held, roots, cutoffs, start * 2, neighbors(cfg['model']), cfg['model']['tree/depth'], registry, spec, stream)
+        b['tree'] = tree(graph, held, roots, cutoffs, start * 2, neighbors(cfg['model']), cfg['model']['tree/depth'], registry, spec, stream, tokens)
     if 'history' in blocks:
         b.update(history_inputs(graph, held, first, last, start, neighbors(cfg['model']), spec, stream, 'structure' in blocks, selected if 'history_targets' in blocks else None))
+        if tokens is not None:
+            b['history_token'] = np.where(b['history_ids'] >= 0, tokens[np.maximum(b['history_ids'], 0)], -1)
     if enabled(cfg) and 'turn_history' in blocks:
         from .turn_inputs import history_tokens
 
@@ -454,6 +488,8 @@ def recipe(bank, block, cfg):
         gap = moment[:, None, None, None] * 2 + 1 - events[..., 2]
         b.update(walk_x=features(graph, known.shape, ('x', np.where(known, observations, -1), 1.0)), walk_mask=array(known), walk_gap=array(gap, torch.float32),
                  walk_identity=array(gather.walk_identities(nodes, known)))
+        if tokens is not None:
+            b['walk_token'] = np.where(known, tokens[nodes], -1)
     LOG.debug('recipe exit graph=%d start=%d stop=%d predictions=%d seconds=%.4f', graph, start, stop, m, time.perf_counter() - started)
     return b
 

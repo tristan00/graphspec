@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Groups, Spatial, TemporalEdges, mean
+from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Groups, Spatial, TemporalEdges, keys_of, mean
 from .turns import EndContext, enabled, gather_end
 
 
@@ -20,11 +20,13 @@ class SnapshotNet(nn.Module):
         self.input = nn.Sequential(nn.Linear(registry.features, hidden), nn.LayerNorm(hidden), nn.SiLU())
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.query = nn.Linear(registry.features, hidden)
+        self.keys = keys_of(spec, hidden)
         attributes = {name: len(registry.attributes(name)) for name in registry.attributed}
         self.widths = list(attributes.values())
         self.spatial = nn.ModuleList()
         if spec['snapshot/spatial'] != 'none':
-            self.spatial.extend(Spatial(hidden, spec['snapshot/spatial'], registry.relations, attributes, spec['dropout']) for _ in range(spec['snapshot/layers']))
+            self.spatial.extend(Spatial(hidden, spec['snapshot/spatial'], registry.relations, attributes, spec['dropout'],
+                                        spec.get('snapshot/chebyshev_order', 0), registry.relation_slots) for _ in range(spec['snapshot/layers']))
         if self.temporal_mode == 'graph_sequence':
             self.sequence_mode = spec['snapshot/sequence']
             self.action_round = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
@@ -46,8 +48,8 @@ class SnapshotNet(nn.Module):
         elif self.temporal_mode == 'evolving':
             self.evolving = nn.ModuleList(EvolvingLayer(hidden) for _ in range(spec['snapshot/temporal_layers']))
         else:
-            self.temporal = nn.ModuleList(TemporalEdges(hidden, spec['snapshot/message'] == 'attention', registry.relation_slots, spec['dropout'])
-                                          for _ in range(spec['snapshot/temporal_layers']))
+            self.temporal = nn.ModuleList(TemporalEdges(hidden, spec['snapshot/message'] == 'attention', registry.relation_slots, spec['dropout'],
+                                                        spec.get('time/encoding', 'log_cosine')) for _ in range(spec['snapshot/temporal_layers']))
             self.final_spatial = Spatial(hidden, 'mean', registry.relations, {}, spec['dropout'])
         self.reward = nn.Sequential(nn.Linear(hidden * 4, hidden), nn.SiLU(), nn.Linear(hidden, 1))
 
@@ -108,9 +110,13 @@ class SnapshotNet(nn.Module):
 
     def forward(self, b):
         h = self.input(b['x']) + self.kind(b['kind'])
+        if self.keys is not None:
+            h = h + self.keys(b['token'])
         groups = None
         if self.spatial and self.spatial[0].mode == 'relational':
             groups = Groups(b['edges'], b['relation'], len(h), b['attribute_values'], b['attribute_edges'], b['attribute_counts'], self.widths)
+        elif self.spatial and self.spatial[0].mode == 'relational_attention':
+            groups = b['relation']
         for layer in self.spatial:
             h = layer(h, b['edges'], groups)
         q = self.query(b['query'])

@@ -49,7 +49,7 @@ Input views, one per packed block: the snapshot graph of observation nodes and r
 
 Encoders: `Linear(x)` plus kind embedding, with or without LayerNorm and SiLU; `TimeEncoding`; relation embedding; structural features (two co-occurrence counts, twelve pair-relative features, walk hitting counts); edge attributes as `sign x log1p`.
 
-Spatial propagation within a snapshot: none; mean; symmetric-normalised; per-relation weights with attributes; dot-product attention. All wrapped in `root(h) + update`, SiLU, dropout, residual, LayerNorm.
+Spatial propagation within a snapshot: none; mean; symmetric-normalised; per-relation weights with attributes; dot-product attention; Chebyshev polynomial filters of the frame Laplacian (ChebNet); relation-aware dot-product attention with a relation embedding in keys and messages. All wrapped in `root(h) + update`, SiLU, dropout, residual, LayerNorm.
 
 Temporal operators: per-entity `GRUCell`, `LSTM`, gated dilated TCN, causal self-attention; the graph cell with plain or K-hop diffusion convolution inside the gates; evolving GCN weights; frame-level sequence over graph summary vectors; message passing over temporal edges (gated or attention); event-driven memory (GRU mailbox, mutual RNN, intensity-weighted tanh, antisymmetric Euler); random-projection walk matrices; sequence models over neighbour tokens (MLP-Mixer, Transformer with patching, selective SSM with a pair-time branch, recursive attention); BiLSTM over walks with attention pooling; gated affinity state; learned top-k channel adjacency with mix-hop and gated convolution.
 

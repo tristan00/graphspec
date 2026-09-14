@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .layers import CausalAttention, SelectiveSSM, TimeEncoding, masked_mean, masked_weights
+from .layers import CausalAttention, SelectiveSSM, TimeEncoding, keys_of, masked_mean, masked_weights
 from .turns import EndContext, enabled, lookback
 
 
@@ -20,7 +20,8 @@ class TreeNet(nn.Module):
         self.depth = spec['tree/depth']
         self.input = nn.Linear(registry.features, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
-        self.time = TimeEncoding(hidden)
+        self.keys = keys_of(spec, hidden)
+        self.time = TimeEncoding(hidden, spec.get('time/encoding', 'log_cosine'))
         self.relation = nn.Embedding(registry.relation_slots, hidden)
         self.q = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(self.depth))
         self.k = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(self.depth))
@@ -30,6 +31,8 @@ class TreeNet(nn.Module):
 
     def encode(self, tree, depth):
         root = self.input(tree['x']) + self.kind(tree['kind'])
+        if self.keys is not None:
+            root = root + self.keys(tree['token'])
         if not depth:
             return root
         children = self.encode(tree['child'], depth - 1).reshape(len(root), tree['mask'].shape[1], -1)
@@ -74,7 +77,8 @@ class SequenceNet(nn.Module):
             self.turn_time = nn.Linear(3, hidden)
             self.turn_kind = nn.Embedding(2, hidden)
         self.input = nn.Linear(registry.features, hidden)
-        self.time = TimeEncoding(hidden)
+        self.keys = keys_of(spec, hidden)
+        self.time = TimeEncoding(hidden, spec.get('time/encoding', 'log_cosine'))
         self.norm = nn.LayerNorm(hidden)
         if self.structure_mode != 'none':
             self.structure = nn.Sequential(nn.Linear(2 if self.structure_mode == 'occurrence' else 12, hidden), nn.ReLU(), nn.Linear(hidden, hidden))
@@ -139,10 +143,15 @@ class SequenceNet(nn.Module):
         keys = ('context', 'query', 'history_x', 'history_mask', 'history_gap', 'occurrence', 'structure', 'pair_gap', 'pair_mask')
         if enabled(self.cfg):
             keys += ('history_end_time', 'history_turn_kind')
+        if self.keys is not None:
+            keys += ('history_token', 'root_token')
         b = {key: b[key][b['selected']] for key in keys}
         roots = self.input(b['context'][:, :2])
         mask = b['history_mask']
         raw = self.input(b['history_x'])
+        if self.keys is not None:
+            roots = roots + self.keys(b['root_token'])
+            raw = raw + self.keys(b['history_token'])
         x = self.norm(raw + self.time(b['history_gap'])) * mask[..., None]
         if enabled(self.cfg):
             x = (x + self.turn_time(b['history_end_time'].log1p()) + self.turn_kind(b['history_turn_kind'])) * mask[..., None]
@@ -170,13 +179,16 @@ class WalkNet(nn.Module):
             self.turn_kind = nn.Embedding(2, hidden)
         self.input = nn.Linear(registry.features, hidden)
         self.anonymous = nn.Sequential(nn.Linear(2 * spec['walks/hops'], hidden), nn.ReLU(), nn.Linear(hidden, hidden))
-        self.time = TimeEncoding(hidden)
+        self.keys = keys_of(spec, hidden)
+        self.time = TimeEncoding(hidden, spec.get('time/encoding', 'log_cosine'))
         self.walk = nn.LSTM(hidden, hidden // 2, batch_first=True, bidirectional=True)
         self.score = nn.Linear(hidden, 1)
         self.reward = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.SiLU(), nn.Linear(hidden, 1))
 
     def forward(self, b):
         raw = self.input(b['walk_x']) + self.anonymous(b['walk_identity'].log1p()) + self.time(b['walk_gap'])
+        if self.keys is not None:
+            raw = raw + self.keys(b['walk_token'])
         if self.has_turns:
             raw = raw + self.turn_time(b['walk_end_time'].log1p()) + self.turn_kind(b['walk_turn_kind'])
         mask = b['walk_mask']
@@ -189,4 +201,6 @@ class WalkNet(nn.Module):
         valid = lengths.reshape(n, sides, walks) > 0
         weight = masked_weights(self.score(encoded).squeeze(-1), valid)
         summary = (encoded * weight[..., None]).sum(2) + self.input(b['context'][:, :2])
+        if self.keys is not None:
+            summary = summary + self.keys(b['root_token'])
         return self.reward(torch.cat((summary.reshape(n, -1), self.input(b['query'])), -1)).squeeze(-1)[b['selected']]
