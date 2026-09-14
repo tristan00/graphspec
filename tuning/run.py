@@ -288,7 +288,10 @@ def run(args):
         if args.random_trials is not None and args.random_trials != plan['random_trials']:
             raise ValueError('resume requested with a different random phase')
         if args.bounds and bounds != plan['bounds']:
-            raise ValueError('resume requested with different bounds')
+            if plan['selector'] != 'random':
+                raise ValueError('resume requested with different bounds')
+            emit('bounds_replaced', previous=plan['bounds'], bounds=bounds)
+            plan['bounds'] = bounds
     else:
         plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
             batch_sequences=args.batch_sequences,
