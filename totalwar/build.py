@@ -31,7 +31,7 @@ class Counter:
         return np.arange(start, start + count, dtype=np.int64)
 
 
-def build(output, name, host, port, database, user, campaigns, features, staged=False):
+def build(output, name, host, port, database, user, campaigns, features, staged=False, staging_only=False):
     started = time.perf_counter()
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -66,6 +66,8 @@ def build(output, name, host, port, database, user, campaigns, features, staged=
     stage.close()
     connection.close()
     write_json(staging / 'summary.json', summary)
+    if staging_only:
+        return finish(output, name, summary, provenance, started, database=False)
     return load(output, name, stage, summary, provenance, started)
 
 
@@ -76,7 +78,14 @@ def load(output, name, stage, summary, provenance, started):
     copy(ladybug, stage)
     ladybug.close()
     store.close()
-    write_json(output / (name + '.task.json'), dict(name=name, database=name + '.lbug', staging=name + '.staging', target=TARGET))
+    return finish(output, name, summary, provenance, started, database=True)
+
+
+def finish(output, name, summary, provenance, started, database):
+    task = dict(name=name, staging=name + '.staging', target=TARGET)
+    if database:
+        task['database'] = name + '.lbug'
+    write_json(output / (name + '.task.json'), task)
     write_json(output / (name + '.build.json'), dict(provenance, graphs=summary, seconds=time.perf_counter() - started))
     LOG.info('build exit seconds=%.1f graphs=%d observations=%d facts=%d', time.perf_counter() - started, len(summary),
              sum(item['observations'] for item in summary), sum(item['facts'] for item in summary))
@@ -94,9 +103,10 @@ def main():
     parser.add_argument('--campaigns', type=int, default=100)
     parser.add_argument('--features', type=int, default=128)
     parser.add_argument('--staged', action='store_true')
+    parser.add_argument('--staging-only', action='store_true')
     args = parser.parse_args()
     configure()
-    print(build(args.output, args.name, args.host, args.port, args.database, args.user, args.campaigns, args.features, args.staged))
+    print(build(args.output, args.name, args.host, args.port, args.database, args.user, args.campaigns, args.features, args.staged, args.staging_only))
 
 
 if __name__ == '__main__':
