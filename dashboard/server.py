@@ -52,7 +52,7 @@ class Results:
         if plan is None or plan.get('version') != VERSION:
             emit('dashboard_snapshot', run=chosen, attempts=0, seconds=round(time.perf_counter() - started, 4))
             return dict(updated=datetime.now(timezone.utc).isoformat(), rows=[], complete=0, unscored=0, best_mse=None, best_r2=None, best_model=None,
-                        planned=0, train_rows=0, holdout_rows=0, stop_requested=False, running=None, run=chosen, runs=runs, bank=None, graphs=None, budget=None)
+                        planned=0, limit=None, recorded=0, train_rows=0, holdout_rows=0, stop_requested=False, running=None, run=chosen, runs=runs, bank=None, graphs=None, budget=None)
         running = self.live(directory)
         live = running is not None
         rows = []
@@ -103,7 +103,8 @@ class Results:
         output = dict(updated=datetime.now(timezone.utc).isoformat(), rows=rows,
             complete=len(scored), unscored=sum(row['mse'] is None and row['status'] != 'Running' for row in rows),
             best_mse=scored[0]['mse'] if scored else None, best_r2=scored[0]['r2'] if scored else None,
-            best_model=scored[0]['model'] if scored else None, planned=len(plan['trials']),
+            best_model=scored[0]['model'] if scored else None, planned=len(plan['trials']), limit=plan.get('limit'),
+            recorded=sum(row['status'] in ('Complete', 'Timeout', 'Failed') for row in rows),
             train_rows=plan['train_rows'], holdout_rows=plan['holdout_rows'],
             stop_requested=(directory / 'STOP').exists(),
             running=running if live else None, run=chosen, runs=runs, bank=plan['bank'],

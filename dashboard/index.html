@@ -12,10 +12,10 @@
 <body>
 <header><div><h1>Graph transform search</h1><p id="source">Connecting…</p></div><div class="actions"><select id="run" aria-label="Run to watch"></select><span id="live" class="live">Connecting</span><button id="refresh">Refresh</button><a class="download" href="/api/results" download="graph-temporal-results.json">Export JSON</a></div></header>
 <section class="cards" aria-label="Search summary">
-<div class="card"><div class="label">Completed fits</div><div class="value" id="complete">—</div><div class="sub" id="attempts">Loading attempts</div></div>
-<div class="card"><div class="label">Best holdout MSE</div><div class="value" id="best">—</div><div class="sub" id="best-model">—</div></div>
-<div class="card"><div class="label">Best holdout R²</div><div class="value" id="best-r2">—</div><div class="sub">Of the same fit</div></div>
-<div class="card"><div class="label">Planned trials</div><div class="value" id="planned">—</div><div class="sub" id="planned-label">Including pending</div></div>
+<div class="card"><div class="label">Completed fits</div><div class="value" id="complete">—</div></div>
+<div class="card"><div class="label">Best holdout MSE</div><div class="value" id="best">—</div></div>
+<div class="card"><div class="label">Best holdout R²</div><div class="value" id="best-r2">—</div></div>
+<div class="card"><div class="label">Trials recorded</div><div class="value" id="planned">—</div></div>
 </section>
 <div class="run" id="running">Reading the current fit…</div>
 <div class="error" role="status" id="error"></div>
@@ -106,8 +106,8 @@ function render(){if(!data)return;distinctCache.clear();buildColumns();renderBod
 async function refresh(){
 if(busy)return;busy=true;
 try{const response=await fetch('/api/results?run='+encodeURIComponent(chosenRun()),{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);data=await response.json();
-$('complete').textContent=nf.format(data.complete);$('attempts').textContent=`${data.rows.length} attempts · ${data.unscored} failed / interrupted`;$('best').textContent=fmt(data.best_mse);$('best-model').textContent=data.best_model||'No completed fits';$('best-r2').textContent=fmt(data.best_r2);
-$('planned').textContent=nf.format(data.planned);$('planned-label').textContent=`${data.planned-new Set(data.rows.map(row=>row.trial)).size} not started`;
+$('complete').textContent=nf.format(data.complete);$('best').textContent=fmt(data.best_mse);$('best-r2').textContent=fmt(data.best_r2);
+$('planned').textContent=data.limit?`${nf.format(data.recorded)} / ${nf.format(data.limit)}`:nf.format(data.recorded);
 const current=data.rows.find(row=>row.status==='Running');$('running').textContent=current?`Running ${current.id} · ${current.model} · graph ${current.graph} · ${duration(current.seconds)} elapsed · epochs ${current.training?.epochs} · lr ${compact(current.training?.lr)}${data.stop_requested?' · Stop requested after this trial':''}`:data.stop_requested?'Stop requested. No active trial.':'No active worker at this refresh. Completed results remain available.';
 $('split').textContent=`${nf.format(data.train_rows)} training rows · ${nf.format(data.holdout_rows)} holdout rows`;runOptions(data.runs,data.run||'');if(data.run&&!chosenRun())location.hash='run='+encodeURIComponent(data.run);$('source').textContent=data.bank?`Run ${data.run} · bank ${data.bank.split(/[\\/]/).pop()} · ${data.graphs} graphs · ${nf.format(data.train_rows)} training rows, ${nf.format(data.holdout_rows)} holdout · ${data.budget} s per trial`:'No run selected';$('live').textContent=`Updated ${new Date(data.updated).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;$('error').style.display='none';render();
 }catch(error){$('live').textContent='Update failed';$('error').textContent=`Could not refresh results (${error.message}). Displayed results are from the last successful update. Retrying in 10 seconds.`;$('error').style.display='block';}finally{busy=false;}
