@@ -6,9 +6,8 @@ import time
 
 import numpy as np
 
-from graphspec import Registry, graphdb, vocabulary
+from graphspec import Registry, graphdb, staged, vocabulary
 from graphspec.truth import VERSION, parse
-from graph_tuning_infra.database import connect, query
 from graph_tuning_infra.files import read_json, sha256_file, write_json
 from graph_tuning_infra.log import configure
 from graph_tuning_infra.processes import WORKERS, parallel
@@ -19,11 +18,17 @@ SPLITS = ('train', 'validation')
 WORKER = {}
 
 
-def supervision(connection, level, target, names):
+def open_source(task_path, task):
+    root = Path(task_path).parent
+    if task.get('staging') and (root / task['staging']).exists():
+        return staged.Staged(root / task['staging'])
+    return graphdb.Database((root / task['database']).resolve())
+
+
+def supervision(source, level, target, names):
     started = time.perf_counter()
     if level == 'node':
-        found = query(connection, 'MATCH (t:`%s`)-[:`%s_of`]->(n) RETURN t.id AS id, t.y AS y, t.split AS split, t.step AS step, '
-                                  'n.graph AS graph, n.entity AS entity, n.key AS node ORDER BY id' % (target, target))
+        found = source.targets(level, target)
         owners, steps = found.column('graph').to_numpy().astype(np.int64), found.column('step').to_numpy().astype(np.int64)
         if np.any(steps < 0):
             raise ValueError('target steps must not be negative')
@@ -32,18 +37,16 @@ def supervision(connection, level, target, names):
         described = [dict(graph=names[owner], step=step, node=node)
                      for owner, step, node in zip(owners.tolist(), steps.tolist(), found.column('node').to_pylist())]
     else:
-        queries = query(connection, 'MATCH (q:query) RETURN q.graph AS graph, q.step AS step, q.period AS period, q.key AS key')
+        queries = source.query_index()
         counts = dict(zip(*(values.tolist() for values in np.unique(queries.column('graph').to_numpy(), return_counts=True))))
         empty = sorted(set(names) - set(counts))
         if empty:
             raise ValueError('%d graphs have no queries, for example graph %d' % (len(empty), empty[0]))
         lookup = {(g, s): (p, k) for g, s, p, k in zip(*(queries.column(name).to_pylist() for name in ('graph', 'step', 'period', 'key')))}
+        found = source.targets(level, target)
         if level == 'query':
-            found = query(connection, 'MATCH (t:`%s`)-[:`%s_of`]->(q:query) RETURN t.id AS id, t.y AS y, t.split AS split, '
-                                      'q.graph AS graph, q.step AS step ORDER BY id' % (target, target))
             owners, steps = found.column('graph').to_numpy().astype(np.int64), found.column('step').to_numpy().astype(np.int64)
         else:
-            found = query(connection, 'MATCH (t:`%s`)-[:`%s_of`]->(g:graph) RETURN t.id AS id, t.y AS y, t.split AS split, g.id AS graph ORDER BY id' % (target, target))
             owners = found.column('graph').to_numpy().astype(np.int64)
             steps = np.asarray([counts[owner] - 1 for owner in owners.tolist()], np.int64)
         if len(np.unique(np.stack((owners, steps), 1), axis=0)) != len(owners):
@@ -78,11 +81,10 @@ def supervision(connection, level, target, names):
     return result, groups
 
 
-def attach(database, declared, categories, target, output, level):
+def attach(task_path, declared, categories, target, output, level):
     configure(level)
-    store, connection = connect(database, read_only=True, buffer_pool_size=4 << 30)
-    WORKER.update(reader=graphdb.Reader(store, connection, graphdb.Schema(connection), target),
-                  registry=Registry.from_declaration(declared), categories=categories, output=Path(output))
+    source = open_source(task_path, read_json(task_path))
+    WORKER.update(reader=source.reader(target), registry=Registry.from_declaration(declared), categories=categories, output=Path(output))
 
 
 def graph(job):
@@ -112,27 +114,23 @@ def build(task_path, output, workers):
     task, output = read_json(task_path), Path(output)
     if output.exists():
         raise FileExistsError('bank exists; choose a new output')
-    database = (Path(task_path).parent / task['database']).resolve()
-    store, connection = connect(database, read_only=True, buffer_pool_size=4 << 30)
-    schema = graphdb.Schema(connection)
+    source = open_source(task_path, task)
+    schema = source.schema
     registry = vocabulary.registry(schema, task)
     graphdb.check(registry)
     level = registry.extras['level']
-    graphs = query(connection, 'MATCH (g:graph) RETURN g.id AS id, g.name AS name ORDER BY id')
+    graphs = source.graphs()
     names = dict(zip(graphs.column('id').to_pylist(), graphs.column('name').to_pylist()))
     if len(set(names.values())) != len(names):
         raise ValueError('graph names must be unique')
-    categories = []
-    if schema.queries:
-        categories = query(connection, 'MATCH (q:query) RETURN DISTINCT q.category AS category ORDER BY category').column('category').to_pylist()
-    rows, groups = supervision(connection, level, task['target'], names)
-    connection.close()
-    store.close()
+    categories = source.categories() if schema.queries else []
+    rows, groups = supervision(source, level, task['target'], names)
+    source.close()
     (output / 'truth').mkdir(parents=True)
     write_json(output / 'supervision.json', rows)
     jobs = [(index, names[index], steps, ids, members) for index, steps, ids, members in groups]
-    metrics = parallel(graph, jobs, workers, attach, (str(database), registry.declaration(), categories, task['target'], str(output), LOG.getEffectiveLevel()))
-    manifest = dict(version=VERSION, database=str(database), task=task, target=dict(table=task['target'], level=level),
+    metrics = parallel(graph, jobs, workers, attach, (str(task_path), registry.declaration(), categories, task['target'], str(output), LOG.getEffectiveLevel()))
+    manifest = dict(version=VERSION, database=source.location, task=task, target=dict(table=task['target'], level=level),
                     spec=registry.declaration(), spec_sha256=registry.fingerprint(), categories=categories, signals=registry.extras['signals'],
                     graphs=metrics, rows=len(rows['rows']), train_rows=len(rows['split']['train_indices']),
                     validation_rows=len(rows['split']['validation_indices']), supervision_sha256=sha256_file(output / 'supervision.json'),

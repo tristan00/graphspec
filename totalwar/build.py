@@ -76,7 +76,7 @@ def load(output, name, stage, summary, provenance, started):
     copy(ladybug, stage)
     ladybug.close()
     store.close()
-    write_json(output / (name + '.task.json'), dict(name=name, database=name + '.lbug', target=TARGET))
+    write_json(output / (name + '.task.json'), dict(name=name, database=name + '.lbug', staging=name + '.staging', target=TARGET))
     write_json(output / (name + '.build.json'), dict(provenance, graphs=summary, seconds=time.perf_counter() - started))
     LOG.info('build exit seconds=%.1f graphs=%d observations=%d facts=%d', time.perf_counter() - started, len(summary),
              sum(item['observations'] for item in summary), sum(item['facts'] for item in summary))

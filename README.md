@@ -39,9 +39,9 @@ OpenSSL 3 is installed system-wide (`choco install openssl.light`) or both DLLs 
 
 **Using your own graph**
 
-1. Create a LadybugDB database that follows the contract below, and load your rows into it.
-2. Write a task file that names the database and the target table.
-3. Build a bank. The database is read once; training never touches it.
+1. Stage your rows as parquet tables that follow the contract below (`graph_tuning_infra.database.Stage` writes them and records the table mapping), and optionally load them into a LadybugDB database for querying and verification.
+2. Write a task file that names the staging, the database and the target table.
+3. Build a bank. The staging is read once, straight from parquet, partitioned by graph; the database is used only when the task names no staging. Training never touches either.
 4. Check that every model runs on the bank.
 5. Run the search and watch it in the dashboard.
 
@@ -64,7 +64,7 @@ python -m totalwar.verify artifacts/graphdb_totalwar/totalwar.task.json --sample
 python -m tuning.build --task artifacts/graphdb_totalwar/totalwar.task.json --output artifacts/bank_totalwar --workers 8
 ```
 
-`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.lbug`, `<name>.task.json` and `<name>.build.json` with per-campaign sizes; `verify` samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
+`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.staging/` (the parquet tables with their mapping, kept), `<name>.lbug`, `<name>.task.json` and `<name>.build.json` with per-campaign sizes; `--staged` loads the database from a staging that already exists; `verify` samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
 
 **Synthetic data**
 
@@ -227,6 +227,7 @@ No spec removes or filters the node types a node target labels, or an observatio
 {
   "name": "retention",
   "database": "retention.lbug",
+  "staging": "retention.staging",
   "target": "renewal"
 }
 ```
@@ -235,9 +236,10 @@ No spec removes or filters the node types a node target labels, or an observatio
 |---|---|
 | `name` | The registry name, part of the fingerprint. |
 | `database` | Database path, relative to the task file. |
+| `staging` | Optional: the staging directory, relative to the task file. When it exists, the bank is built from its parquet tables instead of the database. |
 | `target` | The target table; `<target>_of` must exist. |
 
-All three keys are required and no others are accepted. Everything else a variant needs comes from the spec
+`name`, `database` and `target` are required and no other keys are accepted. Everything else a variant needs comes from the spec
 a trial proposes.
 
 **Building a bank**

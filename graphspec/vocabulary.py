@@ -6,7 +6,7 @@ from .registry import Registry
 
 
 LOG = logging.getLogger(__name__)
-TASK_KEYS = frozenset(('name', 'database', 'target'))
+TASK_KEYS = frozenset(('name', 'database', 'staging', 'target'))
 MARKERS = ('non_relation', 'turn_context')
 HOPS = (2, 3)
 COUPLING = 'temporal'

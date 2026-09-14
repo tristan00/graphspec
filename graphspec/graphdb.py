@@ -3,7 +3,7 @@ import time
 
 import pyarrow as pa
 
-from graph_tuning_infra.database import columns, connections, query, tables, width
+from graph_tuning_infra.database import columns, connect, connections, query, tables, width
 
 
 LOG = logging.getLogger(__name__)
@@ -81,6 +81,39 @@ class Schema:
         if self.columns(name).get('step') != 'INT32':
             raise ValueError('%s labels node types, so it needs a step INT32 column naming the step each label is predicted at' % name)
         return 'node'
+
+
+class Database:
+
+    def __init__(self, path, buffer_pool_size=4 << 30):
+        self.location = str(path)
+        self.store, self.connection = connect(path, read_only=True, buffer_pool_size=buffer_pool_size)
+        self.schema = Schema(self.connection)
+
+    def close(self):
+        self.connection.close()
+        self.store.close()
+
+    def reader(self, target):
+        return Reader(self.store, self.connection, self.schema, target)
+
+    def graphs(self):
+        return query(self.connection, 'MATCH (g:graph) RETURN g.id AS id, g.name AS name ORDER BY id')
+
+    def categories(self):
+        return query(self.connection, 'MATCH (q:query) RETURN DISTINCT q.category AS category ORDER BY category').column('category').to_pylist()
+
+    def query_index(self):
+        return query(self.connection, 'MATCH (q:query) RETURN q.graph AS graph, q.step AS step, q.period AS period, q.key AS key')
+
+    def targets(self, level, target):
+        if level == 'node':
+            return query(self.connection, 'MATCH (t:`%s`)-[:`%s_of`]->(n) RETURN t.id AS id, t.y AS y, t.split AS split, t.step AS step, '
+                                          'n.graph AS graph, n.entity AS entity, n.key AS node ORDER BY id' % (target, target))
+        if level == 'query':
+            return query(self.connection, 'MATCH (t:`%s`)-[:`%s_of`]->(q:query) RETURN t.id AS id, t.y AS y, t.split AS split, '
+                                          'q.graph AS graph, q.step AS step ORDER BY id' % (target, target))
+        return query(self.connection, 'MATCH (t:`%s`)-[:`%s_of`]->(g:graph) RETURN t.id AS id, t.y AS y, t.split AS split, g.id AS graph ORDER BY id' % (target, target))
 
 
 class Reader:

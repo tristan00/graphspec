@@ -234,4 +234,5 @@ Verification before any model runs on it:
 - Labels for every decision in the window equal the values `advisor/base_model.py` produces for the same decisions, and the split matches `stable_split`.
 - Causality: no fact or observation at step s uses a snapshot with a larger id; battles and diplomacy events are placed at the first snapshot at or after their timestamp.
 - `tuning.check_models` runs every view on the bank on the GPU; per-window packing time and memory are recorded for the largest campaign.
+- The bank is built from the staging parquet, not from the LadybugDB copy: the copy of the relation tables runs at a few thousand rows a second on tables with tens of thousands of rows per node and returns 0 for some NaN attribute cells, and both are avoided by reading the staged tables partitioned by graph. `totalwar.verify` still checks the LadybugDB copy against the corpus.
 - The dashboard serves every run under `artifacts/`, the page selects which one to watch, and it is running before the search starts.

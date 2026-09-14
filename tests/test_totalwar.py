@@ -18,7 +18,9 @@ from tuning.data import Bank, pack
 from tuning.models import build
 from tuning.turns import blocks as turn_blocks
 
-from .support import config
+from graphspec.truth import Graph
+
+from .support import config, equal
 
 
 FEATURES = 32
@@ -225,6 +227,18 @@ def test_a_campaign_builds_a_contract_database_and_a_bank(tmp_path):
     (tmp_path / 'tw.task.json').write_text(json.dumps(dict(name='tw', database='tw.lbug', target=TARGET)))
     manifest = build_bank(tmp_path / 'tw.task.json', tmp_path / 'bank', 1)
     assert manifest['rows'] == 8 and manifest['validation_rows'] == 4 and len(manifest['graphs']) == 2
+    (tmp_path / 'tw_staged.task.json').write_text(json.dumps(dict(name='tw', database='tw.lbug', staging='staging', target=TARGET)))
+    staged = build_bank(tmp_path / 'tw_staged.task.json', tmp_path / 'bank_staged', 1)
+    assert staged['spec_sha256'] == manifest['spec_sha256'] and staged['supervision_sha256'] == manifest['supervision_sha256']
+    assert [g['facts'] for g in staged['graphs']] == [g['facts'] for g in manifest['graphs']] and staged['database'].endswith('staging')
+    for index in range(2):
+        first, second = (Graph.load(tmp_path / name / 'truth' / ('graph_%04d' % index)) for name in ('bank', 'bank_staged'))
+        present = first.fact_present
+        for name in first.arrays:
+            if name == 'fact_values':
+                assert np.array_equal(first.fact_values[present], second.fact_values[present], equal_nan=True)
+            else:
+                assert equal(first.arrays[name], second.arrays[name]), name
     bank = Bank(tmp_path / 'bank')
     assert set(bank.registry.nodes) == set(name for name in bank.registry.nodes) and bank.registry.extras['queries'] and bank.registry.extras['signals'] == len(SIGNALS)
     for values in ({'view': 'snapshot'}, {'view': 'event_graph'}, {'view': 'sequence', 'sequence/operator': 'mixer'}):
