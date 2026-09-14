@@ -54,7 +54,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 |---|---|
 | `--selector tpe` | Optuna's multivariate, grouped TPE with 10 random startup trials and 64 expected-improvement candidates. Model parameters are named `model/<parameter>`, training parameters by their names and spec parameters `graph/<parameter>`. A model parameter enters a trial only while its condition holds; a spec parameter only when the model's view reads its group and its condition holds. |
 | `--selector random` | Each active model parameter, each training parameter and each active spec parameter drawn uniformly, in that order. |
-| `--random-trials N` | With `tpe`, the first N trials are uniform draws recorded with selector `random`; every later proposal is TPE over all completed and failed trials so far. A resumed run keeps its N. |
+| `--random-trials N` | With `tpe`, the first N trials are uniform draws recorded with selector `random`; every later proposal is TPE over all completed and failed trials so far. A continued run keeps its N unless a new one is given. |
 
 For every proposal the runner rebuilds an in-memory study from the trial files; there is no external study database. A result enters the study only if it matches the frozen supervision fingerprint, covers every training row, scores the complete validation split and has a finite score. Otherwise the proposal fails. Timeouts and crashes enter TPE as failures ranked worse than every finite score. Interrupted trials are excluded.
 
@@ -66,7 +66,7 @@ For every proposal the runner rebuilds an in-memory study from the trial files; 
 - prior trial ids with result hashes
 - the bank manifest hash, the supervision hash and the declaration fingerprint
 
-Configuration and selection are saved before the worker starts, and a resumed trial reuses them. `--bounds` narrows the space both selectors draw from and the distributions TPE is told about; the bounds are stored in `plan.json` and in every `selection.json`.
+Configuration and selection are saved before the worker starts, and a continued trial reuses them. `--bounds` narrows the space both selectors draw from and the distributions TPE is told about; the bounds are stored in `plan.json` and in every `selection.json`.
 
 A trial's configuration holds the model spec under `model`, the graph spec under `graph`, the training parameters below at the top level and `seed`. Model parameters draw from these ranges; a parameter is drawn only while its condition holds. Spec parameters and their ranges are in [graphspec/README.md](../graphspec/README.md).
 
@@ -117,7 +117,7 @@ A trial's configuration holds the model spec under `model`, the graph spec under
 | `trial_*/trial.json`, `late_result.json` | The runner's phase timings for the whole trial, and a result that arrived after the budget. |
 | `results.csv`, `results.jsonl`, `progress.md`, `coverage.json` | Every attempt with its model description, including failures; the best MSE, R², model and spec digest per view in `progress.md`; completed fits per view in `coverage.json`. |
 
-`--trials N` ends a continuous run once N trials are recorded; a resumed run takes the limit given on resume. A file named `STOP` in the run directory stops the run after the current fit, and stops a resumed run before its first trial. The runner refuses to resume while the worker named in `running.json` is still alive.
+`--trials N` ends a continuous run once N trials are recorded; a continued run takes the limit it is given. A file named `STOP` in the run directory stops the run after the current fit, and stops a continued run before its first trial. The runner refuses to continue while the worker named in `running.json` is still alive.
 
 **Verification**
 

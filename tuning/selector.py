@@ -59,6 +59,27 @@ def observation(registry, config, value, bounds, **attrs):
     return search.record(value, params, distributions, config=config, **attrs)
 
 
+def outside(parameters, spec):
+    names = []
+
+    def read(parameter):
+        value = spec.get(parameter.name, parameter.default)
+        try:
+            parameter.check(value)
+        except ValueError:
+            names.append(parameter.name)
+        return value
+
+    specs.draw(parameters, read)
+    return names
+
+
+def excluded(registry, config, bounds):
+    models, trainings = spaces(registry, bounds)
+    return (outside(models, config['model']) + outside(trainings, training(config))
+            + outside(graph_space(registry, config['model'], bounds), config['graph']))
+
+
 def metadata(registry, config, seed, training_seed, bounds, **extra):
     model, graph = spaces(registry, bounds)[0], graph_space(registry, config['model'], bounds)
     return dict(extra, model_digest=specs.digest(config['model']), description=describe(config['model']),
@@ -77,15 +98,21 @@ def configuration(registry, choose, training_seed, bounds):
 
 def suggest(registry, observations, failures, seed, training_seed, bounds):
     started = time.perf_counter()
-    records = [observation(registry, entry['config'], entry['raw_val_mse'], bounds) for entry in observations]
-    records += [observation(registry, entry['config'], math.inf, bounds, outcome=entry['status']) for entry in failures]
+    records, left_out, used = [], [], dict(complete=0, failed=0)
+    for entry in observations + failures:
+        names = excluded(registry, entry['config'], bounds)
+        if names:
+            left_out.append(dict(trial=entry['trial'], status=entry['status'], parameters=names))
+            continue
+        complete = entry['status'] == 'complete'
+        used['complete' if complete else 'failed'] += 1
+        records.append(observation(registry, entry['config'], entry['raw_val_mse'] if complete else math.inf, bounds, outcome=entry['status']))
     study = search.study(seed, SETTINGS, records)
     trial = study.ask()
     config = configuration(registry, lambda prefix, parameter: search.propose(trial, prefix + parameter.name, distribution(parameter)), training_seed, bounds)
-    total = len(observations) + len(failures)
     return config, metadata(registry, config, seed, training_seed, bounds, sampler='TPESampler', settings=SETTINGS, params=trial.params,
-                            failure_policy=FAILURE_POLICY, observations=len(observations), failed_observations=len(failures),
-                            optuna_version=search.VERSION, phase='tpe' if total >= SETTINGS['n_startup_trials'] else 'random_startup',
+                            failure_policy=FAILURE_POLICY, observations=used['complete'], failed_observations=used['failed'], excluded=left_out,
+                            optuna_version=search.VERSION, phase='tpe' if len(records) >= SETTINGS['n_startup_trials'] else 'random_startup',
                             seconds=time.perf_counter() - started)
 
 
@@ -112,7 +139,7 @@ def load_observations(directory, plan):
             and math.isfinite(result['raw_val_mse']))
         if not valid:
             raise ValueError('incompatible Bayesian observation: ' + str(path))
-        observations.append(result)
+        observations.append(dict(result, trial=item['directory']))
         history.append(dict(trial=item['directory'], raw_val_mse=result['raw_val_mse'], result_sha256=sha256_file(path)))
     return observations, history
 
@@ -131,7 +158,7 @@ def load_failures(directory, plan):
         if specs.digest(config['model']) != item['model']:
             raise ValueError('failure configuration differs from its saved plan: ' + str(path))
         status = 'timeout' if path.name == 'timeout.json' else 'failed'
-        failures.append(dict(config=config, status=status))
+        failures.append(dict(config=config, status=status, trial=item['directory']))
         history.append(dict(trial=item['directory'], status=status, record=path.name,
             failure_sha256=sha256_file(path), config_sha256=sha256_file(config_path)))
     return failures, history
@@ -155,12 +182,12 @@ def append_trial(directory, plan, registry):
     trial = directory / name
     trial.mkdir(exist_ok=True)
     if (trial / 'config.json').exists() and read_json(trial / 'config.json') != config:
-        raise ValueError('proposal changed on resume: ' + name)
+        raise ValueError('proposal changed on continuation: ' + name)
     write_json(trial / 'config.json', config)
     write_json(trial / 'selection.json', dict(selection, history=history, bounds=bounds, bank_manifest_sha256=plan['bank_manifest_sha256'],
         supervision_sha256=plan['supervision_sha256'], spec_sha256=registry.fingerprint(), seconds=time.perf_counter() - started))
     plan['trials'].append(dict(directory=name, model=selection['model_digest'], description=selection['description'],
                                graph=selection['graph_digest'], selector=selector))
     write_json(directory / 'plan.json', plan)
-    emit('parameter_selection', trial=name, observations=len(observations), model=selection['description'],
+    emit('parameter_selection', trial=name, observations=len(observations), excluded=len(selection.get('excluded', ())), model=selection['description'],
         graph=selection['graph_digest'][:10], phase=selection['phase'], seconds=time.perf_counter() - started)

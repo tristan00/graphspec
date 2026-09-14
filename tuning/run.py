@@ -244,8 +244,9 @@ def report(directory):
     views = sorted({r['config']['model']['view'] for r in results})
     write_json(directory / 'coverage.json', dict(views={view: sum(r['config']['model']['view'] == view for r in completed) for view in views},
         completed=len(completed), failed=len(results) - len(completed), planned=len(planned['trials'])))
-    selection_text = ('TPE selects each model spec, its training parameters and its graph-transform spec from completed fits; recorded timeouts and crashes enter as failures.'
-                      if planned['selector'] == 'tpe' else 'Each trial draws a uniform model spec, training parameters and graph-transform spec.')
+    drawn = sum(item['selector'] == 'random' for item in planned['trials'])
+    selection_text = ('%d trials drew a uniform model spec, training parameters and graph-transform spec; %d were proposed by TPE from every trial recorded before them, timeouts and crashes entering as failures.'
+                      % (drawn, len(planned['trials']) - drawn))
     lines = ['**Graph transform and temporal model search**', '',
         'Updated ' + datetime.now(timezone.utc).isoformat() + '.', '',
         '%d completed fits; %d failed or timed out; %d planned so far. %s' % (len(completed), len(results) - len(completed), len(planned['trials']), selection_text), '']
@@ -273,27 +274,22 @@ def run(args):
     bounds = read_json(args.bounds) if args.bounds else {}
     check_bounds(bank.registry, bounds)
     if path.exists():
-        if not args.resume:
-            raise FileExistsError('run exists; pass --resume to continue its pending trials')
         plan = read_json(path)
         if plan.get('version') != VERSION:
-            raise ValueError('this run was written by another plan version and cannot be resumed; choose a new output')
+            raise ValueError('this run was written by another plan version; choose a new output')
         if Path(plan['bank']).resolve() != Path(args.bank).resolve():
-            raise ValueError('resume requested with a different bank')
+            raise ValueError('this run belongs to a different bank')
         if plan['spec_sha256'] != bank.manifest['spec_sha256']:
-            raise ValueError('resume requested under a different graph declaration')
+            raise ValueError('this run was declared under a different graph declaration')
         if plan['bank_manifest_sha256'] != sha256_file(Path(args.bank) / 'manifest.json'):
-            raise ValueError('resume requested with a rebuilt bank')
+            raise ValueError('this run was built on a bank that has since been rebuilt')
         plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30, limit=args.trials)
-        if args.random_trials is not None and args.random_trials != plan['random_trials']:
-            raise ValueError('resume requested with a different random phase')
-        if args.bounds and bounds != plan['bounds']:
-            if plan['selector'] != 'random':
-                raise ValueError('resume requested with different bounds')
-            emit('bounds_replaced', previous=plan['bounds'], bounds=bounds)
-            plan['bounds'] = bounds
+        for name, value in (('selector', args.selector), ('random_trials', args.random_trials), ('bounds', bounds if args.bounds else None)):
+            if value is not None and value != plan[name]:
+                emit(name + '_replaced', previous=plan[name], **{name: value})
+                plan[name] = value
     else:
-        plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector, trials=[],
+        plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector or 'tpe', trials=[],
             batch_sequences=args.batch_sequences,
             workers=args.workers, variant_bytes=args.variant_gb << 30, random_trials=args.random_trials or 0, bounds=bounds, limit=args.trials,
             seconds=args.seconds, train_rows=bank.manifest['train_rows'], holdout_rows=bank.manifest['validation_rows'],
@@ -307,7 +303,7 @@ def run(args):
             if 'tuning.run' in invocation and 'worker' in invocation and '--output' in invocation:
                 output = Path(invocation[invocation.index('--output') + 1])
                 if output.parent.resolve() == directory.resolve():
-                    raise RuntimeError('the previous worker is still running; wait for it before resuming')
+                    raise RuntimeError('the previous worker is still running; wait for it before continuing')
         plan.update(bank_manifest_sha256=sha256_file(Path(plan['bank']) / 'manifest.json'), budget_policy=POLICY, failure_policy=FAILURE_POLICY)
         write_json(path, plan)
         execute(directory, plan, args.continuous, bank.registry)
@@ -412,8 +408,7 @@ def main():
     run_parser.add_argument('--continuous', action='store_true')
     run_parser.add_argument('--trials', type=int)
     run_parser.add_argument('--seconds', type=int, default=600)
-    run_parser.add_argument('--resume', action='store_true')
-    run_parser.add_argument('--selector', choices=('tpe', 'random'), default='tpe')
+    run_parser.add_argument('--selector', choices=('tpe', 'random'), help='how the next trials are chosen; tpe for a new run, and a continued run keeps its selector unless one is given')
     run_parser.add_argument('--random-trials', type=int)
     run_parser.add_argument('--bounds')
     run_parser.add_argument('--workers', type=int, default=WORKERS)

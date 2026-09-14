@@ -275,16 +275,20 @@ python -m tuning.run report RUN
 
 - `--continuous` keeps proposing trials until a file named `STOP` appears in `RUN`; the current fit finishes
   first.
-- `--selector tpe`, the default, proposes the model, its parameters and its graph spec with Optuna TPE.
-  `--selector random` samples all three uniformly. `--random-trials N` makes the first N trials of a TPE run
-  uniform draws; TPE then starts from all of them.
-- `--bounds` names a JSON file that narrows the search space for every selector: `{"epochs": {"low": 1, "high": 3}, "hidden": [16, 32], "graphs/join": "separate"}` fixes a parameter, restricts its choices or tightens its range; the names are model, training or graph parameters, a name may hold `*` wildcards (`edges/*/cap`, `derive/complete*`), an exact name beats a pattern, and a resumed TPE run must pass the same file; a resumed random run may pass a different one, and the plan records it.
+- `--selector` chooses how the next trials are drawn. `tpe`, the default for a new run, proposes the model, its
+  parameters and its graph spec with Optuna TPE from every trial the run has recorded, however each was drawn;
+  `random` samples all three uniformly. `--random-trials N` makes trials before index N uniform draws whatever
+  the selector. Running again with the same `--output` continues the run: `--selector tpe` on a random run proposes
+  from all of its recorded trials, and `--selector random` goes back to uniform draws. Each trial records the selector
+  that drew it in its name and in the plan.
+- `--bounds` names a JSON file that narrows the search space for every selector: `{"epochs": {"low": 1, "high": 3}, "hidden": [16, 32], "graphs/join": "separate"}` fixes a parameter, restricts its choices or tightens its range; the names are model, training or graph parameters, a name may hold `*` wildcards (`edges/*/cap`, `derive/complete*`), an exact name beats a pattern, and a continued run may pass a different file: the plan records it, and TPE leaves out any recorded trial whose parameters fall outside the current bounds, listing it under `excluded` in the next trial's `selection.json`.
 - `--seconds` sets each trial's budget (600), covering everything from parameter selection to the variant pruning after the worker exits, `--batch-sequences` the sequences per batch at history 16 (64), and
   `--seed` the proposal seed.
 - `--workers` (4) is the number of processes that build the trial's variant and, during the fit, pack batches ahead of the GPU. `--variant-gb` (300)
   is the disk budget for `variants/`; the least recently used variants are removed first.
-- `--resume` continues a run with its planned selector, seed, budget and batch size, and refuses a rebuilt or
-  different bank or declaration.
+- Running with an existing `--output` continues that run with its seed, budget and batch size; `--selector`,
+  `--random-trials`, `--bounds`, `--trials` and `--workers` may change and the log records each replacement. A run
+  belongs to its bank and declaration; a rebuilt or different bank is an error.
 
 `python -m dashboard.server --root artifacts --port 8766` lists every run under the root, with its bank and graph count, in a selector at the top of http://127.0.0.1:8766/ and serves the chosen run's attempts (the newest by default; the choice is in the page address),
 sorted by validation MSE and refreshed every ten seconds. It only reads run files.
