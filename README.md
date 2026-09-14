@@ -39,7 +39,7 @@ OpenSSL 3 is installed system-wide (`choco install openssl.light`) or both DLLs 
 
 **Using your own graph**
 
-1. Stage your rows as parquet tables that follow the contract below (`graph_tuning_infra.database.Stage` writes them and records the table mapping), and optionally load them into a LadybugDB database for querying and verification.
+1. Stage your rows as parquet tables that follow the contract below (`graph_tuning_infra.database.Stage` writes them and records the table mapping; `Stage.merge` joins shards written by separate processes), and optionally load them into a LadybugDB database for querying and verification.
 2. Write a task file that names the staging, the database and the target table.
 3. Build a bank. The staging is read once, straight from parquet, partitioned by graph; the database is used only when the task names no staging. Training never touches either.
 4. Check that every model runs on the bank.
@@ -59,12 +59,13 @@ python -m dashboard.server --root artifacts --port 8766
 `totalwar/` loads the Total War: Warhammer III corpus of `tw_stack` into the contract: one graph per campaign, one step per snapshot (decisions and interrupt screens alike), the game turn as the period, twenty-one node types from factions and characters to the technology, skill, building, unit, item and effect catalogue, about seventy relations, the taken action as the query, and the trainers' own reward as the label. The design, the exact reward and split rules and the sizes are in [TOTALWAR.md](TOTALWAR.md).
 
 ```powershell
-python -m totalwar.build --output artifacts/graphdb_totalwar --campaigns 100 --port 55433
+python -m totalwar.build --output artifacts/graphdb_totalwar --campaigns 100 --port 55433 --workers 12
+python -m totalwar.build --output artifacts/graphdb_totalwar --campaigns 100 --port 55433 --staged
 python -m totalwar.verify artifacts/graphdb_totalwar/totalwar.task.json --samples 300
 python -m tuning.build --task artifacts/graphdb_totalwar/totalwar.task.json --output artifacts/bank_totalwar --workers 8
 ```
 
-`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.staging/` (the parquet tables with their mapping, kept), `<name>.lbug`, `<name>.task.json` and `<name>.build.json` with per-campaign sizes; `--staged` loads the database from a staging that already exists; `verify` samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
+`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.staging/` (the parquet tables with their mapping), `<name>.task.json` and `<name>.build.json` with per-campaign sizes. `--workers` processes each build a contiguous block of campaigns into their own staging shard; the bank builds from the shards directly. `--staged` loads `<name>.lbug` from a staging that already exists, which only `verify` needs: it samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
 
 **Synthetic data**
 
@@ -129,7 +130,7 @@ Structure:
 - `observation.x` and `query.x` share one even width `F`. The first half holds values and the second half
   holds presence flags; `graph_tuning_infra.features.encoder(F // 2, numbers, categories)` builds such vectors by
   feature hashing. The bank stores them at float16 precision.
-- `id` keys are unique across a whole table, not per graph.
+- `id` keys are unique across a whole table, not per graph, and increase down the table's rows. A staging reader resolves ids by position when they are dense from zero, or when each graph's ids are its index shifted left by 32 bits plus its row within the graph, which is how shards written in parallel stay unique.
 
 Time and causality:
 

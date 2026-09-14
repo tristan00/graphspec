@@ -12,6 +12,7 @@ from .graphdb import EDGE, FACTS, ROLES
 
 
 LOG = logging.getLogger(__name__)
+IDS = 32
 TYPES = {pa.int64(): 'INT64', pa.int32(): 'INT32', pa.float32(): 'FLOAT', pa.float64(): 'DOUBLE', pa.bool_(): 'BOOL', pa.string(): 'STRING'}
 
 
@@ -29,23 +30,31 @@ class Unit:
 
     def __init__(self, directory, entry):
         self.table, self.source, self.target, self.rows = entry['table'], entry['source'], entry['target'], entry['rows']
-        self.path = directory / entry['file']
-        self.file = pq.ParquetFile(self.path)
-        self.groups = np.r_[0, np.cumsum([self.file.metadata.row_group(i).num_rows for i in range(self.file.num_row_groups)])]
+        self.name = '%s|%s|%s' % (self.table, self.source, self.target)
+        self.files = [pq.ParquetFile(directory / name) for name in entry.get('files', [entry.get('file')])]
+        self.members = [(index, group) for index, file in enumerate(self.files) for group in range(file.num_row_groups)]
+        self.groups = np.r_[0, np.cumsum([self.files[index].metadata.row_group(group).num_rows for index, group in self.members])]
+        self.schema = self.files[0].schema_arrow
         self.bounds = None
 
     def types(self):
-        return {field.name: typename(field.type) for field in self.file.schema_arrow}
+        return {field.name: typename(field.type) for field in self.schema}
+
+    def read(self, columns=None):
+        return pa.concat_tables([file.read(columns=columns) for file in self.files])
 
     def column(self, name):
-        return self.file.read(columns=[name]).column(name)
+        return self.read([name]).column(name)
 
     def rows_between(self, start, stop, columns=None):
         if stop <= start:
-            return self.file.schema_arrow.empty_table().select(columns or self.file.schema_arrow.names)
+            return self.schema.empty_table().select(columns or self.schema.names)
         first = int(np.searchsorted(self.groups, start, 'right') - 1)
         last = int(np.searchsorted(self.groups, stop, 'left'))
-        table = self.file.read_row_groups(list(range(first, last)), columns=columns)
+        chosen = {}
+        for index, group in self.members[first:last]:
+            chosen.setdefault(index, []).append(group)
+        table = pa.concat_tables([self.files[index].read_row_groups(groups, columns=columns) for index, groups in chosen.items()])
         return table.slice(start - int(self.groups[first]), stop - start)
 
     def graph_rows(self, graph, columns=None):
@@ -93,7 +102,7 @@ class Staged:
             if typed['x'] != 'FLOAT[%d]' % self.features:
                 raise ValueError('query.x and observation.x must have the same width')
             self.signals = int(typed['signal'][len('FLOAT['):-1]) if 'signal' in typed else 0
-        self.entity_of, self.graph_of, self.ids, self.dense, self.steps = {}, {}, {}, set(), {}
+        self.entity_of, self.graph_of, self.ids, self.dense, self.based, self.steps = {}, {}, {}, set(), set(), {}
         self.location = str(self.directory)
         self.names = None
         if (self.directory / 'partition.npz').exists():
@@ -131,7 +140,7 @@ class Staged:
     def ids_of(self, table):
         if table not in self.ids:
             unit, = self.by_table[table]
-            ids = numbers(unit.file.read(columns=['id']), 'id')
+            ids = numbers(unit.read(columns=['id']), 'id')
             if len(ids) and np.any(np.diff(ids) <= 0):
                 raise ValueError('%s ids must increase down its rows' % table)
             if np.array_equal(ids, np.arange(len(ids))):
@@ -142,6 +151,12 @@ class Staged:
     def positions(self, table, wanted):
         if table == 'graph' or table in self.dense:
             return wanted
+        if table in self.based:
+            unit, = self.by_table[table]
+            graph, local = wanted >> IDS, wanted & ((1 << IDS) - 1)
+            if np.any(graph >= len(unit.bounds) - 1) or np.any(local >= unit.bounds[np.minimum(graph + 1, len(unit.bounds) - 1)] - unit.bounds[np.minimum(graph, len(unit.bounds) - 2)]):
+                raise ValueError('rows refer to ids missing from %s' % table)
+            return unit.bounds[graph] + local
         ids = self.ids_of(table)
         found = np.searchsorted(ids, wanted)
         if np.any(found >= len(ids)) or not np.array_equal(ids[np.minimum(found, len(ids) - 1)], wanted):
@@ -151,23 +166,23 @@ class Staged:
     def graphs_of(self, table):
         if table not in self.graph_of:
             unit, = self.by_table[table]
-            self.graph_of[table] = numbers(unit.file.read(columns=['graph']), 'graph')
+            self.graph_of[table] = numbers(unit.read(columns=['graph']), 'graph')
         return self.graph_of[table]
 
     def query_steps(self):
         if 'query' not in self.steps:
             unit, = self.by_table['query']
-            self.steps['query'] = numbers(unit.file.read(columns=['step']), 'step')
+            self.steps['query'] = numbers(unit.read(columns=['step']), 'step')
         return self.steps['query']
 
     def endpoints(self, unit):
-        table = unit.file.read(columns=['from', 'to'])
+        table = unit.read(columns=['from', 'to'])
         return self.positions(unit.source, numbers(table, 'from')), self.positions(unit.target, numbers(table, 'to'))
 
     def partition(self):
         started = time.perf_counter()
         graph_unit, = self.by_table['graph']
-        graphs = numbers(graph_unit.file.read(columns=['id']), 'id')
+        graphs = numbers(graph_unit.read(columns=['id']), 'id')
         if not np.array_equal(graphs, np.arange(len(graphs))):
             raise ValueError('graph ids must number the graphs in order')
         self.names = dict(zip(graphs.tolist(), graph_unit.column('name').to_pylist()))
@@ -176,20 +191,29 @@ class Staged:
         self.graph_of['graph'] = graphs
         for table in list(self.nodes) + (['query'] if self.queries else []):
             unit, = self.by_table[table]
-            self.graph_of[table] = numbers(unit.file.read(columns=['graph']), 'graph')
+            self.graph_of[table] = numbers(unit.read(columns=['graph']), 'graph')
             if table != 'query':
-                self.entity_of[table] = numbers(unit.file.read(columns=['entity']), 'entity')
+                self.entity_of[table] = numbers(unit.read(columns=['entity']), 'entity')
             unit.bounds = self.bounds_of(self.graph_of[table], count, table)
+            self.classify(table, unit)
         for table in self.by_table:
             if self.kinds[table] == 'NODE' and table not in self.graph_of:
                 self.graph_of[table] = self.derived_graphs(table, count)
-                self.by_table[table][0].bounds = self.bounds_of(self.graph_of[table], count, table)
+                unit, = self.by_table[table]
+                unit.bounds = self.bounds_of(self.graph_of[table], count, table)
+                self.classify(table, unit)
         for table, units in self.by_table.items():
             if self.kinds[table] == 'REL':
                 for unit in units:
                     source, _ = self.endpoints(unit)
                     unit.bounds = self.bounds_of(self.graph_of[unit.source][source], count, table)
         LOG.info('partition exit seconds=%.3f graphs=%d', time.perf_counter() - started, count)
+
+    def classify(self, table, unit):
+        ids = self.ids_of(table)
+        if table not in self.dense and np.array_equal(ids, (self.graph_of[table] << IDS) + np.arange(len(ids)) - unit.bounds[self.graph_of[table]]):
+            self.based.add(table)
+            del self.ids[table]
 
     def derived_graphs(self, table, count):
         graph = np.full(len(self.ids_of(table)), -1, np.int64)
@@ -208,20 +232,21 @@ class Staged:
         return graph
 
     def persist(self):
-        arrays = {'bounds/' + unit.path.name: unit.bounds for unit in self.units}
+        arrays = {'bounds/' + unit.name: unit.bounds for unit in self.units}
         arrays.update({'ids/' + table: ids for table, ids in self.ids.items() if table not in self.dense})
         arrays.update({'entity/' + table: values for table, values in self.entity_of.items()})
         arrays['dense'] = np.asarray(sorted(self.dense))
+        arrays['based'] = np.asarray(sorted(self.based))
         np.savez(self.directory / 'partition.npz', **arrays)
 
     def restore(self):
         started = time.perf_counter()
         graph_unit, = self.by_table['graph']
-        self.names = dict(zip(numbers(graph_unit.file.read(columns=['id']), 'id').tolist(), graph_unit.column('name').to_pylist()))
+        self.names = dict(zip(numbers(graph_unit.read(columns=['id']), 'id').tolist(), graph_unit.column('name').to_pylist()))
         with np.load(self.directory / 'partition.npz') as saved:
             for unit in self.units:
-                unit.bounds = saved['bounds/' + unit.path.name]
-            self.dense = set(saved['dense'].tolist())
+                unit.bounds = saved['bounds/' + unit.name]
+            self.dense, self.based = set(saved['dense'].tolist()), set(saved['based'].tolist())
             for key in saved.files:
                 if key.startswith('ids/'):
                     self.ids[key[4:]] = saved[key]
@@ -254,11 +279,11 @@ class Staged:
 
     def query_index(self):
         unit, = self.by_table['query']
-        return unit.file.read(columns=['graph', 'step', 'period', 'key'])
+        return unit.read(columns=['graph', 'step', 'period', 'key'])
 
     def targets(self, level, target):
         unit, = self.by_table[target]
-        table = unit.file.read()
+        table = unit.read()
         rows, kinds, destinations = [], [], []
         for link in self.by_table[target + '_of']:
             source, destination = self.endpoints(link)

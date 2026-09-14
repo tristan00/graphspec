@@ -190,3 +190,33 @@ The snapshot fit reaches the same holdout score, R² 0.234 against 0.232, with a
 **Verification**
 
 `tests/`: 10 tests in 7 s; the relational layer tests now check the chunked matmul against an edge loop with and without edges and the stacked attribute parameter against per-relation linears.
+
+**14 September 2026: the campaign loader**
+
+Measured on the same workstation against the live corpus on port 55433. Before is commit `1b15550`; after is `HEAD`.
+
+**Where the time went**
+
+The loader built campaigns one after another in one process and then copied the whole staging into LadybugDB, which nothing on the training path reads. For the newest 20 campaigns that was 62 s of extraction and 72 s of copy; the partial 4,000-campaign build ran at 0.68 s per campaign, of which 0.03 s was the corpus read, 0.27 s the Python assembly and about 0.4 s the parquet write, dominated by dictionary-encoding the observation vectors. Parquet writing does not parallelise across threads because one observation table holds most of the bytes, so the writer had to be split across processes.
+
+**What changed**
+
+- `totalwar.build` splits the campaigns into `--workers` contiguous blocks; each process opens its own corpus connection and reference tables and writes its block into its own staging shard, and `Stage.merge` records the shards as one staging whose units list several files. The staging reader concatenates a unit's files in shard order, so rows stay grouped by graph in index order (`totalwar/build.py`, `graph_tuning_infra/database.py`, `graphspec/staged.py`).
+- Ids are the campaign index shifted left by 32 bits plus the row within the campaign, so shards need no coordination; the reader recognises that layout and resolves ids arithmetically from the graph bounds instead of loading and searching an id column, and persists neither.
+- Parquet units are written with zstd and without dictionary encoding: half the write time and two thirds of the bytes.
+- The LadybugDB copy is no longer part of the build; `--staged` performs it for `totalwar.verify`.
+- The assembler iterated Python sets when creating catalogue entities and removal facts, so the order of entities and facts depended on the process hash seed; those iterations are sorted now, and two builds under different hash seeds write identical tables.
+
+**Results**
+
+| Campaigns | Before | After |
+|---|---:|---:|
+| newest 20, extraction only | 62 s | 11.5 s with 4 processes |
+| newest 20, with the database copy | 134 s | 11.5 s, copy on request in 71 s |
+| newest 100 | about 5 minutes of extraction, 65 minutes with the copy | 23 s with 12 processes |
+
+A bank built from the new staging holds the same entities, observations and facts as one built from the sequential staging, as multisets, and `totalwar.verify` agrees with the corpus on all 328 checks of 20 sampled steps of the database loaded from the sharded staging; row-for-row equality with the old build is not possible because the old order depended on the hash seed. The previous single-file staging format is still read, so the existing 1,000-campaign staging needs no rebuild.
+
+**Verification**
+
+`tests/`: 11 tests in 8 s; the new one builds a synthetic staging as two shards with shifted ids and checks that its bank's truth arrays equal those of a single dense staging. `graph_tuning_infra`: 27 tests; the staging test now merges two shards and copies them into LadybugDB with one statement per table.

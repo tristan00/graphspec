@@ -5,11 +5,13 @@ import time
 
 import numpy as np
 
+from graphspec.staged import IDS
 from graph_tuning_infra.database import LOAD_POOL, Stage, connect, copy
 from graph_tuning_infra.features import encoder
 from graph_tuning_infra.files import read_json, write_json
 from graph_tuning_infra.log import configure
 from graph_tuning_infra.postgres import connect as postgres
+from graph_tuning_infra.processes import WORKERS, parallel
 
 from . import corpus
 from .domain import CATEGORIES, NUMBERS, SIGNALS, TARGET, declaration
@@ -18,20 +20,50 @@ from .reference import Reference
 
 
 LOG = logging.getLogger(__name__)
+WORKER = {}
 
 
 class Counter:
 
-    def __init__(self):
-        self.next = {}
+    def __init__(self, base):
+        self.base, self.next = base, {}
 
     def take(self, table, count):
-        start = self.next.get(table, 0)
+        start = self.next.get(table, self.base)
         self.next[table] = start + count
         return np.arange(start, start + count, dtype=np.int64)
 
 
-def build(output, name, host, port, database, user, campaigns, features, staged=False):
+def attach(host, port, database, user, features):
+    configure()
+    WORKER['connection'] = postgres(host, port, database, user)
+    WORKER['reference'] = Reference(WORKER['connection'])
+    WORKER['encode'] = encoder(features // 2, list(NUMBERS), list(CATEGORIES))
+    WORKER['features'] = features
+
+
+def extract(job):
+    directory, chosen = job
+    started = time.perf_counter()
+    stage = Stage(directory)
+    summary = []
+    for index, campaign in chosen:
+        clock = time.perf_counter()
+        rows = corpus.load(WORKER['connection'], campaign['campaign_id'])
+        tables = Campaign(WORKER['reference'], WORKER['encode'], WORKER['features'], campaign, rows).build(Counter(index << IDS), index, campaign['campaign_key'])
+        stage.write(tables)
+        summary.append(dict(index=index, campaign=campaign['campaign_key'], faction=campaign['faction'], steps=tables[('query', None, None)].num_rows,
+                            entities=sum(table.num_rows for (kind, source, _), table in tables.items() if source is None and kind not in ('graph', 'observation', 'query', TARGET)),
+                            observations=tables[('observation', None, None)].num_rows,
+                            facts=sum(table.num_rows for (kind, _, _), table in tables.items() if kind.startswith('edge_')),
+                            labels=tables[(TARGET, None, None)].num_rows, seconds=time.perf_counter() - clock))
+        LOG.info('campaign exit index=%d key=%s seconds=%.2f', index, campaign['campaign_key'], summary[-1]['seconds'])
+    stage.close()
+    LOG.info('shard exit directory=%s campaigns=%d seconds=%.1f', directory, len(chosen), time.perf_counter() - started)
+    return summary
+
+
+def build(output, name, host, port, database, user, campaigns, features, workers, staged=False):
     started = time.perf_counter()
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -46,27 +78,18 @@ def build(output, name, host, port, database, user, campaigns, features, staged=
         LOG.info('staging reused directory=%s units=%d graphs=%d', staging, len(stage.writers), len(summary))
         return load(output, name, stage, summary, provenance, started)
     connection = postgres(host, port, database, user)
-    reference = Reference(connection)
-    encode = encoder(features // 2, list(NUMBERS), list(CATEGORIES))
-    chosen = corpus.campaigns(connection, campaigns)
-    counter = Counter()
-    stage = Stage(staging)
-    summary = []
-    for index, campaign in enumerate(chosen):
-        clock = time.perf_counter()
-        rows = corpus.load(connection, campaign['campaign_id'])
-        tables = Campaign(reference, encode, features, campaign, rows).build(counter, index, campaign['campaign_key'])
-        stage.write(tables)
-        summary.append(dict(index=index, campaign=campaign['campaign_key'], faction=campaign['faction'], steps=tables[('query', None, None)].num_rows,
-                            entities=sum(table.num_rows for (kind, source, _), table in tables.items() if source is None and kind not in ('graph', 'observation', 'query', TARGET)),
-                            observations=tables[('observation', None, None)].num_rows,
-                            facts=sum(table.num_rows for (kind, _, _), table in tables.items() if kind.startswith('edge_')),
-                            labels=tables[(TARGET, None, None)].num_rows, seconds=time.perf_counter() - clock))
-        LOG.info('campaign exit index=%d key=%s seconds=%.2f', index, campaign['campaign_key'], summary[-1]['seconds'])
-    stage.close()
+    chosen = list(enumerate(corpus.campaigns(connection, campaigns)))
     connection.close()
+    shards = min(workers, len(chosen))
+    jobs = [(str(staging / ('shard_%02d' % shard)), chosen[shard * len(chosen) // shards:(shard + 1) * len(chosen) // shards]) for shard in range(shards)]
+    summary = [item for part in parallel(extract, jobs, workers, attach, (host, port, database, user, features)) for item in part]
+    stage = Stage.merge(staging, [directory for directory, _ in jobs])
     write_json(staging / 'summary.json', summary)
-    return load(output, name, stage, summary, provenance, started)
+    write_json(output / (name + '.task.json'), dict(name=name, database=name + '.lbug', staging=name + '.staging', target=TARGET))
+    write_json(output / (name + '.build.json'), dict(provenance, graphs=summary, seconds=time.perf_counter() - started))
+    LOG.info('build exit seconds=%.1f graphs=%d observations=%d facts=%d units=%d shards=%d', time.perf_counter() - started, len(summary),
+             sum(item['observations'] for item in summary), sum(item['facts'] for item in summary), len(stage.writers), shards)
+    return output / (name + '.task.json')
 
 
 def load(output, name, stage, summary, provenance, started):
@@ -77,9 +100,7 @@ def load(output, name, stage, summary, provenance, started):
     ladybug.close()
     store.close()
     write_json(output / (name + '.task.json'), dict(name=name, database=name + '.lbug', staging=name + '.staging', target=TARGET))
-    write_json(output / (name + '.build.json'), dict(provenance, graphs=summary, seconds=time.perf_counter() - started))
-    LOG.info('build exit seconds=%.1f graphs=%d observations=%d facts=%d', time.perf_counter() - started, len(summary),
-             sum(item['observations'] for item in summary), sum(item['facts'] for item in summary))
+    LOG.info('load exit seconds=%.1f graphs=%d', time.perf_counter() - started, len(summary))
     return output / (name + '.task.json')
 
 
@@ -93,10 +114,11 @@ def main():
     parser.add_argument('--user', default='tw')
     parser.add_argument('--campaigns', type=int, default=100)
     parser.add_argument('--features', type=int, default=128)
+    parser.add_argument('--workers', type=int, default=WORKERS)
     parser.add_argument('--staged', action='store_true')
     args = parser.parse_args()
     configure()
-    print(build(args.output, args.name, args.host, args.port, args.database, args.user, args.campaigns, args.features, args.staged))
+    print(build(args.output, args.name, args.host, args.port, args.database, args.user, args.campaigns, args.features, args.workers, args.staged))
 
 
 if __name__ == '__main__':

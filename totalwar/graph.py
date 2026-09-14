@@ -114,7 +114,7 @@ class Campaign:
         techs.discard(None)
         chosen = ref.tech_set(self.player)
         techs |= {key for key, node in ref.tech_nodes.items() if node['set'] == chosen}
-        for key in techs:
+        for key in sorted(techs):
             node = ref.tech_nodes.get(key, {})
             tech = self.static(features, facts, 'tech', key, {name: node.get(name) for name in ('tier', 'indent', 'research_points_required', 'cost_per_round',
                                                                                               'food_cost', 'resource_cost', 'required_parents', 'is_civil', 'is_engineering', 'is_military')})
@@ -125,8 +125,8 @@ class Campaign:
         for link in ref.tech_links.get(chosen, ()):
             if link['parent_key'] in techs and link['child_key'] in techs:
                 add('tech_prerequisite', self.entity('tech', link['parent_key']), self.entity('tech', link['child_key']))
-        by_technology = {ref.tech_nodes[key]['technology_key']: key for key in techs if key in ref.tech_nodes}
-        for key in techs:
+        by_technology = {ref.tech_nodes[key]['technology_key']: key for key in sorted(techs) if key in ref.tech_nodes}
+        for key in sorted(techs):
             for row in ref.tech_requires.get(ref.tech_nodes.get(key, {}).get('technology_key'), ()):
                 parent = by_technology.get(row['required_technology'])
                 if parent:
@@ -135,7 +135,7 @@ class Campaign:
         subtypes |= {self.key('agent_subtype', row['subtype_id']) for row in self.rows['lord_pools']}
         subtypes |= {self.key('agent_subtype', row['cand_subtype_id']) for row in self.rows['candidates']}
         subtypes.discard(None)
-        for subtype in subtypes:
+        for subtype in sorted(subtypes):
             row = ref.subtypes.get(subtype, {})
             node = self.static(features, facts, 'subtype', subtype, dict(is_caster=row.get('is_caster'), cap=row.get('cap'), cost=row.get('cost'),
                                                                         recruitable=row.get('recruitable'), can_equip=row.get('can_equip_ancillaries')))
@@ -189,7 +189,7 @@ class Campaign:
         buildings |= {self.key('building', row['queued_building_id']) for row in self.rows['slot_states']}
         buildings |= {self.key('building', row['building_id']) for row in self.rows['slot_states']}
         buildings.discard(None)
-        frontier = list(buildings)
+        frontier = sorted(buildings)
         while frontier:
             key = frontier.pop()
             for row in list(ref.building_upgrades.get(key, ())) + list(ref.building_requires.get(key, ())):
@@ -197,7 +197,7 @@ class Campaign:
                 if target in ref.buildings and target not in buildings:
                     buildings.add(target)
                     frontier.append(target)
-        for key in buildings:
+        for key in sorted(buildings):
             building = self.building(key)
             grants(building, ref.building_effects.get(key, ()))
             for row in ref.building_upgrades.get(key, ()):
@@ -237,7 +237,7 @@ class Campaign:
             adjacency.setdefault(row['region_id'], set()).update(row['adjacent'] or ())
         for region, neighbours in adjacency.items():
             source = self.region(region)
-            for neighbour in neighbours:
+            for neighbour in sorted(neighbours):
                 add('adjacent', source, self.region(neighbour))
         LOG.info('catalogue exit campaign=%d seconds=%.3f entities=%d static_facts=%d', self.campaign['campaign_id'], time.perf_counter() - started,
                  len(self.kinds), sum(len(items) for items in facts.values()))
@@ -797,7 +797,7 @@ class Campaign:
             seq = 0
             for relation, keys in removed.items():
                 width_r = len(RELATIONS[relation][1])
-                for source, target, _ in keys:
+                for source, target, _ in sorted(keys):
                     fact_rows[relation].append((source, target, seq, step, False) + (math.nan,) * width_r)
                     seq += 1
             previous = present
