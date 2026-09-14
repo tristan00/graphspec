@@ -1,7 +1,6 @@
 import argparse
 import logging
 from pathlib import Path
-import shutil
 import time
 
 import numpy as np
@@ -77,7 +76,6 @@ def load(output, name, stage, summary, provenance, started):
     copy(ladybug, stage)
     ladybug.close()
     store.close()
-    shutil.rmtree(stage.directory)
     write_json(output / (name + '.task.json'), dict(name=name, database=name + '.lbug', target=TARGET))
     write_json(output / (name + '.build.json'), dict(provenance, graphs=summary, seconds=time.perf_counter() - started))
     LOG.info('build exit seconds=%.1f graphs=%d observations=%d facts=%d', time.perf_counter() - started, len(summary),

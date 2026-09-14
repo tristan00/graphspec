@@ -87,11 +87,12 @@ def declaration(features, signals):
     statements.append('CREATE NODE TABLE query(id INT64 PRIMARY KEY, graph INT32, step INT32, period INT32, key INT64, category STRING, x FLOAT[%d], '
                       'signal FLOAT[%d], signal_observed FLOAT[%d])' % (features, signals, signals))
     statements.append('CREATE NODE TABLE %s(id INT64 PRIMARY KEY, y DOUBLE, split STRING)' % TARGET)
-    statements.append('CREATE REL TABLE observed(%s)' % ', '.join('FROM %s TO observation' % kind for kind in NODES))
-    statements += ['CREATE REL TABLE query_%s(%s)' % (role, ', '.join('FROM query TO %s' % kind for kind in NODES)) for role in ('actor', 'subject', 'context')]
+    forward = " WITH (storage_direction='fwd')"
+    statements.append('CREATE REL TABLE observed(%s)%s' % (', '.join('FROM %s TO observation' % kind for kind in NODES), forward))
+    statements += ['CREATE REL TABLE query_%s(%s)%s' % (role, ', '.join('FROM query TO %s' % kind for kind in NODES), forward) for role in ('actor', 'subject', 'context')]
     for name, (pairs, attributes) in RELATIONS.items():
         columns = ''.join(', %s FLOAT' % attribute for attribute in attributes)
-        statements.append('CREATE REL TABLE edge_%s(%s, seq INT32, step INT32, present BOOLEAN%s)' % (
-            name, ', '.join('FROM %s TO %s' % pair for pair in pairs), columns))
-    statements.append('CREATE REL TABLE %s_of(FROM %s TO query)' % (TARGET, TARGET))
+        statements.append('CREATE REL TABLE edge_%s(%s, seq INT32, step INT32, present BOOLEAN%s)%s' % (
+            name, ', '.join('FROM %s TO %s' % pair for pair in pairs), columns, forward))
+    statements.append('CREATE REL TABLE %s_of(FROM %s TO query)%s' % (TARGET, TARGET, forward))
     return statements

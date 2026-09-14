@@ -95,7 +95,8 @@ class Campaign:
         ref, features, facts = self.ref, self.static_features, self.static_facts
 
         def add(relation, source, target, *values):
-            facts.setdefault(relation, {})[(source, target, len(facts.get(relation, ())))] = tuple(number(value) for value in values)
+            numbers = tuple(number(value) for value in values)
+            facts.setdefault(relation, {})[(source, target, numbers)] = numbers
 
         def effect(key):
             row = ref.effects.get(key)
