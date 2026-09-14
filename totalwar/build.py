@@ -8,7 +8,7 @@ import numpy as np
 
 from graph_tuning_infra.database import LOAD_POOL, Stage, connect, copy
 from graph_tuning_infra.features import encoder
-from graph_tuning_infra.files import write_json
+from graph_tuning_infra.files import read_json, write_json
 from graph_tuning_infra.log import configure
 from graph_tuning_infra.postgres import connect as postgres
 
@@ -32,19 +32,26 @@ class Counter:
         return np.arange(start, start + count, dtype=np.int64)
 
 
-def build(output, name, host, port, database, user, campaigns, features):
+def build(output, name, host, port, database, user, campaigns, features, staged=False):
     started = time.perf_counter()
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     database_path = output / (name + '.lbug')
-    if database_path.exists() or output.joinpath(name + '.staging').exists():
+    staging = output / (name + '.staging')
+    if database_path.exists() or (staging.exists() and not staged):
         raise FileExistsError('database exists; choose another name or output')
+    provenance = dict(host=host, port=port, database=database, campaigns=campaigns, features=features)
+    if staged:
+        stage = Stage.open(staging)
+        summary = read_json(staging / 'summary.json')
+        LOG.info('staging reused directory=%s units=%d graphs=%d', staging, len(stage.writers), len(summary))
+        return load(output, name, stage, summary, provenance, started)
     connection = postgres(host, port, database, user)
     reference = Reference(connection)
     encode = encoder(features // 2, list(NUMBERS), list(CATEGORIES))
     chosen = corpus.campaigns(connection, campaigns)
     counter = Counter()
-    stage = Stage(output / (name + '.staging'))
+    stage = Stage(staging)
     summary = []
     for index, campaign in enumerate(chosen):
         clock = time.perf_counter()
@@ -59,16 +66,20 @@ def build(output, name, host, port, database, user, campaigns, features):
         LOG.info('campaign exit index=%d key=%s seconds=%.2f', index, campaign['campaign_key'], summary[-1]['seconds'])
     stage.close()
     connection.close()
-    store, ladybug = connect(database_path, read_only=False, buffer_pool_size=LOAD_POOL)
-    for statement in declaration(features, len(SIGNALS)):
+    write_json(staging / 'summary.json', summary)
+    return load(output, name, stage, summary, provenance, started)
+
+
+def load(output, name, stage, summary, provenance, started):
+    store, ladybug = connect(output / (name + '.lbug'), read_only=False, buffer_pool_size=LOAD_POOL)
+    for statement in declaration(provenance['features'], len(SIGNALS)):
         ladybug.execute(statement)
     copy(ladybug, stage)
     ladybug.close()
     store.close()
     shutil.rmtree(stage.directory)
     write_json(output / (name + '.task.json'), dict(name=name, database=name + '.lbug', target=TARGET))
-    write_json(output / (name + '.build.json'), dict(host=host, port=port, database=database, campaigns=campaigns, features=features, graphs=summary,
-                                                    seconds=time.perf_counter() - started))
+    write_json(output / (name + '.build.json'), dict(provenance, graphs=summary, seconds=time.perf_counter() - started))
     LOG.info('build exit seconds=%.1f graphs=%d observations=%d facts=%d', time.perf_counter() - started, len(summary),
              sum(item['observations'] for item in summary), sum(item['facts'] for item in summary))
     return output / (name + '.task.json')
@@ -84,9 +95,10 @@ def main():
     parser.add_argument('--user', default='tw')
     parser.add_argument('--campaigns', type=int, default=100)
     parser.add_argument('--features', type=int, default=128)
+    parser.add_argument('--staged', action='store_true')
     args = parser.parse_args()
     configure()
-    print(build(args.output, args.name, args.host, args.port, args.database, args.user, args.campaigns, args.features))
+    print(build(args.output, args.name, args.host, args.port, args.database, args.user, args.campaigns, args.features, args.staged))
 
 
 if __name__ == '__main__':
