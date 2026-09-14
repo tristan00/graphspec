@@ -49,7 +49,7 @@ OpenSSL 3 is installed system-wide (`choco install openssl.light`) or both DLLs 
 python -m tuning.build --task artifacts/graphdb/retention.task.json --output artifacts/bank_retention --workers 8
 python -m tuning.check_models artifacts/bank_retention --output artifacts/checks_retention.json
 python -m tuning.run run --bank artifacts/bank_retention --output artifacts/run_retention --continuous --selector tpe
-python -m dashboard.server --directory artifacts/run_retention --port 8766
+python -m dashboard.server --root artifacts --port 8766
 ```
 
 `retention` is the example used throughout this page.
@@ -283,7 +283,7 @@ python -m tuning.run report RUN
 - `--resume` continues a run with its planned selector, seed, budget and batch size, and refuses a rebuilt or
   different bank or declaration.
 
-`python -m dashboard.server --directory RUN --port 8766` serves every attempt at http://127.0.0.1:8766/,
+`python -m dashboard.server --root artifacts --port 8766` lists every run under the root, with its bank and graph count, in a selector at the top of http://127.0.0.1:8766/ and serves the chosen run's attempts (the newest by default; the choice is in the page address),
 sorted by validation MSE and refreshed every ten seconds. It only reads run files.
 
 **Provenance**
