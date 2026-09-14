@@ -9,29 +9,38 @@ from .turns import enabled
 
 LOG = logging.getLogger(__name__)
 ENTITY_FRAMES = 1 << 20
+CHUNK = 64
 
 
-def batches(blocks, size, entities, seed=None, frame_budget=None):
+def batches(blocks, size, entities, seed=None, frame_budget=None, chunk=CHUNK):
     started = time.perf_counter()
-    buckets = {}
+    rng = np.random.default_rng(seed) if seed is not None else None
+    graphs = list(dict.fromkeys(block[0] for block in blocks))
+    if rng is not None:
+        rng.shuffle(graphs)
+    position = {graph: index // chunk for index, graph in enumerate(graphs)}
+    chunks = {}
     for block in blocks:
-        buckets.setdefault(block[2] - block[1], []).append(block)
+        chunks.setdefault(position[block[0]], {}).setdefault(block[2] - block[1], []).append(block)
     result = []
-    for length, values in buckets.items():
-        limit = min(size, max(1, frame_budget // length)) if frame_budget else size
-        group, rows, cells = [], 0, 0
-        for block in values:
-            width, span = block[6] - block[5], length * entities[block[0]]
-            if group and (len(group) == limit or rows + width > ROWS or cells + span > ENTITY_FRAMES):
-                result.append(group)
-                group, rows, cells = [], 0, 0
-            group.append(block)
-            rows += width
-            cells += span
-        result.append(group)
-    if seed is not None:
-        np.random.default_rng(seed).shuffle(result)
-    LOG.info('batches exit seconds=%.3f blocks=%d batches=%d', time.perf_counter() - started, len(blocks), len(result))
+    for index in sorted(chunks):
+        groups = []
+        for length, values in chunks[index].items():
+            limit = min(size, max(1, frame_budget // length)) if frame_budget else size
+            group, rows, cells = [], 0, 0
+            for block in values:
+                width, span = block[6] - block[5], length * entities[block[0]]
+                if group and (len(group) == limit or rows + width > ROWS or cells + span > ENTITY_FRAMES):
+                    groups.append(group)
+                    group, rows, cells = [], 0, 0
+                group.append(block)
+                rows += width
+                cells += span
+            groups.append(group)
+        if rng is not None:
+            rng.shuffle(groups)
+        result.extend(groups)
+    LOG.info('batches exit seconds=%.3f blocks=%d batches=%d chunks=%d', time.perf_counter() - started, len(blocks), len(result), len(chunks))
     return result
 
 

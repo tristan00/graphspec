@@ -42,6 +42,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 - With `time/context` c above 0, a window that starts in period p starts instead at the first step of period max(0, p−c). Each family gets its period-end readout. Replayed steps add no supervised rows.
 - A batch groups windows of equal length, `batch sequences × 16 // H` of them. It holds at most 1,024 frames, 1,024 prediction rows and 1,048,576 entity-frames, where a window contributes its steps times its graph's entity count.
 - The infra layer reserves the GPU memory a fit or model check may use.
+- Batches hold windows of one length. They are formed within chunks of 64 graphs: each epoch shuffles the graphs, cuts them into chunks, forms every batch inside its chunk and shuffles the batches of a chunk, so the feature matrices an epoch touches are loaded about once each rather than once per batch.
 - Sequence and memory states reset at window boundaries. Event models start from the last features known before the window.
 - Targets are standardised with the training mean and sample standard deviation. Predictions are converted back before scoring raw MSE and R².
 - The saved checkpoint is reloaded and must reproduce the first validation batch.

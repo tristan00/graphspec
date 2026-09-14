@@ -76,8 +76,10 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         raise ValueError('each fit requires at least one complete training epoch')
     context_blocks = turn_blocks(bank, training_blocks, cfg)
     sizes = bank.sizes(cfg)
-    grouped = batches(context_blocks, batch_size, sizes, frame_budget=1024)
-    training = [(epoch, group) for epoch in range(epochs) for group in batches(context_blocks, batch_size, sizes, cfg['seed'] + epoch, frame_budget=1024)]
+    training, ends = [], set()
+    for epoch in range(epochs):
+        training.extend((epoch, group) for group in batches(context_blocks, batch_size, sizes, cfg['seed'] + epoch, frame_budget=1024))
+        ends.add(len(training))
     emit('fit_enter', model=model, graph=graph[:10], updates=len(training), epochs=epochs,
         training_rows=len(bank.split['train_indices']), batch_sequences=batch_size, config=cfg)
     net.train()
@@ -112,7 +114,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         losses.append(float(loss.detach()))
         epoch_sum += losses[-1] * len(b['rows'])
         budget.check()
-        if (update + 1) % len(grouped) == 0:
+        if update + 1 in ends:
             if not np.array_equal(np.sort(epoch_rows), np.asarray(bank.split['train_indices'])):
                 raise ValueError('epoch omitted or duplicated training rows')
             epoch_losses.append(epoch_sum / len(epoch_rows))
