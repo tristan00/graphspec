@@ -89,9 +89,10 @@ class Bank:
         return result
 
     def sizes(self, cfg):
+        graphs = self.manifest['graphs']
         if not self.joining(cfg):
-            return self.entities
-        return {0: len(self.arrays(0, cfg)['entity_kind'])}
+            return {graph['index']: (graph['entities'], graph['facts'] / graph['steps']) for graph in graphs}
+        return {0: (len(self.arrays(0, cfg)['entity_kind']), sum(graph['facts'] for graph in graphs) / sum(graph['steps'] for graph in graphs))}
 
     def variant(self, cfg):
         from .model_spec import groups
@@ -150,7 +151,7 @@ class Bank:
 
 def array(value, dtype=None):
     result = np.ascontiguousarray(value)
-    if dtype is not None and result.dtype != NUMPY[dtype]:
+    if dtype is not None and result.dtype != NUMPY[dtype] and not (dtype == torch.long and result.dtype == np.int32):
         result = result.astype(NUMPY[dtype])
     return result
 
@@ -187,14 +188,6 @@ class Frames:
         self.directed, self.ranges, self.canonical = directed, ranges, canonical
 
 
-class MixedEdges:
-
-    __slots__ = ('segments',)
-
-    def __init__(self, segments):
-        self.segments = segments
-
-
 def gathered(graph, key, index=None):
     return Gather([(graph, key, None if index is None else array(index, torch.long))])
 
@@ -218,8 +211,6 @@ def joined(items, axis=0, order=None):
         return np.concatenate(items, axis)
     if isinstance(first, Gather):
         return Gather([segment for item in items for segment in item.segments])
-    if isinstance(first, MixedEdges):
-        return MixedEdges([segment for item in items for segment in item.segments])
     return Features([segment for item in items for segment in item.segments], order)
 
 
@@ -334,23 +325,23 @@ def recipe(bank, block, cfg):
         first_edge, last_edge = between(spatial_steps, start, stop)
         spatial = held.numpy('spatial')[first_edge:last_edge]
         edge_bounds = np.searchsorted(spatial_steps[first_edge:last_edge], np.arange(start, stop + 1, dtype=spatial_steps.dtype))
-        attribute_rows = held.numpy('spatial_attribute_row')[first_edge:last_edge]
+        attribute_rows = held.numpy('spatial_attribute_row')
         edges = spatial[:, :2].T - lo
         b.update(edges=array(edges, torch.long), relation=array(spatial[:, 2], torch.long))
         b['attributes'], b['attribute_edges'] = {}, {}
-        by_code = np.argsort(spatial[:, 2], kind='stable')
-        sorted_codes = spatial[by_code, 2]
-        codes = [list(dict.fromkeys((registry.by_name[name].code, registry.by_name[name].reverse))) for name in registry.attributed]
-        code_bounds = np.searchsorted(sorted_codes, np.asarray([[code, code + 1] for group in codes for code in group], sorted_codes.dtype).reshape(-1)).reshape(-1, 2)
-        offset = 0
-        for name, group in zip(registry.attributed, codes):
+        by_code, code_offsets = held.numpy('spatial_order'), held.numpy('spatial_code_offsets')
+        window = np.asarray((first_edge, last_edge), by_code.dtype)
+        for name in registry.attributed:
             declared = registry.by_name[name]
-            pieces = [by_code[lo_code:hi_code] for lo_code, hi_code in code_bounds[offset:offset + len(group)]]
-            offset += len(group)
-            chosen = pieces[0] if len(pieces) == 1 else np.sort(np.concatenate(pieces))
+            pieces = []
+            for code in dict.fromkeys((declared.code, declared.reverse)):
+                lo_code, hi_code = code_offsets[code], code_offsets[code + 1]
+                low, high = by_code[lo_code:hi_code].searchsorted(window)
+                pieces.append(by_code[lo_code + low:lo_code + high])
+            chosen = pieces[0] if len(pieces) == 1 else np.concatenate(pieces)
             values = held.numpy('attributes_' + name)[attribute_rows[chosen]]
             b['attributes'][name] = array(values.reshape(-1, len(declared.attributes)), torch.float32)
-            b['attribute_edges'][name] = array(chosen, torch.long)
+            b['attribute_edges'][name] = array(chosen - first_edge, torch.long)
         directed = registry.canonical[spatial[:, 2]]
         canonical_bounds = np.r_[0, np.cumsum(directed)][edge_bounds]
         b['frame_edges'] = Frames(directed, [[(int(edge_bounds[t]), int(edge_bounds[t + 1]))] for t in range(n)], False)
@@ -387,7 +378,8 @@ def recipe(bank, block, cfg):
         all_ticks = np.r_[ticks, moment * 2]
         gaps = np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2).astype(np.float32)
         b['mixed'] = dict(x=joined([features(graph, (right - left,), ('mixed_x', (left, right), None)), b['query']]), kind=mk,
-                          edge_index=array(edge[:, :2].T, torch.long), edge=MixedEdges([('coded', array(edge[:, 2], torch.long), gaps)]), query=array(qi, torch.long))
+                          edge_index=array(edge[:, :2].T, torch.long), edge_code=array(edge[:, 2] | (1 << 13), torch.long),
+                          edge_gap=array(np.stack((gaps, np.zeros_like(gaps)), 1)), query=array(qi, torch.long))
         if enabled(cfg):
             from .turn_inputs import mixed_edges as extend_mixed
 
@@ -479,8 +471,6 @@ def prepare(value, bundle):
         return Features(segments, None if value.order is None else bundle.hold(value.order))
     if isinstance(value, Frames):
         return Frames(bundle.hold(value.directed), value.ranges, value.canonical)
-    if isinstance(value, MixedEdges):
-        return MixedEdges([(segment[0],) + tuple(bundle.hold(item) for item in segment[1:]) for segment in value.segments])
     if isinstance(value, dict):
         return {key: prepare(item, bundle) for key, item in value.items()}
     if isinstance(value, list):
@@ -491,7 +481,7 @@ def prepare(value, bundle):
 
 
 def identical(left, right):
-    return left.shape == right.shape and left.dtype == right.dtype and np.array_equal(left.view(np.uint8), right.view(np.uint8))
+    return left is right or (left.shape == right.shape and left.dtype == right.dtype and np.array_equal(left.view(np.uint8), right.view(np.uint8)))
 
 
 class Resolver:
@@ -512,8 +502,7 @@ class Resolver:
         return self.tables[key]
 
     def numbers(self, values):
-        host = torch.as_tensor(np.asarray(values, np.int64))
-        return host if torch.device(self.device).type == 'cpu' else host.pin_memory().to(self.device, non_blocking=True)
+        return torch.as_tensor(np.asarray(values, np.int64), device=self.device)
 
     def spread(self, values, lengths, total):
         return torch.repeat_interleave(self.numbers(values), self.numbers(lengths), output_size=total)
@@ -590,23 +579,6 @@ class Resolver:
 
         return self.grouped(items, resolve)
 
-    def mixed_edges(self, value):
-        segments = value.segments
-        items = [(segment[0], int(self.tensors[segment[1].index].shape[0])) for segment in segments]
-
-        def resolve(kind, positions):
-            chosen = [segments[position] for position in positions]
-            if kind == 'raw':
-                return torch.cat([self.tensors[segment[1].index] for segment in chosen]) if len(chosen) > 1 else self.tensors[chosen[0][1].index]
-            codes, gaps = (self.local([self.tensors[segment[column].index] for segment in chosen]) for column in (1, 2))
-            feature = torch.zeros((len(codes), 16), device=self.device)
-            feature[:, :13] = ((codes[:, None] & (1 << torch.arange(13, device=self.device))) != 0).float()
-            feature[:, 13] = 1
-            feature[:, 14] = gaps
-            return feature
-
-        return self.grouped(items, resolve)
-
     def run(self, value):
         if isinstance(value, Pending):
             return self.tensors[value.index]
@@ -616,8 +588,6 @@ class Resolver:
             return self.gather(value)
         if isinstance(value, Features):
             return self.features(value)
-        if isinstance(value, MixedEdges):
-            return self.mixed_edges(value)
         if isinstance(value, dict):
             result = {key: self.run(item) for key, item in value.items() if not isinstance(item, Frames)}
             for key, item in value.items():
@@ -661,6 +631,3 @@ def materialise(bank, cfg, tree, device):
     LOG.debug('materialise exit arrays=%d bytes=%d device=%s seconds=%.4f', len(spans), len(buffer), device, time.perf_counter() - started)
     return result
 
-
-def pack(bank, block, cfg, device):
-    return materialise(bank, cfg, recipe(bank, block, cfg), device)

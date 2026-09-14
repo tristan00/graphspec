@@ -59,7 +59,9 @@ def base(graph, registry, spec, categories):
     spatial = np.stack((np.where(flip, target[index], source[index]), np.where(flip, source[index], target[index]),
                         np.where(flip, reverse[index], codes[index])), 1).astype(np.int32)
     attribute_row = np.full(len(codes), -1, np.int32)
-    arrays = {}
+    by_code = np.argsort(spatial[:, 2], kind='stable')
+    arrays = dict(spatial_order=by_code.astype(np.int32),
+                  spatial_code_offsets=np.searchsorted(spatial[by_code, 2], np.arange(registry.relations + 1)).astype(np.int64))
     for name in registry.attributed:
         edge = registry.by_name[name]
         use = codes == edge.code
@@ -94,17 +96,18 @@ def base(graph, registry, spec, categories):
     order = np.argsort(entity, kind='stable')
     altered = np.ones(len(entity), bool)
     if len(order) > 1:
-        altered[order[1:]] = (entity[order][1:] != entity[order][:-1]) | np.any(x[order][1:] != x[order][:-1], 1)
+        owners, vectors = entity[order], x[order]
+        altered[order[1:]] = (owners[1:] != owners[:-1]) | np.any(vectors[1:] != vectors[:-1], 1)
     events = replay(entity, step, altered, np.stack((source, target, codes), 1), fact_step,
                     np.stack((graph.fact_source[absent], graph.fact_target[absent], graph.fact_code[absent]), 1), graph.fact_step[absent], steps,
                     (decision_actor, decision_subject, decision_context, category) if decided else None, graph.name, len(kinds))
-    arrays.update(x=x.astype(np.float16), entity=entity.astype(np.int32), step=step.astype(np.int32), turn=graph.period[step].astype(np.int32),
+    arrays.update(x=x.astype(np.float16, copy=False), entity=entity.astype(np.int32), step=step.astype(np.int32), turn=graph.period[step].astype(np.int32),
                   snapshot_offsets=np.searchsorted(step, np.arange(steps + 1)).astype(np.int64),
                   entity_kind=(np.zeros_like(kinds) if enabled(spec, 'nodes/untyped') else kinds).astype(np.int8),
                   spatial=spatial, spatial_attribute_row=attribute_row[index], spatial_step=fact_step[index].astype(np.int32),
                   observation_ids=np.argsort(entity, kind='stable').astype(np.int32),
                   observation_offsets=np.r_[0, np.cumsum(np.bincount(entity, minlength=len(kinds)))].astype(np.int64),
-                  query=(graph.query_x if decided else np.zeros((0, registry.features))).astype(np.float16),
+                  query=(graph.query_x if decided else np.zeros((0, registry.features))).astype(np.float16, copy=False),
                   decision_actor=(decision_actor if decided else np.zeros(0)).astype(np.int32),
                   actor=np.asarray(actor, np.int32), subject=np.asarray(subject, np.int32), query_context=np.asarray(query_context, np.int32).reshape(-1, 3),
                   query_step=np.asarray(row_step, np.int32), events=events,
@@ -340,7 +343,7 @@ def validate(arrays, graph, registry, spec, groups):
     if not np.isfinite(x).all():
         raise ValueError('nonfinite observation features in graph %s' % graph.name)
     codes, rows = arrays['spatial'][:, 2], arrays['spatial_attribute_row']
-    by_code = np.argsort(codes, kind='stable')
+    by_code = arrays['spatial_order']
     sorted_codes, sorted_rows = codes[by_code], rows[by_code]
     for edge in registry.edges:
         use = np.concatenate([sorted_rows[lo:hi] for lo, hi in np.searchsorted(sorted_codes, np.asarray([[code, code + 1] for code in (edge.code, edge.reverse)], sorted_codes.dtype))])

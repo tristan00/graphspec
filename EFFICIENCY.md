@@ -142,3 +142,51 @@ Snapshot epoch 187 s → 111 s; the training process's time waiting on packed ba
 **Verification**
 
 `tests/`: 9 tests in 6 s, covering the bundle layout against the packed buffer, slot transfer and growth, the packer against `materialise` for the snapshot and event-graph views on a generated bank, prune's trash and sweeper, the size cache and the stamp check, and the relational layer with and without edges.
+
+**14 September 2026: the model code**
+
+Measured on the same workstation and bank, history 8, hidden 32, 64 sequences per batch, one epoch with 8 packing processes, each fit alone on the machine. Before is commit `3b20038`; after is `HEAD`. Every trial folder and every variant under `artifacts/` was deleted before this work started. Equality was checked on the 10-campaign bank against reference outputs and gradients recorded from the previous code for 54 cases: 27 model configurations covering every view, every spatial mode, every temporal operator, every memory rule and both mixed aggregations, each with and without turn context, four batches each. Every case agrees with the reference to the run-to-run noise of the previous code itself (outputs within 1e-7 absolute, gradients within 1e-5 relative, the antisymmetric memory rule within its own 1e-4), except a 1e-4 relative difference in the gradient of the mixed view's source weight, which is now summed over nodes instead of edges. Packed batches from the packing processes are identical to the single-process path for every view with and without turn context, 280 batches, and all 69 preset configurations run on the 10-campaign bank.
+
+**Where the time went**
+
+The snapshot and memory views were bound by kernel launches, not by the GPU. A relational snapshot batch issued about 1,900 launches: the relational layer multiplied each relation kind's edges by its own matrix in a Python loop, about 300 small matrix multiplies per layer and again in the backward pass, and the attributed relations added another 40 gathers, transforms and scatters per layer. The memory view issued about 2,700 launches per batch because every tick recomputed embeddings and masks that do not depend on the memory, and every query phase ran its own attention readout and reward head. The mixed view was already GPU bound.
+
+**What changed**
+
+- The relational layer sorts a batch's edges by relation once, cuts each relation's run into chunks of 128 rows padded with a dummy row, and multiplies every chunk in one `bmm` against the chunk's relation matrix; one `index_add_` sums the messages, with padded rows landing on a dummy node. Attributes travel as one flat vector per batch with per-relation counts; the training process pads them once to the widest relation and multiplies them the same way against one stacked parameter, which is initialised exactly as the per-relation linears were. The degree is computed once per batch instead of once per layer (`tuning/layers.py`, `tuning/snapshot.py`, `tuning/batching.py`).
+- The memory view computes event embeddings, per-tick touched masks and receiver counts once per batch, gathers only the endpoint and neighbour states inside the tick loop, and runs the attention readout, turn context, pair terms and reward head once over all queries after it (`tuning/events.py`).
+- The mixed view applies the source linear to nodes before gathering edges and scores attention from node terms, and its edge features are built on the device from an edge code and two gaps instead of arriving as sixteen floats per edge (`tuning/message_net.py`, `tuning/data.py`, `tuning/turn_inputs.py`).
+- Packing keeps int32 indices as int32 instead of widening them to int64 and narrowing them back in the bundle; the variant stores the code-sorted edge order and per-code offsets, so a window's attributed edges are two binary searches per relation instead of an argsort and forty sorts (`tuning/data.py`, `graphspec/representations.py`, `graph_tuning_infra/arrays.py`).
+- A batch also holds at most 4,194,304 facts, counted from each graph's facts per step in the manifest. The configuration that ran out of memory in the previous search, attention spatial layers with a short history and 204 sequences per batch, allocates about 3.7 KB per edge; the fact budget and the entity-frame budget together keep it near 15 GB (`tuning/batching.py`).
+- The resident loader copies through one reusable pinned staging buffer instead of pinning a fresh buffer per graph; the variant builder no longer copies the feature matrix or gathers it twice (`graph_tuning_infra/arrays.py`, `graphspec/representations.py`).
+
+**Results**
+
+Milliseconds per training step on the 10-campaign bank, forward, backward and optimizer, with kernel launches per step:
+
+| View | Before | After | Launches before | after |
+|---|---:|---:|---:|---:|
+| snapshot, relational, entity GRU | 58.3 | 29.4 | 1,942 | 414 |
+| memory, mailbox GRU | 59.0 | 35.0 | 2,717 | 1,697 |
+| mixed, mean, GRU | 27.2 | 26.8 | 196 | 200 |
+
+Seconds per epoch on the 1,000-campaign bank, with the training process's GPU compute and its wait for packed batches:
+
+| View | Epoch before | after | Compute before | after | Batch wait before | after |
+|---|---:|---:|---:|---:|---:|---:|
+| snapshot | 111 | 90 | 83 | 63 | 27 | 27 |
+| mixed | 99 | 74 | 61 | 54 | 37 | 19 |
+| memory | 79 | 54 | 64 | 40 | 15 | 13 |
+| projection | 31 | 29 | 16 | 15 | 15 | 14 |
+| affinity | 35 | 33 | 23 | 23 | 11 | 10 |
+| event graph | 26 | 27 | 12 | 12 | 14 | 15 |
+| tree | 26 | 20 | 10 | 9 | 15 | 11 |
+| walks | 23 | 23 | 8 | 8 | 14 | 15 |
+| sequence | 19 | 18 | 10 | 9 | 9 | 9 |
+| signal | 15 | 17 | 10 | 9 | 5 | 8 |
+
+The snapshot fit reaches the same holdout score, R² 0.234 against 0.232, with a first-epoch loss that agrees to three digits; the arithmetic order inside the relational layer changed, so the two trajectories are not bit-identical. The snapshot view is now GPU bound: its batch wait is mostly the resolve step's device copies queuing behind the previous step's backward pass. A snapshot batch packs in 336 ms in one process against 472 ms before, so eight processes deliver a batch every 42 ms against a step of 63 ms. The variant build for 1,000 graphs fell from 52.6 s to 48.7 s: a graph builds in 217 ms alone, load 32, representation 125, validation 23, save 27, and in 400 ms under eight-process contention, so the build is bound by the machine, not by one process.
+
+**Verification**
+
+`tests/`: 10 tests in 7 s; the relational layer tests now check the chunked matmul against an edge loop with and without edges and the stacked attribute parameter against per-relation linears.

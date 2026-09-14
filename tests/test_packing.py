@@ -36,14 +36,15 @@ def test_bundle_write_matches_pack():
     buffer = np.full(total + 100, 255, np.uint8)
     bundle.write(buffer, arrays)
     for original, tensor in zip(held_arrays(), views(torch.from_numpy(buffer), spans)):
-        assert torch.equal(tensor, torch.as_tensor(original)) and tensor.dtype == torch.as_tensor(original).dtype
+        expected = torch.as_tensor(original)
+        assert torch.equal(tensor, expected.long() if expected.dtype == torch.int32 else expected)
     packed = Bundle('cpu')
     for array in held_arrays():
         packed.hold(array)
     packed_buffer, packed_spans = packed.pack()
     assert packed_spans == spans and len(packed_buffer) == total
     assert all(same(x, y) for x, y in zip(views(torch.from_numpy(packed_buffer), spans), views(torch.from_numpy(buffer), spans)))
-    assert spans[0][2] == torch.int32 and spans[0][4] == torch.long and spans[1][2] == torch.long
+    assert spans[0][2] == torch.int32 and spans[0][4] == torch.long and spans[1][2] == torch.long and spans[5][2] == torch.int32 and spans[5][4] == torch.long
 
 
 def test_slot_transfer_and_growth():

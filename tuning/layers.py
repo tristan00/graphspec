@@ -1,8 +1,12 @@
 import math
 
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
+
+
+CHUNK = 128
 
 
 def mean(values, index, size):
@@ -30,19 +34,62 @@ def masked_weights(score, mask):
     return weight / weight.sum(-1, keepdim=True).clamp_min(1e-8)
 
 
-def grouping(source, destination, relation):
-    order = torch.argsort(relation)
-    kinds, counts = torch.unique_consecutive(relation[order], return_counts=True)
-    return source[order], destination[order], kinds.tolist(), counts.tolist()
+class Segments:
+
+    __slots__ = ('sources', 'targets', 'kinds', 'length')
+
+    def __init__(self, sources, targets, kinds, length):
+        self.sources, self.targets, self.kinds, self.length = sources, targets, kinds, length
 
 
-def relational_messages(h, grouped, weights):
-    source, destination, kinds, counts = grouped
-    result = h.new_zeros(h.shape)
-    if kinds:
-        pieces = torch.split(h.index_select(0, source), counts)
-        result.index_add_(0, destination, torch.cat([piece @ weights[kind] for kind, piece in zip(kinds, pieces)]))
-    return result
+def segments(order, counts, source, destination, size, labels, length=CHUNK):
+    counts = np.asarray(counts, np.int64)
+    starts = np.cumsum(counts) - counts
+    pieces = -(-counts // length)
+    total = int(pieces.sum())
+    kind = np.repeat(np.arange(len(counts)), pieces)
+    first = np.repeat(np.cumsum(pieces) - pieces, pieces)
+    start = np.repeat(starts, pieces) + (np.arange(total) - first) * length
+    stop = np.repeat(starts + counts, pieces)
+    device = order.device
+    position = torch.as_tensor(start, device=device)[:, None] + torch.arange(length, device=device)
+    valid = position < torch.as_tensor(stop, device=device)[:, None]
+    row = order[position.clamp_max(max(len(order) - 1, 0))]
+    sources = torch.where(valid, source[row], 0).reshape(-1)
+    targets = torch.where(valid, destination[row], size).reshape(-1)
+    return Segments(sources, targets, labels[torch.as_tensor(kind, device=device)], length)
+
+
+def segment_matmul(x, weights, seg):
+    gathered = x.index_select(0, seg.sources).view(-1, seg.length, x.shape[1])
+    return torch.bmm(gathered, weights.index_select(0, seg.kinds)).reshape(-1, weights.shape[2])
+
+
+def attribute_inputs(values, counts, widths, device):
+    rows, kinds = int(sum(counts)), len(counts)
+    counts, widths = np.asarray(counts, np.int64), np.asarray(widths, np.int64)
+    kind = torch.repeat_interleave(torch.arange(kinds, device=device), torch.as_tensor(counts, device=device), output_size=rows)
+    width = torch.as_tensor(widths, device=device)[kind]
+    within = torch.arange(rows, device=device) - torch.as_tensor(np.cumsum(counts) - counts, device=device)[kind]
+    base = torch.as_tensor(np.cumsum(counts * widths) - counts * widths, device=device)[kind] + within * width
+    column = torch.arange(int(widths.max()), device=device)
+    padded = torch.where(column[None] < width[:, None], values[(base[:, None] + column).clamp_max(max(len(values) - 1, 0))], 0.0)
+    return padded.sign() * padded.abs().log1p()
+
+
+class Groups:
+
+    def __init__(self, edges, relation, size, values=None, attribute_edges=None, counts=None, widths=None):
+        source, destination = edges
+        order = torch.argsort(relation)
+        kinds, held = torch.unique_consecutive(relation[order], return_counts=True)
+        self.relational = segments(order, held.tolist(), source, destination, size, kinds)
+        self.degree = torch.zeros(size, device=source.device).index_add_(0, destination, torch.ones(len(destination), device=source.device)).clamp_min_(1)
+        self.attributes = self.inputs = None
+        if counts and sum(counts):
+            rows = torch.arange(len(attribute_edges), device=source.device)
+            self.attributes = segments(rows, counts, rows, destination[attribute_edges], size, torch.arange(len(counts), device=source.device))
+            self.inputs = attribute_inputs(values, counts, widths, source.device)
 
 
 def aggregate(h, edges, mode='mean'):
@@ -78,20 +125,22 @@ class Spatial(nn.Module):
         if mode == 'relational':
             self.weights = nn.Parameter(torch.empty(relations, hidden, hidden))
             nn.init.xavier_uniform_(self.weights)
-            self.attributes = nn.ModuleDict({name: nn.Linear(width, hidden, bias=False) for name, width in attributes.items()})
+            if attributes:
+                widths = list(attributes.values())
+                self.attribute_weights = nn.Parameter(torch.zeros(len(widths), max(widths), hidden))
+                for slot, width in enumerate(widths):
+                    self.attribute_weights.data[slot, :width] = nn.init.kaiming_uniform_(torch.empty(hidden, width), a=math.sqrt(5)).T
         elif mode == 'attention':
             self.query, self.key = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
 
-    def forward(self, h, edges, relation=None, attributes=None, attribute_edges=None):
+    def forward(self, h, edges, groups=None):
         source, destination = edges
         if self.mode == 'relational':
-            update = relational_messages(h, relation, self.weights)
-            if attributes:
-                for name, values in attributes.items():
-                    if len(values):
-                        update.index_add_(0, destination[attribute_edges[name]], self.attributes[name](values.sign() * values.abs().log1p()))
-            count = h.new_zeros(len(h)).index_add_(0, destination, h.new_ones(len(destination)))
-            update = update / count.clamp_min(1)[:, None]
+            update = h.new_zeros((len(h) + 1, h.shape[1]))
+            update.index_add_(0, groups.relational.targets, segment_matmul(h, self.weights, groups.relational))
+            if groups.attributes is not None:
+                update.index_add_(0, groups.attributes.targets, segment_matmul(groups.inputs, self.attribute_weights, groups.attributes))
+            update = update[:len(h)] / groups.degree[:, None]
         elif self.mode == 'attention':
             score = (self.query(h)[destination] * self.key(h)[source]).sum(-1) / math.sqrt(h.shape[-1])
             weight = segment_softmax(score, destination, len(h))

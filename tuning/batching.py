@@ -9,10 +9,11 @@ from .turns import enabled
 
 LOG = logging.getLogger(__name__)
 ENTITY_FRAMES = 1 << 20
+FACTS = 4 << 20
 CHUNK = 64
 
 
-def batches(blocks, size, entities, seed=None, frame_budget=None, chunk=CHUNK):
+def batches(blocks, size, sizes, seed=None, frame_budget=None, chunk=CHUNK):
     started = time.perf_counter()
     rng = np.random.default_rng(seed) if seed is not None else None
     graphs = list(dict.fromkeys(block[0] for block in blocks))
@@ -27,15 +28,17 @@ def batches(blocks, size, entities, seed=None, frame_budget=None, chunk=CHUNK):
         groups = []
         for length, values in chunks[index].items():
             limit = min(size, max(1, frame_budget // length)) if frame_budget else size
-            group, rows, cells = [], 0, 0
+            group, rows, cells, facts = [], 0, 0, 0.0
             for block in values:
-                width, span = block[6] - block[5], length * entities[block[0]]
-                if group and (len(group) == limit or rows + width > ROWS or cells + span > ENTITY_FRAMES):
+                entities, rate = sizes[block[0]]
+                width, span = block[6] - block[5], length * entities
+                if group and (len(group) == limit or rows + width > ROWS or cells + span > ENTITY_FRAMES or facts + length * rate > FACTS):
                     groups.append(group)
-                    group, rows, cells = [], 0, 0
+                    group, rows, cells, facts = [], 0, 0, 0.0
                 group.append(block)
                 rows += width
                 cells += span
+                facts += length * rate
             groups.append(group)
         if rng is not None:
             rng.shuffle(groups)
@@ -84,9 +87,10 @@ def recipe_batch(bank, blocks, cfg):
             b[key] = np.concatenate([np.where(p[key] >= 0, p[key] + int(offset), p[key]) for p, offset in zip(parts, entity_offsets)])
     if 'attributes' in parts[0]:
         edge_offsets = np.r_[0, np.cumsum([len(p['relation']) for p in parts])]
-        b['attributes'] = {name: np.concatenate([p['attributes'][name] for p in parts]) for name in parts[0]['attributes']}
-        b['attribute_edges'] = {name: np.concatenate([p['attribute_edges'][name] + int(offset)
-            for p, offset in zip(parts, edge_offsets)]) for name in parts[0]['attributes']}
+        names = list(parts[0]['attributes'])
+        b['attribute_values'] = np.concatenate([p['attributes'][name].reshape(-1) for name in names for p in parts])
+        b['attribute_edges'] = np.concatenate([p['attribute_edges'][name] + int(offset) for name in names for p, offset in zip(parts, edge_offsets)])
+        b['attribute_counts'] = Host([sum(len(p['attributes'][name]) for p in parts) for name in names])
     if 'x' in b:
         b['context_index'] = np.concatenate([p['context_index'] + int(offset) for p, offset in zip(parts, nodes)])
         b['decision_context'] = np.concatenate([np.where(p['decision_context'] >= 0, p['decision_context'] + int(offset), -1) for p, offset in zip(parts, nodes)])
@@ -107,7 +111,7 @@ def recipe_batch(bank, blocks, cfg):
         b['end_tree'] = combine_tree([p['end_tree'] for p in parts])
     if 'mixed' in parts[0]:
         offsets = np.r_[0, np.cumsum([length(p['mixed']['x']) for p in parts])]
-        b['mixed'] = {key: joined([p['mixed'][key] for p in parts]) for key in ('x', 'kind', 'edge')}
+        b['mixed'] = {key: joined([p['mixed'][key] for p in parts]) for key in ('x', 'kind', 'edge_code', 'edge_gap')}
         b['mixed']['edge_index'] = np.concatenate([p['mixed']['edge_index'] + int(offset) for p, offset in zip(parts, offsets)], 1)
         b['mixed']['query'] = np.concatenate([p['mixed']['query'] + int(offset) for p, offset in zip(parts, offsets)])
     if 'events' in parts[0]:

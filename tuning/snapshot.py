@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Spatial, TemporalEdges, grouping, mean
+from .layers import CausalAttention, EvolvingLayer, GatedTCN, GraphCell, Groups, Spatial, TemporalEdges, mean
 from .turns import EndContext, enabled, gather_end
 
 
@@ -21,6 +21,7 @@ class SnapshotNet(nn.Module):
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.query = nn.Linear(registry.features, hidden)
         attributes = {name: len(registry.attributes(name)) for name in registry.attributed}
+        self.widths = list(attributes.values())
         self.spatial = nn.ModuleList()
         if spec['snapshot/spatial'] != 'none':
             self.spatial.extend(Spatial(hidden, spec['snapshot/spatial'], registry.relations, attributes, spec['dropout']) for _ in range(spec['snapshot/layers']))
@@ -107,9 +108,11 @@ class SnapshotNet(nn.Module):
 
     def forward(self, b):
         h = self.input(b['x']) + self.kind(b['kind'])
-        relation = grouping(b['edges'][0], b['edges'][1], b['relation']) if self.spatial and self.spatial[0].mode == 'relational' else b['relation']
+        groups = None
+        if self.spatial and self.spatial[0].mode == 'relational':
+            groups = Groups(b['edges'], b['relation'], len(h), b['attribute_values'], b['attribute_edges'], b['attribute_counts'], self.widths)
         for layer in self.spatial:
-            h = layer(h, b['edges'], relation, b['attributes'], b['attribute_edges'])
+            h = layer(h, b['edges'], groups)
         q = self.query(b['query'])
         width = h.shape[-1]
         if self.temporal_mode == 'graph_sequence':

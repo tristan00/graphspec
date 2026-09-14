@@ -61,6 +61,9 @@ class Rule(nn.Module):
     def initial(self, state, observed, initialized):
         return state
 
+    def prepare(self, events, raw):
+        return None
+
     def state(self, memory):
         return memory
 
@@ -79,13 +82,16 @@ class MailboxGRU(Rule):
         self.message = nn.Sequential(nn.Linear(hidden * 5, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
         self.update = nn.GRUCell(hidden, hidden)
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous):
-        source, destination, kind = events[:, 0], events[:, 1], events[:, 3]
-        receivers, partners = torch.cat((source, destination)), torch.cat((destination, source))
+    def prepare(self, events, raw):
+        kind = events[:, 3]
         rel = torch.where(kind == 1, events[:, 6] + 1, torch.where(kind == 2, torch.full_like(kind, self.non_relation), torch.zeros_like(kind)))
-        edge = (self.event_kind(kind) + self.relation(rel) + self.status(events[:, 8] + 1)).repeat(2, 1)
-        content = torch.cat((memory[receivers], memory[partners], raw.repeat(2, 1), clock(receivers), edge), -1)
-        mailbox = mean(self.message(content), receivers, len(memory))
+        return self.event_kind(kind) + self.relation(rel) + self.status(events[:, 8] + 1)
+
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
+        source, destination = events[:, 0], events[:, 1]
+        receivers, partners = torch.cat((source, destination)), torch.cat((destination, source))
+        content = torch.cat((memory[receivers], memory[partners], raw.repeat(2, 1), clock(receivers), edge.repeat(2, 1)), -1)
+        mailbox = memory.new_zeros(memory.shape).index_add_(0, receivers, self.message(content)) / count[:, None]
         return torch.where(touched[:, None], self.update(mailbox, memory), memory), touched
 
 
@@ -107,7 +113,7 @@ class MutualRNN(Rule):
             head = head * (1 + self.projection(torch.log1p((frame_tick - last[actor]).clamp_min(0))[:, None]))
         return torch.stack((head + observed[actor], right[subject] + observed[subject]), 1)
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous):
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
         left, right, observed, initialized = memory
         source, destination, kind = events[:, 0], events[:, 1], events[:, 3]
         seen = kind == 0
@@ -140,7 +146,7 @@ class Intensity(Rule):
         self.state_map = nn.Linear(hidden, hidden)
         self.change_status = nn.Embedding(3, hidden)
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous):
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
         source, destination, kind = events[:, 0], events[:, 1], events[:, 3]
         neighborhood = self.structural(memory, b['frame_edges'][time_step])
         messages = torch.zeros_like(memory)
@@ -171,7 +177,7 @@ class Antisymmetric(Rule):
     def matrix(self):
         return self.weight - self.weight.T - self.damping * torch.eye(len(self.weight), device=self.weight.device)
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous):
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
         receivers = torch.cat((events[:, 0], events[:, 1]))
         forcing = mean(raw.repeat(2, 1), receivers, len(memory))
         matrix = self.matrix()
@@ -210,34 +216,39 @@ class MemoryNet(nn.Module):
             self.query_key, self.query_value = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
         self.reward = nn.Sequential(nn.Linear(hidden * (5 if self.pair_terms else 3), hidden), nn.SiLU(), nn.Linear(hidden, 1))
 
-    def embedding(self, memory, roots, step, b, last, frame_tick):
-        endpoints = self.rule.read(memory, roots, last, frame_tick)
-        if not self.attention:
-            return endpoints
-        state = self.rule.state(memory)
-        values = endpoints + self.input(b['context'][step, :2])
-        ids, mask = b['history_ids'][step].long(), b['history_mask'][step]
-        neighbors = state[ids.clamp_min(0)] + self.time(b['history_gap'][step])
-        scores = (self.query_key(values)[:, :, None] * neighbors).sum(-1) / math.sqrt(state.shape[-1])
-        weights = masked_weights(scores, mask)
-        return values + (self.query_value(neighbors) * weights[..., None]).sum(2)
-
-    def pairs(self, endpoints, memory, step, b):
-        state = self.rule.state(memory)
-        ids = b['common_ids'][step].long()
-        weight = b['common_frequency'][step] * (ids >= 0)
-        common = (state[ids.clamp_min(0)] * weight[:, :, None]).sum(1)
-        counts = b['common_stats'][step]
-        return torch.cat((endpoints[:, 0] * endpoints[:, 1], common, endpoints[:, 0] * counts[:, 1, None].log1p(), endpoints[:, 1] * counts[:, 2, None].log1p()), -1)
+    def readout(self, endpoints, neighbors, common, end_values, order, b):
+        if self.attention:
+            values = endpoints + self.input(b['context'][order, :2])
+            neighbors = neighbors + self.time(b['history_gap'][order])
+            scores = (self.query_key(values)[:, :, None] * neighbors).sum(-1) / math.sqrt(values.shape[-1])
+            weights = masked_weights(scores, b['history_mask'][order])
+            endpoints = values + (self.query_value(neighbors) * weights[..., None]).sum(2)
+        if end_values is not None:
+            endpoints = self.turns(endpoints.flatten(1), end_values.reshape(b['predictions'], lookback(self.cfg), -1)[order],
+                                   b['end_gaps'][order], b['end_mask'][order]).reshape(endpoints.shape)
+        if self.pair_terms:
+            ids = b['common_ids'][order]
+            weight = b['common_frequency'][order] * (ids >= 0)
+            counts = b['common_stats'][order]
+            return torch.cat((endpoints[:, 0] * endpoints[:, 1], (common * weight[:, :, None]).sum(1),
+                              endpoints[:, 0] * counts[:, 1, None].log1p(), endpoints[:, 1] * counts[:, 2, None].log1p()), -1)
+        return endpoints.flatten(1)
 
     def forward(self, b):
         state = self.input(b['initial']) + self.kind(b['entity_kind'])
         hidden = state.shape[-1]
         memory = self.rule.initial(state, self.input(b['initial']), b['initial'][:, self.width:].any(-1))
         last = state.new_full((b['entities'],), float(b['start'] * 2 - 1))
-        groups = {tick: (begin, end) for tick, begin, end in b['event_groups']}
+        groups = {tick: (index, begin, end) for index, (tick, begin, end) in enumerate(b['event_groups'])}
         encoded = self.input(b['event_x'])
-        predictions, order = [], []
+        static = self.rule.prepare(b['events'], encoded)
+        sizes = torch.as_tensor([end - begin for _, begin, end in b['event_groups']], device=state.device)
+        member = torch.repeat_interleave(torch.arange(len(sizes), device=state.device), sizes, output_size=len(b['events'])).repeat(2)
+        receivers = torch.cat((b['events'][:, 0], b['events'][:, 1]))
+        touched_all = torch.zeros(len(sizes), b['entities'], dtype=torch.bool, device=state.device)
+        touched_all[member, receivers] = True
+        counts = torch.zeros(len(sizes), b['entities'], device=state.device).index_put_((member, receivers), state.new_ones(len(receivers)), accumulate=True).clamp_min_(1)
+        endpoints, neighbors, common, order = [], [], [], []
         context = enabled(self.cfg)
         if context:
             end_values = state.new_zeros(b['predictions'] * lookback(self.cfg), hidden * 2)
@@ -248,29 +259,25 @@ class MemoryNet(nn.Module):
             for phase in (0, 1):
                 now = tick + phase
                 if phase:
-                    q = self.input(b['query'][step])
                     roots = torch.stack((b['actor'][step], b['subject'][step]), -1)
-                    endpoints = self.embedding(memory, roots, step, b, last, tick).flatten(1)
-                    if context:
-                        endpoints = self.turns(endpoints, end_values.reshape(b['predictions'], lookback(self.cfg), -1)[step],
-                                               b['end_gaps'][step], b['end_mask'][step])
-                    if self.pair_terms:
-                        endpoints = self.pairs(endpoints.reshape(len(step), 2, hidden), memory, step, b)
-                    predictions.append(self.reward(torch.cat((endpoints, q), -1)).squeeze(-1))
+                    endpoints.append(self.rule.read(memory, roots, last, tick))
                     order.append(step)
+                    if self.attention:
+                        neighbors.append(self.rule.state(memory)[b['history_ids'][step].long().clamp_min(0)])
+                    if self.pair_terms:
+                        common.append(self.rule.state(memory)[b['common_ids'][step].long().clamp_min(0)])
                 group = groups.get(now)
                 if group is None:
                     continue
-                begin, end = group
+                index, begin, end = group
                 events, raw = b['events'][begin:end], encoded[begin:end]
-                touched = torch.zeros(b['entities'], dtype=torch.bool, device=state.device)
-                touched[torch.cat((events[:, 0], events[:, 1]))] = True
 
                 def clock(ids):
                     return self.time((now - last[ids]).clamp_min(0))
 
-                memory, touched = self.rule.step(memory, events, raw, clock, touched, b, time_step, now, previous)
-                last = torch.where(touched, torch.full_like(last, now), last)
+                memory, touched = self.rule.step(memory, events, raw, clock, touched_all[index], b, time_step, now, previous,
+                                                 None if static is None else static[begin:end], counts[index])
+                last = last.masked_fill(touched, float(now))
                 previous = now
             if context:
                 ids, roots = b['end_capture'][time_step]
@@ -278,7 +285,11 @@ class MemoryNet(nn.Module):
                     prior = self.rule.read(memory, roots, last).reshape(len(ids), -1)
                     known = b['end_raw_mask'][:, :2].transpose(1, 2).reshape(-1, 2)[ids]
                     end_values = end_values.index_copy(0, ids, prior * known.repeat_interleave(hidden, -1))
-        return torch.cat(predictions)[torch.argsort(torch.cat(order))][b['selected']]
+        order = torch.cat(order)
+        features = self.readout(torch.cat(endpoints), torch.cat(neighbors) if self.attention else None, torch.cat(common) if self.pair_terms else None,
+                                end_values if context else None, order, b)
+        predictions = self.reward(torch.cat((features, self.input(b['query'][order])), -1)).squeeze(-1)
+        return predictions[torch.argsort(order)][b['selected']]
 
 
 class ProjectionNet(nn.Module):

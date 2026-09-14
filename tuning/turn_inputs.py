@@ -3,7 +3,7 @@ import torch
 
 from graphspec.transform import SEED
 
-from .data import Features, MixedEdges, array, features, gathered, joined, length, tree
+from .data import Features, array, features, gathered, joined, length, tree
 from .turns import lookback
 
 
@@ -92,13 +92,11 @@ def mixed_edges(b, graph):
     source = np.arange(len(chosen)) + length(mixed['x'])
     destination = np.broadcast_to(mixed['query'][:, None, None], b['end_raw_mask'].shape).reshape(-1)[mask]
     gaps = b['end_token_gaps'].reshape(-1, 3)[mask]
-    feature = np.zeros((len(chosen), 16), np.float32)
-    feature[:, 12:14] = 1
-    feature[:, 14:16] = np.log1p(gaps[:, :2])
     mixed['x'] = joined([mixed['x'], features(graph, (len(chosen),), ('x', chosen, 1.0))])
     mixed['kind'] = np.concatenate((mixed['kind'], np.zeros(len(chosen), np.int64)))
     mixed['edge_index'] = np.concatenate((mixed['edge_index'], np.stack((source, destination))), 1)
-    mixed['edge'] = MixedEdges(mixed['edge'].segments + [('raw', feature)])
+    mixed['edge_code'] = np.concatenate((mixed['edge_code'], np.full(len(chosen), (1 << 12) | (1 << 13), np.int64)))
+    mixed['edge_gap'] = np.concatenate((mixed['edge_gap'], np.log1p(gaps[:, :2]).astype(np.float32)))
 
 
 def history_tokens(b, graph, held, first, last, start, cfg, registry):
