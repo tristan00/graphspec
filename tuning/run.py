@@ -7,7 +7,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from graphspec.infra import sources
+from graphspec.infra import files, sources
 from graphspec.infra.files import (
     BUDGET,
     JsonCache,
@@ -377,6 +377,7 @@ def execute(directory, plan, continuous, registry):
         )
         raise
     finally:
+        files.drain()
         state.update(completed=datetime.now(timezone.utc).isoformat(), seconds=time.perf_counter() - started)
         write_json(directory / "runner.json", state)
         emit("run_exit", status=state["status"], seconds=state["seconds"])

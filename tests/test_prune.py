@@ -62,3 +62,12 @@ def test_prune_budget_spans_every_bank_and_evicts_the_least_recent_first(tmp_pat
     assert not stale.exists() and recent.exists() and keep.exists()
     files.SWEEPERS[tmp_path / "trash"].join(10)
     assert list((tmp_path / "trash").iterdir()) == []
+
+
+def test_drain_waits_for_every_sweep(tmp_path):
+    root = tmp_path / "variants"
+    keep = variant(root, "keep", 1, 10, 0)
+    variant(root, "old", 1, 10, 100)
+    files.prune(root, 0, keep, "variant.json")
+    files.drain()
+    assert list((tmp_path / "trash").iterdir()) == []

@@ -236,6 +236,13 @@ def sweep(trash):
     LOG.debug("sweep exit trash=%s removed=%d seconds=%.3f", trash, removed, time.perf_counter() - started)
 
 
+def drain():
+    started = time.perf_counter()
+    for thread in list(SWEEPERS.values()):
+        thread.join()
+    LOG.info("drain exit sweepers=%d seconds=%.3f", len(SWEEPERS), time.perf_counter() - started)
+
+
 def prune(root, limit, keep, stamp, pattern="*"):
     started = time.perf_counter()
     root = Path(root)
