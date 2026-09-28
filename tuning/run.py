@@ -23,6 +23,9 @@ from graphspec.spec import digest
 
 from . import objective
 from .budget import TIMEOUT_EXIT_CODE
+
+STARTUP = 10
+MIX = dict(random=25, tpe=25, forest=25, botorch=25)
 from .records import VERSION, Outcome, worker_alive
 from .report import report
 from .training import PACKAGES, fit
@@ -127,9 +130,9 @@ def run(args):
             batch_sequences=args.batch_sequences,
             workers=args.workers,
             variant_bytes=args.variant_gb << 30,
-            random_trials=100 if args.random_trials is None else args.random_trials,
+            random_trials=STARTUP if args.random_trials is None else args.random_trials,
             random_params=args.random_params or [],
-            mix=mix or {args.selector or "botorch": 100},
+            mix=mix or ({args.selector: 100} if args.selector else dict(MIX)),
             bounds=bounds,
             objective=chosen,
             limit=args.trials,

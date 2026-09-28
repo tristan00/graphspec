@@ -167,11 +167,11 @@ def test_running_again_continues_and_may_change_selector_random_phase_and_bounds
     output = tmp_path / "run"
     run(arguments(bank, output, selector="random"))
     plan = read_json(output / "plan.json")
-    assert plan["selector"] == "random" and plan["random_trials"] == 100 and plan["bounds"] == {}
+    assert plan["selector"] == "random" and plan["random_trials"] == 10 and plan["bounds"] == {}
 
     run(arguments(bank, output))
     plan = read_json(output / "plan.json")
-    assert plan["selector"] == "random" and plan["random_trials"] == 100 and plan["bounds"] == {}
+    assert plan["selector"] == "random" and plan["random_trials"] == 10 and plan["bounds"] == {}
 
     bounds = tmp_path / "bounds.json"
     write_json(bounds, {"epochs": {"low": 1, "high": 2}})
@@ -288,3 +288,12 @@ def test_tpe_good_set_is_the_best_hundred_trials():
     assert study.sampler._gamma(410) == 100
     assert study.sampler._gamma(40) == 40
     assert SETTINGS["good_set"] == 100
+
+
+def test_new_runs_default_to_a_short_random_start_then_a_four_way_mix(bank, tmp_path):
+    run(arguments(bank, tmp_path / "mixed"))
+    plan = read_json(tmp_path / "mixed" / "plan.json")
+    assert plan["random_trials"] == 10
+    assert plan["mix"] == {"random": 25, "tpe": 25, "forest": 25, "botorch": 25}
+    run(arguments(bank, tmp_path / "chosen", selector="tpe"))
+    assert read_json(tmp_path / "chosen" / "plan.json")["mix"] == {"tpe": 100}
