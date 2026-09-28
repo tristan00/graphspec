@@ -28,7 +28,10 @@ FAILURE_POLICY = dict(
 
 
 def histogram(values):
-    counts, edges = np.histogram(values, bins=30)
+    values = np.asarray(values, np.float64)
+    low, high = float(values.min()), float(values.max())
+    resolvable = high - low > 64 * np.spacing(max(abs(low), abs(high)))
+    counts, edges = np.histogram(values, bins=30 if resolvable else 1)
     return dict(edges=edges.tolist(), counts=counts.tolist())
 
 

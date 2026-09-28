@@ -297,3 +297,11 @@ def test_new_runs_default_to_a_short_random_start_then_a_four_way_mix(bank, tmp_
     assert plan["mix"] == {"random": 25, "tpe": 25, "forest": 25, "botorch": 25}
     run(arguments(bank, tmp_path / "chosen", selector="tpe"))
     assert read_json(tmp_path / "chosen" / "plan.json")["mix"] == {"tpe": 100}
+
+
+def test_score_histograms_survive_nearly_identical_predictions():
+    from tuning.space import histogram
+
+    nearly = [0.25, 0.25 + 5e-17, 0.25 + 1e-16]
+    assert histogram(nearly)["counts"] == [3]
+    assert sum(histogram([0.0, 1.0, 2.0])["counts"]) == 3 and len(histogram([0.0, 1.0])["counts"]) == 30
