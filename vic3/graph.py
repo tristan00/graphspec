@@ -560,8 +560,8 @@ class Run:
             held[name] = self.named("ideology", name)
             self.put(facts, "holds", self.owned("interest_group", group, state), held[name])
         for name, node in sorted(held.items()):
-            for law, approval in self.definitions["stances"].get(name, ()):
-                self.put(facts, "stance", node, self.named("law_type", law), approval)
+            for law, stance in self.definitions["stances"].get(name, ()):
+                self.put(facts, "ideology_" + stance, node, self.named("law_type", law))
         for (group, trait), row in state["interest_group_held_trait"].items():
             if row["enabled"]:
                 name = self.names["interest_group_trait"][trait]

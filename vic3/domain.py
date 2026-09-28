@@ -17,6 +17,7 @@ CODES = (
     "institution_type",
 )
 ATTITUDES = tuple(range(14))
+APPROVAL = ("strongly_disapprove", "disapprove", "neutral", "approve", "strongly_approve")
 STANCES = ("stance_colonize_region", "stance_conquer_region", "stance_none", "stance_protect_region")
 ENACTING_PHASES = (1, 2)
 OWNER_KINDS = {
@@ -108,7 +109,6 @@ RELATIONS = {
         (),
     ),
     "disallows": ((("law_type", "law_type"), ("law_type", "production_method")), ()),
-    "stance": ((("ideology", "law_type"),), ("approval",)),
     "holds": ((("interest_group", "ideology"),), ()),
     "governs": ((("interest_group", "country"),), ()),
     "party_of": ((("party", "country"),), ()),
@@ -136,7 +136,7 @@ RELATIONS.update(
     {"attitude_%d" % code: ((("country", "country"),), ("neighbour", "relevance")) for code in ATTITUDES}
 )
 RELATIONS.update({stance: ((("country", "strategic_region"),), ()) for stance in STANCES})
-APPROVAL = dict(strongly_disapprove=-2.0, disapprove=-1.0, neutral=0.0, approve=1.0, strongly_approve=2.0)
+RELATIONS.update({"ideology_" + word: ((("ideology", "law_type"),), ()) for word in APPROVAL})
 REQUIREMENTS = {
     "unlocking_technologies": ("unlocks", "technology"),
     "unlocking_laws": ("unlocks", "law_type"),

@@ -49,7 +49,10 @@ DEFINITIONS = dict(
         ("law_type", "law_x", "law_type", "law_y"),
         ("law_type", "law_y", "production_method", "pm_x"),
     ],
-    stances={"ideology_a": [("law_x", 2.0), ("law_y", -1.0)], "ideology_b": [("law_x", -2.0)]},
+    stances={
+        "ideology_a": [("law_x", "strongly_approve"), ("law_y", "disapprove")],
+        "ideology_b": [("law_x", "approve")],
+    },
     laws={
         "law_x": {"law_type.group": "lawgroup_a", "modifier.state_x_mult": 0.5},
         "law_y": {"law_type.group": "lawgroup_a", "modifier.state_y_bool": 1.0},
@@ -502,7 +505,8 @@ def test_run_writes_a_contract_graph(tmp_path):
     assert relations["disallows"].num_rows == 6
     assert relations["holds"].num_rows == relations["governs"].num_rows == 3
     assert relations["party_of"].num_rows == relations["member_of"].num_rows == 3
-    assert np.allclose(relations["stance"].column("approval").to_numpy(), [2.0, -1.0] * 3)
+    assert relations["ideology_strongly_approve"].num_rows == relations["ideology_disapprove"].num_rows == 3
+    assert "ideology_approve" not in relations
     assert relations["backs"].column("present").to_pylist() == [True, True, False]
     assert np.allclose(relations["backs"].column("members").to_numpy()[:2], [40.0, 40.0])
     law = [node for node, key in key_of.items() if key == "law_type:law_x"]

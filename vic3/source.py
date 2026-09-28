@@ -173,7 +173,9 @@ def definitions_of(connection, ruleset):
             found["disallows"].append((source, name, target, value))
         elif key == ("common/ideologies", "stance"):
             law, stance = value.split()
-            found["stances"].setdefault(name, []).append((law, APPROVAL[stance]))
+            if stance not in APPROVAL:
+                raise ValueError("unknown ideology stance %r" % stance)
+            found["stances"].setdefault(name, []).append((law, stance))
         elif row["field"] == "group":
             found["laws"].setdefault(name, {})["law_type.group"] = value
         elif row["field"] == "modifier":

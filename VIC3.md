@@ -38,7 +38,7 @@ GDP is value added: the market value of what buildings produce minus what they c
 - Institutions of the economy: laws, government, interest groups and parties are not multipliers on a fixed economy; they decide which economy exists. Serfdom forbids peasant migration and forces subsistence employment, slavery and its bans change who works and at what wage, public health and education change pop needs and literacy, agrarianism or laissez-faire change who invests and how, and a law can forbid or unlock whole production methods. The graph states this structurally:
   - each law type carries its modifiers as features (`modifier.<name>`, 250 names in the recorded rulesets) and its law group (`law_type.group`, the alternatives such as serfdom against tenant farmers);
   - `disallows` from a law type to the law types and production methods it forbids, and `unlocks` from laws, technologies and production methods to the production methods they unlock, from the method requirement tables;
-  - interest groups `hold` ideologies, and each held ideology states its `stance` toward every law it cares about, with approval from −2 to 2, which is what moves enactment;
+  - interest groups `hold` ideologies, and each held ideology states its stance toward every law it cares about as one of five relations, `ideology_strongly_disapprove` through `ideology_strongly_approve`, which is what moves enactment; the level is the relation, not an edge attribute, so every model family reads it;
   - interest groups `govern` their country while in government, carry their traits, belong to parties (`member_of`, `party_of`, party votes), and are `backed` by the strata whose pops belong to them, weighted by those pops' size;
   - the country's government type, the laws it has and is enacting, rulers, leaders and movements, as before.
 - Other multipliers: decrees, institutions, technology, companies, charters, power blocs, devastation, turmoil and pollution. Technology is recorded for the player only.
@@ -91,7 +91,7 @@ The `vic3` package reads finished runs and writes contract tables through `Stage
   - Economy: `owns`, `adjacent_country`, `import_tariff`, `export_tariff`, `market_owner`, `market_goods`, `in_market`, `local_price`, `produces_state`, `consumes_state`, `produces`, `consumes`, `uses`, `in_state`, `queued`, `will_be`, `runs`, `owned_by`, `needs`.
   - Policy: `has_law`, `enacting`, `researched`, `researching`, `decreed`, `institution`, `unlocks`, `pending`, `of_type`.
   - Space and population: `lives_in`, `works_in`, `migrates_to`, `adjacent`, `hub`, `lane`, `strait`.
-  - Politics: `represents`, `governs`, `leads`, `rules`, `supports`, `movement_of`, `holds`, `stance`, `member_of`, `party_of`, `backs`, `in_bloc`, `in_war`, `occupies`, one relation per attitude value and one per stance.
+  - Politics: `represents`, `governs`, `leads`, `rules`, `supports`, `movement_of`, `holds`, the five `ideology_<stance>` relations, `member_of`, `party_of`, `backs`, `in_bloc`, `in_war`, `occupies`, one relation per attitude value and one per stance.
   - Definitions: `unlocks` and `disallows` among technologies, law types and production methods.
   - Every fact is restated at every step, and removals are derived.
 - Targets: an action's integer parameters reach country, state, building, company, character, interest group (`interest_group` and `member`), political movement and war. A target absent at the step's pre-action snapshot is not stated and is counted in the build summary under `absent`: an event answer can create a building mid-turn that the main batch then orders, and the mid-turn snapshot is never read. AI attitudes toward a country that no longer exists are likewise counted and not stated. Law and institution parameters resolve to their type, and text parameters reach definition nodes.
@@ -108,23 +108,23 @@ The `vic3` package reads finished runs and writes contract tables through `Stage
 - Score: each series gets `val_loss` (query-weighted MSE over its training variance), raw MSE and persistence skill `val_r2`. `tuning/objective.py` blends the series losses with the run's `--objective` weights into the ranked score, used by every selector, the report and the dashboard. Predictions store the row, prediction, target, τ and series.
 - The suite passes. With four workers it takes about fourteen seconds.
 
-Built data: the `vic3-block-4y` dataset and bank from runs 1 and 4, with the four-year cap, verified with no problems.
+Built data: the `vic3-series-5y` dataset and bank from all 57 finished runs (12 held out for validation), with the five-year cap and the three series: 3,483 decision steps and 273,557 label points, verified against the database with no problems (1,796 checks), and every model family passing `check`. The build skipped 92 AI attitudes toward countries that no longer existed and one action target created mid-turn. The search runs at `runs/vic3-series-5y`, ranked by the equal-weight mean of the three standardised validation losses.
 
 **9. Open work, in order**
 
-1. Suite time under ten seconds. It stands at about fourteen with four workers. The remaining pass defers heavy imports so each worker pays only for its own tests.
-2. Fallbacks and simplifications in the adapter:
+1. Fallbacks and simplifications in the adapter:
    - Ideology and commander-rank names fall back to the raw code.
    - A missing region shape falls back to an empty dict.
    - `present` defaults to true when absent.
    - The database comparison in verify is optional.
    - `actions_at` recomputes state it already has.
    - The query vector is always empty and could be dropped.
-3. Verify does not check the four-year cap or date uniqueness. The bank builder catches duplicates later.
-4. Five unmodelled parameter kinds name node types that already exist: character, interest group, political movement, war and diplomatic play. Their actions could get `targets` edges. Formations, journal entries, treaties and amendments have no node types.
-5. Edge attributes reach only the `relational` spatial mode. Every other mode ignores them, and the snapshot model's final layer is `mean`.
+2. Verify does not check the five-year cap or date uniqueness. The bank builder catches duplicates later.
+3. Diplomatic plays, formations, journal entries, treaties, amendments, fronts and ships have no node types, so actions naming them have no `targets` edge.
+4. Edge attributes reach only the `relational` spatial mode. Every other mode ignores them, and the snapshot model's final layer is `mean`.
+5. `party_member` holds 11 rows across all runs; membership is read from `interest_group_history.party` instead.
 6. The declarative builder of PLAN.md is not built. It would move restating and removal derivation into the library. Restating is the reason per-goods relations such as `local_price` dominate the fact count.
-7. Stale outputs: the uncapped `vic3-block` bank and the `vic3-block-1`, `vic3-run2` and `vic3-run4` datasets predate the current design.
+7. Stale outputs: the `vic3-block` and `vic3-block-4y` banks and the `vic3-block`, `vic3-block-1`, `vic3-block-2`, `vic3-block-4y`, `vic3-run2` and `vic3-run4` datasets predate the current design.
 
 Later, not in the first build: a defeat hazard head, a known-future channel from the game's scheduled facts, auxiliary per-node next-step targets, and the symbolic-order variant, which the production method tables now make possible.
 
