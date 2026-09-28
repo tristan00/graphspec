@@ -21,6 +21,7 @@ def batches(blocks, size, sizes, seed=None, frame_budget=None, chunk=CHUNK):
     if size < 1 or chunk < 1 or (frame_budget is not None and frame_budget < 1):
         raise ValueError("batch size, chunk size and frame budget must be positive")
     rng = np.random.default_rng(seed) if seed is not None else None
+    blocks = [tuple(block) for block in blocks]
     graphs = list(dict.fromkeys(block[0] for block in blocks))
     if rng is not None:
         rng.shuffle(graphs)

@@ -150,3 +150,16 @@ def test_packer_matches_single_process(packers, view):
         assert same(materialise(opened, cfg, recipe_batch(opened, group, cfg), "cuda"), streamed)
     packer.close()
     assert len(packer.slots) == 2 and packer.slots[0].tensor.numel() >= 1 << 20
+
+
+def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
+    class Sizes:
+        members = 2
+
+        def __call__(self, starts, stops):
+            return np.asarray([stop - start for start, stop in zip(starts, stops)], np.int64)
+
+    blocks = [[0, 0, 2, 1, 0, 0, 2], [0, 1, 3, 2, 0, 2, 4], [1, 0, 2, 1, 0, 0, 1]]
+    sizes = {0: (Sizes(), 1.0), 1: (5, 1.0)}
+    groups = batches(blocks, 4, sizes, 3, frame_budget=1024)
+    assert sorted(block for group in groups for block in group) == sorted(map(tuple, blocks))
