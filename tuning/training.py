@@ -60,14 +60,9 @@ def path_score(targets, predictions, queries, series, names, scale):
         owner = np.unique(queries[member], return_inverse=True)[1].reshape(-1)
         weight = 1.0 / np.bincount(owner)[owner]
         mse = float((weight * (values[member] - targets[member]) ** 2).sum() / weight.sum())
-        persistence = float((weight * targets[member] ** 2).sum() / weight.sum())
-        if persistence == 0:
-            raise ValueError("persistence skill of series %s requires nonzero validation targets" % name)
         result[name] = dict(
             val_loss=mse / float(scale[code]) ** 2,
             raw_val_mse=mse,
-            persistence_mse=persistence,
-            val_r2=1 - mse / persistence,
             points=int(member.sum()),
             queries=int(owner.max()) + 1,
         )
@@ -75,13 +70,9 @@ def path_score(targets, predictions, queries, series, names, scale):
         "score",
         seconds=time.perf_counter() - started,
         rows=len(values),
-        **{name + "_skill": entry["val_r2"] for name, entry in result.items()},
+        **{name + "_loss": entry["val_loss"] for name, entry in result.items()},
     )
-    return dict(
-        val_loss=float(np.mean([entry["val_loss"] for entry in result.values()])),
-        val_r2=float(np.mean([entry["val_r2"] for entry in result.values()])),
-        series=result,
-    )
+    return dict(val_loss=float(np.mean([entry["val_loss"] for entry in result.values()])), series=result)
 
 
 def path_loss(predictions, targets, point_query, series, queries, count):
@@ -441,7 +432,7 @@ class TrainingSession:
             "fit_exit",
             model=self.description,
             graph=self.graph_digest[:10],
-            skill=metrics["val_r2"],
+            loss=metrics["val_loss"] if path else metrics["raw_val_mse"],
             seconds=result["seconds"],
             train_rows=result["train_unique_rows"],
         )

@@ -1,6 +1,6 @@
 import math
 
-SERIES = "series/%s/%s"
+SERIES = "series/%s/loss"
 
 
 def weights(bank, given):
@@ -37,37 +37,26 @@ def value(result, plan):
 def measures(plan):
     if plan["objective"] is None:
         return [
-            dict(key="mse", label="Validation MSE", short="MSE", better="lower"),
-            dict(key="r2", label="Validation R²", short="R²", better="higher"),
+            dict(key="mse", label="Validation MSE", short="MSE", better="lower", shown=True),
+            dict(key="r2", label="Validation R²", short="R²", better="higher", shown=True),
         ]
-    found = [
-        dict(key="mse", label="Loss, weighted mean of series", short="Loss", better="lower"),
-        dict(key="r2", label="Skill vs persistence, mean of series", short="Skill", better="higher"),
+    return [dict(key="mse", label="Validation loss", short="Loss", better="lower", shown=True)] + [
+        dict(
+            key=SERIES % name,
+            label=name + " validation loss",
+            short=name + " loss",
+            better="lower",
+            shown=False,
+        )
+        for name in plan["objective"]
     ]
-    for name in plan["objective"]:
-        found.append(
-            dict(
-                key=SERIES % (name, "skill"),
-                label=name + " skill vs persistence",
-                short=name + " skill",
-                better="higher",
-            )
-        )
-        found.append(
-            dict(key=SERIES % (name, "loss"), label=name + " loss", short=name + " loss", better="lower")
-        )
-    return found
 
 
 def columns(plan):
-    return [] if plan["objective"] is None else [SERIES % (name, "skill") for name in plan["objective"]]
+    return [] if plan["objective"] is None else [SERIES % name for name in plan["objective"]]
 
 
 def scores(result, plan):
     if plan["objective"] is None or "series" not in result:
         return {}
-    return {
-        SERIES % (name, part): result["series"][name][field]
-        for name in plan["objective"]
-        for part, field in (("skill", "val_r2"), ("loss", "val_loss"))
-    }
+    return {SERIES % name: result["series"][name]["val_loss"] for name in plan["objective"]}

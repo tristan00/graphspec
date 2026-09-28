@@ -172,7 +172,7 @@ def test_path_loss_averages_within_query_and_series_then_queries_then_series():
     assert float(value) == pytest.approx((first + second) / 2)
 
 
-def test_path_score_weights_queries_equally_per_series_and_measures_persistence_skill():
+def test_path_score_is_the_training_loss_on_validation_points():
     from tuning.training import path_score, score
 
     targets = np.array([2.0, 1.0, -1.0, 4.0, 2.0])
@@ -181,16 +181,33 @@ def test_path_score_weights_queries_equally_per_series_and_measures_persistence_
     series = np.array([0, 0, 0, 1, 1])
     metrics = path_score(targets, predictions, queries, series, ["a", "b"], np.array([1.0, 2.0]))
     mse = (1.0 * 1 + 0.5 * 0 + 0.5 * 4) / 2
-    persistence = (1.0 * 4 + 0.5 * 1 + 0.5 * 1) / 2
     first, second = metrics["series"]["a"], metrics["series"]["b"]
     assert first["raw_val_mse"] == pytest.approx(mse) and first["val_loss"] == pytest.approx(mse)
-    assert first["val_r2"] == pytest.approx(1 - mse / persistence)
     assert second["raw_val_mse"] == pytest.approx(10) and second["val_loss"] == pytest.approx(2.5)
-    assert second["val_r2"] == pytest.approx(0) and second["queries"] == 2 and second["points"] == 2
-    assert metrics["val_loss"] == pytest.approx((mse + 2.5) / 2)
+    assert second["queries"] == 2 and second["points"] == 2
+    assert metrics["val_loss"] == pytest.approx((mse + 2.5) / 2) and set(metrics) == {"val_loss", "series"}
     assert score(targets[:3], predictions[:3])["raw_val_mse"] == pytest.approx(5 / 3)
-    with pytest.raises(ValueError, match="persistence"):
-        path_score(np.zeros(5), predictions, queries, series, ["a", "b"], np.ones(2))
+
+
+def test_validation_loss_matches_the_training_loss_on_the_same_points():
+    import torch
+
+    from tuning.training import path_loss, path_score
+
+    rng = np.random.default_rng(4)
+    queries = np.repeat(np.arange(6), 4)
+    series = np.tile(np.array([0, 0, 1, 1]), 6)
+    targets, predictions = rng.normal(size=24), rng.normal(size=24)
+    center, scale = np.array([0.3, -0.2]), np.array([1.5, 0.4])
+    scored = path_score(targets, predictions, queries, series, ["a", "b"], scale)["val_loss"]
+
+    def standard(values):
+        return torch.tensor((values - center[series]) / scale[series])
+
+    trained = path_loss(
+        standard(predictions), standard(targets), torch.tensor(queries), torch.tensor(series), 6, 2
+    )
+    assert float(trained) == pytest.approx(scored)
 
 
 def test_objective_blends_series_losses_by_their_weights(path_bank):
@@ -204,13 +221,13 @@ def test_objective_blends_series_losses_by_their_weights(path_bank):
     assert objective.value(result, dict(objective=chosen)) == pytest.approx(5.0)
     assert objective.value(dict(raw_val_mse=0.5), dict(objective=None)) == 0.5
     plan = dict(objective=chosen)
-    assert [entry["key"] for entry in objective.measures(plan)][2:4] == [
-        "series/level/skill",
+    assert [entry["key"] for entry in objective.measures(plan)] == [
+        "mse",
         "series/level/loss",
+        "series/trend/loss",
     ]
-    assert objective.columns(plan) == ["series/level/skill", "series/trend/skill"]
-    full = dict(series=dict(level=dict(val_loss=2.0, val_r2=0.5), trend=dict(val_loss=6.0, val_r2=-0.1)))
-    assert objective.scores(full, plan)["series/trend/skill"] == -0.1
+    assert objective.columns(plan) == ["series/level/loss", "series/trend/loss"]
+    assert objective.scores(result, plan) == {"series/level/loss": 2.0, "series/trend/loss": 6.0}
     assert objective.scores(dict(error="x"), plan) == {} and objective.columns(dict(objective=None)) == []
     for given in (["other=1"], ["level=1", "level=2"], ["level=0"], ["level=-1", "trend=2"]):
         with pytest.raises(ValueError, match="objective"):

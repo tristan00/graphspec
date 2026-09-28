@@ -109,20 +109,20 @@ def report(directory):
     ]
     lines.extend(
         [
-            "| View | Completed fits | Best MSE | Best RÂ² | Best model | Best graph |",
-            "|---|---:|---:|---:|---|---|",
+            "| View | Completed fits | Best %s | Best model | Best graph |"
+            % objective.measures(planned)[0]["label"],
+            "|---|---:|---:|---|---|",
         ]
     )
     for view in views:
         subset = [r for r in completed if r["config"]["model"]["view"] == view]
         best = min(subset, key=lambda r: r["objective"]) if subset else None
         lines.append(
-            "| %s | %d | %s | %s | %s | %s |"
+            "| %s | %d | %s | %s | %s |"
             % (
                 view,
                 len(subset),
                 "%.6f" % best["objective"] if best else "Pending",
-                "%.4f" % best["val_r2"] if best else "â€”",
                 describe(best["config"]["model"]) if best else "â€”",
                 best["graph"][:10] if best else "â€”",
             )

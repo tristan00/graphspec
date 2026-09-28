@@ -107,8 +107,8 @@ decides the level.
   predicted from everything visible at that step. One query may carry several series, such as GDP and
   population. `tau` is finite and strictly positive, no two points of one query and series share a `tau`, and
   every point of one query carries the same split. Each series is standardised with its own training mean and
-  deviation, the loss averages within a query and series, then over queries, then over series, and each series
-  is scored against persistence. A query without points still feeds the history.
+  deviation, the loss averages within a query and series, then over queries, then over series, and the score
+  is that same loss on the validation points. A query without points still feeds the history.
 - **On a graph** (`FROM renewal TO graph`): one label per graph, predicted at the graph's last query.
 
 Query and graph targets need the query tables. A single graph with node targets needs no query tables, only
@@ -126,8 +126,8 @@ For every level:
   every `y` is finite at float32 precision.
 - Building needs at least two training labels and two validation labels that differ at float32 precision.
 - Training targets are standardised with the training mean and sample standard deviation. Fits are scored by
-  raw MSE and R² on the whole validation split. Path targets weight every query equally over its points,
-  in the loss and in the score, and their R² is the skill against persistence, `y = 0`.
+  raw MSE and R² on the whole validation split. Path targets are scored by their validation loss, the
+  training loss on the validation points, overall and per series; they have no R².
 
 No spec removes or filters the node types a node target labels, or an observation a query needs at its step.
 

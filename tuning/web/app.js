@@ -276,7 +276,7 @@ function trialResults() {
 }
 
 function trialTable(rows, sortable) {
-  const columns = ['number','status','selector',...state.columns,'mse','r2','seconds','parameters'];
+  const columns = ['number','status','selector',...state.columns,...MEASURES.filter(measure => measure.shown && !state.columns.includes(measure.key)).map(measure => measure.key),'seconds','parameters'];
   const heading = key => `<th scope="col" aria-sort="${state.sort === key ? state.direction === 'asc' ? 'ascending' : 'descending' : 'none'}"><button class="sort-button${state.sort === key ? ' active' : ''}" data-sort="${esc(key)}">${esc(fieldName(key))}${state.sort === key ? state.direction === 'asc' ? ' ↑' : ' ↓' : ' ↕'}</button></th>`;
   const cell = (trial,key) => key === 'number' ? trialButton(trial) : key === 'status' ? badge(trial.status) : key === 'selector' ? esc(SELECTORS[trial.selector] || label(trial.selector)) : key === 'seconds' ? duration(trial.seconds) : key === 'parameters' ? number(trial.parameters) : isMeasure(key) ? score(valueOf(trial,key)) : esc(displayValue(valueOf(trial,key)));
   return `<div class="table-wrap"><table aria-label="All matching trials"><thead><tr><th scope="col">Compare</th>${columns.map(heading).join('')}</tr></thead><tbody>${rows.map(trial => `<tr><td><input type="checkbox" data-select="${esc(trial.id)}" aria-label="Compare trial ${trial.number}"${state.selected.includes(trial.id) ? ' checked' : ''}></td>${columns.map(key => `<td class="${key.startsWith('config/') ? 'parameter-value' : 'numeric'}" data-column="${esc(key)}">${cell(trial,key)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
@@ -439,7 +439,7 @@ function download(name, content, type) {
 }
 
 function exportCsv() {
-  const keys = ['number','id','status',...state.columns,'selector','mse','r2','seconds','parameters','config'];
+  const keys = ['number','id','status',...state.columns,'selector',...MEASURES.filter(measure => !state.columns.includes(measure.key)).map(measure => measure.key),'seconds','parameters','config'];
   download(`${state.run}-trials.csv`,[keys.map(csvCell).join(','),...filtered().map(trial => keys.map(key => csvCell(/^(config|result)\//.test(key) || isMeasure(key) ? valueOf(trial,key) : trial[key])).join(','))].join('\r\n'),'text/csv;charset=utf-8');
 }
 

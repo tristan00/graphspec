@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {valueOf,parameterFields,displayValue,compareValues,matchesFilter,groupedResults,valueKey,setMeasures} from '../tuning/web/parameters.js';
 
-setMeasures([{key:'mse',label:'Validation MSE',short:'MSE',better:'lower'},{key:'r2',label:'Validation R²',short:'R²',better:'higher'}]);
+setMeasures([{key:'mse',label:'Validation MSE',short:'MSE',better:'lower',shown:true},{key:'r2',label:'Validation R²',short:'R²',better:'higher',shown:true}]);
 
 const trial = (hops,status='complete',mse=1,r2=.2) => ({config:{graph:hops === undefined ? {} : {'derive/hops':hops},model:{enabled:false},epochs:3},status,mse,r2,seconds:12});
 const field='config/graph/derive/hops';
@@ -89,12 +89,12 @@ test('Graphs summarize arbitrary numeric targets using their saved values',()=>{
 
 test('Series measures read trial scores and rank in their own direction',() => {
   setMeasures([
-    {key:'mse',label:'Loss',short:'Loss',better:'lower'},
-    {key:'series/gdp/skill',label:'gdp skill vs persistence',short:'gdp skill',better:'higher'},
+    {key:'mse',label:'Validation loss',short:'Loss',better:'lower',shown:true},
+    {key:'series/gdp/loss',label:'gdp validation loss',short:'gdp loss',better:'lower',shown:false},
   ]);
-  const rows=[.1,.4].map((skill,index) => ({status:'complete',mse:1,scores:{'series/gdp/skill':skill},config:{epochs:index}}));
-  assert.equal(valueOf(rows[1],'series/gdp/skill'),.4);
+  const rows=[.1,.4].map((loss,index) => ({status:'complete',mse:1,scores:{'series/gdp/loss':loss},config:{epochs:index}}));
+  assert.equal(valueOf(rows[1],'series/gdp/loss'),.4);
   assert.equal(valueOf(rows[0],'r2'),undefined);
-  assert.equal(groupedResults(rows,'config/model/enabled','series/gdp/skill')[0].best,.4);
-  setMeasures([{key:'mse',label:'Validation MSE',short:'MSE',better:'lower'},{key:'r2',label:'Validation R²',short:'R²',better:'higher'}]);
+  assert.equal(groupedResults(rows,'config/model/enabled','series/gdp/loss')[0].best,.1);
+  setMeasures([{key:'mse',label:'Validation MSE',short:'MSE',better:'lower',shown:true},{key:'r2',label:'Validation R²',short:'R²',better:'higher',shown:true}]);
 });

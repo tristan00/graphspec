@@ -23,14 +23,14 @@ from graphspec.spec import digest
 
 from . import objective
 from .budget import TIMEOUT_EXIT_CODE
-
-STARTUP = 10
-MIX = dict(random=25, tpe=25, forest=25, botorch=25)
 from .records import VERSION, Outcome, worker_alive
 from .report import report
 from .training import PACKAGES, fit
 
 REFERENCE_HISTORY = 16
+
+STARTUP = 10
+MIX = dict(random=25, tpe=25, forest=25, botorch=25)
 
 
 def fit_timings(directory):

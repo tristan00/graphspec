@@ -59,7 +59,7 @@ def validate_result(result: dict, item: dict, config: dict, plan: dict):
         and result["training_examples_seen"] == result["epochs"] * plan["train_rows"]
     )
     score = objective.value(result, plan)
-    metrics = math.isfinite(score) and score >= 0 and math.isfinite(result["val_r2"])
+    metrics = math.isfinite(score) and score >= 0
     if not (identity and epochs and coverage and metrics):
         raise ValueError(
             "completed trial violates its configuration or scoring contract: " + item["directory"]
