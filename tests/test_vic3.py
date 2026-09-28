@@ -46,6 +46,7 @@ PARAMETERS = {
     "state": {"integer"},
     "event": {"text"},
     "option": {"integer"},
+    "days": {"integer"},
     "building": {"integer"},
     "production_method": {"text"},
     "technology": {"text"},
@@ -356,7 +357,7 @@ def data():
             params={"building": 5, "production_method": "pm_x"},
         ),
         dict(n=4, turn=1, before_seq=2, name="run_days", advisor="loop", params={"days": 30}),
-        dict(n=5, turn=2, before_seq=3, name="run_days", advisor="loop", params={"days": 30}),
+        dict(n=5, turn=2, before_seq=3, name="run_days", advisor="random", params={"days": 30}),
         dict(n=6, turn=3, before_seq=4, name="research", advisor="random", params={"technology": "t1"}),
         dict(n=7, turn=3, before_seq=5, name="run_days", advisor="loop", params={"days": 30}),
     ]
@@ -420,7 +421,8 @@ def test_run_writes_a_contract_graph(tmp_path):
         )
         if key_of[node].startswith("action:")
     }
-    assert actions == set(joined) and len(actions) == 4
+    assert actions == set(joined) and len(actions) == 5
+    assert {key_of[node] for node, st in actions if st == 1} == {"action:5"}
     assert all(joined[(node, st)] == subjects[st] for node, st in actions)
     assert {key_of[node] for node, st in actions if st == 0} == {"action:1", "action:2", "action:3"}
     (unit,) = Staged(staging).by_table[TARGET]

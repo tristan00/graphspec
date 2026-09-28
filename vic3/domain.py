@@ -411,10 +411,11 @@ GROUPS = {
     "companies": ("create_company", "remove_company", "toggle_charter"),
     "expansion": ("colonize", "toggle_pause_colonization", "abandon_colony", "incorporate", "unincorporate"),
     "journal": ("press_journal_button", "choose_event_option", "take_decision", "toggle_ignore_decision"),
-    "time": ("pause", "unpause", "set_speed"),
+    "time": ("pause", "unpause", "set_speed", "run_days"),
 }
 GROUP = {name: group for group, names in GROUPS.items() for name in names}
 EVENT = "choose_event_option"
+WAIT = "run_days"
 TEXT_TARGETS = {
     "building_type": "building_type",
     "production_method": "production_method",

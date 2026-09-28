@@ -61,14 +61,14 @@ Consequences for the block design:
 - Snapshots are `(run_id, seq)` with a game date and a phase: `start`, `post_action` (mid-turn or end of batch; both share the value) or `post_run`. The pre-action snapshot of a pause is the `start` or `post_run` one.
 - Entities are anchored once per run by full id with generation. Attributes live in change-only history tables with a `present = false` row on removal. Status tables are written on change. Sample tables are append-only.
 - Static data per ruleset covers vocabularies, extracted definitions, methods per building type and the five production method definition tables. Geometry per world covers provinces, adjacency and map files. Vanilla run geometry now exists but its correctness is unverified.
-- Actions are `loop_action` rows with advisor, action code, `before_seq`, `after_seq`, status and parameters in `loop_action_param`. Event answers name the pre-action snapshot in `before_seq`. Proposal answers and the main batch name the mid-turn snapshot when one was taken, otherwise the pre-action one. Loop actions (speed, pause, unpause, run days) are logged under the loop advisor.
+- Actions are `loop_action` rows with advisor, action code, `before_seq`, `after_seq`, status and parameters in `loop_action_param`. Event answers name the pre-action snapshot in `before_seq`. Proposal answers and the main batch name the mid-turn snapshot when one was taken, otherwise the pre-action one. Loop actions (speed, pause, unpause) are logged under the loop advisor. The wait (`run_days` with its `days`) is drawn with the batch and logged under the advisor that drew it.
 - Pops are transient: the game splits and merges them with new ids. The persistent unit is the stratum, meaning the pops of one state, type, culture and religion.
 
 **6. Leakage rules**
 
 - `status`, `detail`, `ms`, `logged_at` and `after_seq` are decided after the choice and enter nothing: features, edges, sample selection, structure or splits.
 - The step is the pre-action snapshot. Mid-turn and end-of-batch snapshots are never read. The mid-turn snapshot follows an executor outcome, so reading it would leak.
-- Loop-advisor rows are dropped. The days run define when the next observation happens.
+- Loop-advisor rows are dropped. The wait drawn with a batch is an action of its block, in group `time`, with its days as a feature; it does not set the block's category, so a pause where only the wait was drawn stays `empty`.
 - Run facts that are future or wall-clock are excluded: end reason and detail, timestamps, heartbeat and progress columns, seeds, world identity, budgets and the snapshot's wall-clock columns. World size, speed and starting levels are legal.
 - The split is by whole run, from a salted hash of the run id.
 - Truncation: runs end on the game-year budget, the wall-clock budget, defeat, a stuck interface, a crash or a stall. Points past the end are absent and cost nothing. The mean is unbiased only if censoring does not depend on the future path given the inputs. Runs ended by game years are the clean subset for checking that. Defeat leaves y undefined, and those points are absent too. A hazard head for defeat is not built.

@@ -31,6 +31,7 @@ from .domain import (
     SUBJECTS,
     TEXT_TARGETS,
     UNMODELLED_PARAMS,
+    WAIT,
     field,
 )
 from .tables import chunk_tables, label_tables, node_tables, removal_values
@@ -183,8 +184,8 @@ class Run:
 
     def query(self, step, seq, block, values):
         names = [row["name"] for row in self.actions[seq]]
-        rest = [name for name in names if name != EVENT]
-        category = GROUP[rest[0]] if rest else "events" if names else "empty"
+        rest = [name for name in names if name not in (EVENT, WAIT)]
+        category = GROUP[rest[0]] if rest else "events" if EVENT in names else "empty"
         return dict(
             step=step,
             period=self.snapshots[seq]["game_date"] // HOURS_PER_DAY,

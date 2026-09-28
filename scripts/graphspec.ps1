@@ -7,7 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not [System.IO.Path]::IsPathFullyQualified($RuntimeHome)) {
+if ($RuntimeHome -notmatch '^([A-Za-z]:[\\/]|\\\\)') {
     throw 'Home must be an absolute path outside the code checkout'
 }
 $env:GRAPHSPEC_HOME = (Resolve-Path -LiteralPath $RuntimeHome).ProviderPath
