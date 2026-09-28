@@ -16,6 +16,8 @@ from vic3.verify import check_graph, check_labels
 DAY = 24
 COLUMNS = {table: [] for table in REPORTS["country"] + REPORTS["state"] + PLAYER}
 COLUMNS["country_economy_report"] = ["gdp"]
+COLUMNS["player_population"] = ["lower_strata", "middle_strata", "upper_strata"]
+COLUMNS["country_standard_of_living_report"] = ["average_standard_of_living_by_population"]
 NAMES = {name: {} for name in VOCABULARIES}
 NAMES.update(
     goods={1: "grain"},
@@ -95,6 +97,15 @@ def data():
             dict(country=7, seq=3, present=True, gdp=110.0),
             dict(country=7, seq=4, present=True, gdp=121.0),
             dict(country=7, seq=6, present=True, gdp=133.1),
+        ],
+        "player_population": [
+            dict(seq=0, lower_strata=600, middle_strata=300, upper_strata=100),
+            dict(seq=6, lower_strata=900, middle_strata=450, upper_strata=150),
+        ],
+        "country_standard_of_living_report": [
+            dict(country=7, seq=0, present=True, average_standard_of_living_by_population=10.0),
+            dict(country=7, seq=3, present=True, average_standard_of_living_by_population=12.0),
+            dict(country=7, seq=6, present=True, average_standard_of_living_by_population=9.0),
         ],
         "building_history": [
             dict(
@@ -366,7 +377,7 @@ def test_run_writes_a_contract_graph(tmp_path):
     staging = tmp_path / "vic3.staging"
     with Stage(staging) as stage:
         counts = graph.build(stage, Counter(0), 0, "run-2", held(2))
-    assert counts == dict(steps=3, entities=len(graph.kinds), labels=6)
+    assert counts == dict(steps=3, entities=len(graph.kinds), labels=18)
     assert read == [0, 3, 4, 6]
     staged = Staged(staging)
     reader = staged.reader(TARGET)
@@ -380,7 +391,9 @@ def test_run_writes_a_contract_graph(tmp_path):
     assert queries.column("period").to_pylist() == [100, 130, 160]
     assert queries.column("key").to_pylist() == [0, 3, 4]
     signal = np.asarray(queries.column("signal").combine_chunks().flatten().to_numpy(zero_copy_only=False))
-    assert np.allclose(signal, np.log([100.0, 110.0, 121.0]), atol=1e-3)
+    expected = [[np.log(100.0), np.log(1000.0), 10.0], [np.log(110.0), np.log(1000.0), 12.0]]
+    expected.append([np.log(121.0), np.log(1000.0), 12.0])
+    assert np.allclose(signal.reshape(3, 3), expected, atol=1e-3)
     nodes = tables["nodes"]
     key_of = dict(zip(nodes.column("entity").to_pylist(), nodes.column("key").to_pylist()))
     subjects = queries.column("subject").to_pylist()
@@ -410,11 +423,20 @@ def test_run_writes_a_contract_graph(tmp_path):
     assert actions == set(joined) and len(actions) == 4
     assert all(joined[(node, st)] == subjects[st] for node, st in actions)
     assert {key_of[node] for node, st in actions if st == 0} == {"action:1", "action:2", "action:3"}
+    (unit,) = Staged(staging).by_table[TARGET]
+    labelled = unit.read()
+    series = np.asarray(labelled.column("series").to_pylist())
     targets = tables["targets"]
-    assert targets.column("step").to_pylist() == [0, 0, 0, 1, 1, 2]
-    assert targets.column("tau").to_pylist() == [30.0, 60.0, 90.0, 30.0, 60.0, 30.0]
-    growth = [1.1, 1.21, 1.331, 1.1, 1.21, 1.1]
-    assert np.allclose(targets.column("y").to_numpy(), np.log(growth))
+    steps, tau, y = (np.asarray(targets.column(name).to_pylist()) for name in ("step", "tau", "y"))
+    order = np.flatnonzero(series == "gdp")
+    assert steps[order].tolist() == [0, 0, 0, 1, 1, 2]
+    assert tau[order].tolist() == [30.0, 60.0, 90.0, 30.0, 60.0, 30.0]
+    assert np.allclose(y[order], np.log([1.1, 1.21, 1.331, 1.1, 1.21, 1.1]))
+    order = np.flatnonzero(series == "population")
+    assert np.allclose(y[order], np.log([1.0, 1.0, 1.5, 1.0, 1.5, 1.5]))
+    order = np.flatnonzero(series == "sol")
+    assert np.allclose(y[order], [2.0, 2.0, -1.0, 0.0, -3.0, -3.0])
+    assert tau[order].tolist() == [30.0, 60.0, 90.0, 30.0, 60.0, 30.0]
     owns = tables["edges"]["owns"]
     removed = [
         (s, t)
@@ -466,13 +488,18 @@ def test_split_is_deterministic():
     assert isinstance(held(1), bool)
 
 
-def test_labels_stop_at_the_horizon():
-    dates = [d * HOURS_PER_DAY for d in (0, 400, 1460, 1461, 2000)]
-    gdp = [0.0, 0.1, 0.2, 0.3, 0.4]
-    rows = Run.labels(SimpleNamespace(steps=[0, 1]), dates, gdp)
-    assert [(i, tau) for i, tau, _ in rows] == [
-        (0, 400.0),
-        (0, 1460.0),
-        (1, 1060.0),
-        (1, 1061.0),
+def test_labels_stop_at_the_horizon_and_skip_unmeasured_points_per_series():
+    dates = [d * HOURS_PER_DAY for d in (0, 400, 1825, 1826, 2400)]
+    measured = [(0.0, None, 5.0), (0.1, 1.0, 6.0), (0.2, 1.5, None), (0.3, 2.0, 7.0), (0.4, 2.5, 8.0)]
+    rows = Run.labels(SimpleNamespace(steps=[0, 1]), dates, measured)
+    assert [(i, tau, name) for i, tau, _, name in rows] == [
+        (0, 400.0, "gdp"),
+        (0, 1825.0, "gdp"),
+        (0, 400.0, "sol"),
+        (1, 1425.0, "gdp"),
+        (1, 1426.0, "gdp"),
+        (1, 1425.0, "population"),
+        (1, 1426.0, "population"),
+        (1, 1426.0, "sol"),
     ]
+    assert rows[-1][2] == pytest.approx(1.0)

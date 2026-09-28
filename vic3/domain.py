@@ -1,8 +1,10 @@
-TARGET = "gdp_path"
-SIGNALS = ("log_gdp",)
+TARGET = "future"
+SERIES = ("gdp", "population", "sol")
+SIGNALS = ("log_gdp", "log_population", "sol")
+STRATA = ("lower_strata", "middle_strata", "upper_strata")
 SALT, HELD = "vic3", 250
 HOURS_PER_DAY = 24
-HORIZON_DAYS = 4 * 365
+HORIZON_DAYS = 5 * 365
 LOOP_ADVISOR = "loop"
 PRE_ACTION = ("start", "post_run")
 CODES = (

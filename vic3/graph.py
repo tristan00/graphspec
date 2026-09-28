@@ -24,6 +24,8 @@ from .domain import (
     RELATIONS,
     REPORTS,
     RESOLVED_TARGETS,
+    SERIES,
+    STRATA,
     STRATUM_MEANS,
     STRATUM_SUMS,
     SUBJECTS,
@@ -35,6 +37,14 @@ from .tables import chunk_tables, label_tables, node_tables, removal_values
 
 LOG = logging.getLogger(__name__)
 CHUNK = 8
+
+
+def finite(value):
+    return value if value is not None and math.isfinite(value) else None
+
+
+def logarithm(value):
+    return math.log(value) if value is not None and value > 0 and math.isfinite(value) else None
 
 
 class Run:
@@ -97,7 +107,7 @@ class Run:
 
     def build(self, stage, counter, index, name, held_out):
         started = time.perf_counter()
-        previous, dates, gdp = {}, [], []
+        previous, dates, measured = {}, [], []
         observations, fact_rows, queries = [], {}, []
         for step, seq in enumerate(self.steps):
             state = self.current(seq)
@@ -130,19 +140,19 @@ class Run:
                     )
                     counted += 1
             previous = present
-            value = self.gdp(state)
-            queries.append(self.query(step, seq, block, value))
+            values = self.measures(state)
+            queries.append(self.query(step, seq, block, values))
             dates.append(self.snapshots[seq]["game_date"])
-            gdp.append(value)
+            measured.append(values)
             if len(queries) == CHUNK:
                 stage.write(self.chunk(index, counter, observations, fact_rows, queries))
                 observations, fact_rows, queries = [], {}, []
         if queries:
             stage.write(self.chunk(index, counter, observations, fact_rows, queries))
         for seq in self.moments[len(self.steps) :]:
-            gdp.append(self.gdp(self.current(seq)))
+            measured.append(self.measures(self.current(seq)))
             dates.append(self.snapshots[seq]["game_date"])
-        labels = self.labels(dates, gdp)
+        labels = self.labels(dates, measured)
         stage.write(node_tables(index, name, self.kinds, self.keys))
         stage.write(label_tables(index, counter, labels, held_out))
         LOG.info(
@@ -160,12 +170,18 @@ class Run:
             index, counter, self.kinds, self.features, observations, fact_rows, queries, self.player
         )
 
-    def gdp(self, state):
-        report = state["country_economy_report"].get((self.run["player_country"],))
-        value = None if report is None else report["gdp"]
-        return math.log(value) if value is not None and value > 0 and math.isfinite(value) else None
+    def measures(self, state):
+        player = (self.run["player_country"],)
+        economy = state["country_economy_report"].get(player)
+        people = state["player_population"].get(())
+        living = state["country_standard_of_living_report"].get(player)
+        return (
+            logarithm(None if economy is None else economy["gdp"]),
+            logarithm(None if people is None else sum(people[name] for name in STRATA)),
+            finite(None if living is None else living["average_standard_of_living_by_population"]),
+        )
 
-    def query(self, step, seq, block, value):
+    def query(self, step, seq, block, values):
         names = [row["name"] for row in self.actions[seq]]
         rest = [name for name in names if name != EVENT]
         category = GROUP[rest[0]] if rest else "events" if names else "empty"
@@ -176,25 +192,26 @@ class Run:
             category=category,
             subject=block,
             x=self.vector("query", {}),
-            signal=[0.0 if value is None else value],
-            observed=[float(value is not None)],
+            signal=[0.0 if value is None else value for value in values],
+            observed=[float(value is not None) for value in values],
         )
 
-    def labels(self, dates, gdp):
+    def labels(self, dates, measured):
         rows = []
         for i in range(len(self.steps)):
-            base = gdp[i]
-            if base is None:
-                continue
-            seen = {dates[i]}
-            for j in range(i + 1, len(dates)):
-                tau = (dates[j] - dates[i]) / HOURS_PER_DAY
-                if tau > HORIZON_DAYS:
-                    break
-                if dates[j] in seen or gdp[j] is None:
+            for code, name in enumerate(SERIES):
+                base = measured[i][code]
+                if base is None:
                     continue
-                seen.add(dates[j])
-                rows.append((i, tau, gdp[j] - base))
+                seen = {dates[i]}
+                for j in range(i + 1, len(dates)):
+                    tau = (dates[j] - dates[i]) / HOURS_PER_DAY
+                    if tau > HORIZON_DAYS:
+                        break
+                    if dates[j] in seen or measured[j][code] is None:
+                        continue
+                    seen.add(dates[j])
+                    rows.append((i, tau, measured[j][code] - base, name))
         return rows
 
     def put(self, facts, relation, source, target, *values):

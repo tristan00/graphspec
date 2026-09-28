@@ -14,7 +14,7 @@ exactly one query when the database has queries.
 | `query` | node, optional | `id INT64` key, `graph INT32`, `step INT32`, `period INT32`, `key INT64`, `category STRING`, `x FLOAT[F]`, optionally `signal FLOAT[S]` and `signal_observed FLOAT[S]` | Decision moments, when the history has them. |
 | `query_actor`, `query_subject`, `query_context` | relationship, with `query` | FROM `query` TO node types | The three entities each query is about. |
 | `edge_<relation>` | relationship | FROM/TO pairs between node types; `seq INT32`, `step INT32`, `present BOOLEAN`; any `FLOAT` attributes | Relationship facts. |
-| `<target>` | node | `id INT64` key, `y DOUBLE`, `split STRING`, `step INT32` for node targets, `tau FLOAT` for path targets | Labels; the name is yours. |
+| `<target>` | node | `id INT64` key, `y DOUBLE`, `split STRING`, `step INT32` for node targets, `tau FLOAT` and `series STRING` for path targets | Labels; the name is yours. |
 | `<target>_of` | relationship | FROM `<target>` TO node types, TO `query`, or TO `graph` | What each label belongs to. |
 
 Structure:
@@ -102,10 +102,13 @@ decides the level.
   observation at that step. A node can carry labels at several steps, one per step. Queries are optional.
 - **On a query** (`FROM renewal TO query`): one label per query, predicted at that query's step from
   everything visible then. Queries without a label still feed the history.
-- **On a query, as a path** (`FROM renewal TO query` with a `tau FLOAT` column): any number of points per
-  query, each a value `y` at elapsed time `tau` after the query's step, predicted from everything visible at
-  that step. `tau` is finite and strictly positive, no two points of one query share a `tau`, and every point
-  of one query carries the same split. A query without points still feeds the history.
+- **On a query, as paths** (`FROM renewal TO query` with `tau FLOAT` and `series STRING` columns): any number
+  of points per query, each a value `y` of the named series at elapsed time `tau` after the query's step,
+  predicted from everything visible at that step. One query may carry several series, such as GDP and
+  population. `tau` is finite and strictly positive, no two points of one query and series share a `tau`, and
+  every point of one query carries the same split. Each series is standardised with its own training mean and
+  deviation, the loss averages within a query and series, then over queries, then over series, and each series
+  is scored against persistence. A query without points still feeds the history.
 - **On a graph** (`FROM renewal TO graph`): one label per graph, predicted at the graph's last query.
 
 Query and graph targets need the query tables. A single graph with node targets needs no query tables, only

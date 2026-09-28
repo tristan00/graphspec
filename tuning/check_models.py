@@ -29,7 +29,7 @@ def probe(bank, block, cfg, device):
     values = net(b)
     if values.shape != b["target"].shape or not torch.isfinite(values).all():
         raise ValueError("model output must be finite and match the target shape")
-    loss(values, b, bank.split, bank.level).backward()
+    loss(values, b, bank).backward()
     if torch.device(device).type == "cuda":
         torch.cuda.synchronize()
     gradients = [p.grad for p in net.parameters() if p.grad is not None]

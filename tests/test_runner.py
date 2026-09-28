@@ -89,6 +89,7 @@ def plan_at(directory):
         selector="random",
         train_rows=2,
         holdout_rows=2,
+        objective=None,
         workers=1,
         variant_bytes=100,
     )

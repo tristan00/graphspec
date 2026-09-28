@@ -154,6 +154,7 @@ def label_tables(index, counter, labels, held_out):
                 y=pa.array([row[2] for row in labels], pa.float64()),
                 split=pa.array(["validation" if held_out else "train"] * len(labels), pa.string()),
                 tau=pa.array([row[1] for row in labels], pa.float32()),
+                series=pa.array([row[3] for row in labels], pa.string()),
             )
         ),
         (TARGET + "_of", TARGET, "query"): pa.table(

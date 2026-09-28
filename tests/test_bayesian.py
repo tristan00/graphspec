@@ -69,10 +69,10 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     for index, view in enumerate(("snapshot", "mixed", "sequence", "memory")):
         config, _ = selector.random_suggest(registry, index, index + 1, {"view": view, "epochs": 4})
         config["max_seconds"] = 600 + 400 * index
-        entry = dict(config=config, status="complete", trial=str(index), raw_val_mse=float(index + 1))
+        entry = dict(config=config, status="complete", trial=str(index), objective=float(index + 1))
         observations.append(entry)
         failed = copy.deepcopy(entry)
-        failed.update(status="timeout", trial="failed-" + str(index), raw_val_mse=None)
+        failed.update(status="timeout", trial="failed-" + str(index), objective=None)
         failures.append(failed)
     original = copy.deepcopy(observations + failures)
     seen = []

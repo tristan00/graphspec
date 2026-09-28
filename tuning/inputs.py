@@ -510,6 +510,7 @@ def base_inputs(bank, block, window):
     if bank.level == "path":
         b.update(
             tau=array(bank.taus[rows]),
+            series=array(bank.series[rows], torch.long),
             point_query=array(point_query, torch.long),
             queries=int(selected.sum()),
         )

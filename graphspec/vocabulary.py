@@ -26,16 +26,23 @@ def hop(distance):
     return "hop:%d" % distance
 
 
-def registry(schema, task):
-    started = time.perf_counter()
+def target_level(schema, task):
     unknown = sorted(set(task) - TASK_KEYS)
     if unknown:
         raise ValueError("unknown task keys: " + ", ".join(unknown))
-    level = schema.target(task["target"])
-    if level != "node" and not schema.queries:
+    found = schema.target(task["target"])
+    if found != "node" and not schema.queries:
         raise ValueError(
-            "%s-level targets are predicted at queries, so the database needs a query table" % level
+            "%s-level targets are predicted at queries, so the database needs a query table" % found
         )
+    return found
+
+
+def registry(schema, task, series):
+    started = time.perf_counter()
+    level = target_level(schema, task)
+    if (level == "path") != bool(series) or list(series) != sorted(set(series)):
+        raise ValueError("path targets need their sorted distinct series names, and other targets none")
     if schema.features < 2 or schema.features % 2:
         raise ValueError("feature vectors need an even width: values, then presence")
     clash = sorted(
@@ -96,6 +103,8 @@ def registry(schema, task):
         base=[relation["name"] for relation in schema.relations],
         protected=[kind for kind in nodes if kind in labelled],
     )
+    if level == "path":
+        extras["series"] = list(series)
     result = Registry(task["name"], nodes, edges, schema.features // 2, MARKERS, extras)
     LOG.info(
         "vocabulary exit seconds=%.3f nodes=%d relations=%d level=%s",

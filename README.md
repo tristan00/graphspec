@@ -1,6 +1,6 @@
 **graphspec**
 
-Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. The learning objective is scalar regression on nodes, queries, or graphs, or a path: many `(tau, y)` points per query, each predicted from the query's embedding and an encoding of the elapsed time `tau`; training requires CUDA.
+Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. The learning objective is scalar regression on nodes, queries, or graphs, or paths: many `(series, tau, y)` points per query, each predicted from the query's embedding, a learned embedding of the series and an encoding of the elapsed time `tau`; training requires CUDA.
 
 **Install and storage**
 

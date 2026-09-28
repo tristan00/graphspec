@@ -33,16 +33,22 @@ def staged_points(root, name, edit):
 
 def test_path_bank_records_one_row_per_point_and_splits_by_query(path_bank):
     manifest = read_json(path_bank / "manifest.json")
-    assert manifest["target"]["level"] == "path" and manifest["rows"] == 104
-    rows = read_json(path_bank / "supervision.json")["rows"]
+    assert manifest["target"]["level"] == "path" and manifest["rows"] == 208
+    supervision = read_json(path_bank / "supervision.json")
+    rows = supervision["rows"]
     assert all(row["tau"] >= 1 for row in rows)
     opened = Bank(path_bank)
-    assert opened.level == "path" and len(opened.taus) == 104
+    assert opened.level == "path" and len(opened.taus) == 208
+    assert opened.series_names == opened.registry.extras["series"] == ["level", "trend"]
+    assert np.bincount(opened.series).tolist() == [104, 104]
+    for code, entry in enumerate(supervision["split"]["series"]):
+        train = [row["y"] for row in rows if row["series"] == entry["name"]]
+        train = np.asarray(train)[np.isin(np.flatnonzero(opened.series == code), supervision["split"]["train_indices"])]
+        assert entry["mean"] == pytest.approx(train.mean()) and entry["sd"] == pytest.approx(train.std(ddof=1))
     for index in range(4):
         steps, points = opened.row_steps[index], opened.row_index[index]
-        taus = opened.taus[points]
-        assert np.all(np.diff(steps) >= 0)
-        assert np.all((np.diff(steps) > 0) | (np.diff(taus) > 0))
+        keys = np.stack((steps, opened.series[points], opened.taus[points]), 1)
+        assert all(tuple(a) < tuple(b) for a, b in zip(keys[:-1], keys[1:]))
         assert len(set(opened.partitions[points].tolist())) == 1
     queries = {(row["graph"], row["step"]) for row in rows}
     assert len(set(opened.query_of.tolist())) == len(queries)
@@ -54,7 +60,7 @@ def test_path_supervision_rejects_duplicate_tau(tmp_path):
         tau[1] = tau[0]
         return table.set_column(table.schema.get_field_index("tau"), "tau", pa.array(tau, pa.float32()))
 
-    with pytest.raises(ValueError, match="graph_000 has two points with one query and one tau"):
+    with pytest.raises(ValueError, match="graph_000 has two points with one query, one series and one tau"):
         build(staged_points(tmp_path, "twice", duplicated), tmp_path / "bank", 1)
 
 
@@ -66,6 +72,11 @@ def test_path_supervision_rejects_nonpositive_tau(tmp_path):
 
     with pytest.raises(ValueError, match="strictly positive"):
         build(staged_points(tmp_path, "zero", flattened), tmp_path / "bank", 1)
+
+
+def test_path_targets_require_a_series(tmp_path):
+    with pytest.raises(ValueError, match="requires a series STRING column"):
+        build(staged_points(tmp_path, "unnamed", lambda table: table.drop_columns(["series"])), tmp_path / "bank", 1)
 
 
 def test_targets_without_tau_stay_scalar(bank):
@@ -139,31 +150,53 @@ def test_path_windows_join_like_query_windows(path_bank):
         assert sorted(covered) == opened.split[("train_indices", "validation_indices")[partition]]
 
 
-def test_path_loss_averages_points_within_each_query_then_over_queries():
+def test_path_loss_averages_within_query_and_series_then_queries_then_series():
     import torch
 
     from tuning.training import path_loss
 
-    predictions = torch.tensor([1.0, 3.0, 1.0, 2.0])
-    targets = torch.tensor([0.0, 0.0, 0.0, 0.0])
-    point_query = torch.tensor([0, 1, 1, 2])
-    assert float(path_loss(predictions, targets, point_query, 3)) == pytest.approx((1 + 5 + 4) / 3)
+    predictions = torch.tensor([1.0, 3.0, 1.0, 2.0, 4.0, 2.0])
+    targets = torch.zeros(6)
+    point_query = torch.tensor([0, 1, 1, 2, 0, 0])
+    series = torch.tensor([0, 0, 0, 0, 1, 1])
+    first, second = (1 + 5 + 4) / 3, (16 + 4) / 2
+    value = path_loss(predictions, targets, point_query, series, 3, 2)
+    assert float(value) == pytest.approx((first + second) / 2)
 
 
-def test_path_score_weights_queries_equally_and_measures_persistence_skill():
-    from tuning.training import score
+def test_path_score_weights_queries_equally_per_series_and_measures_persistence_skill():
+    from tuning.training import path_score, score
 
-    targets = np.array([2.0, 1.0, -1.0])
-    predictions = np.array([1.0, 1.0, 1.0])
-    groups = np.array([0, 1, 1])
-    metrics = score(targets, predictions, groups)
+    targets = np.array([2.0, 1.0, -1.0, 4.0, 2.0])
+    predictions = np.array([1.0, 1.0, 1.0, 0.0, 0.0])
+    queries = np.array([0, 1, 1, 0, 1])
+    series = np.array([0, 0, 0, 1, 1])
+    metrics = path_score(targets, predictions, queries, series, ["a", "b"], np.array([1.0, 2.0]))
     mse = (1.0 * 1 + 0.5 * 0 + 0.5 * 4) / 2
     persistence = (1.0 * 4 + 0.5 * 1 + 0.5 * 1) / 2
-    assert metrics["raw_val_mse"] == pytest.approx(mse)
-    assert metrics["val_r2"] == pytest.approx(1 - mse / persistence)
-    assert score(targets, predictions)["raw_val_mse"] == pytest.approx(5 / 3)
+    first, second = metrics["series"]["a"], metrics["series"]["b"]
+    assert first["raw_val_mse"] == pytest.approx(mse) and first["val_loss"] == pytest.approx(mse)
+    assert first["val_r2"] == pytest.approx(1 - mse / persistence)
+    assert second["raw_val_mse"] == pytest.approx(10) and second["val_loss"] == pytest.approx(2.5)
+    assert second["val_r2"] == pytest.approx(0) and second["queries"] == 2 and second["points"] == 2
+    assert metrics["val_loss"] == pytest.approx((mse + 2.5) / 2)
+    assert score(targets[:3], predictions[:3])["raw_val_mse"] == pytest.approx(5 / 3)
     with pytest.raises(ValueError, match="persistence"):
-        score(np.zeros(3), predictions, groups)
+        path_score(np.zeros(5), predictions, queries, series, ["a", "b"], np.ones(2))
+
+
+def test_objective_blends_series_losses_by_their_weights(path_bank):
+    from tuning import objective
+
+    opened = Bank(path_bank)
+    assert objective.weights(opened, None) == {"level": 1.0, "trend": 1.0}
+    chosen = objective.weights(opened, ["trend=3", "level=1"])
+    result = dict(series=dict(level=dict(val_loss=2.0), trend=dict(val_loss=6.0)))
+    assert objective.value(result, dict(objective=chosen)) == pytest.approx(5.0)
+    assert objective.value(dict(raw_val_mse=0.5), dict(objective=None)) == 0.5
+    for given in (["other=1"], ["level=1", "level=2"], ["level=0"], ["level=-1", "trend=2"]):
+        with pytest.raises(ValueError, match="objective"):
+            objective.weights(opened, given)
 
 
 @pytest.mark.parametrize(
@@ -203,6 +236,7 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     assert prediction.shape == batch["target"].shape == batch["tau"].shape
     assert len(prediction) > batch["queries"] == 2
     assert torch.isfinite(prediction).all()
-    value = loss(prediction, batch, opened.split, opened.level)
+    value = loss(prediction, batch, opened)
     value.backward()
     assert torch.isfinite(value) and net.reward.time.frequency.grad is not None
+    assert net.reward.series.weight.grad is not None and set(batch["series"].tolist()) == {0, 1}

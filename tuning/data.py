@@ -130,9 +130,19 @@ class Bank:
         self.partitions[self.split["validation_indices"]] = 1
         if self.level == "path":
             self.taus = np.asarray([row["tau"] for row in self.rows], np.float32)
+            self.series_names = [entry["name"] for entry in self.split["series"]]
+            if self.series_names != self.registry.extras["series"]:
+                raise ValueError("bank supervision and declaration name different series")
+            code = {name: index for index, name in enumerate(self.series_names)}
+            self.series = np.asarray([code[row["series"]] for row in self.rows], np.int64)
+            self.center = np.asarray([entry["mean"] for entry in self.split["series"]], np.float32)
+            self.scale = np.asarray([entry["sd"] for entry in self.split["series"]], np.float32)
             owners = {graph["name"]: graph["index"] for graph in self.manifest["graphs"]}
             keys = np.asarray([(owners[row["graph"]], row["step"]) for row in self.rows], np.int64)
             self.query_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
+        else:
+            self.center = np.asarray([self.split["reward_mean"]], np.float32)
+            self.scale = np.asarray([self.split["reward_sd"]], np.float32)
         self.row_index, self.row_steps, self.entities = {}, {}, {}
         for graph in self.manifest["graphs"]:
             index = graph["index"]

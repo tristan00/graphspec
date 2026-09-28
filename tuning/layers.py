@@ -157,14 +157,15 @@ class Head(nn.Module):
         self.query = nn.Sequential(nn.Linear(width, hidden), nn.SiLU())
         if self.path:
             self.time = TimeEncoding(hidden, spec["time/encoding"])
-            self.output = nn.Sequential(nn.Linear(hidden * 2, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+            self.series = nn.Embedding(len(registry.extras["series"]), hidden)
+            self.output = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.SiLU(), nn.Linear(hidden, 1))
         else:
             self.output = nn.Linear(hidden, 1)
 
     def forward(self, features, b):
         h = self.query(features)
         if self.path:
-            h = torch.cat((h[b["point_query"]], self.time(b["tau"])), -1)
+            h = torch.cat((h[b["point_query"]], self.time(b["tau"]), self.series(b["series"])), -1)
         return self.output(h).squeeze(-1)
 
 

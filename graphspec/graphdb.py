@@ -87,7 +87,7 @@ class Database:
                 self.connection,
                 "MATCH (t:`%s`)-[:`%s_of`]->(q:query) RETURN t.id AS id, t.y AS y, t.split AS split, "
                 "q.graph AS graph, q.step AS step%s ORDER BY id"
-                % (target, target, ", t.tau AS tau" if level == "path" else ""),
+                % (target, target, ", t.tau AS tau, t.series AS series" if level == "path" else ""),
             )
         return query(
             self.connection,

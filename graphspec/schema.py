@@ -81,9 +81,11 @@ class TableSchema:
                 return "query"
             if typed["tau"] not in ("FLOAT", "DOUBLE"):
                 raise ValueError("%s.tau must be a FLOAT or DOUBLE column, found %s" % (name, typed["tau"]))
+            if typed.get("series") != "STRING":
+                raise ValueError("%s is a path target and requires a series STRING column" % name)
             return "path"
-        if "tau" in typed:
-            raise ValueError("%s carries a tau column, which only targets on queries may have" % name)
+        if "tau" in typed or "series" in typed:
+            raise ValueError("%s carries tau or series columns, which only path targets may have" % name)
         if destinations == {"graph"}:
             return "graph"
         if not destinations or not destinations <= set(self.nodes):

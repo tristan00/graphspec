@@ -66,9 +66,9 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
     observations, failures = [], []
     for index in range(6):
         config, _ = selector.random_suggest(registry, index, index + 1, {"epochs": 2})
-        entry = dict(config=config, status="complete", trial=str(index), raw_val_mse=float(index + 1))
+        entry = dict(config=config, status="complete", trial=str(index), objective=float(index + 1))
         observations.append(entry)
-        failed = dict(entry, status="failed", trial="failed-" + str(index), raw_val_mse=None)
+        failed = dict(entry, status="failed", trial="failed-" + str(index), objective=None)
         failures.append(failed)
     monkeypatch.setattr(space, "CANDIDATES", 20)
     bounds = {"epochs": {"low": 1, "high": 3}}

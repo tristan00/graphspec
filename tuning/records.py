@@ -6,6 +6,8 @@ from pathlib import Path
 from graphspec.infra.files import JsonCache, sha256_json
 from graphspec.infra.processes import command
 
+from . import objective
+
 VERSION = 9
 
 
@@ -56,11 +58,8 @@ def validate_result(result: dict, item: dict, config: dict, plan: dict):
         and result["holdout_rows"] == plan["holdout_rows"]
         and result["training_examples_seen"] == result["epochs"] * plan["train_rows"]
     )
-    metrics = (
-        math.isfinite(result["raw_val_mse"])
-        and result["raw_val_mse"] >= 0
-        and math.isfinite(result["val_r2"])
-    )
+    score = objective.value(result, plan)
+    metrics = math.isfinite(score) and score >= 0 and math.isfinite(result["val_r2"])
     if not (identity and epochs and coverage and metrics):
         raise ValueError(
             "completed trial violates its configuration or scoring contract: " + item["directory"]
@@ -123,7 +122,7 @@ class Run:
         self.plan = cache.require(self.directory / "plan.json")
         if self.plan["version"] != VERSION:
             raise ValueError(f"unsupported run version {self.plan['version']}: {self.directory}")
-        required = {"bank", "trials", "limit", "seconds", "selector", "train_rows", "holdout_rows"}
+        required = {"bank", "trials", "limit", "seconds", "selector", "train_rows", "holdout_rows", "objective"}
         missing = required - self.plan.keys()
         if missing:
             raise ValueError(f"run plan lacks {sorted(missing)}: {self.directory}")

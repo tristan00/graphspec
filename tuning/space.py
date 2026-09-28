@@ -22,7 +22,7 @@ LOWER = {"predicted_mse"}
 FAILURE_POLICY = dict(
     version=2,
     outcomes=["timeout", "failed"],
-    objective="raw_val_mse",
+    objective="objective",
     interpretation="Completed trials train the score model; all completed and failed trials train feasibility.",
 )
 
@@ -186,7 +186,7 @@ def propose(
     rng = np.random.default_rng(seed)
     fixed = {name: space.proposal_parameters[name].uniform(rng) for name in space.random_names(random_params)}
     complete = [entry["status"] == "complete" for entry in records]
-    losses = [entry["raw_val_mse"] if ok else 0.0 for entry, ok in zip(records, complete)]
+    losses = [entry["objective"] if ok else 0.0 for entry, ok in zip(records, complete)]
 
     def update(stage):
         if progress is not None:

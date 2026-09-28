@@ -28,7 +28,7 @@ PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / "graphspec")
 Block = Sequence[int]
 
 
-def score(targets, predictions, groups=None):
+def score(targets, predictions):
     started = time.perf_counter()
     targets = np.asarray(targets, dtype=np.float64)
     values = np.asarray(predictions, dtype=np.float64)
@@ -36,43 +36,82 @@ def score(targets, predictions, groups=None):
         raise ValueError("targets and predictions must be matching vectors")
     if not len(values) or not np.isfinite(values).all() or not np.isfinite(targets).all():
         raise ValueError("validation predictions must be nonempty and finite")
-    if groups is None:
-        mse = float(np.mean((values - targets) ** 2))
-        emit("score", seconds=time.perf_counter() - started, rows=len(values), raw_mse=mse)
-        variance = float(targets.var())
-        if variance == 0:
-            raise ValueError("R2 requires varying validation targets")
-        return dict(raw_val_mse=mse, val_r2=1 - mse / variance)
-    groups = np.asarray(groups, dtype=np.int64)
-    if groups.shape != targets.shape:
-        raise ValueError("every point needs the index of its query")
-    weight = 1.0 / np.bincount(groups)[groups]
-    mse = float((weight * (values - targets) ** 2).sum() / weight.sum())
-    persistence = float((weight * targets**2).sum() / weight.sum())
+    mse = float(np.mean((values - targets) ** 2))
+    emit("score", seconds=time.perf_counter() - started, rows=len(values), raw_mse=mse)
+    variance = float(targets.var())
+    if variance == 0:
+        raise ValueError("R2 requires varying validation targets")
+    return dict(raw_val_mse=mse, val_r2=1 - mse / variance)
+
+
+def path_score(targets, predictions, queries, series, names, scale):
+    started = time.perf_counter()
+    targets = np.asarray(targets, dtype=np.float64)
+    values = np.asarray(predictions, dtype=np.float64)
+    if targets.ndim != 1 or not targets.shape == values.shape == queries.shape == series.shape:
+        raise ValueError("every point needs a target, a prediction, a query and a series")
+    if not len(values) or not np.isfinite(values).all() or not np.isfinite(targets).all():
+        raise ValueError("validation predictions must be nonempty and finite")
+    result = {}
+    for code, name in enumerate(names):
+        member = series == code
+        if not member.any():
+            raise ValueError("series %s has no validation points" % name)
+        owner = np.unique(queries[member], return_inverse=True)[1].reshape(-1)
+        weight = 1.0 / np.bincount(owner)[owner]
+        mse = float((weight * (values[member] - targets[member]) ** 2).sum() / weight.sum())
+        persistence = float((weight * targets[member] ** 2).sum() / weight.sum())
+        if persistence == 0:
+            raise ValueError("persistence skill of series %s requires nonzero validation targets" % name)
+        result[name] = dict(
+            val_loss=mse / float(scale[code]) ** 2,
+            raw_val_mse=mse,
+            persistence_mse=persistence,
+            val_r2=1 - mse / persistence,
+            points=int(member.sum()),
+            queries=int(owner.max()) + 1,
+        )
     emit(
         "score",
         seconds=time.perf_counter() - started,
         rows=len(values),
-        queries=int(groups.max()) + 1,
-        raw_mse=mse,
-        persistence_mse=persistence,
+        **{name + "_skill": entry["val_r2"] for name, entry in result.items()},
     )
-    if persistence == 0:
-        raise ValueError("persistence skill requires nonzero validation targets")
-    return dict(raw_val_mse=mse, val_r2=1 - mse / persistence)
+    return dict(
+        val_loss=float(np.mean([entry["val_loss"] for entry in result.values()])),
+        val_r2=float(np.mean([entry["val_r2"] for entry in result.values()])),
+        series=result,
+    )
 
 
-def path_loss(predictions, targets, point_query, queries):
+def path_loss(predictions, targets, point_query, series, queries, count):
+    import torch
+
     error = (predictions - targets).square()
-    total = error.new_zeros(queries).index_add_(0, point_query, error)
-    count = error.new_zeros(queries).index_add_(0, point_query, error.new_ones(len(error)))
-    return (total / count).mean()
+    group = point_query * count + series
+    total = error.new_zeros(queries * count).index_add_(0, group, error)
+    points = error.new_zeros(queries * count).index_add_(0, group, error.new_ones(len(error)))
+    present = (points > 0).to(error.dtype)
+    kind = torch.arange(queries * count, device=error.device) % count
+    series_total = error.new_zeros(count).index_add_(0, kind, total / points.clamp_min(1))
+    series_queries = error.new_zeros(count).index_add_(0, kind, present)
+    return (series_total / series_queries.clamp_min(1)).sum() / (series_queries > 0).sum()
 
 
-def loss(predictions, batch, split, level):
-    targets = (batch["target"] - split["reward_mean"]) / split["reward_sd"]
-    if level == "path":
-        return path_loss(predictions, targets, batch["point_query"], batch["queries"])
+def standardisation(predictions, batch, bank):
+    center, scale = predictions.new_tensor(bank.center), predictions.new_tensor(bank.scale)
+    if bank.level == "path":
+        return center[batch["series"]], scale[batch["series"]]
+    return center[0], scale[0]
+
+
+def loss(predictions, batch, bank):
+    center, scale = standardisation(predictions, batch, bank)
+    targets = (batch["target"] - center) / scale
+    if bank.level == "path":
+        return path_loss(
+            predictions, targets, batch["point_query"], batch["series"], batch["queries"], len(bank.center)
+        )
     return (predictions - targets).square().mean()
 
 
@@ -184,7 +223,7 @@ class TrainingSession:
             with measure("forward"):
                 predictions = self.net(batch)
             with measure("loss"):
-                value = loss(predictions, batch, self.bank.split, self.bank.level)
+                value = loss(predictions, batch, self.bank)
                 if not torch.isfinite(value):
                     raise FloatingPointError("nonfinite training loss")
             with measure("backward"):
@@ -260,8 +299,8 @@ class TrainingSession:
         checkpoint = dict(
             config=self.config,
             state_dict=self.net.state_dict(),
-            reward_mean=self.bank.split["reward_mean"],
-            reward_sd=self.bank.split["reward_sd"],
+            center=self.bank.center.tolist(),
+            scale=self.bank.scale.tolist(),
             supervision_sha256=self.supervision_digest,
             source_sha256=self.revision,
             train_blocks=training_blocks,
@@ -316,7 +355,8 @@ class TrainingSession:
                     with measure("prediction_collect"):
                         if not torch.isfinite(predictions).all():
                             raise FloatingPointError("nonfinite holdout predictions")
-                        raw = predictions * self.bank.split["reward_sd"] + self.bank.split["reward_mean"]
+                        center, scale = standardisation(predictions, batch, self.bank)
+                        raw = predictions * scale + center
                         values.extend(raw.cpu().tolist())
                         indices.extend(batch["rows"].tolist())
                 if (index + 1) % 256 == 0:
@@ -343,18 +383,25 @@ class TrainingSession:
             raise ValueError("holdout predictions do not exactly cover the frozen partition")
         path = self.bank.level == "path"
         with measure("metrics"):
-            metrics = score(
-                self.bank.targets[indices].astype(np.float64),
-                values,
-                self.bank.query_of[indices] if path else None,
-            )
+            targets = self.bank.targets[indices].astype(np.float64)
+            if path:
+                metrics = path_score(
+                    targets,
+                    values,
+                    self.bank.query_of[indices],
+                    self.bank.series[indices],
+                    self.bank.series_names,
+                    self.bank.scale,
+                )
+            else:
+                metrics = score(targets, values)
         with measure("prediction_save"):
             np.savez_compressed(
                 self.directory / "predictions.npz",
                 row_index=indices,
                 prediction=values,
                 target=self.bank.targets[indices],
-                **(dict(tau=self.bank.taus[indices]) if path else {}),
+                **(dict(tau=self.bank.taus[indices], series=self.bank.series[indices]) if path else {}),
             )
         self.budget.check()
         result = dict(
@@ -394,7 +441,7 @@ class TrainingSession:
             "fit_exit",
             model=self.description,
             graph=self.graph_digest[:10],
-            raw_mse=metrics["raw_val_mse"],
+            skill=metrics["val_r2"],
             seconds=result["seconds"],
             train_rows=result["train_unique_rows"],
         )

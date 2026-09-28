@@ -1,6 +1,5 @@
 import argparse
 import logging
-import math
 import time
 from contextlib import closing
 from pathlib import Path
@@ -13,16 +12,31 @@ from graphspec.infra.postgres import connect as postgres
 from graphspec.infra.postgres import rows
 from graphspec.staged import Staged
 
-from .domain import TARGET
+from .domain import SERIES, SIGNALS, TARGET
 
 LOG = logging.getLogger(__name__)
 OWNED = (
     "SELECT count(*) FROM (SELECT DISTINCT ON (state) country, present FROM state_history "
     "WHERE run_id = %(run)s AND seq <= %(seq)s ORDER BY state, seq DESC) s WHERE present AND country = %(player)s"
 )
-GDP = (
-    "SELECT gdp FROM (SELECT DISTINCT ON (country) gdp, present FROM country_economy_report "
-    "WHERE run_id = %(run)s AND country = %(player)s AND seq <= %(seq)s ORDER BY country, seq DESC) s WHERE present"
+MEASURES = (
+    (
+        "gdp",
+        "SELECT ln(gdp) FROM (SELECT DISTINCT ON (country) gdp, present FROM country_economy_report "
+        "WHERE run_id = %(run)s AND country = %(player)s AND seq <= %(seq)s ORDER BY country, seq DESC) s "
+        "WHERE present AND gdp > 0",
+    ),
+    (
+        "population",
+        "SELECT ln(total) FROM (SELECT lower_strata + middle_strata + upper_strata AS total FROM player_population "
+        "WHERE run_id = %(run)s AND seq <= %(seq)s ORDER BY seq DESC LIMIT 1) s WHERE total > 0",
+    ),
+    (
+        "sol",
+        "SELECT average_standard_of_living_by_population FROM (SELECT DISTINCT ON (country) "
+        "average_standard_of_living_by_population, present FROM country_standard_of_living_report "
+        "WHERE run_id = %(run)s AND country = %(player)s AND seq <= %(seq)s ORDER BY country, seq DESC) s WHERE present",
+    ),
 )
 PLAYER = "SELECT player_country FROM run WHERE run_id = %(run)s"
 
@@ -153,6 +167,8 @@ def check_labels(staged, problems):
         problems.append("label tau values must be positive elapsed days")
     if not {*table.column("split").to_pylist()} <= {"train", "validation"}:
         problems.append("label splits must be train or validation")
+    if not {*table.column("series").to_pylist()} <= set(SERIES):
+        problems.append("label series must be one of " + ", ".join(SERIES))
 
 
 def compare(connection, staged, reader, build, samples, seed):
@@ -168,10 +184,10 @@ def compare(connection, staged, reader, build, samples, seed):
         keys = queries.column("key").to_numpy()
         signal = np.asarray(
             queries.column("signal").combine_chunks().flatten().to_numpy(zero_copy_only=False)
-        )
+        ).reshape(-1, len(SIGNALS))
         observed = np.asarray(
             queries.column("signal_observed").combine_chunks().flatten().to_numpy(zero_copy_only=False)
-        )
+        ).reshape(-1, len(SIGNALS))
         for step in rng.choice(len(keys), min(samples, len(keys)), replace=False).tolist():
             seq = int(keys[step])
             expected = int(rows(connection, OWNED, dict(run=run, seq=seq, player=player))[0][0])
@@ -186,26 +202,16 @@ def compare(connection, staged, reader, build, samples, seed):
                 mismatches.append(
                     dict(graph=index, step=step, seq=seq, check="owns", expected=expected, found=found)
                 )
-            gdp = rows(connection, GDP, dict(run=run, seq=seq, player=player))
-            checked += 1
-            if gdp and gdp[0][0] > 0:
-                if observed[step] != 1.0 or abs(signal[step] - math.log(gdp[0][0])) > 1e-4:
+            for code, (name, statement) in enumerate(MEASURES):
+                found = rows(connection, statement, dict(run=run, seq=seq, player=player))
+                value, seen = float(signal[step, code]), float(observed[step, code])
+                checked += 1
+                expected = float(found[0][0]) if found and found[0][0] is not None else None
+                wrong = seen != 0.0 if expected is None else seen != 1.0 or abs(value - expected) > 1e-4
+                if wrong:
                     mismatches.append(
-                        dict(
-                            graph=index,
-                            step=step,
-                            seq=seq,
-                            check="gdp",
-                            expected=gdp[0][0],
-                            found=float(signal[step]),
-                        )
+                        dict(graph=index, step=step, seq=seq, check=name, expected=expected, found=value)
                     )
-            elif observed[step] != 0.0:
-                mismatches.append(
-                    dict(
-                        graph=index, step=step, seq=seq, check="gdp", expected=None, found=float(signal[step])
-                    )
-                )
     return mismatches, checked
 
 

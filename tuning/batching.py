@@ -181,6 +181,7 @@ def recipe_batch(bank, blocks, cfg):
         "selected",
         "target",
         "tau",
+        "series",
         "query",
         "context",
         "entity_kind",

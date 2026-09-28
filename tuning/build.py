@@ -30,6 +30,13 @@ def open_source(task_path, task):
     return graphdb.Database((root / task["database"]).resolve())
 
 
+def series_statistics(name, y, member, held):
+    train, validation = y[member & ~held].astype(np.float32), y[member & held].astype(np.float32)
+    if len(train) < 2 or len(validation) < 2 or np.ptp(train) == 0 or np.ptp(validation) == 0:
+        raise ValueError("series %s needs at least two varying training and validation points" % name)
+    return dict(name=name, mean=float(train.astype(np.float64).mean()), sd=float(train.astype(np.float64).std(ddof=1)))
+
+
 def supervision(source, level, target, names):
     started = time.perf_counter()
     if level == "node":
@@ -88,14 +95,21 @@ def supervision(source, level, target, names):
             tau = found.column("tau").to_numpy().astype(np.float64)
             if not np.isfinite(tau).all() or np.any(tau <= 0):
                 raise ValueError("path tau values must be finite and strictly positive")
-            order = np.lexsort((tau, steps, owners))
-            same = (np.diff(owners[order]) == 0) & (np.diff(steps[order]) == 0) & (np.diff(tau[order]) == 0)
+            series = found.column("series").to_pylist()
+            if None in series or "" in series:
+                raise ValueError("every path point needs a series name")
+            names_of, series_index = np.unique(np.asarray(series, object), return_inverse=True)
+            order = np.lexsort((tau, series_index, steps, owners))
+            keys = np.stack((owners, steps, series_index), 1)[order]
+            same = (np.diff(keys, axis=0) == 0).all(1) & (np.diff(tau[order]) == 0)
             if same.any():
                 raise ValueError(
-                    "graph %s has two points with one query and one tau"
+                    "graph %s has two points with one query, one series and one tau"
                     % names[int(owners[order][np.flatnonzero(same)[0]])]
                 )
-            described = [dict(entry, tau=value) for entry, value in zip(described, tau.tolist())]
+            described = [
+                dict(entry, tau=value, series=name) for entry, value, name in zip(described, tau.tolist(), series)
+            ]
         else:
             order = np.argsort(owners, kind="stable")
             if len(np.unique(np.stack((owners, steps), 1), axis=0)) != len(owners):
@@ -120,15 +134,11 @@ def supervision(source, level, target, names):
     if len(train) < 2 or len(validation) < 2 or np.ptp(stored[train]) == 0 or np.ptp(stored[validation]) == 0:
         raise ValueError("need at least two varying training targets and two varying validation targets")
     rows = [dict(entry, y=value) for entry, value in zip(described, y.tolist())]
-    result = dict(
-        rows=rows,
-        split=dict(
-            train_indices=train.tolist(),
-            validation_indices=validation.tolist(),
-            reward_mean=float(y[train].mean()),
-            reward_sd=float(y[train].std(ddof=1)),
-        ),
-    )
+    if level == "path":
+        standard = dict(series=[series_statistics(name, y, series_index == code, held) for code, name in enumerate(names_of.tolist())])
+    else:
+        standard = dict(reward_mean=float(y[train].mean()), reward_sd=float(y[train].std(ddof=1)))
+    result = dict(rows=rows, split=dict(train_indices=train.tolist(), validation_indices=validation.tolist(), **standard))
     ids = found.column("id").to_numpy().astype(np.int64)
     if level == "node":
         order = np.argsort(owners, kind="stable")
@@ -305,15 +315,16 @@ def build(task_path, output, workers=1):
         raise FileExistsError("bank exists; choose a new output")
     with closing(open_source(task_path, task)) as source:
         schema = source.schema
-        registry = vocabulary.registry(schema, task)
-        graphdb.check(registry)
-        level = registry.extras["level"]
+        level = vocabulary.target_level(schema, task)
         graphs = source.graphs()
         names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
         if len(set(names.values())) != len(names):
             raise ValueError("graph names must be unique")
         categories = source.categories() if schema.queries else []
         rows, groups = supervision(source, level, task["target"], names)
+        series = [entry["name"] for entry in rows["split"]["series"]] if level == "path" else []
+        registry = vocabulary.registry(schema, task, series)
+        graphdb.check(registry)
     (output / "truth").mkdir(parents=True)
     write_json(output / "supervision.json", rows)
     jobs = [(index, names[index], steps, ids, members) for index, steps, ids, members in groups]

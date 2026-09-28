@@ -21,6 +21,7 @@ from graphspec.infra.runtime import exclusive, output_path
 from graphspec.infra.timing import Timeline, measure, timed
 from graphspec.spec import digest
 
+from . import objective
 from .budget import TIMEOUT_EXIT_CODE
 from .records import VERSION, Outcome, worker_alive
 from .report import report
@@ -93,6 +94,7 @@ def run(args):
         pairs = [item.split("=") for item in args.mix]
         mix = check_mix({name: float(share) for name, share in pairs})
     check_bounds(bank.registry, bounds)
+    chosen = objective.weights(bank, args.objective)
     if path.exists():
         plan = read_json(path)
         if plan.get("version") != VERSION:
@@ -110,6 +112,7 @@ def run(args):
             ("random_params", args.random_params),
             ("seconds", args.seconds),
             ("bounds", bounds if args.bounds else None),
+            ("objective", chosen if args.objective else None),
         ):
             if value is not None and value != plan[name]:
                 emit(name + "_replaced", previous=plan[name], **{name: value})
@@ -128,6 +131,7 @@ def run(args):
             random_params=args.random_params or [],
             mix=mix or {args.selector or "botorch": 100},
             bounds=bounds,
+            objective=chosen,
             limit=args.trials,
             seconds=600 if args.seconds is None else args.seconds,
             train_rows=bank.manifest["train_rows"],
@@ -414,6 +418,11 @@ def main():
         "--mix",
         nargs="*",
         help="percent of trials after startup for each selector, as name=share pairs summing to 100",
+    )
+    run_parser.add_argument(
+        "--objective",
+        nargs="*",
+        help="series=weight pairs that blend per-series validation losses into the trial score; every series weighs 1 when omitted on a new run",
     )
     run_parser.add_argument("--bounds")
     run_parser.add_argument("--workers", type=int, default=WORKERS)

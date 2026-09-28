@@ -46,6 +46,8 @@ class Registry:
             raise ValueError(
                 "registry level must be one of %s, found %s" % (", ".join(LEVELS), self.extras["level"])
             )
+        if (self.extras["level"] == "path") != bool(self.extras.get("series")):
+            raise ValueError("path registries, and only they, name their target series")
         if not set(self.extras["protected"]) <= set(self.nodes):
             raise ValueError("protected node types must be declared")
         if not set(self.extras["base"]) <= set(self.by_name):

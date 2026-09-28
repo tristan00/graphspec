@@ -9,11 +9,11 @@ Blocked: nothing.
 - One decision per pause. Every action taken in a pause, the event answers, the proposal answers and the main batch alike, belongs to that one decision. There is no time between them and they are not a sequence.
 - One `block` node per pause. The step's query points at it. Each action is its own node, joined to the block and to the game entities and definitions its parameters name. Nothing is predicted per action and no action effects are summed; summing would assume the actions are independent.
 - The input is the run's sequence of game states up to the pause: buildings, pops, politics, research, GDP, prices and the rest, one step per pause. Whether the model reads that sequence with a recurrence over frames, a per-entity recurrence or temporal edges is a search choice. All of them read the same sequence.
-- The output is a sequence: the player country's future national GDP, as y(τ) = log GDP(t + τ) − log GDP(t), one value for each later pause of the run, at the elapsed game time τ of that pause. It is indexed by game time rather than by pause count, because pause lengths are random draws of the loop.
-- The target stops four game years after the block.
-- The whole sequence is produced in one pass from the block's context and a learned encoding of τ. Nothing is autoregressive and there is no teacher forcing.
-- Loss: squared error on standardised y, averaged over a block's points, then over blocks, so every decision counts once whatever its number of future points.
-- Score: skill against persistence (y = 0), one minus the ratio of the model's weighted squared error to persistence's under the loss weights. It is clustered by run, since one run's blocks share a future.
+- The output is three sequences for the player country: national GDP as log GDP(t + τ) − log GDP(t), population (lower, middle and upper strata of `player_population`) as log population(t + τ) − log population(t), and the population-weighted standard of living (`country_standard_of_living_report.average_standard_of_living_by_population`) as SoL(t + τ) − SoL(t). Each has one value for each later pause of the run, at the elapsed game time τ of that pause. They are indexed by game time rather than by pause count, because pause lengths are random draws of the loop. The deficit is not part of any target.
+- The targets stop five game years after the block.
+- All three sequences are produced in one pass from the block's context, a learned embedding of the series and a learned encoding of τ. Nothing is autoregressive and there is no teacher forcing.
+- Loss: squared error on y standardised per series, averaged over a block's points of one series, then over blocks, then over the three series, so every decision counts once whatever its number of future points and every series weighs the same.
+- Score: per series, skill against persistence (y = 0), one minus the ratio of the model's weighted squared error to persistence's under the loss weights, clustered by run, since one run's blocks share a future. Trials are ranked by the mean of the three standardised validation losses; the weights are a search setting (`--objective`).
 
 **2. Why this design, from the literature**
 
@@ -79,7 +79,7 @@ The `vic3` package reads finished runs and writes contract tables through `Stage
 
 - Step: one per pause, at the pre-action snapshot. Each non-loop action goes to the last pre-action snapshot at or before its `before_seq`. The closing snapshot is a step only if it has actions, but it still supplies label points. The period is the game date.
 - Block: one node per step, `block:<seq>`, observed at that step only. Features: turn, action count, event-answer count and days since run start.
-- Query: actor and context are the player country and the subject is the block. The query vector is empty. The query signal is log GDP at the pre-action snapshot with its observed mask. Category: the group of the first action that is not an event answer, `events` when there are only event answers, `empty` when there are none.
+- Query: actor and context are the player country and the subject is the block. The query vector is empty. The query signal is log GDP, log population and standard of living at the pre-action snapshot with their observed masks; only the `signal` model reads it, as the baseline that sees nothing but the three series. The graph models read the same values from the country's report features. Category: the group of the first action that is not an event answer, `events` when there are only event answers, `empty` when there are none.
 - Node types: country, state, market, building, queue entry, company, law, stratum, world market hub, strategic region; block and action; interest group, character, political movement, power bloc and war; and the definition nodes goods, building type, production method, law type, technology, decree type and institution type.
 - Relations: `in_block` and `targets` for actions, with no `orders`.
   - Economy: `owns`, `adjacent_country`, `import_tariff`, `export_tariff`, `market_owner`, `market_goods`, `in_market`, `local_price`, `produces_state`, `consumes_state`, `produces`, `consumes`, `uses`, `in_state`, `queued`, `will_be`, `runs`, `owned_by`, `needs`.
@@ -88,18 +88,17 @@ The `vic3` package reads finished runs and writes contract tables through `Stage
   - Politics: `represents`, `leads`, `rules`, `supports`, `movement_of`, `in_bloc`, `in_war`, `occupies`, one relation per attitude value and one per stance.
   - Every fact is restated at every step, and removals are derived.
 - Targets: an action's integer parameters reach country, state, building and company. Law and institution parameters resolve to their type, and text parameters reach definition nodes.
-- Labels: table `gdp_path` (`id`, `y`, `split`, `tau`) with edge table `gdp_path_of` to the query. `tau` is elapsed game days and must be positive. It is capped at 1460 days. Points come from every later pre-action snapshot with GDP, and at a repeated date only the first counts. The library reads the table as level `path`.
+- Labels: table `future` (`id`, `y`, `split`, `tau`, `series`) with edge table `future_of` to the query. `series` is `gdp`, `population` or `sol`. `tau` is elapsed game days and must be positive. It is capped at 1825 days. Points of a series come from every later pre-action snapshot where that series is measured, and at a repeated date only the first counts. The library reads the table as level `path`.
 - Split: a blake2b hash of the run id, about a quarter of runs to validation.
 - `vic3.verify` checks the contract's structural rules; that the subject is the step's block; that actor and context are one country; that every observed action is `in_block` with its own block; that labels are finite and tau positive; and, against the database, the owned-state count and the GDP signal.
 
 **8. The library as built**
 
-- Supervision (`tuning/build.py`) takes many points per query with finite positive τ, one point per query and τ, and one split per query. Standardisation uses the mean and deviation of the train points.
-- The bank carries τ and each point's query. Batching carries them into the model.
-- Head (`tuning/layers.py`): the query's representation, joined with a learned time encoding of τ, through a two-layer MLP, one value per point. The encoding is a search choice among log-cosine, cosine and log-linear. In the snapshot model, the query's representation is the sequence frame together with actor, subject (the block) and context.
-- Loss (`tuning/training.py`): squared error on standardised y, averaged per query, then over queries.
-- Score: `val_r2` is persistence skill with point weights of one over the points per query. Predictions store the row, prediction, target and τ.
-- The dead `tuning/objective.py` and `tuning/readout.py` are deleted.
+- Supervision (`tuning/build.py`) takes many points per query with finite positive τ and a series name, one point per query, series and τ, and one split per query. Standardisation uses the mean and deviation of each series' train points. The registry records the series names.
+- The bank carries τ, the series and each point's query. Batching carries them into the model.
+- Head (`tuning/layers.py`): the query's representation, joined with a learned time encoding of τ and a learned series embedding, through a two-layer MLP, one value per point. The encoding is a search choice among log-cosine, cosine and log-linear. In the snapshot model, the query's representation is the sequence frame together with actor, subject (the block) and context.
+- Loss (`tuning/training.py`): squared error on per-series standardised y, averaged per query and series, then over queries, then over series.
+- Score: each series gets `val_loss` (query-weighted MSE over its training variance), raw MSE and persistence skill `val_r2`. `tuning/objective.py` blends the series losses with the run's `--objective` weights into the ranked score, used by every selector, the report and the dashboard. Predictions store the row, prediction, target, τ and series.
 - The suite passes. With four workers it takes about fourteen seconds.
 
 Built data: the `vic3-block-4y` dataset and bank from runs 1 and 4, with the four-year cap, verified with no problems.

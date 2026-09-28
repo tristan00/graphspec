@@ -133,7 +133,7 @@ def test_bank_build_closes_source_when_validation_fails(tmp_path, monkeypatch):
     def invalid(*args):
         raise ValueError("invalid schema")
 
-    monkeypatch.setattr(build.vocabulary, "registry", invalid)
+    monkeypatch.setattr(build.vocabulary, "target_level", invalid)
     with pytest.raises(ValueError, match="invalid schema"):
         build.build.__wrapped__(task, tmp_path / "bank")
     assert closed == [True]

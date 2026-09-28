@@ -6,6 +6,7 @@ from graphspec.infra.files import JsonCache, write_csv, write_json, write_jsonl
 from graphspec.infra.log import emit
 from graphspec.infra.runtime import output_path
 
+from . import objective
 from .model_spec import describe
 from .records import Run, Status
 
@@ -38,6 +39,7 @@ def report(directory):
                 model=trial.item["model"],
                 trial_seconds=record["seconds"] if record is not None else None,
                 phases=record["phases"] if record is not None else None,
+                **(dict(objective=objective.value(outcome, planned)) if trial.status == Status.COMPLETE else {}),
             )
         )
     completed = [r for r in results if r["status"] == "complete"]
@@ -48,7 +50,7 @@ def report(directory):
         "model",
         "graph",
         "status",
-        "raw_val_mse",
+        "objective",
         "val_r2",
         "trial_seconds",
         "max_seconds",
@@ -109,13 +111,13 @@ def report(directory):
     )
     for view in views:
         subset = [r for r in completed if r["config"]["model"]["view"] == view]
-        best = min(subset, key=lambda r: r["raw_val_mse"]) if subset else None
+        best = min(subset, key=lambda r: r["objective"]) if subset else None
         lines.append(
             "| %s | %d | %s | %s | %s | %s |"
             % (
                 view,
                 len(subset),
-                "%.6f" % best["raw_val_mse"] if best else "Pending",
+                "%.6f" % best["objective"] if best else "Pending",
                 "%.4f" % best["val_r2"] if best else "â€”",
                 describe(best["config"]["model"]) if best else "â€”",
                 best["graph"][:10] if best else "â€”",

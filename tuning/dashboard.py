@@ -8,6 +8,7 @@ from graphspec.infra.log import configure
 from graphspec.infra.runtime import home
 from graphspec.infra.serve import HttpError, serve, server
 
+from . import objective
 from .records import Run, Status
 
 LOG = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ class Dashboard:
                     description=trial.item.get("description", ""),
                     family=trial.config["model"]["view"],
                     selector=trial.item["selector"],
-                    mse=outcome.get("raw_val_mse"),
+                    mse=objective.value(outcome, run.plan) if trial.status == Status.COMPLETE else None,
                     r2=outcome.get("val_r2"),
                     seconds=record.get("seconds"),
                     parameters=outcome.get("parameters"),

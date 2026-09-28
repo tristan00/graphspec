@@ -66,7 +66,7 @@ def test_random_and_tpe_accept_non_power_of_two_settings(bank):
     records = []
     for index in range(12):
         config, _ = random_suggest(registry, index, index, bounds)
-        records.append(dict(config=config, status="complete", trial=str(index), raw_val_mse=float(index)))
+        records.append(dict(config=config, status="complete", trial=str(index), objective=float(index)))
     tpe, metadata = suggest(registry, records, [], 12, 13, bounds)
     assert metadata["phase"] == "tpe" and metadata["observations"] == 12
     assert all(config["model"][key] == value for config in (random, tpe) for key, value in bounds.items())
@@ -93,6 +93,7 @@ def arguments(bank, output, **overrides):
         random_trials=None,
         random_params=None,
         mix=None,
+        objective=None,
         bounds=None,
         workers=1,
         variant_gb=1,
@@ -123,11 +124,11 @@ def test_tpe_learns_from_every_recorded_trial_inside_the_bounds(bank):
         config["epochs"] = 1 + index % 4
         status = "complete" if index % 5 else "failed"
         records.append(
-            dict(config=config, status=status, trial="trial_%06d_random" % index, raw_val_mse=1.0 + index)
+            dict(config=config, status=status, trial="trial_%06d_random" % index, objective=1.0 + index)
         )
     bounds = {"epochs": {"low": 1, "high": 2}}
     completed = [entry for entry in records if entry["status"] == "complete"]
-    failures = [dict(entry, raw_val_mse=None) for entry in records if entry["status"] != "complete"]
+    failures = [dict(entry, objective=None) for entry in records if entry["status"] != "complete"]
     config, selection = suggest(registry, completed, failures, 7, 8, bounds)
     inside = [entry for entry in records if entry["config"]["epochs"] <= 2]
     assert selection["observations"] == sum(entry["status"] == "complete" for entry in inside)
@@ -153,7 +154,7 @@ def test_tpe_excludes_recorded_trials_that_lack_an_active_parameter(bank):
     records = []
     for index in range(3):
         config, _ = random_suggest(registry, 300 + index, 400 + index, {"graphs/join": "single"})
-        records.append(dict(config=config, status="complete", trial="trial_%d" % index, raw_val_mse=1.0))
+        records.append(dict(config=config, status="complete", trial="trial_%d" % index, objective=1.0))
     del records[0]["config"]["graph"]["graphs/join_size"]
     _, selection = suggest(registry, records, [], 7, 8, {})
     assert selection["excluded"] == [
@@ -262,6 +263,7 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path):
         bank=str(bank),
         train_rows=1,
         holdout_rows=1,
+        objective=None,
         limit=None,
     )
     write_json(tmp_path / "plan.json", plan)

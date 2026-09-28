@@ -10,6 +10,7 @@ from graphspec.infra import search
 from graphspec.infra.files import JsonCache, read_json, sha256_file, write_json
 from graphspec.infra.log import emit
 
+from . import objective
 from .model_spec import TRAINING, describe, groups
 from .model_spec import space as model_space
 from .records import Run, Status
@@ -170,7 +171,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
             observation(
                 registry,
                 entry["config"],
-                entry["raw_val_mse"] if complete else math.inf,
+                entry["objective"] if complete else math.inf,
                 bounds,
                 outcome=entry["status"],
             )
@@ -242,11 +243,12 @@ def load_history(directory, plan):
             )
             continue
         result = outcome.data
-        observations.append(dict(result, config=trial.parameters, trial=trial.item["directory"]))
+        score = objective.value(result, plan)
+        observations.append(dict(result, objective=score, config=trial.parameters, trial=trial.item["directory"]))
         history.append(
             dict(
                 trial=trial.item["directory"],
-                raw_val_mse=result["raw_val_mse"],
+                objective=score,
                 result_sha256=sha256_file(outcome.path),
             )
         )

@@ -25,6 +25,7 @@ RELATIONS = (
 ROLES = dict(actor="person", subject="place", context="team")
 CATEGORIES = ("buy", "sell", "move")
 TARGET = "outcome"
+SERIES = ("level", "trend")
 
 
 def vectors(rng, rows, features):
@@ -209,11 +210,14 @@ def graph_rows(rng, index, name, settings, counter, level):
     elif level == "path":
         source, later = path_points(steps, settings["period"])
         tau = (later - source).astype(np.float64)
-        y = (
-            0.05 * tau * actor_x[source, :3].sum(1)
-            + (category[source] == 0)
-            + rng.normal(scale=0.5, size=len(source))
+        drift = actor_x[source, :3].sum(1)
+        y = np.concatenate(
+            (
+                0.05 * tau * drift + (category[source] == 0) + rng.normal(scale=0.5, size=len(source)),
+                -2.0 * np.log1p(tau) * drift + rng.normal(scale=0.2, size=len(source)),
+            )
         )
+        source, tau = np.tile(source, len(SERIES)), np.tile(tau, len(SERIES))
         label_ids = counter.take(TARGET, len(source))
         tables[(TARGET, None, None)] = pa.table(
             dict(
@@ -221,6 +225,7 @@ def graph_rows(rng, index, name, settings, counter, level):
                 y=pa.array(y, pa.float64()),
                 split=pa.array(["validation" if index % 2 == 1 else "train"] * len(source)),
                 tau=pa.array(tau, pa.float32()),
+                series=pa.array(np.repeat(SERIES, len(source) // len(SERIES)).tolist(), pa.string()),
             )
         )
         tables[(TARGET + "_of", TARGET, "query")] = pa.table(
@@ -264,7 +269,7 @@ def labels(graphs, level, settings):
         moments = np.arange(period - 1, steps, period)
         return 2 * int((moments < steps * 0.8).sum()), 2 * int((moments >= steps * 0.8).sum())
     if level == "path":
-        points = len(path_points(steps, period)[0])
+        points = len(path_points(steps, period)[0]) * len(SERIES)
         return points * (graphs - graphs // 2), points * (graphs // 2)
     return graphs - graphs // 2, graphs // 2
 

@@ -352,7 +352,7 @@ class Staged(TableSchema):
                 step=pa.array(self.query_steps()[destinations], pa.int32()),
             )
             if level == "path":
-                columns["tau"] = table.column("tau")
+                columns.update(tau=table.column("tau"), series=table.column("series"))
         elif level == "graph":
             columns.update(graph=pa.array(destinations, pa.int32()))
         else:
