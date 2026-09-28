@@ -3,7 +3,7 @@ import time
 
 from graphspec.infra.postgres import records, rows
 
-from .domain import PLAYER, REPORTS, UNLOCKS, VOCABULARIES
+from .domain import APPROVAL, DISALLOWS, PLAYER, REPORTS, REQUIREMENTS, UNLOCKS, VOCABULARIES
 
 LOG = logging.getLogger(__name__)
 KEYS = {
@@ -57,6 +57,11 @@ KEYS = {
     "country_ai_goal": ("country_ai", "target_country"),
     "country_ai_region_stance": ("country_ai", "strategic_region"),
     "law_private": ("law",),
+    "interest_group_ideology": ("interest_group", "ideology"),
+    "interest_group_held_trait": ("interest_group", "interest_group_trait"),
+    "interest_group_pop": ("interest_group", "pop"),
+    "party_history": ("party",),
+    "party_member": ("party", "interest_group"),
 }
 KEYS.update({table: ("country",) for table in REPORTS["country"]})
 KEYS.update({table: ("state",) for table in REPORTS["state"]})
@@ -70,8 +75,15 @@ ADJACENCY = (
 )
 DEFINITIONS = (
     "SELECT folder, name, field, value FROM game_definition WHERE ruleset_id = %(ruleset)s "
-    "AND field IN ('unlocking_technologies', 'unlocking_laws') ORDER BY folder, name, field, position"
+    "AND (field IN ('unlocking_technologies', 'unlocking_laws') OR folder = 'common/laws' "
+    "AND field IN ('disallowing_laws', 'group', 'modifier') OR folder = 'common/ideologies' AND field = 'stance') "
+    "ORDER BY folder, name, field, position"
 )
+REQUIRED = (
+    "SELECT production_method, kind, key FROM production_method_requirement WHERE ruleset_id = %(ruleset)s "
+    "AND kind = ANY(%(kinds)s) ORDER BY production_method, kind, key"
+)
+MODIFIERS = "SELECT DISTINCT value FROM game_definition WHERE folder = 'common/laws' AND field = 'modifier'"
 RUNS = (
     "SELECT run_id, kind, world_id, ruleset_id, player_country, game_speed, end_reason "
     "FROM run WHERE ended_at IS NOT NULL ORDER BY run_id"
@@ -135,12 +147,52 @@ def world_of(connection, world):
     )
 
 
-def unlocks_of(connection, ruleset):
-    found = []
+def modifiers(text):
+    tokens = text.split()
+    if len(tokens) % 3 or any(tokens[i + 1] != "=" for i in range(0, len(tokens), 3)):
+        raise ValueError("law modifier is not a list of key = value pairs: %r" % text)
+    return {
+        tokens[i]: 1.0 if tokens[i + 2] == "yes" else 0.0 if tokens[i + 2] == "no" else float(tokens[i + 2])
+        for i in range(0, len(tokens), 3)
+    }
+
+
+def modifier_names(connection):
+    return sorted({name for (text,) in rows(connection, MODIFIERS) for name in modifiers(text)})
+
+
+def definitions_of(connection, ruleset):
+    started = time.perf_counter()
+    found = dict(unlocks=[], disallows=[], stances={}, laws={})
     for row in records(connection, DEFINITIONS, dict(ruleset=ruleset)):
-        pair = UNLOCKS.get((row["folder"], row["field"]))
-        if pair is not None:
-            found.append((pair[0], row["value"], pair[1], row["name"]))
+        key, name, value = (row["folder"], row["field"]), row["name"], row["value"]
+        if key in UNLOCKS:
+            source, target = UNLOCKS[key]
+            found["unlocks"].append((source, value, target, name))
+        elif key in DISALLOWS:
+            source, target = DISALLOWS[key]
+            found["disallows"].append((source, name, target, value))
+        elif key == ("common/ideologies", "stance"):
+            law, stance = value.split()
+            found["stances"].setdefault(name, []).append((law, APPROVAL[stance]))
+        elif row["field"] == "group":
+            found["laws"].setdefault(name, {})["law_type.group"] = value
+        elif row["field"] == "modifier":
+            found["laws"].setdefault(name, {}).update(
+                ("modifier." + modifier, amount) for modifier, amount in modifiers(value).items()
+            )
+    for row in records(connection, REQUIRED, dict(ruleset=ruleset, kinds=list(REQUIREMENTS))):
+        relation, kind = REQUIREMENTS[row["kind"]]
+        found[relation].append((kind, row["key"], "production_method", row["production_method"]))
+    LOG.info(
+        "definitions exit ruleset=%d seconds=%.2f unlocks=%d disallows=%d ideologies=%d laws=%d",
+        ruleset,
+        time.perf_counter() - started,
+        len(found["unlocks"]),
+        len(found["disallows"]),
+        len(found["stances"]),
+        len(found["laws"]),
+    )
     return found
 
 
@@ -192,5 +244,5 @@ def load(connection, run):
         actions=actions,
         tables=tables,
         world=world_of(connection, run["world_id"]),
-        unlocks=unlocks_of(connection, run["ruleset_id"]),
+        definitions=definitions_of(connection, run["ruleset_id"]),
     )

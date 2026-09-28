@@ -46,6 +46,8 @@ NODES = (
     "war",
     "law",
     "strategic_region",
+    "ideology",
+    "party",
 ) + CODES
 RELATIONS = {
     "in_block": ((("action", "block"),), ()),
@@ -97,11 +99,21 @@ RELATIONS = {
             ("technology", "law_type"),
             ("technology", "decree_type"),
             ("technology", "technology"),
+            ("technology", "production_method"),
             ("law_type", "law_type"),
             ("law_type", "decree_type"),
+            ("law_type", "production_method"),
+            ("production_method", "production_method"),
         ),
         (),
     ),
+    "disallows": ((("law_type", "law_type"), ("law_type", "production_method")), ()),
+    "stance": ((("ideology", "law_type"),), ("approval",)),
+    "holds": ((("interest_group", "ideology"),), ()),
+    "governs": ((("interest_group", "country"),), ()),
+    "party_of": ((("party", "country"),), ()),
+    "member_of": ((("interest_group", "party"),), ()),
+    "backs": ((("stratum", "interest_group"),), ("members",)),
     "lives_in": ((("stratum", "state"),), ()),
     "works_in": ((("stratum", "building_type"),), ("share",)),
     "migrates_to": ((("state", "state"),), ()),
@@ -124,6 +136,14 @@ RELATIONS.update(
     {"attitude_%d" % code: ((("country", "country"),), ("neighbour", "relevance")) for code in ATTITUDES}
 )
 RELATIONS.update({stance: ((("country", "strategic_region"),), ()) for stance in STANCES})
+APPROVAL = dict(strongly_disapprove=-2.0, disapprove=-1.0, neutral=0.0, approve=1.0, strongly_approve=2.0)
+REQUIREMENTS = {
+    "unlocking_technologies": ("unlocks", "technology"),
+    "unlocking_laws": ("unlocks", "law_type"),
+    "unlocking_production_methods": ("unlocks", "production_method"),
+    "disallowing_laws": ("disallows", "law_type"),
+}
+DISALLOWS = {("common/laws", "disallowing_laws"): ("law_type", "law_type")}
 UNLOCKS = {
     ("common/buildings", "unlocking_technologies"): ("technology", "building_type"),
     ("common/laws", "unlocking_technologies"): ("technology", "law_type"),
@@ -147,6 +167,7 @@ VOCABULARIES = CODES + (
     "commander_rank",
     "state_region",
     "ai_region_stance",
+    "interest_group_trait",
 )
 REPORTS = {
     "country": (
@@ -231,6 +252,7 @@ HISTORY = {
     "political_movement": (("radicalism",), ("political_movement_type", "ideology", "managed_status")),
     "power_bloc": (("cohesion", "mandate_progress"), ("power_bloc_identity",)),
     "war": (("days_since_exhaustion", "dead"), ()),
+    "party": (("votes",), ("party_type",)),
     "law": (("progress", "phase"), ()),
     "world_market_hub": (("trade_centers",), ()),
 }
@@ -479,6 +501,7 @@ def declared():
     numbers.update(field("law", column) for column in LAW_PRIVATE[0])
     categories.update(field("law", column) for column in LAW_PRIVATE[1])
     numbers.add(field("character", "ruler"))
+    categories.add(field("law_type", "group"))
     return numbers, categories
 
 

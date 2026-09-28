@@ -72,7 +72,7 @@ class Run:
         self.entities, self.kinds, self.keys, self.static = {}, [], [], {}
         self.absent = {}
         self.player = self.entity("country", run["player_country"])
-        self.unlocks = data["unlocks"]
+        self.definitions = data["definitions"]
         self.shapes, self.borders = geometry(data["world"], names["terrain"])
 
     def entity(self, kind, ident):
@@ -95,7 +95,13 @@ class Run:
 
     def named(self, kind, name):
         node = self.entity(kind, name)
-        self.static[node] = dict(key=name)
+        if node not in self.static:
+            data = dict(key=name)
+            if kind == "law_type":
+                if name not in self.definitions["laws"]:
+                    raise ValueError("law type %r has no definition in this ruleset" % name)
+                data.update(self.definitions["laws"][name])
+            self.static[node] = data
         return node
 
     def vector(self, kind, data):
@@ -416,10 +422,11 @@ class Run:
             needs[(ident, goods)] = needs.get((ident, goods), 0.0) + row["weight"]
         for (ident, goods), weight in needs.items():
             self.put(facts, "needs", self.owned("state", ident, state), self.code("goods", goods), weight)
-        for source_kind, source_name, target_kind, target_name in self.unlocks:
-            self.put(
-                facts, "unlocks", self.named(source_kind, source_name), self.named(target_kind, target_name)
-            )
+        for relation in ("unlocks", "disallows"):
+            for source_kind, source_name, target_kind, target_name in self.definitions[relation]:
+                self.put(
+                    facts, relation, self.named(source_kind, source_name), self.named(target_kind, target_name)
+                )
         self.strata(state, features, facts)
         regions = {ident: row["state_region"] for (ident,), row in state["state_history"].items()}
         by_region = {}
@@ -461,15 +468,20 @@ class Run:
     def strata(self, state, features, facts):
         cultures = {ident: row["culture_type"] for (ident,), row in state["culture_history"].items()}
         types = {ident: row["building_type"] for (ident,), row in state["building_history"].items()}
+        members = {}
+        for group, pop in state["interest_group_pop"]:
+            members.setdefault(pop, []).append(group)
         groups = {}
         for (ident,), row in state["pop_history"].items():
             status = state["pop_status"].get((ident,))
             if status is None:
                 raise ValueError("pop %r has no status at this snapshot" % ident)
             key = (row["location"], row["pop_type"], row["culture"], row["religion"])
-            group = groups.setdefault(key, dict(sums={}, means={}, size=0.0, work={}))
+            group = groups.setdefault(key, dict(sums={}, means={}, size=0.0, work={}, backs={}))
             size = float(status["workforce"] + status["dependents"])
             group["size"] += size
+            for backed in members.get(ident, ()):
+                group["backs"][backed] = group["backs"].get(backed, 0.0) + size
             for column in STRATUM_SUMS:
                 group["sums"][column] = group["sums"].get(column, 0.0) + status[column]
             for column in STRATUM_MEANS:
@@ -494,6 +506,8 @@ class Run:
             data[field("stratum", "religion")] = self.names["religion"][religion]
             features[node] = data
             self.put(facts, "lives_in", node, self.owned("state", location, state))
+            for backed, size in group["backs"].items():
+                self.put(facts, "backs", node, self.owned("interest_group", backed, state), size)
             workforce = group["sums"]["workforce"]
             for kind, count in group["work"].items():
                 if workforce > 0:
@@ -533,8 +547,28 @@ class Run:
             data.update(self.subjects("interest_group", state, (ident,)))
             features[node] = data
             self.put(facts, "represents", node, self.owned("country", row["country"], state))
+            if row["in_government"]:
+                self.put(facts, "governs", node, self.entity("country", row["country"]))
             if row["leader"] is not None:
                 leaders[row["leader"]] = node
+        held = {}
+        for (group, ideology), row in state["interest_group_ideology"].items():
+            name = self.names["ideology"][ideology]
+            held[name] = self.named("ideology", name)
+            self.put(facts, "holds", self.owned("interest_group", group, state), held[name])
+        for name, node in sorted(held.items()):
+            for law, approval in self.definitions["stances"].get(name, ()):
+                self.put(facts, "stance", node, self.named("law_type", law), approval)
+        for (group, trait), row in state["interest_group_held_trait"].items():
+            if row["enabled"]:
+                name = self.names["interest_group_trait"][trait]
+                features[self.owned("interest_group", group, state)]["trait." + name] = 1
+        for (ident,), row in state["party_history"].items():
+            node = self.entity("party", ident)
+            features[node] = self.history("party", row)
+            self.put(facts, "party_of", node, self.owned("country", row["country"], state))
+        for (party, group), row in state["party_member"].items():
+            self.put(facts, "member_of", self.owned("interest_group", group, state), self.owned("party", party, state))
         for (ident,), row in state["character_history"].items():
             node = self.entity("character", ident)
             data = self.history("character", row)
@@ -706,11 +740,13 @@ def geometry(world, terrains):
     return shapes, borders
 
 
-def allowed_fields(columns, parameters, names):
+def allowed_fields(columns, parameters, names, modifiers):
     numbers, categories = set(NUMBERS), set(CATEGORIES)
     numbers.update("terrain." + name for name in names["terrain"].values())
     numbers.update("role." + name for name in names["character_role"].values())
     numbers.update("principle." + name for name in names["power_bloc_principle"].values())
+    numbers.update("trait." + name for name in names["interest_group_trait"].values())
+    numbers.update("modifier." + name for name in modifiers)
     numbers.update(field(table, column) for table, names in columns.items() for column in names)
     for name, kinds in parameters.items():
         if "text" in kinds:

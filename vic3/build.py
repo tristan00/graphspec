@@ -51,7 +51,7 @@ def attach(host, port, database, user, features):
     names = source.names_of(connection)
     columns = source.columns_of(connection)
     parameters = source.parameters_of(connection)
-    numbers, categories = allowed_fields(columns, parameters, names)
+    numbers, categories = allowed_fields(columns, parameters, names, source.modifier_names(connection))
     WORKER = Worker(
         connection,
         names,

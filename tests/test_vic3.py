@@ -28,6 +28,9 @@ NAMES.update(
     pop_type={8: "farmers"},
     culture_type={5: "cult"},
     religion={3: "rel"},
+    ideology={1: "ideology_a"},
+    interest_group_trait={1: "trait_a"},
+    interest_group_type={1: "ig_x"},
 )
 WORLD = dict(
     provinces=[
@@ -40,7 +43,16 @@ WORLD = dict(
         dict(first_color=2, second_color=3, shared_border_pixels=3),
     ],
 )
-UNLOCKS = [("technology", "tech_a", "building_type", "building_farm")]
+DEFINITIONS = dict(
+    unlocks=[("technology", "tech_a", "building_type", "building_farm")],
+    disallows=[("law_type", "law_x", "law_type", "law_y"), ("law_type", "law_y", "production_method", "pm_x")],
+    stances={"ideology_a": [("law_x", 2.0), ("law_y", -1.0)], "ideology_b": [("law_x", -2.0)]},
+    laws={
+        "law_x": {"law_type.group": "lawgroup_a", "modifier.state_x_mult": 0.5},
+        "law_y": {"law_type.group": "lawgroup_a", "modifier.state_y_bool": 1.0},
+    },
+)
+MODIFIERS = ["state_x_mult", "state_y_bool"]
 PARAMETERS = {
     "building_type": {"text"},
     "state": {"integer"},
@@ -361,11 +373,31 @@ def data():
         dict(n=6, turn=3, before_seq=4, name="research", advisor="random", params={"technology": "t1"}),
         dict(n=7, turn=3, before_seq=5, name="run_days", advisor="loop", params={"days": 30}),
     ]
-    return dict(snapshots=snapshots, actions=actions, tables=versions(rows), world=WORLD, unlocks=UNLOCKS)
+    rows.update(
+        interest_group_history=[
+            dict(
+                interest_group=50,
+                seq=0,
+                present=True,
+                country=7,
+                interest_group_type=1,
+                approval_state=0,
+                influence_type=1,
+                in_government=True,
+                leader=None,
+            )
+        ],
+        interest_group_ideology=[dict(interest_group=50, ideology=1, seq=0, present=True)],
+        interest_group_held_trait=[dict(interest_group=50, interest_group_trait=1, seq=0, present=True, enabled=True)],
+        interest_group_pop=[dict(interest_group=50, pop=100, seq=0, present=True)],
+        party_history=[dict(party=60, seq=0, present=True, country=7, party_type=2, votes=0.4)],
+        party_member=[dict(party=60, interest_group=50, seq=0, present=True)],
+    )
+    return dict(snapshots=snapshots, actions=actions, tables=versions(rows), world=WORLD, definitions=DEFINITIONS)
 
 
 def make_run(features=16):
-    numbers, categories = allowed_fields(COLUMNS, PARAMETERS, NAMES)
+    numbers, categories = allowed_fields(COLUMNS, PARAMETERS, NAMES, MODIFIERS)
     encode = encoder(features // 2, numbers, categories)
     run = dict(run_id=2, kind="mini", player_country=7, end_reason="time")
     return Run(encode, features, run, data(), NAMES, COLUMNS, PARAMETERS, frozenset(numbers + categories))
@@ -460,6 +492,15 @@ def test_run_writes_a_contract_graph(tmp_path):
     assert relations["pending"].num_rows == 3 and relations["of_type"].num_rows == 3
     assert np.allclose(relations["needs"].column("weight").to_numpy(), [0.75] * 3)
     assert relations["unlocks"].num_rows == 3
+    assert relations["disallows"].num_rows == 6
+    assert relations["holds"].num_rows == relations["governs"].num_rows == 3
+    assert relations["party_of"].num_rows == relations["member_of"].num_rows == 3
+    assert np.allclose(relations["stance"].column("approval").to_numpy(), [2.0, -1.0] * 3)
+    assert relations["backs"].column("present").to_pylist() == [True, True, False]
+    assert np.allclose(relations["backs"].column("members").to_numpy()[:2], [40.0, 40.0])
+    law = [node for node, key in key_of.items() if key == "law_type:law_x"]
+    assert len(law) == 1 and "production_method:pm_x" in key_of.values()
+    assert "ideology:ideology_b" not in key_of.values()
     assert relations["adjacent"].num_rows == 6
     assert np.allclose(relations["adjacent"].column("border").to_numpy(), [7.0] * 6)
     assert relations["lives_in"].column("present").to_pylist() == [True, True, True]
@@ -519,3 +560,12 @@ def test_labels_stop_at_the_horizon_and_skip_unmeasured_points_per_series():
         (1, 1426.0, "sol"),
     ]
     assert rows[-1][2] == pytest.approx(1.0)
+
+
+def test_law_modifiers_parse_into_numbers_and_reject_other_shapes():
+    from vic3.source import modifiers
+
+    parsed = modifiers("state_x_mult = 0.25 country_y_bool = yes country_z_bool = no")
+    assert parsed == {"state_x_mult": 0.25, "country_y_bool": 1.0, "country_z_bool": 0.0}
+    with pytest.raises(ValueError, match="key = value"):
+        modifiers("state_x_mult 0.25")
