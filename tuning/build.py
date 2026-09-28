@@ -34,7 +34,9 @@ def series_statistics(name, y, member, held):
     train, validation = y[member & ~held].astype(np.float32), y[member & held].astype(np.float32)
     if len(train) < 2 or len(validation) < 2 or np.ptp(train) == 0 or np.ptp(validation) == 0:
         raise ValueError("series %s needs at least two varying training and validation points" % name)
-    return dict(name=name, mean=float(train.astype(np.float64).mean()), sd=float(train.astype(np.float64).std(ddof=1)))
+    return dict(
+        name=name, mean=float(train.astype(np.float64).mean()), sd=float(train.astype(np.float64).std(ddof=1))
+    )
 
 
 def supervision(source, level, target, names):
@@ -108,7 +110,8 @@ def supervision(source, level, target, names):
                     % names[int(owners[order][np.flatnonzero(same)[0]])]
                 )
             described = [
-                dict(entry, tau=value, series=name) for entry, value, name in zip(described, tau.tolist(), series)
+                dict(entry, tau=value, series=name)
+                for entry, value, name in zip(described, tau.tolist(), series)
             ]
         else:
             order = np.argsort(owners, kind="stable")
@@ -135,10 +138,18 @@ def supervision(source, level, target, names):
         raise ValueError("need at least two varying training targets and two varying validation targets")
     rows = [dict(entry, y=value) for entry, value in zip(described, y.tolist())]
     if level == "path":
-        standard = dict(series=[series_statistics(name, y, series_index == code, held) for code, name in enumerate(names_of.tolist())])
+        standard = dict(
+            series=[
+                series_statistics(name, y, series_index == code, held)
+                for code, name in enumerate(names_of.tolist())
+            ]
+        )
     else:
         standard = dict(reward_mean=float(y[train].mean()), reward_sd=float(y[train].std(ddof=1)))
-    result = dict(rows=rows, split=dict(train_indices=train.tolist(), validation_indices=validation.tolist(), **standard))
+    result = dict(
+        rows=rows,
+        split=dict(train_indices=train.tolist(), validation_indices=validation.tolist(), **standard),
+    )
     ids = found.column("id").to_numpy().astype(np.int64)
     if level == "node":
         order = np.argsort(owners, kind="stable")

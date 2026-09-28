@@ -122,7 +122,16 @@ class Run:
         self.plan = cache.require(self.directory / "plan.json")
         if self.plan["version"] != VERSION:
             raise ValueError(f"unsupported run version {self.plan['version']}: {self.directory}")
-        required = {"bank", "trials", "limit", "seconds", "selector", "train_rows", "holdout_rows", "objective"}
+        required = {
+            "bank",
+            "trials",
+            "limit",
+            "seconds",
+            "selector",
+            "train_rows",
+            "holdout_rows",
+            "objective",
+        }
         missing = required - self.plan.keys()
         if missing:
             raise ValueError(f"run plan lacks {sorted(missing)}: {self.directory}")

@@ -72,7 +72,9 @@ def prepare(bank_directory, cfg, workers, timing_directory=None):
 
 def prune(bank_directory, limit, keep):
     started = time.perf_counter()
-    total, removed = files.prune(Bank(bank_directory).cache.parent, limit, keep, "variant.json", "*/variants/*")
+    total, removed = files.prune(
+        Bank(bank_directory).cache.parent, limit, keep, "variant.json", "*/variants/*"
+    )
     emit(
         "variant_prune",
         removed=removed,

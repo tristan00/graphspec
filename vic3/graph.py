@@ -425,7 +425,10 @@ class Run:
         for relation in ("unlocks", "disallows"):
             for source_kind, source_name, target_kind, target_name in self.definitions[relation]:
                 self.put(
-                    facts, relation, self.named(source_kind, source_name), self.named(target_kind, target_name)
+                    facts,
+                    relation,
+                    self.named(source_kind, source_name),
+                    self.named(target_kind, target_name),
                 )
         self.strata(state, features, facts)
         regions = {ident: row["state_region"] for (ident,), row in state["state_history"].items()}
@@ -567,8 +570,14 @@ class Run:
             node = self.entity("party", ident)
             features[node] = self.history("party", row)
             self.put(facts, "party_of", node, self.owned("country", row["country"], state))
-        for (party, group), row in state["party_member"].items():
-            self.put(facts, "member_of", self.owned("interest_group", group, state), self.owned("party", party, state))
+        for (ident,), row in state["interest_group_history"].items():
+            if row["party"] is not None:
+                self.put(
+                    facts,
+                    "member_of",
+                    self.entity("interest_group", ident),
+                    self.owned("party", row["party"], state),
+                )
         for (ident,), row in state["character_history"].items():
             node = self.entity("character", ident)
             data = self.history("character", row)

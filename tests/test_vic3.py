@@ -45,7 +45,10 @@ WORLD = dict(
 )
 DEFINITIONS = dict(
     unlocks=[("technology", "tech_a", "building_type", "building_farm")],
-    disallows=[("law_type", "law_x", "law_type", "law_y"), ("law_type", "law_y", "production_method", "pm_x")],
+    disallows=[
+        ("law_type", "law_x", "law_type", "law_y"),
+        ("law_type", "law_y", "production_method", "pm_x"),
+    ],
     stances={"ideology_a": [("law_x", 2.0), ("law_y", -1.0)], "ideology_b": [("law_x", -2.0)]},
     laws={
         "law_x": {"law_type.group": "lawgroup_a", "modifier.state_x_mult": 0.5},
@@ -385,15 +388,19 @@ def data():
                 influence_type=1,
                 in_government=True,
                 leader=None,
+                party=60,
             )
         ],
         interest_group_ideology=[dict(interest_group=50, ideology=1, seq=0, present=True)],
-        interest_group_held_trait=[dict(interest_group=50, interest_group_trait=1, seq=0, present=True, enabled=True)],
+        interest_group_held_trait=[
+            dict(interest_group=50, interest_group_trait=1, seq=0, present=True, enabled=True)
+        ],
         interest_group_pop=[dict(interest_group=50, pop=100, seq=0, present=True)],
         party_history=[dict(party=60, seq=0, present=True, country=7, party_type=2, votes=0.4)],
-        party_member=[dict(party=60, interest_group=50, seq=0, present=True)],
     )
-    return dict(snapshots=snapshots, actions=actions, tables=versions(rows), world=WORLD, definitions=DEFINITIONS)
+    return dict(
+        snapshots=snapshots, actions=actions, tables=versions(rows), world=WORLD, definitions=DEFINITIONS
+    )
 
 
 def make_run(features=16):

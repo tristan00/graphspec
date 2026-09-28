@@ -14,7 +14,10 @@ def weights(bank, given):
         if name in parsed or name not in bank.series_names:
             raise ValueError("objective names each series of %s at most once" % ", ".join(bank.series_names))
         parsed[name] = float(share)
-    if any(not math.isfinite(share) or share < 0 for share in parsed.values()) or not sum(parsed.values()) > 0:
+    if (
+        any(not math.isfinite(share) or share < 0 for share in parsed.values())
+        or not sum(parsed.values()) > 0
+    ):
         raise ValueError("objective weights must be finite, nonnegative and not all zero")
     return parsed
 

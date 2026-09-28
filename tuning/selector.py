@@ -244,7 +244,9 @@ def load_history(directory, plan):
             continue
         result = outcome.data
         score = objective.value(result, plan)
-        observations.append(dict(result, objective=score, config=trial.parameters, trial=trial.item["directory"]))
+        observations.append(
+            dict(result, objective=score, config=trial.parameters, trial=trial.item["directory"])
+        )
         history.append(
             dict(
                 trial=trial.item["directory"],

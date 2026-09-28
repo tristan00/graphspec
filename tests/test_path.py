@@ -43,8 +43,12 @@ def test_path_bank_records_one_row_per_point_and_splits_by_query(path_bank):
     assert np.bincount(opened.series).tolist() == [104, 104]
     for code, entry in enumerate(supervision["split"]["series"]):
         train = [row["y"] for row in rows if row["series"] == entry["name"]]
-        train = np.asarray(train)[np.isin(np.flatnonzero(opened.series == code), supervision["split"]["train_indices"])]
-        assert entry["mean"] == pytest.approx(train.mean()) and entry["sd"] == pytest.approx(train.std(ddof=1))
+        train = np.asarray(train)[
+            np.isin(np.flatnonzero(opened.series == code), supervision["split"]["train_indices"])
+        ]
+        assert entry["mean"] == pytest.approx(train.mean()) and entry["sd"] == pytest.approx(
+            train.std(ddof=1)
+        )
     for index in range(4):
         steps, points = opened.row_steps[index], opened.row_index[index]
         keys = np.stack((steps, opened.series[points], opened.taus[points]), 1)
@@ -76,7 +80,11 @@ def test_path_supervision_rejects_nonpositive_tau(tmp_path):
 
 def test_path_targets_require_a_series(tmp_path):
     with pytest.raises(ValueError, match="requires a series STRING column"):
-        build(staged_points(tmp_path, "unnamed", lambda table: table.drop_columns(["series"])), tmp_path / "bank", 1)
+        build(
+            staged_points(tmp_path, "unnamed", lambda table: table.drop_columns(["series"])),
+            tmp_path / "bank",
+            1,
+        )
 
 
 def test_targets_without_tau_stay_scalar(bank):

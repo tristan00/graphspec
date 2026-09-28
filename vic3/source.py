@@ -61,7 +61,6 @@ KEYS = {
     "interest_group_held_trait": ("interest_group", "interest_group_trait"),
     "interest_group_pop": ("interest_group", "pop"),
     "party_history": ("party",),
-    "party_member": ("party", "interest_group"),
 }
 KEYS.update({table: ("country",) for table in REPORTS["country"]})
 KEYS.update({table: ("state",) for table in REPORTS["state"]})

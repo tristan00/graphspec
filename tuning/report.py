@@ -39,7 +39,11 @@ def report(directory):
                 model=trial.item["model"],
                 trial_seconds=record["seconds"] if record is not None else None,
                 phases=record["phases"] if record is not None else None,
-                **(dict(objective=objective.value(outcome, planned)) if trial.status == Status.COMPLETE else {}),
+                **(
+                    dict(objective=objective.value(outcome, planned))
+                    if trial.status == Status.COMPLETE
+                    else {}
+                ),
             )
         )
     completed = [r for r in results if r["status"] == "complete"]
