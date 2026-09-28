@@ -49,7 +49,20 @@ NODES = (
 RELATIONS = {
     "in_block": ((("action", "block"),), ()),
     "targets": (
-        tuple(("action", kind) for kind in ("country", "state", "building", "company") + CODES),
+        tuple(
+            ("action", kind)
+            for kind in (
+                "country",
+                "state",
+                "building",
+                "company",
+                "character",
+                "interest_group",
+                "political_movement",
+                "war",
+            )
+            + CODES
+        ),
         (),
     ),
     "owns": ((("country", "state"),), ()),
@@ -226,17 +239,15 @@ STATE_SHAPE = ("x", "y", "area", "coastal", "provinces")
 LAW_PRIVATE = (("chance",), ("checkpoint_result",))
 POLICY = ("tax_level", "government_wage_level", "military_wage_level", "supply_ship_construction_level")
 QUEUE = ("queue_work", "queue_speed", "queue_items")
-CHOICE_PARAMS = ("option", "index", "level", "flag", "button", "days")
+CHOICE_PARAMS = ("option", "index", "level", "flag", "button", "days", "levels", "slot")
 UNMODELLED_PARAMS = (
-    "character",
     "military_formation",
-    "interest_group",
-    "political_movement",
     "journal_entry",
-    "war",
     "treaty",
     "diplomatic_play",
     "amendment",
+    "front",
+    "ship",
 )
 GROUPS = {
     "construction": (
@@ -290,6 +301,7 @@ GROUPS = {
         "toggle_suppress_movement",
         "negotiate",
         "reform_government",
+        "reform_government_party",
         "set_institution_level",
         "stop_institution_change",
         "issue_decree",
@@ -423,7 +435,17 @@ TEXT_TARGETS = {
     "goods": "goods",
     "decree": "decree_type",
 }
-ENTITY_TARGETS = {"country": "country", "state": "state", "building": "building", "company": "company"}
+ENTITY_TARGETS = {
+    "country": "country",
+    "state": "state",
+    "building": "building",
+    "company": "company",
+    "character": "character",
+    "interest_group": "interest_group",
+    "member": "interest_group",
+    "political_movement": "political_movement",
+    "war": "war",
+}
 RESOLVED_TARGETS = {"law": "law_type", "institution": "institution_type"}
 
 
