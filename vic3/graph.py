@@ -70,6 +70,7 @@ class Run:
         if not self.steps:
             raise ValueError("run %d has no decision moments" % run["run_id"])
         self.entities, self.kinds, self.keys, self.static = {}, [], [], {}
+        self.absent = {}
         self.player = self.entity("country", run["player_country"])
         self.unlocks = data["unlocks"]
         self.shapes, self.borders = geometry(data["world"], names["terrain"])
@@ -157,14 +158,15 @@ class Run:
         stage.write(node_tables(index, name, self.kinds, self.keys))
         stage.write(label_tables(index, counter, labels, held_out))
         LOG.info(
-            "run build exit run=%d seconds=%.2f steps=%d entities=%d labels=%d",
+            "run build exit run=%d seconds=%.2f steps=%d entities=%d labels=%d absent=%s",
             self.run["run_id"],
             time.perf_counter() - started,
             len(self.steps),
             len(self.kinds),
             len(labels),
+            self.absent,
         )
-        return dict(steps=len(self.steps), entities=len(self.kinds), labels=len(labels))
+        return dict(steps=len(self.steps), entities=len(self.kinds), labels=len(labels), absent=self.absent)
 
     def chunk(self, index, counter, observations, fact_rows, queries):
         return chunk_tables(
@@ -593,6 +595,8 @@ class Run:
         for (ai, target), row in state["country_ai_goal"].items():
             if ai not in thinkers:
                 raise ValueError("country_ai %r is not present at this snapshot" % ai)
+            if not self.present("country", target, state, "ai_goal_target"):
+                continue
             self.put(
                 facts,
                 "attitude_%d" % row["attitude"],
@@ -610,6 +614,12 @@ class Run:
                 self.owned("country", thinkers[ai], state),
                 self.named("strategic_region", self.names["strategic_region"][region]),
             )
+
+    def present(self, kind, ident, state, reason):
+        found = (ident,) in state[kind + "_history"]
+        if not found:
+            self.absent[reason] = self.absent.get(reason, 0) + 1
+        return found
 
     def owned(self, kind, ident, state):
         if (ident,) not in state[kind + "_history"]:
@@ -636,7 +646,9 @@ class Run:
                     if name in TEXT_TARGETS:
                         self.put(facts, "targets", node, self.named(TEXT_TARGETS[name], value))
                 elif name in ENTITY_TARGETS:
-                    self.put(facts, "targets", node, self.owned(ENTITY_TARGETS[name], value, state))
+                    kind = ENTITY_TARGETS[name]
+                    if self.present(kind, value, state, "action_target_" + kind):
+                        self.put(facts, "targets", node, self.entity(kind, value))
                 elif name in RESOLVED_TARGETS:
                     kind = RESOLVED_TARGETS[name]
                     found = state[name + "_history"].get((value,))

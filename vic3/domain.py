@@ -25,6 +25,7 @@ OWNER_KINDS = {
     "manor_house": ("building", "owner_building"),
     "financial_district": ("building", "owner_building"),
     "company": ("building", "owner_building"),
+    "company_regional_headquarter": ("building", "owner_building"),
 }
 LAND = "land"
 NODES = (

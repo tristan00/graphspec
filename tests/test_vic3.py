@@ -378,7 +378,7 @@ def test_run_writes_a_contract_graph(tmp_path):
     staging = tmp_path / "vic3.staging"
     with Stage(staging) as stage:
         counts = graph.build(stage, Counter(0), 0, "run-2", held(2))
-    assert counts == dict(steps=3, entities=len(graph.kinds), labels=18)
+    assert counts == dict(steps=3, entities=len(graph.kinds), labels=18, absent={})
     assert read == [0, 3, 4, 6]
     staged = Staged(staging)
     reader = staged.reader(TARGET)
@@ -468,6 +468,20 @@ def test_run_writes_a_contract_graph(tmp_path):
     assert np.allclose(works.column("share").to_numpy()[:2], [0.75, 0.75])
     kinds = tables["nodes"].column("kind").to_pylist()
     assert kinds.count("stratum") == 1 and kinds.count("law") == 1
+
+
+def test_action_targets_absent_at_the_step_are_counted_not_stated():
+    graph = make_run()
+    graph.actions[0][2]["params"]["building"] = 999
+    facts = {}
+    graph.current(0)
+    graph.actions_at(0, 0, {}, facts)
+    assert graph.absent == {"action_target_building": 1}
+    assert sorted(graph.kinds[target] for _, target in facts["targets"]) == [
+        "building_type",
+        "production_method",
+        "state",
+    ]
 
 
 def test_unknown_action_parameter_is_an_error():
