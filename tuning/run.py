@@ -1,433 +1,441 @@
 import argparse
-from datetime import datetime, timezone
-import json
 import os
-from pathlib import Path
+import shutil
 import subprocess
-import sys
 import time
 import traceback
+from datetime import datetime, timezone
+from pathlib import Path
 
-import numpy as np
-
-import graph_tuning_infra
+from graphspec.infra import sources
+from graphspec.infra.files import (
+    BUDGET,
+    JsonCache,
+    read_json,
+    sha256_file,
+    write_json,
+)
+from graphspec.infra.log import configure, emit
+from graphspec.infra.processes import WORKERS, Lock, WorkerProcess
+from graphspec.infra.runtime import exclusive, output_path
+from graphspec.infra.timing import Timeline, measure, timed
 from graphspec.spec import digest
-from graph_tuning_infra import compute, sources
-from graph_tuning_infra.files import BUDGET, read_json, sha256_bytes, sha256_file, write_csv, write_json, write_jsonl
-from graph_tuning_infra.log import configure, emit
-from graph_tuning_infra.processes import WORKERS, Lock, command
 
+from .budget import TIMEOUT_EXIT_CODE
+from .records import VERSION, Outcome, worker_alive
+from .report import report
+from .training import PACKAGES, fit
 
-VERSION = 9
 REFERENCE_HISTORY = 16
-PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / 'graphspec', Path(graph_tuning_infra.__file__).parent)
 
 
-def score(targets, predictions):
-    started = time.perf_counter()
-    targets = np.asarray(targets, dtype=np.float64)
-    values = np.asarray(predictions, dtype=np.float64)
-    if targets.ndim != 1 or targets.shape != values.shape:
-        raise ValueError('reward targets and predictions must be matching vectors')
-    if not len(values) or not np.isfinite(values).all() or not np.isfinite(targets).all():
-        raise ValueError('validation predictions must be nonempty and finite')
-    mse = float(np.mean((values - targets)**2))
-    emit('score', seconds=time.perf_counter() - started, rows=len(values), raw_mse=mse)
-    return dict(raw_val_mse=mse, val_r2=1 - mse / float(targets.var()))
-
-
-def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, workers):
-    import torch
-    from .data import Bank
-    from .batching import batches
-    from .packing import Packer
-    from .variants import prepare
-    from .models import build
-    from .model_spec import describe
-    from .turns import blocks as turn_blocks
-    from .budget import FitBudget, POLICY
-
-    entered = time.perf_counter()
-    budget = FitBudget(directory, deadline)
-    prepare(bank_directory, config, workers)
-    budget.check()
-    revision = sources.digest(PACKAGES)
-    cfg, directory = config, Path(directory)
-    graph, history, model = digest(cfg['graph']), cfg['graph']['time/history'], describe(cfg['model'])
-    torch.manual_seed(cfg['seed'])
-    np.random.seed(cfg['seed'])
-    device = compute.DEVICE
-    if not torch.cuda.is_available():
-        raise RuntimeError('this research run requires the available CUDA GPU')
-    compute.reserve()
-    bank = Bank(bank_directory)
-    actual_hash = sha256_file(Path(bank_directory) / 'supervision.json')
-    if actual_hash != bank.manifest['supervision_sha256']:
-        raise ValueError('frozen supervision changed')
-    net = build(cfg, bank.registry, len(bank.categories)).to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=cfg['lr'], weight_decay=cfg['weight_decay'])
-    torch.cuda.reset_peak_memory_stats()
-    timing = dict(prepare=time.perf_counter() - entered, packer=0.0, train_pack=0.0, train_compute=0.0, validation_pack=0.0, validation_compute=0.0)
-    losses, trained_rows, epoch_losses = [], [], []
-    if sorted(map(tuple, training_blocks)) != sorted(bank.blocks(0, history, cfg)):
-        raise ValueError('training blocks must cover the entire frozen training partition')
-    epochs = cfg['epochs']
-    if epochs < 1:
-        raise ValueError('each fit requires at least one complete training epoch')
-    context_blocks = turn_blocks(bank, training_blocks, cfg)
-    sizes = bank.sizes(cfg)
-    training, ends = [], set()
-    for epoch in range(epochs):
-        training.extend((epoch, group) for group in batches(context_blocks, batch_size, sizes, cfg['seed'] + epoch, frame_budget=1024))
-        ends.add(len(training))
-    emit('fit_enter', model=model, graph=graph[:10], updates=len(training), epochs=epochs,
-        training_rows=len(bank.split['train_indices']), batch_sequences=batch_size, config=cfg)
-    net.train()
-    epoch_rows, epoch_sum = [], 0.0
-    started = time.perf_counter()
-    packer = Packer(bank, cfg, device, workers)
-    timing['packer'] = time.perf_counter() - started
-    stream = packer.stream([blocks for _, blocks in training])
-    epoch_started = time.perf_counter()
-    budget.pulse('training')
-    for update, (epoch, blocks) in enumerate(training):
-        budget.check()
-        started = time.perf_counter()
-        b = next(stream)
-        timing['train_pack'] += time.perf_counter() - started
-        if np.any(bank.partitions[b['rows']] != 0):
-            raise ValueError('holdout row reached the optimizer')
-        trained_rows.extend(b['rows'].tolist())
-        epoch_rows.extend(b['rows'].tolist())
-        started = time.perf_counter()
-        optimizer.zero_grad(set_to_none=True)
-        predictions = net(b)
-        targets = (b['target'] - bank.split['reward_mean']) / bank.split['reward_sd']
-        loss = (predictions - targets).square().mean()
-        if not torch.isfinite(loss):
-            raise FloatingPointError('nonfinite training loss')
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), cfg['clip'], error_if_nonfinite=True)
-        optimizer.step()
-        torch.cuda.synchronize()
-        timing['train_compute'] += time.perf_counter() - started
-        losses.append(float(loss.detach()))
-        epoch_sum += losses[-1] * len(b['rows'])
-        budget.check()
-        if update + 1 in ends:
-            if not np.array_equal(np.sort(epoch_rows), np.asarray(bank.split['train_indices'])):
-                raise ValueError('epoch omitted or duplicated training rows')
-            epoch_losses.append(epoch_sum / len(epoch_rows))
-            finished = time.perf_counter()
-            budget.epoch_seconds.append(finished - epoch_started)
-            emit('epoch_complete', epoch=epoch + 1, rows=len(epoch_rows), loss=epoch_losses[-1],
-                epoch_seconds=budget.epoch_seconds[-1], mean_epoch_seconds=float(np.mean(budget.epoch_seconds)), seconds=finished - entered)
-            epoch_rows, epoch_sum = [], 0.0
-            epoch_started = finished
-            budget.pulse('training')
-        elif (update + 1) % 8 == 0:
-            budget.pulse('training')
-        if (update + 1) % 16 == 0:
-            emit('training_progress', updates=update + 1, total_updates=len(training), epoch=epoch + 1,
-                epoch_rows=len(epoch_rows), loss=float(np.mean(losses[-16:])), seconds=time.perf_counter() - entered)
-        del b, predictions, targets, loss
-    completed_epochs = len(epoch_losses)
-    if epoch_rows or completed_epochs != epochs:
-        raise ValueError('evaluation requires every requested epoch to complete')
-    budget.check()
-    budget.pulse('evaluation')
-    net.eval()
-    checkpoint = dict(config=cfg, state_dict=net.state_dict(), reward_mean=bank.split['reward_mean'],
-        reward_sd=bank.split['reward_sd'], supervision_sha256=actual_hash, source_sha256=revision,
-        train_blocks=training_blocks, train_rows=sorted(set(trained_rows)),
-        epochs=completed_epochs, requested_epochs=epochs, epoch_seconds=budget.epoch_seconds)
-    torch.save(checkpoint, directory / 'checkpoint.pt')
-    values, indices = [], []
-    validation = batches(turn_blocks(bank, bank.blocks(1, history, cfg), cfg), batch_size, sizes, frame_budget=1024)
-    stream = packer.stream(validation)
-    with torch.inference_mode():
-        for index, blocks in enumerate(validation):
-            budget.check()
-            started = time.perf_counter()
-            b = next(stream)
-            timing['validation_pack'] += time.perf_counter() - started
-            started = time.perf_counter()
-            predictions = net(b)
-            if index == 0:
-                loaded = torch.load(directory / 'checkpoint.pt', map_location=device, weights_only=False)
-                clone = build(loaded['config'], bank.registry, len(bank.categories)).to(device).eval()
-                clone.load_state_dict(loaded['state_dict'], strict=True)
-                torch.testing.assert_close(predictions, clone(b), atol=2e-5, rtol=2e-5)
-                del loaded, clone
-            if not torch.isfinite(predictions).all():
-                raise FloatingPointError('nonfinite holdout predictions')
-            raw = predictions * bank.split['reward_sd'] + bank.split['reward_mean']
-            values.extend(raw.cpu().tolist())
-            indices.extend(b['rows'].tolist())
-            timing['validation_compute'] += time.perf_counter() - started
-            if (index + 1) % 8 == 0:
-                budget.pulse('evaluation')
-            if (index + 1) % 256 == 0:
-                emit('validation_progress', blocks=index + 1, total_blocks=len(validation), rows=len(indices), seconds=time.perf_counter() - entered)
-            del b, predictions
-    packer.close()
-    ordering = np.argsort(indices)
-    indices, values = np.asarray(indices, np.int64)[ordering], np.asarray(values, np.float64)[ordering]
-    if not np.array_equal(indices, np.asarray(bank.split['validation_indices'])):
-        raise ValueError('holdout predictions do not exactly cover the frozen partition')
-    metrics = score(bank.targets[indices].astype(np.float64), values)
-    np.savez_compressed(directory / 'predictions.npz', row_index=indices, prediction=values, target=bank.targets[indices])
-    budget.check()
-    result = dict(status='complete', model=digest(cfg['model']), description=model, graph=graph, config=cfg, **metrics,
-        seconds=time.perf_counter() - entered, timings=timing,
-        parameters=sum(p.numel() for p in net.parameters()), peak_cuda_bytes=torch.cuda.max_memory_allocated(),
-        optimizer_updates=len(losses), epochs=completed_epochs, requested_epochs=epochs,
-        epoch_seconds=budget.epoch_seconds, budget_policy=POLICY,
-        epoch_losses=epoch_losses, batch_sequences=batch_size,
-        training_coverage_complete=True, training_examples_seen=len(trained_rows),
-        train_unique_rows=len(set(trained_rows)), train_available_rows=len(bank.split['train_indices']),
-        train_graphs=len({bank.rows[i]['graph'] for i in trained_rows}), holdout_rows=len(indices),
-        training_losses=losses, checkpoint_reload=True, supervision_sha256=actual_hash, source_sha256=revision,
-        prediction_rows_sha256=sha256_bytes(indices.tobytes()),
-        completed=datetime.now(timezone.utc).isoformat())
-    write_json(directory / 'result.json', result)
-    budget.pulse('complete')
-    emit('fit_exit', model=model, graph=graph[:10], raw_mse=metrics['raw_val_mse'], seconds=result['seconds'], train_rows=result['train_unique_rows'])
-    return result
+def fit_timings(directory):
+    progress = JsonCache().read(Path(directory) / "fit_progress.json")
+    if progress is None:
+        return {}
+    return dict(
+        timeline=progress.get("timeline"),
+        stage=progress["phase"],
+        timings=progress.get("timings", {}),
+        fit_phases=progress.get("phase_seconds", {}),
+        timing_recorded_at=progress.get("recorded_at"),
+        graph_preparation=progress.get("graph_preparation"),
+        timeout_reason=progress.get("timeout_reason"),
+    )
 
 
 def worker(args):
     directory = Path(args.output)
-    config = read_json(directory / 'config.json')
+    config = read_json(directory / "config.json")
     blocks = read_json(args.training_blocks)
     try:
         fit(args.bank, directory, config, blocks, args.batch_sequences, args.deadline, args.workers)
-    except TimeoutError:
-        raise
+    except TimeoutError as error:
+        emit("worker_timeout", error=str(error), deadline=args.deadline)
+        raise SystemExit(TIMEOUT_EXIT_CODE) from error
     except Exception as error:
-        write_json(directory / 'failure.json', dict(model=digest(config['model']), graph=digest(config['graph']),
-            error=repr(error), traceback=traceback.format_exc(), source_sha256=sources.digest(PACKAGES)))
+        write_json(
+            directory / "failure.json",
+            dict(
+                model=digest(config["model"]),
+                graph=digest(config["graph"]),
+                error=repr(error),
+                traceback=traceback.format_exc(),
+                source_sha256=sources.digest(PACKAGES),
+                **fit_timings(directory),
+            ),
+        )
         raise
 
 
-def report(directory):
-    from .model_spec import describe
-
-    started = time.perf_counter()
-    directory = Path(directory)
-    planned = read_json(directory / 'plan.json')
-    results = []
-    for item in planned['trials']:
-        trial = directory / item['directory']
-        path = next((trial / name for name in ('result.json', 'failure.json', 'timeout.json') if (trial / name).exists()), None)
-        if path is None:
-            continue
-        result = read_json(path)
-        result.setdefault('status', 'timeout' if path.name == 'timeout.json' else 'failed')
-        result.setdefault('config', read_json(trial / 'config.json'))
-        record = read_json(trial / 'trial.json') if (trial / 'trial.json').exists() else {}
-        result.update(trial=item['directory'], selector=item['selector'], graph=item['graph'], model=item['model'],
-                      trial_seconds=record.get('seconds'), phases=record.get('phases'))
-        results.append(result)
-    completed = [r for r in results if r['status'] == 'complete']
-    columns = ['trial', 'view', 'description', 'model', 'graph', 'status', 'raw_val_mse', 'val_r2', 'trial_seconds', 'seconds',
-        'parameters', 'peak_cuda_bytes', 'optimizer_updates', 'train_unique_rows', 'holdout_rows',
-        'epochs', 'requested_epochs', 'training_coverage_complete',
-        'supervision_sha256', 'source_sha256', 'selector', 'config_json']
-    rows = []
-    for result in results:
-        row = {key: result.get(key) for key in columns}
-        row.update(view=result['config']['model']['view'], description=describe(result['config']['model']), config_json=json.dumps(result['config'], sort_keys=True))
-        rows.append(row)
-    write_csv(directory / 'results.csv', columns, rows)
-    write_jsonl(directory / 'results.jsonl', results)
-    views = sorted({r['config']['model']['view'] for r in results})
-    write_json(directory / 'coverage.json', dict(views={view: sum(r['config']['model']['view'] == view for r in completed) for view in views},
-        completed=len(completed), failed=len(results) - len(completed), planned=len(planned['trials'])))
-    drawn = sum(item['selector'] == 'random' for item in planned['trials'])
-    selection_text = ('%d trials drew a uniform model spec, training parameters and graph-transform spec; %d were proposed by TPE from every trial recorded before them, timeouts and crashes entering as failures.'
-                      % (drawn, len(planned['trials']) - drawn))
-    lines = ['**Graph transform and temporal model search**', '',
-        'Updated ' + datetime.now(timezone.utc).isoformat() + '.', '',
-        '%d completed fits; %d failed or timed out; %d planned so far. %s' % (len(completed), len(results) - len(completed), len(planned['trials']), selection_text), '']
-    lines.extend(['| View | Completed fits | Best MSE | Best R² | Best model | Best graph |', '|---|---:|---:|---:|---|---|'])
-    for view in views:
-        subset = [r for r in completed if r['config']['model']['view'] == view]
-        best = min(subset, key=lambda r: r['raw_val_mse']) if subset else None
-        lines.append('| %s | %d | %s | %s | %s | %s |' % (view, len(subset), '%.6f' % best['raw_val_mse'] if best else 'Pending',
-            '%.4f' % best['val_r2'] if best else '—', describe(best['config']['model']) if best else '—', best['graph'][:10] if best else '—'))
-    lines.extend(['', 'All trial configurations, failure records and individual scores: [results.csv](results.csv). Full records: [results.jsonl](results.jsonl).', ''])
-    (directory / 'progress.md').write_text('\n'.join(lines), encoding='utf-8')
-    emit('report', attempts=len(results), completed=len(completed), seconds=time.perf_counter() - started)
-    return results
-
-
+@exclusive
 def run(args):
-    from .data import Bank
     from .budget import POLICY
-    from .selector import FAILURE_POLICY, check_bounds
+    from .data import Bank
+    from .selector import FAILURE_POLICY, SURROGATES, check_bounds, check_mix
 
-    directory = Path(args.output)
+    for name in ("workers", "batch_sequences", "variant_gb"):
+        if type(getattr(args, name)) is not int or getattr(args, name) < 1:
+            raise ValueError(name + " must be a positive integer")
+    for name in ("trials", "random_trials"):
+        value = getattr(args, name)
+        if value is not None and (type(value) is not int or value < 0):
+            raise ValueError(name + " must be a nonnegative integer")
+    if args.seconds is not None and (type(args.seconds) is not int or args.seconds < 1):
+        raise ValueError("seconds must be a positive integer")
+    directory = output_path(args.output)
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / 'plan.json'
+    path = directory / "plan.json"
     bank = Bank(args.bank)
     bounds = read_json(args.bounds) if args.bounds else {}
+    mix = None
+    if args.mix is not None:
+        pairs = [item.split("=") for item in args.mix]
+        mix = check_mix({name: float(share) for name, share in pairs})
     check_bounds(bank.registry, bounds)
     if path.exists():
         plan = read_json(path)
-        if plan.get('version') != VERSION:
-            raise ValueError('this run was written by another plan version; choose a new output')
-        if plan['bank_manifest_sha256'] != sha256_file(Path(args.bank) / 'manifest.json'):
-            raise ValueError('this run belongs to a different bank')
-        plan['bank'] = str(Path(args.bank).resolve())
+        if plan.get("version") != VERSION:
+            raise ValueError("this run was written by another plan version; choose a new output")
+        if plan["bank_manifest_sha256"] != sha256_file(Path(args.bank) / "manifest.json"):
+            raise ValueError("this run belongs to a different bank")
+        plan["bank"] = str(Path(args.bank).resolve())
         plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30, limit=args.trials)
-        for name, value in (('selector', args.selector), ('random_trials', args.random_trials), ('bounds', bounds if args.bounds else None)):
+        plan.setdefault("random_params", [])
+        plan.setdefault("mix", {plan["selector"]: 100})
+        for name, value in (
+            ("selector", args.selector),
+            ("random_trials", args.random_trials),
+            ("mix", mix),
+            ("random_params", args.random_params),
+            ("seconds", args.seconds),
+            ("bounds", bounds if args.bounds else None),
+        ):
             if value is not None and value != plan[name]:
-                emit(name + '_replaced', previous=plan[name], **{name: value})
+                emit(name + "_replaced", previous=plan[name], **{name: value})
                 plan[name] = value
     else:
-        plan = dict(version=VERSION, seed=args.seed, bank=str(Path(args.bank).resolve()), selector=args.selector or 'tpe', trials=[],
+        plan = dict(
+            version=VERSION,
+            seed=args.seed,
+            bank=str(Path(args.bank).resolve()),
+            selector=args.selector or "botorch",
+            trials=[],
             batch_sequences=args.batch_sequences,
-            workers=args.workers, variant_bytes=args.variant_gb << 30, random_trials=args.random_trials or 0, bounds=bounds, limit=args.trials,
-            seconds=args.seconds, train_rows=bank.manifest['train_rows'], holdout_rows=bank.manifest['validation_rows'],
-            supervision_sha256=bank.manifest['supervision_sha256'], spec_sha256=bank.manifest['spec_sha256'],
-            created=datetime.now(timezone.utc).isoformat())
-    with Lock(directory / 'runner.lock'):
-        running = directory / 'running.json'
+            workers=args.workers,
+            variant_bytes=args.variant_gb << 30,
+            random_trials=100 if args.random_trials is None else args.random_trials,
+            random_params=args.random_params or [],
+            mix=mix or {args.selector or "botorch": 100},
+            bounds=bounds,
+            limit=args.trials,
+            seconds=600 if args.seconds is None else args.seconds,
+            train_rows=bank.manifest["train_rows"],
+            holdout_rows=bank.manifest["validation_rows"],
+            supervision_sha256=bank.manifest["supervision_sha256"],
+            spec_sha256=bank.manifest["spec_sha256"],
+            created=datetime.now(timezone.utc).isoformat(),
+        )
+    if plan["selector"] in SURROGATES:
+        from .space import Space
+
+        Space(bank.registry, plan["bounds"], plan["seconds"]).random_names(plan["random_params"])
+    with Lock(directory / "runner.lock"):
+        running = directory / "running.json"
         if running.exists():
             previous = read_json(running)
-            invocation = command(previous['worker_pid'])
-            if 'tuning.run' in invocation and 'worker' in invocation and '--output' in invocation:
-                output = Path(invocation[invocation.index('--output') + 1])
-                if output.parent.resolve() == directory.resolve():
-                    raise RuntimeError('the previous worker is still running; wait for it before continuing')
-        plan.update(bank_manifest_sha256=sha256_file(Path(plan['bank']) / 'manifest.json'), budget_policy=POLICY, failure_policy=FAILURE_POLICY)
+            if worker_alive(directory, previous):
+                raise RuntimeError("the previous worker is still running; wait for it before continuing")
+        plan.update(
+            bank_manifest_sha256=sha256_file(Path(plan["bank"]) / "manifest.json"),
+            budget_policy=POLICY,
+            failure_policy=FAILURE_POLICY,
+        )
+        discard_unfinished(directory, plan)
         write_json(path, plan)
         execute(directory, plan, args.continuous, bank.registry)
 
 
+def discard_unfinished(directory, plan):
+    started = time.perf_counter()
+    finished = []
+    for item in plan["trials"]:
+        if Outcome.read(directory / item["directory"], JsonCache()) is None:
+            shutil.rmtree(directory / item["directory"], ignore_errors=True)
+            emit("trial_discarded", directory=item["directory"])
+        else:
+            finished.append(item)
+    plan["trials"] = finished
+    emit("unfinished_discarded", trials=len(finished), seconds=time.perf_counter() - started)
+
+
+@timed("layout")
 def training_layout(directory, plan, config):
     from .data import Bank
 
     started = time.perf_counter()
-    history = config['graph']['time/history']
+    history = config["graph"]["time/history"]
     from graphspec.join import parameters
 
-    path = directory / ('train_blocks_%s.json' % digest(dict(history=history, join=parameters(config['graph'])))[:12])
+    path = directory / (
+        "train_blocks_%s.json" % digest(dict(history=history, join=parameters(config["graph"])))[:12]
+    )
     if not path.exists():
-        bank = Bank(plan['bank'])
-        if bank.manifest['supervision_sha256'] != plan['supervision_sha256']:
-            raise ValueError('training layout changed supervision')
+        bank = Bank(plan["bank"])
+        if bank.manifest["supervision_sha256"] != plan["supervision_sha256"]:
+            raise ValueError("training layout changed supervision")
         blocks = bank.blocks(0, history, config)
         write_json(path, blocks)
-        emit('training_layout_created', history=history, blocks=len(blocks),
-            rows=len(bank.split['train_indices']), seconds=time.perf_counter() - started)
-    return path, max(1, plan['batch_sequences'] * REFERENCE_HISTORY // history)
+        emit(
+            "training_layout_created",
+            history=history,
+            blocks=len(blocks),
+            rows=len(bank.split["train_indices"]),
+            seconds=time.perf_counter() - started,
+        )
+    return path, max(1, plan["batch_sequences"] * REFERENCE_HISTORY // history)
+
+
+def mark_timeout(trial, max_seconds, started, phases, error):
+    for name in ("result.json", "failure.json"):
+        path = trial / name
+        if path.exists():
+            path.replace(trial / ("late_" + name))
+    write_json(
+        trial / "timeout.json",
+        dict(
+            seconds=time.perf_counter() - started,
+            budget=max_seconds,
+            phases=phases,
+            error=str(error),
+            **fit_timings(trial),
+        ),
+    )
+
+
+def execute_trial(directory, plan, item, index, started, phases):
+    with Timeline(directory / item["directory"] / "runner_timing.json"), measure("trial_runner"):
+        return execute_trial_body(directory, plan, item, index, started, phases)
+
+
+def execute_trial_body(directory, plan, item, index, started, phases):
+    from .budget import wait_worker
+
+    trial = directory / item["directory"]
+    opened = datetime.now(timezone.utc).isoformat()
+    config = read_json(trial / "config.json")
+    if "max_seconds" not in config:
+        config["max_seconds"] = plan["seconds"]
+        write_json(trial / "config.json", config)
+    max_seconds = config["max_seconds"]
+    if type(max_seconds) is not int or max_seconds < 1:
+        raise ValueError("max_seconds must be a positive integer")
+    deadline = started + max_seconds
+    timeout = None
+    try:
+        stage = time.perf_counter()
+        blocks, batch_size = training_layout(directory, plan, config)
+        phases["layout"] = time.perf_counter() - stage
+        arguments = [
+            "worker",
+            "--bank",
+            plan["bank"],
+            "--output",
+            str(trial.resolve()),
+            "--training-blocks",
+            str(blocks.resolve()),
+            "--batch-sequences",
+            str(batch_size),
+            "--workers",
+            str(plan["workers"]),
+            "--deadline",
+            repr(deadline),
+        ]
+        emit(
+            "trial_enter",
+            index=index,
+            total=len(plan["trials"]),
+            model=item["model"],
+            graph=item["graph"][:10],
+        )
+        stage = time.perf_counter()
+        with measure("source_snapshot"):
+            sources.snapshot(PACKAGES, trial / "source")
+        phases["snapshot"] = time.perf_counter() - stage
+        if time.perf_counter() >= deadline:
+            mark_timeout(trial, max_seconds, started, phases, "deadline reached during trial preparation")
+            return config
+        with (trial / "worker.log").open("w", encoding="utf-8") as stream:
+            stage = time.perf_counter()
+            with WorkerProcess("tuning.run", arguments, stream) as process:
+                write_json(
+                    directory / "running.json",
+                    dict(
+                        runner_pid=os.getpid(),
+                        worker_pid=process.pid,
+                        trial=item["directory"],
+                        started=opened,
+                        max_seconds=max_seconds,
+                    ),
+                )
+                try:
+                    with measure("worker_wait"):
+                        code = wait_worker(process, deadline, trial)
+                except subprocess.TimeoutExpired as error:
+                    timeout = error
+                    mark_timeout(trial, max_seconds, started, phases, error)
+            phases["worker"] = time.perf_counter() - stage
+        if timeout is not None:
+            mark_timeout(trial, max_seconds, started, phases, timeout)
+        elif code == TIMEOUT_EXIT_CODE:
+            mark_timeout(
+                trial,
+                max_seconds,
+                started,
+                phases,
+                fit_timings(trial).get("timeout_reason") or "worker reached its deadline",
+            )
+        elif Outcome.read(trial, JsonCache()) is None:
+            write_json(
+                trial / "failure.json",
+                dict(error=f"worker exited {code} without an outcome", **fit_timings(trial)),
+            )
+    except BaseException as error:
+        if Outcome.read(trial, JsonCache()) is None:
+            filename = (
+                "interrupted.json" if isinstance(error, (KeyboardInterrupt, SystemExit)) else "failure.json"
+            )
+            write_json(trial / filename, dict(error=repr(error), traceback=traceback.format_exc()))
+        raise
+    finally:
+        seconds = time.perf_counter() - started
+        write_json(
+            trial / "trial.json",
+            dict(
+                seconds=seconds,
+                budget=max_seconds,
+                phases=phases,
+                started=opened,
+                completed=datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        (directory / "running.json").unlink(missing_ok=True)
+    outcome = Outcome.read(trial, JsonCache())
+    emit("trial_exit", index=index, status=outcome.status, seconds=seconds, phases=phases)
+    return config
 
 
 def execute(directory, plan, continuous, registry):
-    from .budget import wait_worker
     from .data import Bank
     from .selector import append_trial
     from .variants import prune
 
-    emit('run_enter', trials=len(plan['trials']), limit=plan['limit'], seconds_per_trial=plan['seconds'], continuous=continuous)
+    started = time.perf_counter()
+    state = dict(status="running", pid=os.getpid(), started=datetime.now(timezone.utc).isoformat())
+    write_json(directory / "runner.json", state)
+    emit(
+        "run_enter",
+        trials=len(plan["trials"]),
+        limit=plan["limit"],
+        seconds_per_trial=plan["seconds"],
+        continuous=continuous,
+    )
     index = 0
-    while True:
-        if (directory / 'STOP').exists():
-            emit('run_stopped', reason='STOP file; current trial finished')
-            break
-        started, phases = time.perf_counter(), {}
-        opened = datetime.now(timezone.utc).isoformat()
-        if index == len(plan['trials']):
-            if not continuous or index == plan['limit']:
+    try:
+        while not (directory / "STOP").exists():
+            trial_started, phases = time.perf_counter(), {}
+            if plan["limit"] is not None and index >= plan["limit"]:
                 break
-            append_trial(directory, plan, registry)
-            phases['select'] = time.perf_counter() - started
-        item = plan['trials'][index]
-        index += 1
-        trial = directory / item['directory']
-        if any((trial / name).exists() for name in ('result.json', 'failure.json', 'timeout.json')):
-            continue
-        deadline = started + plan['seconds']
-        config = read_json(trial / 'config.json')
-        stage = time.perf_counter()
-        blocks, batch_size = training_layout(directory, plan, config)
-        phases['layout'] = time.perf_counter() - stage
-        attempt = len(list(trial.glob('worker_*.log')))
-        invocation = [sys.executable, '-u', '-m', 'tuning.run', 'worker', '--bank', plan['bank'],
-            '--output', str(trial.resolve()), '--training-blocks', str(blocks.resolve()), '--batch-sequences', str(batch_size),
-            '--workers', str(plan['workers']), '--deadline', repr(deadline)]
-        emit('trial_enter', index=index, total=len(plan['trials']), model=item['model'], graph=item['graph'][:10], attempt=attempt)
-        stage = time.perf_counter()
-        sources.snapshot(PACKAGES, trial / 'source')
-        phases['snapshot'] = time.perf_counter() - stage
-        with (trial / ('worker_%02d.log' % attempt)).open('w', encoding='utf-8') as stream:
+            if index == len(plan["trials"]):
+                if not continuous:
+                    break
+                append_trial(directory, plan, registry)
+                phases["select"] = time.perf_counter() - trial_started
+            item = plan["trials"][index]
+            index += 1
+            if Outcome.read(directory / item["directory"], JsonCache()) is not None:
+                continue
+            config = execute_trial(directory, plan, item, index, trial_started, phases)
             stage = time.perf_counter()
-            process = subprocess.Popen(invocation, stdout=stream, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-            write_json(directory / 'running.json', dict(runner_pid=os.getpid(), worker_pid=process.pid, trial=item['directory'], started=opened))
-            try:
-                code = wait_worker(process, deadline)
-            except subprocess.TimeoutExpired:
-                code = -1
-            phases['worker'] = time.perf_counter() - stage
-        stage = time.perf_counter()
-        prune(plan['bank'], plan['variant_bytes'], Bank(plan['bank']).stamp(config))
-        phases['prune'] = time.perf_counter() - stage
-        seconds = time.perf_counter() - started
-        if seconds > plan['seconds']:
-            if (trial / 'result.json').exists():
-                (trial / 'result.json').replace(trial / 'late_result.json')
-            if not (trial / 'failure.json').exists():
-                write_json(trial / 'timeout.json', dict(seconds=seconds, budget=plan['seconds'], phases=phases, model=item['model'], graph=item['graph']))
-        elif code and not (trial / 'failure.json').exists():
-            write_json(trial / 'failure.json', dict(model=item['model'], graph=item['graph'], error='worker exited %s' % code))
-        write_json(trial / 'trial.json', dict(seconds=seconds, budget=plan['seconds'], phases=phases, started=opened, completed=datetime.now(timezone.utc).isoformat()))
-        if (trial / 'result.json').exists():
-            result = read_json(trial / 'result.json')
-            emit('trial_exit', index=index, model=item['model'], graph=item['graph'][:10], raw_mse=result['raw_val_mse'], seconds=seconds, phases=phases)
-        else:
-            emit('trial_failed', trial=item['directory'], exit_code=code, seconds=seconds, phases=phases)
+            with Timeline(directory / item["directory"] / "maintenance_timing.json"), measure("maintenance"):
+                with measure("cache_prune"):
+                    prune(plan["bank"], plan["variant_bytes"], Bank(plan["bank"]).stamp(config))
+                emit("trial_prune", seconds=time.perf_counter() - stage)
+                with measure("report"):
+                    report(directory)
         report(directory)
-    results = report(directory)
-    completed = [r for r in results if r['status'] == 'complete']
-    emit('run_exit', completed=len(completed), failed=len(results) - len(completed), views=len({r['config']['model']['view'] for r in completed}))
+        state["status"] = "stopped" if (directory / "STOP").exists() else "complete"
+    except BaseException as error:
+        state.update(
+            status="interrupted" if isinstance(error, (KeyboardInterrupt, SystemExit)) else "failed",
+            error=repr(error),
+            traceback=traceback.format_exc(),
+        )
+        raise
+    finally:
+        state.update(completed=datetime.now(timezone.utc).isoformat(), seconds=time.perf_counter() - started)
+        write_json(directory / "runner.json", state)
+        emit("run_exit", status=state["status"], seconds=state["seconds"])
 
 
 def main():
     parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers(dest='command', required=True)
-    run_parser = subparsers.add_parser('run')
-    run_parser.add_argument('--bank', required=True)
-    run_parser.add_argument('--output', required=True)
-    run_parser.add_argument('--seed', type=int, default=20260909)
-    run_parser.add_argument('--batch-sequences', type=int, default=64)
-    run_parser.add_argument('--continuous', action='store_true')
-    run_parser.add_argument('--trials', type=int)
-    run_parser.add_argument('--seconds', type=int, default=600)
-    run_parser.add_argument('--selector', choices=('tpe', 'random'), help='how the next trials are chosen; tpe for a new run, and a continued run keeps its selector unless one is given')
-    run_parser.add_argument('--random-trials', type=int)
-    run_parser.add_argument('--bounds')
-    run_parser.add_argument('--workers', type=int, default=WORKERS)
-    run_parser.add_argument('--variant-gb', type=int, default=BUDGET >> 30)
-    worker_parser = subparsers.add_parser('worker')
-    worker_parser.add_argument('--bank', required=True)
-    worker_parser.add_argument('--output', required=True)
-    worker_parser.add_argument('--training-blocks', required=True)
-    worker_parser.add_argument('--batch-sequences', type=int, required=True)
-    worker_parser.add_argument('--deadline', type=float, required=True)
-    worker_parser.add_argument('--workers', type=int, required=True)
-    report_parser = subparsers.add_parser('report')
-    report_parser.add_argument('directory')
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    run_parser = subparsers.add_parser("run")
+    run_parser.add_argument("--bank", required=True)
+    run_parser.add_argument("--output", required=True)
+    run_parser.add_argument("--seed", type=int, default=20260909)
+    run_parser.add_argument("--batch-sequences", type=int, default=64)
+    run_parser.add_argument("--continuous", action="store_true")
+    run_parser.add_argument("--trials", type=int)
+    run_parser.add_argument(
+        "--seconds",
+        type=int,
+        help="time limit for new trials; defaults to 600 for a new run, otherwise keeps the saved limit",
+    )
+    run_parser.add_argument(
+        "--selector",
+        choices=("forest", "botorch", "tpe", "random"),
+        help="how trials are chosen; botorch for a new run, otherwise keep the saved selector",
+    )
+    run_parser.add_argument(
+        "--startup-trials",
+        "--random-trials",
+        dest="random_trials",
+        type=int,
+        help="minimum finished trials before a surrogate selector starts, including failures and any previous selector",
+    )
+    run_parser.add_argument(
+        "--random-params",
+        nargs="*",
+        help="parameters to draw randomly and hold fixed during surrogate selection",
+    )
+    run_parser.add_argument(
+        "--mix",
+        nargs="*",
+        help="percent of trials after startup for each selector, as name=share pairs summing to 100",
+    )
+    run_parser.add_argument("--bounds")
+    run_parser.add_argument("--workers", type=int, default=WORKERS)
+    run_parser.add_argument("--variant-gb", type=int, default=BUDGET >> 30)
+    worker_parser = subparsers.add_parser("worker")
+    worker_parser.add_argument("--bank", required=True)
+    worker_parser.add_argument("--output", required=True)
+    worker_parser.add_argument("--training-blocks", required=True)
+    worker_parser.add_argument("--batch-sequences", type=int, required=True)
+    worker_parser.add_argument("--deadline", type=float, required=True)
+    worker_parser.add_argument("--workers", type=int, required=True)
+    report_parser = subparsers.add_parser("report")
+    report_parser.add_argument("directory")
     args = parser.parse_args()
     configure(json_lines=True)
-    if args.command == 'worker':
+    if args.command == "worker":
         worker(args)
-    elif args.command == 'run':
+    elif args.command == "run":
         run(args)
     else:
         report(args.directory)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

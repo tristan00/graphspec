@@ -15,7 +15,23 @@ def lower(ids, offsets, ticks, entity, bound):
 
 
 @njit(cache=True, parallel=True)
-def walked(ids, offsets, source, target, ticks, roots, floors, cutoffs, active, identity, fanout, bias, seed, stream, hops):
+def walked(
+    ids,
+    offsets,
+    source,
+    target,
+    ticks,
+    roots,
+    floors,
+    cutoffs,
+    active,
+    identity,
+    fanout,
+    bias,
+    seed,
+    stream,
+    hops,
+):
     result = np.full((len(roots), hops), -1, np.int32)
     for row in prange(len(roots)):
         if not active[row]:
@@ -162,10 +178,7 @@ def novel(slots, keys_low, keys_high, count, low, high):
 
 
 @njit(cache=True)
-def runs(ids, step, groups):
-    last = np.full(groups, -2, np.int64)
-    current = np.zeros(groups, np.int64)
-    begun = np.zeros(groups, np.int64)
+def runs(ids, step, last, current, begun):
     position = np.empty(len(ids), np.int64)
     started = np.empty(len(ids), np.int64)
     for row in range(len(ids)):
@@ -246,8 +259,7 @@ def observed_at(obs_entity, obs_step, include, entity, step, entities):
 
 
 @njit(cache=True)
-def degrees(obs_entity, obs_step, fact_source, fact_target, fact_step, use, entities, cumulative):
-    count = np.zeros(entities, np.int64)
+def degrees(obs_entity, obs_step, fact_source, fact_target, fact_step, use, entities, cumulative, count):
     stamp = np.full(entities, -1, np.int64)
     result = np.zeros(len(obs_entity), np.int64)
     cursor = 0
@@ -274,8 +286,7 @@ def degrees(obs_entity, obs_step, fact_source, fact_target, fact_step, use, enti
 
 
 @njit(cache=True)
-def activity(obs_entity, entities):
-    count = np.zeros(entities, np.int64)
+def activity(obs_entity, count):
     result = np.empty(len(obs_entity), np.int64)
     for row in range(len(obs_entity)):
         count[obs_entity[row]] += 1
@@ -354,7 +365,12 @@ def peel(obs_entity, obs_step, alive, minimum, fact_source, fact_target, fact_st
                 left[local] = -1
                 if other != index:
                     degree[other] -= 1
-                    if alive[other] and minimum[other] > 0 and degree[other] < minimum[other] and not queued[other - low]:
+                    if (
+                        alive[other]
+                        and minimum[other] > 0
+                        and degree[other] < minimum[other]
+                        and not queued[other - low]
+                    ):
                         queue[tail] = other
                         tail += 1
                         queued[other - low] = True
@@ -381,6 +397,55 @@ def untyped(typed, pairs, present, base, typed_groups, pair_groups):
                 live[pair] -= 1
             kept[row] = live[pair] == 0
     return kept
+
+
+@njit(cache=True)
+def grouped(ids, groups):
+    offsets = np.zeros(groups + 1, np.int64)
+    for row in range(len(ids)):
+        offsets[ids[row] + 1] += 1
+    for group in range(groups):
+        offsets[group + 1] += offsets[group]
+    cursor = offsets[:-1].copy()
+    order = np.empty(len(ids), np.int32)
+    for row in range(len(ids)):
+        order[cursor[ids[row]]] = row
+        cursor[ids[row]] += 1
+    return order, offsets
+
+
+@njit(cache=True)
+def grouped_column(table, column, groups):
+    offsets = np.zeros(groups + 1, np.int64)
+    for row in range(len(table)):
+        offsets[table[row, column] + 1] += 1
+    for group in range(groups):
+        offsets[group + 1] += offsets[group]
+    cursor = offsets[:-1].copy()
+    order = np.empty(len(table), np.int32)
+    for row in range(len(table)):
+        order[cursor[table[row, column]]] = row
+        cursor[table[row, column]] += 1
+    return order, offsets
+
+
+@njit(cache=True)
+def misplaced_attributes(table, rows, limits):
+    for row in range(len(table)):
+        limit = limits[table[row, 2]]
+        if (limit < 0 and rows[row] != -1) or (limit >= 0 and (rows[row] < 0 or rows[row] >= limit)):
+            return table[row, 2]
+    return -1
+
+
+@njit(cache=True)
+def continuing(ids, step, groups):
+    following = np.full(groups, -2, np.int64)
+    result = np.zeros(len(ids), np.bool_)
+    for row in range(len(ids) - 1, -1, -1):
+        result[row] = following[ids[row]] == step[row] + 1
+        following[ids[row]] = step[row]
+    return result
 
 
 @njit(cache=True)
@@ -470,7 +535,20 @@ def turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, row):
 
 
 @njit(cache=True)
-def boundary_flag(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, ticks, who, anchor, destination, lookback, window):
+def boundary_flag(
+    turn_offset,
+    turn_value,
+    turn_lo,
+    turn_hi,
+    entries,
+    entry_offset,
+    ticks,
+    who,
+    anchor,
+    destination,
+    lookback,
+    window,
+):
     if ticks[destination] // 2 - ticks[anchor] // 2 >= window:
         return 0
     prior = turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, anchor)
@@ -487,7 +565,25 @@ def boundary_flag(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offs
 
 
 @njit(cache=True)
-def boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, source, target, ticks, who, lookback, window, out_source, out_target, out_flag, start, write):
+def boundary_rows(
+    turn_offset,
+    turn_value,
+    turn_lo,
+    turn_hi,
+    entries,
+    entry_offset,
+    source,
+    target,
+    ticks,
+    who,
+    lookback,
+    window,
+    out_source,
+    out_target,
+    out_flag,
+    start,
+    write,
+):
     base, count = turn_offset[who], turn_offset[who + 1] - turn_offset[who]
     total = 0
     for index in range(count):
@@ -518,7 +614,20 @@ def boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offs
                     other_b = target[b] if source[b] == who else source[b]
                     merged = flag
                     if other_a == other_b and other_a != who:
-                        shared = boundary_flag(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, ticks, other_a, a, b, lookback, window)
+                        shared = boundary_flag(
+                            turn_offset,
+                            turn_value,
+                            turn_lo,
+                            turn_hi,
+                            entries,
+                            entry_offset,
+                            ticks,
+                            other_a,
+                            a,
+                            b,
+                            lookback,
+                            window,
+                        )
                         if other_a < who and shared != 0:
                             continue
                         merged |= shared
@@ -531,27 +640,65 @@ def boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offs
 
 
 @njit(cache=True, parallel=True)
-def boundaries(source, target, ticks, member, turn_of, lookback, window, entities):
-    turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset = turn_index(source, target, ticks, member, turn_of, entities)
+def boundaries(source, target, ticks, member, turn_of, lookback, window, entities, max_pairs):
+    turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset = turn_index(
+        source, target, ticks, member, turn_of, entities
+    )
     counts = np.zeros(entities, np.int64)
     empty = np.empty(0, np.int32)
     for who in prange(entities):
-        counts[who] = boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, source, target, ticks, who, lookback, window,
-                                    empty, empty, empty, 0, False)
+        counts[who] = boundary_rows(
+            turn_offset,
+            turn_value,
+            turn_lo,
+            turn_hi,
+            entries,
+            entry_offset,
+            source,
+            target,
+            ticks,
+            who,
+            lookback,
+            window,
+            empty,
+            empty,
+            empty,
+            0,
+            False,
+        )
     offsets = np.zeros(entities + 1, np.int64)
     for who in range(entities):
         offsets[who + 1] = offsets[who] + counts[who]
+        if offsets[who + 1] > max_pairs:
+            raise ValueError("event boundary edges exceed the graph resource budget")
     out_source = np.empty(offsets[entities], np.int32)
     out_target = np.empty(offsets[entities], np.int32)
     out_flag = np.empty(offsets[entities], np.int32)
     for who in prange(entities):
-        boundary_rows(turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset, source, target, ticks, who, lookback, window,
-                      out_source, out_target, out_flag, offsets[who], True)
+        boundary_rows(
+            turn_offset,
+            turn_value,
+            turn_lo,
+            turn_hi,
+            entries,
+            entry_offset,
+            source,
+            target,
+            ticks,
+            who,
+            lookback,
+            window,
+            out_source,
+            out_target,
+            out_flag,
+            offsets[who],
+            True,
+        )
     return out_source, out_target, out_flag
 
 
 @njit(cache=True)
-def coupled(entity, step, chosen, mode, width, cap, limit, entities):
+def coupled(entity, step, chosen, mode, width, cap, limit, entities, max_pairs):
     rows = len(entity)
     offsets = np.zeros(entities + 1, np.int64)
     for ix in range(rows):
@@ -571,6 +718,8 @@ def coupled(entity, step, chosen, mode, width, cap, limit, entities):
     total = 0
     for phase in range(2):
         if phase == 1:
+            if total > max_pairs:
+                raise ValueError("temporal coupling edges exceed the graph resource budget")
             out_source = np.empty(total, np.int32)
             out_target = np.empty(total, np.int32)
             total = 0
@@ -613,11 +762,32 @@ def coupled(entity, step, chosen, mode, width, cap, limit, entities):
                             out_source[total] = csr[base + low]
                             out_target[total] = ix
                         total += 1
+            if phase == 0 and total > max_pairs:
+                raise ValueError("temporal coupling edges exceed the graph resource budget")
     return out_source, out_target
 
 
 @njit(cache=True)
-def bundled(entity, offsets, prior, altered, actor, trace, bundles, decided, entities, limit, wires, holders):
+def bundled(
+    entity,
+    offsets,
+    prior,
+    altered,
+    actor,
+    trace,
+    bundles,
+    decided,
+    limit,
+    wires,
+    holders,
+    node_base,
+    row_base,
+    last_node,
+    trace_node,
+    trace_row,
+    trace_count,
+    previous_action,
+):
     kind = np.empty(limit, np.int8)
     tick = np.empty(limit, np.int32)
     owner = np.empty(limit, np.int32)
@@ -628,15 +798,10 @@ def bundled(entity, offsets, prior, altered, actor, trace, bundles, decided, ent
     out_source = np.empty(wires, np.int32)
     out_target = np.empty(wires, np.int32)
     out_flag = np.empty(wires, np.int32)
-    span = trace if trace > 0 else 1
-    last_node = np.full(entities, -1, np.int64)
-    trace_node = np.empty((entities, span), np.int64)
-    trace_row = np.empty((entities, span), np.int64)
-    trace_count = np.zeros(entities, np.int64)
     node_of_row = np.empty(len(entity), np.int64)
     total, held, used = 0, 0, 0
     member_offset[0] = 0
-    previous_action, bundle = -1, -1
+    bundle = -1
     for moment in range(len(offsets) - 1):
         start, stop = offsets[moment], offsets[moment + 1]
         for row in range(start, stop):
@@ -647,14 +812,14 @@ def bundled(entity, offsets, prior, altered, actor, trace, bundles, decided, ent
             owner[node] = who
             mode[node] = 0
             fill[node] = row
-            member_id[used] = row
+            member_id[used] = row + row_base
             used += 1
             member_offset[node + 1] = used
-            node_of_row[row] = node
+            node_of_row[row] = node + node_base
             total += 1
             if last_node[who] >= 0:
                 out_source[held] = last_node[who]
-                out_target[held] = node
+                out_target[held] = node + node_base
                 out_flag[held] = 4
                 held += 1
                 if altered[row]:
@@ -665,22 +830,22 @@ def bundled(entity, offsets, prior, altered, actor, trace, bundles, decided, ent
                     mode[change] = 1
                     fill[change] = row
                     member_id[used] = prior[row]
-                    member_id[used + 1] = row
+                    member_id[used + 1] = row + row_base
                     used += 2
                     member_offset[change + 1] = used
                     total += 1
                     out_source[held] = last_node[who]
-                    out_target[held] = change
+                    out_target[held] = change + node_base
                     out_flag[held] = 32
                     held += 1
-                    out_source[held] = change
-                    out_target[held] = node
+                    out_source[held] = change + node_base
+                    out_target[held] = node + node_base
                     out_flag[held] = 32
                     held += 1
-            last_node[who] = node
+            last_node[who] = node + node_base
             if trace > 0:
-                trace_node[who, trace_count[who]] = node
-                trace_row[who, trace_count[who]] = row
+                trace_node[who, trace_count[who]] = node + node_base
+                trace_row[who, trace_count[who]] = row + row_base
                 trace_count[who] += 1
                 if trace_count[who] == trace:
                     group = total
@@ -696,11 +861,11 @@ def bundled(entity, offsets, prior, altered, actor, trace, bundles, decided, ent
                     total += 1
                     for slot in range(trace):
                         out_source[held] = trace_node[who, slot]
-                        out_target[held] = group
+                        out_target[held] = group + node_base
                         out_flag[held] = 512
                         held += 1
-                    out_source[held] = group
-                    out_target[held] = node
+                    out_source[held] = group + node_base
+                    out_target[held] = node + node_base
                     out_flag[held] = 1024
                     held += 1
                     trace_count[who] = 0
@@ -712,13 +877,13 @@ def bundled(entity, offsets, prior, altered, actor, trace, bundles, decided, ent
             mode[bundle] = 5 if stop > start else 4
             fill[bundle] = moment
             for row in range(start, stop):
-                member_id[used] = row
+                member_id[used] = row + row_base
                 used += 1
             member_offset[bundle + 1] = used
             total += 1
             for row in range(start, stop):
                 out_source[held] = node_of_row[row]
-                out_target[held] = bundle
+                out_target[held] = bundle + node_base
                 out_flag[held] = 512
                 held += 1
         if decided:
@@ -731,30 +896,62 @@ def bundled(entity, offsets, prior, altered, actor, trace, bundles, decided, ent
             member_offset[action + 1] = used
             total += 1
             if bundles:
-                out_source[held] = bundle
-                out_target[held] = action
+                out_source[held] = bundle + node_base
+                out_target[held] = action + node_base
                 out_flag[held] = 8
                 held += 1
-            if moment > 0:
+            if previous_action >= 0:
                 out_source[held] = previous_action
-                out_target[held] = action
+                out_target[held] = action + node_base
                 out_flag[held] = 1
                 held += 1
-            previous_action = action
-    return (kind[:total], tick[:total], owner[:total], mode[:total], fill[:total], member_offset[:total + 1], member_id[:used],
-            out_source[:held], out_target[:held], out_flag[:held])
+            previous_action = action + node_base
+    return (
+        kind[:total],
+        tick[:total],
+        owner[:total],
+        mode[:total],
+        fill[:total],
+        member_offset[: total + 1],
+        member_id[:used],
+        out_source[:held],
+        out_target[:held],
+        out_flag[:held],
+        previous_action,
+    )
 
 
 @njit(cache=True)
-def replayed(entity, step, altered, present_source, present_target, present_code, present_step, absent_source, absent_target, absent_code, absent_step,
-             actor, subject, context, category, steps, entities):
+def replayed(
+    entity,
+    step,
+    altered,
+    present_source,
+    present_target,
+    present_code,
+    present_step,
+    absent_source,
+    absent_target,
+    absent_code,
+    absent_step,
+    actor,
+    subject,
+    context,
+    category,
+    steps,
+    last,
+    base,
+    initial_source,
+    initial_target,
+    initial_code,
+    initial_state,
+):
     observations, statements, removals = len(step), len(present_step), len(absent_step)
     decided = len(actor) > 0
     total = observations + statements + removals + (steps if decided else 0)
     events = np.empty((total, 9), np.int32)
-    last = np.full(entities, -1, np.int64)
     capacity = 16
-    while capacity < 2 * (statements + removals + 1):
+    while capacity < 2 * (statements + removals + len(initial_state) + 1):
         capacity *= 2
     slots = np.zeros(capacity, np.int64)
     keys_source = np.empty(capacity, np.int64)
@@ -762,6 +959,17 @@ def replayed(entity, step, altered, present_source, present_target, present_code
     keys_code = np.empty(capacity, np.int64)
     states = np.empty(capacity, np.int64)
     stored = 0
+    for index in range(len(initial_state)):
+        left, right, code = initial_source[index], initial_target[index], initial_code[index]
+        slot = np.int64(
+            mix(mix(mix(np.uint64(left)) ^ np.uint64(right)) ^ np.uint64(code)) & np.uint64(capacity - 1)
+        )
+        while slots[slot] != 0:
+            slot = (slot + 1) & (capacity - 1)
+        slots[slot] = stored + 1
+        keys_source[stored], keys_target[stored], keys_code[stored] = left, right, code
+        states[stored] = initial_state[index]
+        stored += 1
     filled, observed, asserted, retracted = 0, 0, 0, 0
     for moment in range(steps):
         while observed < observations and step[observed] == moment:
@@ -772,13 +980,13 @@ def replayed(entity, step, altered, present_source, present_target, present_code
                 events[filled, 1] = owner
                 events[filled, 2] = 2 * moment
                 events[filled, 3] = 0
-                events[filled, 4] = observed
-                events[filled, 5] = observed
+                events[filled, 4] = observed + base
+                events[filled, 5] = observed + base
                 events[filled, 6] = previous
                 events[filled, 7] = -1
                 events[filled, 8] = -1
                 filled += 1
-            last[owner] = observed
+            last[owner] = observed + base
             observed += 1
         for phase in range(2):
             while True:
@@ -788,7 +996,7 @@ def replayed(entity, step, altered, present_source, present_target, present_code
                     row, live = asserted, 1
                     left, right = entity[present_source[row]], entity[present_target[row]]
                     code = present_code[row]
-                    origin, destination = present_source[row], present_target[row]
+                    origin, destination = present_source[row] + base, present_target[row] + base
                 else:
                     if retracted >= removals or absent_step[retracted] != moment:
                         break
@@ -796,9 +1004,19 @@ def replayed(entity, step, altered, present_source, present_target, present_code
                     left, right = absent_source[row], absent_target[row]
                     code = absent_code[row]
                     if last[left] < 0 or last[right] < 0:
-                        return events[:0], np.int64(-1)
+                        return (
+                            events[:0],
+                            np.int64(-1),
+                            keys_source[:0],
+                            keys_target[:0],
+                            keys_code[:0],
+                            states[:0],
+                        )
                     origin, destination = last[left], last[right]
-                slot = np.int64(mix(mix(mix(np.uint64(left)) ^ np.uint64(right)) ^ np.uint64(code)) & np.uint64(capacity - 1))
+                slot = np.int64(
+                    mix(mix(mix(np.uint64(left)) ^ np.uint64(right)) ^ np.uint64(code))
+                    & np.uint64(capacity - 1)
+                )
                 while True:
                     held = slots[slot]
                     if held == 0:
@@ -810,7 +1028,11 @@ def replayed(entity, step, altered, present_source, present_target, present_code
                         held = stored + 1
                         stored += 1
                         break
-                    if keys_source[held - 1] == left and keys_target[held - 1] == right and keys_code[held - 1] == code:
+                    if (
+                        keys_source[held - 1] == left
+                        and keys_target[held - 1] == right
+                        and keys_code[held - 1] == code
+                    ):
                         break
                     slot = (slot + 1) & (capacity - 1)
                 before = states[held - 1]
@@ -835,13 +1057,20 @@ def replayed(entity, step, altered, present_source, present_target, present_code
             events[filled, 1] = subject[moment]
             events[filled, 2] = 2 * moment + 1
             events[filled, 3] = 2
-            events[filled, 4] = context[moment, 0]
-            events[filled, 5] = context[moment, 1]
+            events[filled, 4] = context[moment, 0] + base
+            events[filled, 5] = context[moment, 1] + base
             events[filled, 6] = category[moment]
             events[filled, 7] = -1
             events[filled, 8] = -1
             filled += 1
-    return events[:filled], np.int64(0)
+    return (
+        events[:filled].copy(),
+        np.int64(0),
+        keys_source[:stored],
+        keys_target[:stored],
+        keys_code[:stored],
+        states[:stored],
+    )
 
 
 @njit(cache=True)
@@ -898,7 +1127,24 @@ def group_index(source, target, ticks, member, entities):
 
 
 @njit(cache=True)
-def dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_hi, group_tick, entries, lags, windowed, window, cap, buffer):
+def dag_row(
+    row,
+    source,
+    target,
+    ticks,
+    belongs,
+    group_offset,
+    group_lo,
+    group_hi,
+    group_tick,
+    entries,
+    lags,
+    windowed,
+    window,
+    cap,
+    buffer,
+    max_pairs,
+):
     fill = 0
     for side in range(2):
         who = source[row] if side == 0 else target[row]
@@ -932,6 +1178,8 @@ def dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_h
                 previous = entries[index]
                 if ticks[row] - ticks[previous] > window:
                     continue
+                if fill >= max_pairs:
+                    raise ValueError("event neighbors exceed the graph resource budget")
                 if fill == len(buffer):
                     grown = np.empty(2 * len(buffer), np.int64)
                     grown[:fill] = buffer[:fill]
@@ -942,28 +1190,66 @@ def dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_h
     if fill == 0:
         return buffer, 0
     ordered = np.unique(buffer[:fill])
-    buffer[:len(ordered)] = ordered
+    buffer[: len(ordered)] = ordered
     return buffer, len(ordered)
 
 
 @njit(cache=True, parallel=True)
-def event_dag(source, target, ticks, member, lags, windowed, window, cap, entities):
+def event_dag(source, target, ticks, member, lags, windowed, window, cap, entities, max_pairs):
     events = len(ticks)
-    belongs, group_offset, group_lo, group_hi, group_tick, entries = group_index(source, target, ticks, member, entities)
+    belongs, group_offset, group_lo, group_hi, group_tick, entries = group_index(
+        source, target, ticks, member, entities
+    )
     counts = np.zeros(events, np.int64)
     for row in prange(events):
         if member[row]:
             buffer = np.empty(64, np.int64)
-            _, counts[row] = dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_hi, group_tick, entries, lags, windowed, window, cap, buffer)
+            _, counts[row] = dag_row(
+                row,
+                source,
+                target,
+                ticks,
+                belongs,
+                group_offset,
+                group_lo,
+                group_hi,
+                group_tick,
+                entries,
+                lags,
+                windowed,
+                window,
+                cap,
+                buffer,
+                max_pairs,
+            )
     offsets = np.zeros(events + 1, np.int64)
     for row in range(events):
         offsets[row + 1] = offsets[row] + counts[row]
+        if offsets[row + 1] > max_pairs:
+            raise ValueError("event graph edges exceed the graph resource budget")
     out_source = np.empty(offsets[events], np.int32)
     out_target = np.empty(offsets[events], np.int32)
     for row in prange(events):
         if member[row] and counts[row] > 0:
             buffer = np.empty(max(64, counts[row]), np.int64)
-            buffer, fill = dag_row(row, source, target, ticks, belongs, group_offset, group_lo, group_hi, group_tick, entries, lags, windowed, window, cap, buffer)
+            buffer, fill = dag_row(
+                row,
+                source,
+                target,
+                ticks,
+                belongs,
+                group_offset,
+                group_lo,
+                group_hi,
+                group_tick,
+                entries,
+                lags,
+                windowed,
+                window,
+                cap,
+                buffer,
+                max_pairs,
+            )
             for index in range(fill):
                 out_source[offsets[row] + index] = buffer[index]
                 out_target[offsets[row] + index] = row
@@ -982,7 +1268,7 @@ def first_rows(ids, groups):
 
 
 @njit(cache=True)
-def project_pairs(members, owners, kinds, left_kind, right_kind, cap):
+def project_pairs(members, owners, kinds, left_kind, right_kind, cap, max_pairs):
     rows = len(owners)
     stamp = np.zeros(len(kinds), np.int64)
     picked = np.empty(rows, np.int64)
@@ -1018,6 +1304,8 @@ def project_pairs(members, owners, kinds, left_kind, right_kind, cap):
             if kinds[picked[slot]] == right_kind:
                 right += 1
         total += left * (left - 1) // 2 if left_kind == right_kind else left * right
+        if total > max_pairs:
+            raise ValueError("projection candidate edges exceed the graph resource budget")
     source = np.empty(total, np.int32)
     target = np.empty(total, np.int32)
     at = 0
@@ -1036,8 +1324,14 @@ def project_pairs(members, owners, kinds, left_kind, right_kind, cap):
 
 
 @njit(cache=True)
-def within_pairs(members, offsets, kinds, nodes):
+def within_pairs(members, offsets, kinds, nodes, max_pairs):
     chunks = len(offsets) - 1
+    total = 0
+    for chunk in range(chunks):
+        size = offsets[chunk + 1] - offsets[chunk]
+        total += size * (size - 1) // 2
+        if total > max_pairs:
+            raise ValueError("completion candidate edges exceed the graph resource budget")
     picked = np.empty(len(members), np.int64)
     bounds = np.empty(chunks + 1, np.int64)
     bounds[0] = 0
@@ -1046,7 +1340,7 @@ def within_pairs(members, offsets, kinds, nodes):
         for index in range(offsets[chunk], offsets[chunk + 1]):
             picked[fill] = members[index]
             fill += 1
-        section = np.sort(picked[bounds[chunk]:fill])
+        section = np.sort(picked[bounds[chunk] : fill])
         counts = np.zeros(nodes + 1, np.int64)
         for value in section:
             counts[kinds[value] + 1] += 1
@@ -1056,12 +1350,8 @@ def within_pairs(members, offsets, kinds, nodes):
         for value in section:
             ordered[counts[kinds[value]]] = value
             counts[kinds[value]] += 1
-        picked[bounds[chunk]:fill] = ordered
+        picked[bounds[chunk] : fill] = ordered
         bounds[chunk + 1] = fill
-    total = 0
-    for chunk in range(chunks):
-        size = bounds[chunk + 1] - bounds[chunk]
-        total += size * (size - 1) // 2
     source = np.empty(total, np.int32)
     target = np.empty(total, np.int32)
     at = 0
@@ -1150,8 +1440,26 @@ def within_cap(groups, count, best, earliest, part, low, high, cap):
 
 
 @njit(cache=True)
-def audit(obs_entity, obs_step, obs_anchor, fact_source, fact_target, fact_step, fact_present, fact_code, canonical,
-          actor, subject, context, label_entity, label_step, labelled, steps, entities):
+def audit(
+    obs_entity,
+    obs_step,
+    obs_anchor,
+    fact_source,
+    fact_target,
+    fact_step,
+    fact_present,
+    fact_code,
+    canonical,
+    actor,
+    subject,
+    context,
+    label_entity,
+    label_step,
+    labelled,
+    steps,
+    entities,
+    known,
+):
     flags = np.zeros(19, np.bool_)
     observations, facts, labels = len(obs_step), len(fact_step), len(label_step)
     for row in range(observations):
@@ -1170,7 +1478,9 @@ def audit(obs_entity, obs_step, obs_anchor, fact_source, fact_target, fact_step,
             flags[5] = True
         if fact_code[row] < 0 or fact_code[row] >= len(canonical) or not canonical[fact_code[row]]:
             flags[10] = True
-        if row > 0 and np.int64(fact_step[row]) * 2 + (0 if fact_present[row] else 1) < np.int64(fact_step[row - 1]) * 2 + (0 if fact_present[row - 1] else 1):
+        if row > 0 and np.int64(fact_step[row]) * 2 + (0 if fact_present[row] else 1) < np.int64(
+            fact_step[row - 1]
+        ) * 2 + (0 if fact_present[row - 1] else 1):
             flags[12] = True
     for row in range(labels):
         if label_step[row] < 0 or label_step[row] >= steps:
@@ -1193,6 +1503,9 @@ def audit(obs_entity, obs_step, obs_anchor, fact_source, fact_target, fact_step,
     stamp = np.full(entities, -1, np.int64)
     structure = np.full(entities, -1, np.int64)
     first = np.full(entities, steps, np.int64)
+    for who in range(entities):
+        if known[who]:
+            first[who] = -1
     cursor = 0
     for row in range(facts):
         moment = np.int64(fact_step[row])
@@ -1223,7 +1536,11 @@ def audit(obs_entity, obs_step, obs_anchor, fact_source, fact_target, fact_step,
         while cursor < observations and obs_step[cursor] <= moment:
             stamp[obs_entity[cursor]] = obs_step[cursor]
             cursor += 1
-        if stamp[actor[moment]] != moment or stamp[subject[moment]] != moment or stamp[context[moment]] != moment:
+        if (
+            stamp[actor[moment]] != moment
+            or stamp[subject[moment]] != moment
+            or stamp[context[moment]] != moment
+        ):
             flags[17] = True
     if labelled:
         stamp[:] = -1
@@ -1263,35 +1580,35 @@ def components(source, target, count):
 
 
 @njit(cache=True)
-def linked(adjacency, a, b, k, l):
-    return adjacency[a, b] or (a == k and b == l) or (a == l and b == k)
+def linked(adjacency, a, b, k, partner):
+    return adjacency[a, b] or (a == k and b == partner) or (a == partner and b == k)
 
 
 @njit(cache=True)
-def curvature_with(adjacency, offsets, columns, i, j, k, l):
-    di = offsets[i + 1] - offsets[i] + (1 if i == k or i == l else 0)
-    dj = offsets[j + 1] - offsets[j] + (1 if j == k or j == l else 0)
+def curvature_with(adjacency, offsets, columns, i, j, k, partner):
+    di = offsets[i + 1] - offsets[i] + (1 if i == k or i == partner else 0)
+    dj = offsets[j + 1] - offsets[j] + (1 if j == k or j == partner else 0)
     if min(di, dj) == 1:
         return 0.0
     triangles = 0
-    for position in range(offsets[i], offsets[i + 1] + (1 if i == k or i == l else 0)):
-        x = columns[position] if position < offsets[i + 1] else (l if i == k else k)
-        triangles += linked(adjacency, j, x, k, l)
+    for position in range(offsets[i], offsets[i + 1] + (1 if i == k or i == partner else 0)):
+        x = columns[position] if position < offsets[i + 1] else (partner if i == k else k)
+        triangles += linked(adjacency, j, x, k, partner)
     largest, smallest = max(di, dj), min(di, dj)
     value = 2 / di + 2 / dj - 2 + 2 * triangles / largest + triangles / smallest
     squares, gamma = 0, 0
     for side in range(2):
         near, far, other = (i, j, j) if side == 0 else (j, i, i)
-        extra_near = 1 if near == k or near == l else 0
+        extra_near = 1 if near == k or near == partner else 0
         for position in range(offsets[near], offsets[near + 1] + extra_near):
-            kk = columns[position] if position < offsets[near + 1] else (l if near == k else k)
-            if linked(adjacency, far, kk, k, l) or kk == other:
+            kk = columns[position] if position < offsets[near + 1] else (partner if near == k else k)
+            if linked(adjacency, far, kk, k, partner) or kk == other:
                 continue
             count = -1
-            extra = 1 if kk == k or kk == l else 0
+            extra = 1 if kk == k or kk == partner else 0
             for slot in range(offsets[kk], offsets[kk + 1] + extra):
-                x = columns[slot] if slot < offsets[kk + 1] else (l if kk == k else k)
-                count += linked(adjacency, far, x, k, l) & (not linked(adjacency, near, x, k, l))
+                x = columns[slot] if slot < offsets[kk + 1] else (partner if kk == k else k)
+                count += linked(adjacency, far, x, k, partner) & (not linked(adjacency, near, x, k, partner))
             if count > 0:
                 squares += 1
             if count > gamma:
@@ -1334,7 +1651,7 @@ def by_target(before, after, size):
         lo, hi = offsets[slot], offsets[slot + 1]
         if hi - lo > 1:
             segment = order[lo:hi]
-            order[lo:hi] = segment[np.argsort(before[segment], kind='mergesort')]
+            order[lo:hi] = segment[np.argsort(before[segment], kind="mergesort")]
     return order
 
 
@@ -1351,6 +1668,13 @@ def check_boundaries(rows, events, member, turn, codes):
         known = False
         for code in codes:
             known |= relation == code
-        if not shared or before >= after or not member[source] or not member[destination] or gap != after - before or not known:
+        if (
+            not shared
+            or before >= after
+            or not member[source]
+            or not member[destination]
+            or gap != after - before
+            or not known
+        ):
             problems += 1
     return problems

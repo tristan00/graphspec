@@ -1,15 +1,15 @@
 import logging
 import time
 
+import numpy as np
 import torch
 from torch import nn
-
 
 LOG = logging.getLogger(__name__)
 
 
 def lookback(cfg):
-    return cfg['graph']['time/context']
+    return cfg["graph"]["time/context"]
 
 
 def enabled(cfg):
@@ -20,12 +20,24 @@ def blocks(bank, original, cfg):
     if not enabled(cfg):
         return original
     started = time.perf_counter()
-    output = []
+    output, starts = [], {}
+    context = lookback(cfg)
     for graph, start, stop, target, partition, first, last in original:
-        arrays = bank.arrays(graph, cfg)
-        turn = int(arrays['turn_membership'][start])
-        output.append((graph, int(arrays['turn_starts'][max(0, turn - lookback(cfg))]), stop, target, partition, first, last))
-    LOG.info('turn blocks exit blocks=%d seconds=%.4f', len(output), time.perf_counter() - started)
+        if graph not in starts:
+            arrays = bank.arrays(graph, cfg)
+            starts[graph] = arrays["turn_starts"][np.maximum(0, arrays["turn_membership"] - context)]
+        output.append(
+            (
+                graph,
+                int(starts[graph][start]),
+                stop,
+                target,
+                partition,
+                first,
+                last,
+            )
+        )
+    LOG.info("turn blocks exit blocks=%d seconds=%.4f", len(output), time.perf_counter() - started)
     return output
 
 
@@ -45,5 +57,5 @@ class EndContext(nn.Module):
 
 
 def gather_end(sequence, entities, b):
-    times = b['end_steps'].clamp_min(0) % b['time_steps']
+    times = b["end_steps"].clamp_min(0) % b["time_steps"]
     return sequence[times, entities[:, None]]

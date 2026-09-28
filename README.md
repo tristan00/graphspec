@@ -1,299 +1,59 @@
 **graphspec**
 
-graphspec searches graph transforms and temporal graph models together for the best predictor of a target you
-choose. You store one temporal truth graph in a LadybugDB database and name the target in a small task file.
-graphspec reads node types, relations and feature widths from the database schema and parses the graph once into
-a bank. Each search trial then proposes model parameters together with a graph-transform spec. The spec
-derives a variant of the truth graph: a reduction, a densification or a different temporal edge scheme. The
-model trains on that variant on a CUDA GPU.
+Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. The learning objective is scalar regression on nodes, queries, or graphs, or a path: many `(tau, y)` points per query, each predicted from the query's embedding and an encoding of the elapsed time `tau`; training requires CUDA.
 
-- `graphspec/` — the domain-free core:
-  - the database contract: schema and reader (`graphdb.py`)
-  - the relation vocabulary (`vocabulary.py`, `registry.py`, `declarations.py`)
-  - the parsed truth graph (`truth.py`)
-  - the spec space (`spec.py`)
-  - the graph operators and model representations (`operators.py`, `representations.py`, `transform.py`)
+**Install and storage**
 
-  See [graphspec/README.md](graphspec/README.md).
-- `tuning/` — bank building, the model space and its components, batching and the search runner. See
-  [tuning/README.md](tuning/README.md).
-- `dashboard/` — a read-only results server for a running search.
+Set `GRAPHSPEC_HOME` to an explicit absolute directory before starting Python. There is no default home or profile settings file. Runtime output must stay outside the checkout and installed package tree; on Windows, every output must resolve to the same volume as `GRAPHSPEC_HOME`. Inputs may be read from other volumes. Inputs and completed banks are read-only; derived caches and temporary files live under the runtime home.
 
-Everything that is mechanism rather than graph logic lives in the sibling `graph_tuning_infra` repository: files and arrays,
-LadybugDB access, process supervision, logging, Optuna plumbing, the HTTP server, hashing and the feature
-encoder. `graph_tuning_infra` imports nothing from this repository; this repository imports `graph_tuning_infra`.
+Create a virtual environment outside the checkout using the [environment setup](docs/loader.md#environment-setup). From an external build copy of the source, install with `python -B -m pip install .`, or install a built wheel. This keeps packaging metadata and build directories outside the working checkout too. Dependencies and extras are declared in `pyproject.toml`. Use `.[totalwar]` for the PostgreSQL adapter, `.[ladybug]` for database inspection/export, and `.[dev]` for development. Infrastructure ships in `graphspec.infra`; no sibling repository is required. The console command is `graphspec`, also available as `python -B -m graphspec`.
 
-**Install**
+The examples use `D:/graphspec-runtime` and its external virtual environment at `environment/Scripts/python.exe`. From the checkout, `scripts/graphspec.ps1 -Home ABSOLUTE_PATH` configures the environment before starting Python and forwards the remaining graphspec arguments. Choose your own runtime directory; the library does not assume a drive or machine path. For direct Python use, set `GRAPHSPEC_HOME` in the launching environment and use `-B` or `PYTHONDONTWRITEBYTECODE=1`. See [storage and loader details](docs/loader.md).
 
-Clone `graph_tuning_infra` next to this repository, then from this directory:
+**One input path for different domains**
+
+Source data → adapter → public Stage Parquet tables → bank → transformed variants → model/search.
+
+There is no required database round trip. LadybugDB remains an optional way to query and inspect the same graph; it is not required to create Parquet files. `Stage` writes files and manifests, and `GraphTables` manages contract tables and identifiers. [The loader walkthrough](docs/loader.md) shows a complete custom graph in Python.
 
 ```powershell
-pip install -e ../graph_tuning_infra
-pip install -r requirements.txt
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --graphs 4 --entities 40 --steps 12 --features 8
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime build --task D:/graphspec-runtime/datasets/demo/demo.task.json --output D:/graphspec-runtime/banks/demo --workers 1
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --continuous --selector botorch --startup-trials 100 --random-params model/view
 ```
 
-with a CUDA build of PyTorch; fits run on CUDA only.
+Replace the Windows paths with your external workspace. The API also exposes `build_bank`, `open_bank`, and `fit`. New bank and fit output directories must not already exist. Searches resume when their existing run directory is supplied. Put a STOP file in a run to stop after its current trial.
 
-On Windows the LadybugDB wheel links `libssl-3-x64.dll` and `libcrypto-3-x64.dll` without shipping them, so
-OpenSSL 3 is installed system-wide (`choco install openssl.light`) or both DLLs sit in `site-packages\ladybug.libs`.
+On Windows, user-SID named mutexes enforce one resource-intensive build, check, fit, or search across runtime homes. These singleton guards create no lock files.
 
-**Using your own graph**
+**Source adapters**
 
-1. Stage your rows as parquet tables that follow the contract below (`graph_tuning_infra.database.Stage` writes them and records the table mapping; `Stage.merge` joins shards written by separate processes), and optionally load them into a LadybugDB database for querying and verification.
-2. Write a task file that names the staging, the database and the target table.
-3. Build a bank. The staging is read once, straight from parquet, partitioned by graph; the database is used only when the task names no staging. Training never touches either.
-4. Check that every model runs on the bank.
-5. Run the search and watch it in the dashboard.
+Total War loads campaign histories from the existing PostgreSQL corpus. Churn predicts whether a client active at T remains active at T plus one calendar year. Victoria 3 reads finished recorder runs and writes decision moments with a GDP path label table; see [VIC3.md](VIC3.md). All write the same graph contract and use the same bank builder, packing, models, and search.
 
 ```powershell
-python -m tuning.build --task artifacts/graphdb/retention.task.json --output artifacts/bank_retention --workers 8
-python -m tuning.check_models artifacts/bank_retention --output artifacts/checks_retention.json
-python -m tuning.run run --bank artifacts/bank_retention --output artifacts/run_retention --continuous --selector tpe
-python -m dashboard.server --root artifacts --port 8766
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime totalwar --output D:/graphspec-runtime/datasets/totalwar --campaigns 100 --port 55433 --workers 1
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime vic3 --output D:/graphspec-runtime/datasets/vic3 --runs 2 --workers 1
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime churn --source C:/Users/trist/Downloads/TX.csv.zip --output D:/graphspec-runtime/datasets/churn --prediction 2025-08-31 --data-through 2026-09-08 --features 64
 ```
 
-`retention` is the example used throughout this page.
+Churn includes descriptive client and policy attributes by default. Cancellation history contributes features only when the policy ended before T; later cancellation outcomes and future policies never become features. The example evaluates retention on 2026-08-31. Full cutoff rules, node/edge mappings, and the extract-coverage assumption are in [CHURN.md](CHURN.md). The Total War source and reward rules are in [TOTALWAR.md](TOTALWAR.md).
 
-**Total War**
-
-`totalwar/` loads the Total War: Warhammer III corpus of `tw_stack` into the contract: one graph per campaign, one step per snapshot (decisions and interrupt screens alike), the game turn as the period, twenty-one node types from factions and characters to the technology, skill, building, unit, item and effect catalogue, about seventy relations, the taken action as the query, and the trainers' own reward as the label. The design, the exact reward and split rules and the sizes are in [TOTALWAR.md](TOTALWAR.md).
+To inspect either graph in LadybugDB, install the extra and run:
 
 ```powershell
-python -m totalwar.build --output artifacts/graphdb_totalwar --campaigns 100 --port 55433 --workers 12
-python -m totalwar.build --output artifacts/graphdb_totalwar --campaigns 100 --port 55433 --staged
-python -m totalwar.verify artifacts/graphdb_totalwar/totalwar.task.json --samples 300
-python -m tuning.build --task artifacts/graphdb_totalwar/totalwar.task.json --output artifacts/bank_totalwar --workers 8
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime database --staging D:/graphspec-runtime/datasets/demo/demo.staging --output D:/graphspec-runtime/datasets/demo/demo.lbug
 ```
 
-`build` takes the newest campaigns from the live PostgreSQL corpus and writes `<name>.staging/` (the parquet tables with their mapping), `<name>.task.json` and `<name>.build.json` with per-campaign sizes. `--workers` processes each build a contiguous block of campaigns into their own staging shard; the bank builds from the shards directly. `--staged` loads `<name>.lbug` from a staging that already exists, which only `verify` needs: it samples steps and compares fact counts per relation, labels and splits against the corpus, and exits with the disagreements when there are any.
+The exporter derives its schema from Parquet. Database-only tasks remain supported; when a task names staging, missing staging is an error.
 
-**Synthetic data**
+**Reference**
 
-Development and benchmarking use generated databases, never client data. `python -m graphspec.synthetic --output artifacts/graphdb --name dev --graphs 4 --entities 2000 --steps 48` writes `dev.lbug` and `dev.task.json` following the contract: four node types, five relations with bounded degrees (`--degree`, `--max-degree`), relations that persist for a geometric lifetime and end with a removal row (`--lifetime`), observation coverage `--alive`, one query per step with categories and `--signals` channels, periods of `--period` steps, and a target on queries, nodes or graphs (`--level`). Every run is fixed by `--seed`. The generator refuses settings that cannot give two training and two validation label groups: at least ten steps for query targets, labelled periods on both sides of the 80% split for node targets, four graphs for graph targets.
+- [Graph table contract](docs/contract.md): schema, time, causality, labels, tasks.
+- [Public loader interface](docs/loader.md): graphs, shards, database export, storage.
+- [Graph transforms](graphspec/README.md).
+- [Models, packing, search, and run outputs](tuning/README.md).
 
-**Why LadybugDB**
 
-Graphs live in [LadybugDB](https://github.com/LadybugDB/ladybug), an embedded Cypher property-graph database
-forked from Kùzu, pinned at 0.20.4. It was chosen on 10 September 2026 after comparing embedded and server
-graph databases; the embedded candidates were installed and measured on this workstation.
 
-What it gives:
-
-- A schema that is a real declaration. Node tables are primary-keyed, relationship tables list every allowed
-  FROM/TO pair, properties are typed, and fixed-width float arrays are supported. graphspec reads the schema
-  back instead of asking for a separate spec.
-- In-process use from a CPython 3.14 Windows wheel, with no server and one database file. Several read-only
-  processes can open one database at once, which is how the bank builder parallelises.
-- Fast bulk paths where training needs them: relationships imported at 1.3–3.6 million rows/s, and every read
-  returns Arrow.
-
-Reads start from the entity tables (`WHERE e.graph = $graph`), because a filter on a property of a large table
-scans the whole table.
-
-Alternatives: DuckDB with DuckPGQ was the runner-up. It was the fastest and smallest, but it stores plain
-tables, and its property-graph extension is a research project with no Windows build for DuckDB 1.5.5. Kùzu is
-archived and has no CPython 3.14 Windows wheel, RyuGraph is dormant, and Grafeo cannot import Parquet or
-Arrow. Neo4j reserves typed graph schemas and Arrow export for Enterprise, and Apache AGE has untyped
-properties. Memgraph, TigerGraph, ArangoDB, NebulaGraph, JanusGraph, Dgraph and Neptune need Docker, Linux or a
-cloud account here, or do not enforce relationship endpoints.
-
-**The database contract**
-
-A database holds one or more graphs. A graph is one connected history: a whole book of business, a campaign, a
-portfolio. One graph is enough, because labels on its nodes carry their own step and split. Time inside a graph is
-a sequence of steps 0, 1, 2, … Each step holds the observations and relationship facts known at that step, and
-exactly one query when the database has queries.
-
-| Table | Kind | Columns | Meaning |
-|---|---|---|---|
-| `graph` | node | `id INT32` key, `name STRING` | One row per graph. Names are unique. |
-| one per node type, such as `customer` | node | `id INT64` key, `graph INT32`, `entity INT32`, `key STRING` | The entities of each graph. `entity` is unique within its graph; only uniqueness matters. `key` is a readable label. |
-| `observation` | node | `id INT64` key, `seq INT32`, `step INT32`, `x FLOAT[F]` | An entity's feature vector at a step. |
-| `observed` | relationship | FROM every node type TO `observation` | Links each observation to its entity. |
-| `query` | node, optional | `id INT64` key, `graph INT32`, `step INT32`, `period INT32`, `key INT64`, `category STRING`, `x FLOAT[F]`, optionally `signal FLOAT[S]` and `signal_observed FLOAT[S]` | Decision moments, when the history has them. |
-| `query_actor`, `query_subject`, `query_context` | relationship, with `query` | FROM `query` TO node types | The three entities each query is about. |
-| `edge_<relation>` | relationship | FROM/TO pairs between node types; `seq INT32`, `step INT32`, `present BOOLEAN`; any `FLOAT` attributes | Relationship facts. |
-| `<target>` | node | `id INT64` key, `y DOUBLE`, `split STRING`, and `step INT32` for node targets | Labels; the name is yours. |
-| `<target>_of` | relationship | FROM `<target>` TO node types, TO `query`, or TO `graph` | What each label belongs to. |
-
-Structure:
-
-- Node types are the source tables of `observed`, in creation order. Relations are the `edge_` tables, also in
-  creation order. Order sets the relation codes and the fingerprint, so recreating tables in another order
-  builds a different bank.
-- The `edge_` prefix exists because node and relationship tables share one case-insensitive namespace.
-  Every relationship column other than `seq`, `step` and `present` is an attribute and must be `FLOAT`.
-- Relation names may not contain `:` or be `diffusion`, `rewire`, `temporal` or `untyped`; those belong to
-  derived relations. Node types may not be
-  named `graph`, `observation`, `observed`, `query`, `query_actor`, `query_subject`, `query_context` or `step`, and may
-  not start with `edge_` or contain `:`.
-- `observation.x` and `query.x` share one even width `F`. The first half holds values and the second half
-  holds presence flags; `graph_tuning_infra.features.encoder(F // 2, numbers, categories)` builds such vectors by
-  feature hashing. The bank stores them at float16 precision.
-- `id` keys are unique across a whole table, not per graph, and increase down the table's rows. A staging reader resolves ids by position when they are dense from zero, or when each graph's ids are its index shifted left by 32 bits plus its row within the graph, which is how shards written in parallel stay unique.
-
-Time and causality:
-
-- With queries, query steps in each graph number 0 to n−1 with no gaps, and every graph has at least one query.
-  Without queries, a graph's steps run from 0 to its last observation, fact or label, and a step may be empty.
-- An observation or fact at step `s` is visible to a query or node label at step `s` and every later one, never
-  to an earlier one.
-- `seq` orders rows within a step. `(step, seq)` must be unique among observations, among present facts across
-  all relations, and among absent facts.
-- An entity has at most one observation per step. A present fact needs observations of both of its entities at
-  its step, a query needs observations of its actor, subject and context at its step, and a node label needs
-  an observation of its node at its step. An unchanged vector adds nothing to the event history, which records
-  an observation only when `x` changes.
-- A present fact holds at its own step only: the snapshot at step `s` contains exactly the facts stated at
-  step `s`, so a relation that persists is restated at every step. The event history records a relation when
-  it becomes present, and a removal when a `present = false` row arrives. A removal needs both entities
-  observed at or before its step.
-- Each query has exactly one `query_actor`, one `query_subject` and one `query_context` edge.
-- `period` groups query steps into turns — a game turn, a billing cycle, a day — and never decreases. Without
-  queries every step is its own period. A spec keeps these periods or replaces them with fixed-length ones.
-- `key` is the query's own identifier, kept as `decision` in the bank. `category` names the kind of query;
-  the sorted distinct categories form the vocabulary for affinity features.
-- `signal` and `signal_observed` are optional per-query channels with an observed mask. The signal model is
-  offered only when they exist and the target is on queries or graphs.
-
-**Example schema**
-
-A renewal model for insurance customers. Each graph is one customer's history; each step is a month.
-
-```cypher
-CREATE NODE TABLE graph(id INT32 PRIMARY KEY, name STRING);
-CREATE NODE TABLE customer(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE policy(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE agent(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE region(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE observation(id INT64 PRIMARY KEY, seq INT32, step INT32, x FLOAT[128]);
-CREATE NODE TABLE query(id INT64 PRIMARY KEY, graph INT32, step INT32, period INT32, key INT64, category STRING, x FLOAT[128]);
-CREATE NODE TABLE renewal(id INT64 PRIMARY KEY, y DOUBLE, split STRING);
-CREATE REL TABLE observed(FROM customer TO observation, FROM policy TO observation, FROM agent TO observation, FROM region TO observation);
-CREATE REL TABLE query_actor(FROM query TO policy);
-CREATE REL TABLE query_subject(FROM query TO customer);
-CREATE REL TABLE query_context(FROM query TO agent);
-CREATE REL TABLE edge_holds(FROM customer TO policy, seq INT32, step INT32, present BOOLEAN);
-CREATE REL TABLE edge_sold_by(FROM policy TO agent, seq INT32, step INT32, present BOOLEAN, commission FLOAT);
-CREATE REL TABLE edge_located_in(FROM customer TO region, FROM agent TO region, seq INT32, step INT32, present BOOLEAN);
-CREATE REL TABLE renewal_of(FROM renewal TO query);
-```
-
-Load node tables first, then relationships, with `COPY` from Parquet. A relationship file starts with the source
-and target `id` columns, followed by the properties in declared order. Load one file per FROM/TO pair and name
-the pair, as `graph_tuning_infra.database.copy` does:
-
-```cypher
-COPY customer FROM 'customer.parquet';
-COPY observation FROM 'observation.parquet';
-COPY observed FROM 'observed_customer.parquet' (from='customer', to='observation');
-COPY edge_located_in FROM 'located_in_agent.parquet' (from='agent', to='region');
-```
-
-**Targets on nodes, queries or graphs**
-
-A target is any real value: a reward, an outcome, an amount. Keep the labels in a node table of your choosing,
-attach each one with `<target>_of`, and name the table in the task file. The destination of `<target>_of`
-decides the level.
-
-- **On nodes** (`FROM renewal TO customer`, to one or more node types): the target table also has `step INT32`.
-  Each label is predicted for its node at that step from everything visible then, so the node needs an
-  observation at that step. A node can carry labels at several steps, one per step. Queries are optional.
-- **On a query** (`FROM renewal TO query`): one label per query, predicted at that query's step from
-  everything visible then. Queries without a label still feed the history.
-- **On a graph** (`FROM renewal TO graph`): one label per graph, predicted at the graph's last query.
-
-Query and graph targets need the query tables. A single graph with node targets needs no query tables, only
-the target table and its relationship next to the tables above:
-
-```cypher
-CREATE NODE TABLE renewal(id INT64 PRIMARY KEY, y DOUBLE, split STRING, step INT32);
-CREATE REL TABLE renewal_of(FROM renewal TO customer);
-```
-
-For every level:
-
-- `split` is `train` or `validation`, set per label.
-- A node carries at most one label per step, a query or graph at most one label, every graph at least one, and
-  every `y` is finite at float32 precision.
-- Building needs at least two training labels and two validation labels that differ at float32 precision.
-- Training targets are standardised with the training mean and sample standard deviation. Fits are scored by
-  raw MSE and R² on the whole validation split.
-
-No spec removes or filters the node types a node target labels, or an observation a query needs at its step.
-
-**Task file**
-
-```json
-{
-  "name": "retention",
-  "database": "retention.lbug",
-  "staging": "retention.staging",
-  "target": "renewal"
-}
-```
-
-| Key | Meaning |
-|---|---|
-| `name` | The registry name, part of the fingerprint. |
-| `database` | Database path, relative to the task file. |
-| `staging` | Optional: the staging directory, relative to the task file. When it exists, the bank is built from its parquet tables instead of the database. |
-| `target` | The target table; `<target>_of` must exist. |
-
-`name`, `database` and `target` are required and no other keys are accepted. Everything else a variant needs comes from the spec
-a trial proposes.
-
-**Building a bank**
-
-`python -m tuning.build --task TASK --output BANK --workers N`. The output directory must not exist.
-
-1. The builder reads the schema, derives the relation vocabulary and refuses reserved names.
-2. It reads the labels, applies the target rules above and writes `supervision.json`.
-3. Worker processes open the database read-only, each with a 4 GiB buffer pool. Each reads one graph with
-   anchored Cypher, checks it against the contract and writes its truth arrays.
-4. It writes `manifest.json`. That pins the declaration and fingerprint, the task, the target level,
-   categories, signal width and per-graph sizes.
-
-Variants are not built here. A trial's spec materialises its variant of a graph on first use, under
-`variants/`.
-
-```
-BANK/
-  manifest.json                     declaration, fingerprint, task, target level, categories, graphs
-  supervision.json                  labels, split indices, training mean and standard deviation
-  truth/graph_0000/                 the truth graph: one .npy per array and graph.json
-  variants/<digest>/variant.json    a spec, its representation groups and the graphspec and graph_tuning_infra source hash
-  variants/<digest>/graph_0000/     that variant's arrays for graph 0
-```
-
-**Running the search**
-
-```powershell
-python -m tuning.run run --bank BANK --output RUN --continuous --selector tpe
-python -m tuning.run report RUN
-```
-
-- `--continuous` keeps proposing trials until a file named `STOP` appears in `RUN`; the current fit finishes
-  first.
-- `--selector` chooses how the next trials are drawn. `tpe`, the default for a new run, proposes the model, its
-  parameters and its graph spec with Optuna TPE from every trial the run has recorded, however each was drawn;
-  `random` samples all three uniformly. `--random-trials N` makes trials before index N uniform draws whatever
-  the selector. Running again with the same `--output` continues the run: `--selector tpe` on a random run proposes
-  from all of its recorded trials, and `--selector random` goes back to uniform draws. Each trial records the selector
-  that drew it in its name and in the plan.
-- `--bounds` names a JSON file that narrows the search space for every selector: `{"epochs": {"low": 1, "high": 3}, "hidden": [16, 32], "graphs/join": "separate"}` fixes a parameter, restricts its choices or tightens its range; the names are model, training or graph parameters, a name may hold `*` wildcards (`edges/*/cap`, `derive/complete*`), an exact name beats a pattern, and a continued run may pass a different file: the plan records it, and TPE leaves out any recorded trial whose parameters fall outside the current bounds, listing it under `excluded` in the next trial's `selection.json`.
-- `--seconds` sets each trial's budget (600), covering everything from parameter selection to the variant pruning after the worker exits, `--batch-sequences` the sequences per batch at history 16 (64), and
-  `--seed` the proposal seed.
-- `--workers` (4) is the number of processes that build the trial's variant and, during the fit, pack batches ahead of the GPU. `--variant-gb` (300)
-  is the disk budget for `variants/`; the least recently used variants are removed first.
-- Running with an existing `--output` continues that run with its seed, budget and batch size; `--selector`,
-  `--random-trials`, `--bounds`, `--trials` and `--workers` may change and the log records each replacement. A run
-  belongs to its bank; a bank with a different manifest is an error.
-
-`python -m dashboard.server --root artifacts --port 8766` lists every run under the root, with its bank and graph count, in a selector at the top of http://127.0.0.1:8766/ and serves the chosen run's attempts (the newest by default; the choice is in the page address),
-sorted by validation MSE and refreshed every ten seconds. It only reads run files.
-
-**Provenance**
-
-History was path-filtered out of tw_stack, so no commit hash is shared with it. The extraction point was
-tw_stack commit 3e08d6e, which exists in that repo, not this one.
+The repository was extracted from tw_stack at commit `3e08d6e` in that repository. No commit hash is shared with it.

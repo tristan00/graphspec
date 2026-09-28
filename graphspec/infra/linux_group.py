@@ -1,0 +1,45 @@
+import ctypes
+import os
+import signal
+
+LIBC = ctypes.CDLL(None, use_errno=True)
+SET_CHILD_SUBREAPER = 36
+GET_CHILD_SUBREAPER = 37
+
+
+def checked(result):
+    if result < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+class ProcessGroup:
+    popen_options = {"start_new_session": True}
+
+    def __init__(self):
+        self.process = None
+        self.previous = ctypes.c_int()
+        checked(LIBC.prctl(GET_CHILD_SUBREAPER, ctypes.byref(self.previous), 0, 0, 0))
+        checked(LIBC.prctl(SET_CHILD_SUBREAPER, 1, 0, 0, 0))
+
+    def attach(self, process):
+        self.process = process
+
+    def stop(self):
+        if self.process is None:
+            return
+        try:
+            os.killpg(self.process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self.process.wait()
+        while True:
+            try:
+                os.waitpid(-self.process.pid, 0)
+            except ChildProcessError:
+                break
+        self.process = None
+
+    def close(self):
+        checked(LIBC.prctl(SET_CHILD_SUBREAPER, self.previous.value, 0, 0, 0))

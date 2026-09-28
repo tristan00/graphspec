@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101715">
+  <meta name="color-scheme" content="dark">
+  <title>Graphspec · Tuning</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to dashboard</a>
+  <aside class="sidebar">
+    <a class="brand" href="#"><span class="brand-mark" aria-hidden="true">g.</span><span>graphspec<span class="brand-caption">EXPERIMENT WORKSPACE</span></span></a>
+    <div class="nav-label">TUNING</div>
+    <nav aria-label="Dashboard"><button data-view="current"><span aria-hidden="true">◷</span> Current run</button><button data-view="forest"><span aria-hidden="true">⁂</span> SMAC</button><button data-view="botorch"><span aria-hidden="true">◎</span> BoTorch</button><button data-view="tpe"><span aria-hidden="true">◍</span> TPE</button><button data-view="overview"><span aria-hidden="true">◫</span> Analyze</button><button data-view="discover"><span aria-hidden="true">↗</span> Discover</button><button data-view="trials"><span aria-hidden="true">≡</span> Trials <span id="trial-count" class="nav-count">0</span></button><button data-view="compare"><span aria-hidden="true">⇄</span> Compare <span id="compare-count" class="nav-count">0</span></button></nav>
+    <div class="sidebar-footer"><span class="source-dot"></span> Local tuning records<p id="source">Connecting…</p><span class="read-only">Observation workspace</span></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> Tuning</div><div class="sync-controls"><span id="sync" role="status">Connecting…</span><label class="live-switch"><input id="live" type="checkbox" checked> Auto-refresh</label><button id="refresh" class="button">↻ <span>Refresh</span></button></div></header>
+    <main id="main" tabindex="-1">
+      <div class="page-heading"><div><div class="eyebrow">SEARCH OBSERVATORY</div><h1 id="page-title">Analyze the search</h1><p class="subtitle" id="subtitle">Choose the parameters. Ask your own questions.</p></div><div class="run-picker"><label for="run">TUNING RUN</label><select id="run" disabled><option>Loading runs…</option></select></div></div>
+      <div id="error" class="notice error" role="alert" hidden></div>
+      <div id="content" aria-busy="true"><div class="empty panel"><span class="loading-dot"></span><h2>Connecting to your runs</h2><p>Reading the saved tuning records.</p></div></div>
+    </main>
+    <footer>GRAPHSPEC <span>Every result has a configuration. Every trial tells a story.</span></footer>
+  </div>
+  <dialog id="detail" aria-labelledby="detail-title"><div class="dialog-head"><div><div class="eyebrow">TRIAL INSPECTOR</div><h2 id="detail-title">Trial</h2></div><button id="close-detail" class="icon-button" aria-label="Close trial details">×</button></div><div id="detail-body"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

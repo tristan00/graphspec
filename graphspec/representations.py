@@ -4,151 +4,321 @@ import time
 
 import numpy as np
 
-from graph_tuning_infra.features import token
+from graphspec.infra.timing import timed
+from graphspec.infra.workspace import allocate, block_rows, changed, finite
 
 from . import kernels
 from .operators import enabled
+from .resources import DEFAULT_LIMITS, GraphBudget
 from .vocabulary import BOUNDARIES
 
-
 LOG = logging.getLogger(__name__)
-EVENT_KINDS = ('observation', 'relation', 'query')
+EVENT_KINDS = ("observation", "relation", "query")
 WALK_SAMPLES, WALK_HOPS, TURN_LOOKBACK = 32, 4, 3
 WALK_STREAM, TURN_STREAM = 16, 32
+EMPTY = np.zeros(0, np.int64)
 
 
 def lags(maximum):
-    return tuple(2 ** i for i in range(int(math.log2(maximum)) + 1))
+    values = tuple(2**i for i in range(int(math.log2(maximum)) + 1))
+    return values if values[-1] == maximum else (*values, maximum)
 
 
-def replay(entity, step, altered, present, present_step, absent, absent_step, steps, decisions, name, entities):
+def replay(
+    entity,
+    step,
+    altered,
+    present,
+    present_step,
+    absent,
+    absent_step,
+    steps,
+    decisions,
+    name,
+    last,
+    base=0,
+    initial=(EMPTY, EMPTY, EMPTY, EMPTY),
+):
     empty = np.zeros(0, np.int64)
-    actor, subject, category = (decisions[0], decisions[1], decisions[3]) if decisions else (empty, empty, empty)
+    actor, subject, category = (
+        (decisions[0], decisions[1], decisions[3]) if decisions else (empty, empty, empty)
+    )
     context = decisions[2] if decisions else np.zeros((0, 3), np.int64)
-    events, status = kernels.replayed(entity.astype(np.int64), step.astype(np.int64), altered, present[:, 0].astype(np.int64), present[:, 1].astype(np.int64),
-                                      present[:, 2].astype(np.int64), present_step.astype(np.int64), absent[:, 0].astype(np.int64),
-                                      absent[:, 1].astype(np.int64), absent[:, 2].astype(np.int64), absent_step.astype(np.int64),
-                                      np.asarray(actor, np.int64), np.asarray(subject, np.int64), np.ascontiguousarray(context, np.int64),
-                                      np.asarray(category, np.int64), steps, entities)
+    events, status, *table = kernels.replayed(
+        entity.astype(np.int64),
+        step.astype(np.int64),
+        altered,
+        present[:, 0].astype(np.int64),
+        present[:, 1].astype(np.int64),
+        present[:, 2].astype(np.int64),
+        present_step.astype(np.int64),
+        absent[:, 0].astype(np.int64),
+        absent[:, 1].astype(np.int64),
+        absent[:, 2].astype(np.int64),
+        absent_step.astype(np.int64),
+        np.asarray(actor, np.int64),
+        np.asarray(subject, np.int64),
+        np.ascontiguousarray(context, np.int64),
+        np.asarray(category, np.int64),
+        steps,
+        last,
+        np.int64(base),
+        *(np.asarray(values, np.int64) for values in initial),
+    )
     if status < 0:
-        raise ValueError('an absent fact of graph %s names an entity before its first observation' % name)
-    return events
+        raise ValueError("an absent fact of graph %s names an entity before its first observation" % name)
+    return events, table
 
 
-def base(graph, registry, spec, categories):
+def observed_features(arrays):
+    return np.asarray(arrays["x_table"])[arrays["x_ref"]]
+
+
+def referenced_change(table, left, right):
+    result = left != right
+    differ = np.flatnonzero(result)
+    result[differ] = changed(table, left[differ], right[differ])
+    return result
+
+
+def affinities(actor, row_step, decision_actor, category, steps, width, counts, totals, key):
+    affinity, global_affinity = [], []
+    bounds = np.searchsorted(row_step, np.arange(steps + 1))
+    for s in range(steps):
+        for r in range(bounds[s], bounds[s + 1]):
+            affinity.append(counts.setdefault(key(actor[r]), np.zeros(width, np.float32)).copy())
+            global_affinity.append(totals.copy())
+        if decision_actor is not None:
+            counts.setdefault(key(decision_actor[s]), np.zeros(width, np.float32))[category[s]] += 1
+            totals[category[s]] += 1
+    return (
+        np.asarray(affinity, np.float32).reshape(len(row_step), width),
+        np.asarray(global_affinity, np.float32).reshape(len(row_step), width),
+    )
+
+
+def carried_rows(link, entity, x_table):
+    last = link.table("last")
+    found = last.find(link.glob[entity])
+    rows = np.full(len(entity), -1, np.int64)
+    known = found >= 0
+    values = np.zeros((len(entity), x_table.shape[1]), x_table.dtype)
+    if known.any():
+        rows[known] = last.columns["row"][found[known]]
+        values[known] = last.columns["x"][found[known]]
+    return rows, values
+
+
+@timed("base")
+def base(graph, registry, spec, categories, link=None):
     steps, kinds = graph.steps, graph.kinds
-    step, entity, x = graph.obs_step, graph.obs_entity, graph.obs_x
+    step, entity, reference = graph.obs_step, graph.obs_entity, graph.obs_ref
     lookup = step.astype(np.int64) * len(kinds) + entity
-    by_key = np.argsort(lookup, kind='stable')
+    by_key = np.argsort(lookup, kind="stable")
     sorted_keys = lookup[by_key]
 
     def observed(owners, moments):
         probe = np.asarray(moments, np.int64) * len(kinds) + owners
-        found = by_key[np.minimum(np.searchsorted(sorted_keys, probe), len(by_key) - 1)]
+        positions = np.searchsorted(sorted_keys, probe)
+        if np.any(positions >= len(by_key)):
+            raise ValueError("a row of graph %s names an entity with no observation at its step" % graph.name)
+        found = by_key[positions]
         if not np.array_equal(lookup[found], probe):
-            raise ValueError('a row of graph %s names an entity with no observation at its step' % graph.name)
+            raise ValueError("a row of graph %s names an entity with no observation at its step" % graph.name)
         return found.astype(np.int32)
 
     present = graph.fact_present
-    codes, fact_step, values = graph.fact_code[present], graph.fact_step[present], graph.fact_values[present]
-    source, target = observed(graph.fact_source[present], fact_step), observed(graph.fact_target[present], fact_step)
-    symmetric = np.asarray([edge.symmetric for edge in registry.edges] + [False] * (registry.relations - len(registry.edges)))[codes]
-    direction = spec.get('relations/direction')
-    doubled = symmetric | (direction != 'directed')
-    reverse = np.where(symmetric | (direction == 'symmetric'), codes, registry.flipped[codes])
+    codes, fact_step, values = (
+        graph.fact_code[present],
+        graph.fact_step[present],
+        graph.fact_ref[present],
+    )
+    source, target = (
+        observed(graph.fact_source[present], fact_step),
+        observed(graph.fact_target[present], fact_step),
+    )
+    symmetric = np.asarray(
+        [edge.symmetric for edge in registry.edges] + [False] * (registry.relations - len(registry.edges))
+    )[codes]
+    direction = spec.get("relations/direction")
+    doubled = symmetric | (direction != "directed")
+    reverse = np.where(symmetric | (direction == "symmetric"), codes, registry.flipped[codes])
     index = np.repeat(np.arange(len(codes)), np.where(doubled, 2, 1))
     flip = np.r_[False, index[1:] == index[:-1]] if len(index) else np.zeros(0, bool)
-    spatial = np.stack((np.where(flip, target[index], source[index]), np.where(flip, source[index], target[index]),
-                        np.where(flip, reverse[index], codes[index])), 1).astype(np.int32)
+    spatial = np.stack(
+        (
+            np.where(flip, target[index], source[index]),
+            np.where(flip, source[index], target[index]),
+            np.where(flip, reverse[index], codes[index]),
+        ),
+        1,
+    ).astype(np.int32)
     attribute_row = np.full(len(codes), -1, np.int32)
-    by_code = np.argsort(spatial[:, 2], kind='stable')
-    arrays = dict(spatial_order=by_code.astype(np.int32),
-                  spatial_code_offsets=np.searchsorted(spatial[by_code, 2], np.arange(registry.relations + 1)).astype(np.int64))
+    by_code = np.argsort(spatial[:, 2], kind="stable")
+    arrays = dict(
+        spatial_order=by_code.astype(np.int32),
+        spatial_code_offsets=np.searchsorted(spatial[by_code, 2], np.arange(registry.relations + 1)).astype(
+            np.int64
+        ),
+    )
     for name in registry.attributed:
         edge = registry.by_name[name]
         use = codes == edge.code
-        attribute_row[use] = np.arange(int(use.sum()))
-        arrays['attributes_' + name] = values[use, :len(edge.attributes)].astype(np.float32)
-    decided, width = registry.extras['queries'], len(categories)
+        attribute_row[use] = np.arange(int(use.sum())) + (0 if link is None else link.attributes.get(name, 0))
+        chosen = values[use]
+        rows = np.full((len(chosen), len(edge.attributes)), np.nan, np.float32)
+        rows[chosen >= 0] = graph.value_table[chosen[chosen >= 0], : len(edge.attributes)]
+        arrays["attributes_" + name] = rows
+    decided, width = registry.extras["queries"], len(categories)
     moments = np.arange(steps)
     if decided:
-        decision_actor, decision_subject, category = graph.query_actor, graph.query_subject, graph.query_category
-        decision_context = np.stack((observed(decision_actor, moments), observed(decision_subject, moments), observed(graph.query_context, moments)), 1)
-    if registry.extras['level'] == 'node':
+        decision_actor, decision_subject, category = (
+            graph.query_actor,
+            graph.query_subject,
+            graph.query_category,
+        )
+        decision_context = np.stack(
+            (
+                observed(decision_actor, moments),
+                observed(decision_subject, moments),
+                observed(graph.query_context, moments),
+            ),
+            1,
+        )
+    if registry.extras["level"] == "node":
         actor = subject = graph.label_entity
         row_step = graph.label_step
         context = observed(actor, row_step)
         query_context = np.stack((context, context, context), 1)
-        row_index, decision, signals = graph.label_row, graph.label_id, np.zeros((len(actor), 0, 2), np.float32)
+        row_index, decision, signals = (
+            graph.label_row,
+            graph.label_id,
+            np.zeros((len(actor), 0, 2), np.float32),
+        )
     else:
         actor, subject, query_context, row_step = decision_actor, decision_subject, decision_context, moments
         row_index = np.full(steps, -1, np.int64)
         row_index[graph.label_step] = graph.label_row
         decision, signals = graph.query_key, graph.query_signals
-    counts, totals, affinity, global_affinity = {}, np.zeros(width, np.float32), [], []
-    bounds = np.searchsorted(row_step, np.arange(steps + 1))
-    for s in range(steps):
-        for r in range(bounds[s], bounds[s + 1]):
-            affinity.append(counts.setdefault(int(actor[r]), np.zeros(width, np.float32)).copy())
-            global_affinity.append(totals.copy())
-        if decided:
-            counts.setdefault(int(decision_actor[s]), np.zeros(width, np.float32))[category[s]] += 1
-            totals[category[s]] += 1
+    if link is None:
+        counts, totals, key = {}, np.zeros(width, np.float32), int
+    else:
+        counts = link.state.setdefault("affinity/counts", {})
+        totals = link.state.setdefault("affinity/totals", np.zeros(width, np.float32))
+        glob = link.glob
+
+        def key(value):
+            return int(glob[value])
+
+    affinity, global_affinity = affinities(
+        actor,
+        row_step,
+        decision_actor if decided else None,
+        category if decided else None,
+        steps,
+        width,
+        counts,
+        totals,
+        key,
+    )
     absent = ~graph.fact_present
-    order = np.argsort(entity, kind='stable')
+    order = np.argsort(entity, kind="stable")
     altered = np.ones(len(entity), bool)
     if len(order) > 1:
-        owners, vectors = entity[order], x[order]
-        altered[order[1:]] = (owners[1:] != owners[:-1]) | np.any(vectors[1:] != vectors[:-1], 1)
-    events = replay(entity, step, altered, np.stack((source, target, codes), 1), fact_step,
-                    np.stack((graph.fact_source[absent], graph.fact_target[absent], graph.fact_code[absent]), 1), graph.fact_step[absent], steps,
-                    (decision_actor, decision_subject, decision_context, category) if decided else None, graph.name, len(kinds))
-    arrays.update(x=x.astype(np.float16, copy=False), entity=entity.astype(np.int32),
-                  entity_token=np.asarray([token(registry.nodes[kind] + ':' + key) & ((1 << 62) - 1) for kind, key in zip(kinds.tolist(), graph.keys)], np.int64), step=step.astype(np.int32), turn=graph.period[step].astype(np.int32),
-                  snapshot_offsets=np.searchsorted(step, np.arange(steps + 1)).astype(np.int64),
-                  entity_kind=(np.zeros_like(kinds) if enabled(spec, 'nodes/untyped') else kinds).astype(np.int8),
-                  spatial=spatial, spatial_attribute_row=attribute_row[index], spatial_step=fact_step[index].astype(np.int32),
-                  observation_ids=np.argsort(entity, kind='stable').astype(np.int32),
-                  observation_offsets=np.r_[0, np.cumsum(np.bincount(entity, minlength=len(kinds)))].astype(np.int64),
-                  query=(graph.query_x if decided else np.zeros((0, registry.features))).astype(np.float16, copy=False),
-                  decision_actor=(decision_actor if decided else np.zeros(0)).astype(np.int32),
-                  actor=np.asarray(actor, np.int32), subject=np.asarray(subject, np.int32), query_context=np.asarray(query_context, np.int32).reshape(-1, 3),
-                  query_step=np.asarray(row_step, np.int32), events=events,
-                  affinity=np.asarray(affinity, np.float32).reshape(len(row_step), width),
-                  global_affinity=np.asarray(global_affinity, np.float32).reshape(len(row_step), width),
-                  signals=np.asarray(signals, np.float32), row_index=np.asarray(row_index, np.int64), decision=np.asarray(decision, np.int64),
-                  period=graph.period.astype(np.int32))
+        owners = entity[order]
+        altered[order[1:]] = (owners[1:] != owners[:-1]) | referenced_change(
+            graph.x_table, reference[order[1:]], reference[order[:-1]]
+        )
+    last = np.full(len(kinds), -1, np.int64)
+    initial = (EMPTY, EMPTY, EMPTY, EMPTY)
+    if link is not None:
+        heads = order[np.r_[True, entity[order][1:] != entity[order][:-1]]] if len(order) else order
+        prior_rows, prior_x = carried_rows(link, entity[heads], graph.x_table)
+        seen = prior_rows >= 0
+        altered[heads[seen]] = np.any(
+            np.asarray(graph.x_table)[reference[heads[seen]]] != prior_x[seen], axis=1
+        )
+        last[:] = carried_rows(link, np.arange(len(kinds)), graph.x_table)[0]
+        initial = link.replay_keys(graph)
+    events, table = replay(
+        entity,
+        step,
+        altered,
+        np.stack((source, target, codes), 1),
+        fact_step,
+        np.stack((graph.fact_source[absent], graph.fact_target[absent], graph.fact_code[absent]), 1),
+        graph.fact_step[absent],
+        steps,
+        (decision_actor, decision_subject, decision_context, category) if decided else None,
+        graph.name,
+        last,
+        0 if link is None else link.obs0,
+        initial,
+    )
+    arrays.update(
+        x_ref=reference.astype(np.int32),
+        x_table=np.asarray(graph.x_table).astype(np.float16, copy=False),
+        entity=entity.astype(np.int32),
+        entity_token=(np.asarray(graph.entity_token) & np.uint64((1 << 62) - 1)).astype(np.int64),
+        step=step.astype(np.int32),
+        turn=graph.period[step].astype(np.int32),
+        snapshot_offsets=np.searchsorted(step, np.arange(steps + 1)).astype(np.int64),
+        entity_kind=(np.zeros_like(kinds) if enabled(spec, "nodes/untyped") else kinds).astype(np.int32),
+        spatial=spatial,
+        spatial_attribute_row=attribute_row[index],
+        spatial_step=fact_step[index].astype(np.int32),
+        observation_ids=np.argsort(entity, kind="stable").astype(np.int32),
+        observation_offsets=np.r_[0, np.cumsum(np.bincount(entity, minlength=len(kinds)))].astype(np.int64),
+        query=(graph.query_x if decided else np.zeros((0, registry.features))).astype(np.float16, copy=False),
+        decision_actor=(decision_actor if decided else np.zeros(0)).astype(np.int32),
+        actor=np.asarray(actor, np.int32),
+        subject=np.asarray(subject, np.int32),
+        query_context=np.asarray(query_context, np.int32).reshape(-1, 3),
+        query_step=np.asarray(row_step, np.int32),
+        events=events,
+        affinity=affinity,
+        global_affinity=global_affinity,
+        signals=np.asarray(signals, np.float32),
+        row_index=np.asarray(row_index, np.int64),
+        decision=np.asarray(decision, np.int64),
+        period=graph.period.astype(np.int32),
+    )
+    if link is not None:
+        link.remember(graph, entity, reference, table)
     return arrays
 
 
-def turns(arrays):
-    periods = np.asarray(arrays['period'])
+@timed("turns")
+def turns(arrays, budget):
+    periods = np.asarray(arrays["period"])
     starts = np.r_[0, np.flatnonzero(np.diff(periods)) + 1].astype(np.int32)
     ends = np.r_[starts[1:] - 1, len(periods) - 1].astype(np.int32)
     membership = np.repeat(np.arange(len(starts)), ends - starts + 1).astype(np.int32)
-    size = len(arrays['entity_kind'])
-    observed = np.full((len(ends), size), -1, np.int32)
-    state = np.full(size, -1, np.int32)
-    previous = 0
-    for turn, end in enumerate(ends):
-        stop = int(arrays['snapshot_offsets'][end + 1])
-        ids = np.arange(previous, stop)
-        np.maximum.at(state, arrays['entity'][ids], ids)
-        observed[turn] = state
-        previous = stop
-    choices = np.asarray(arrays['events'])
+    order = arrays["observation_ids"]
+    observed_keys = allocate((len(order),), np.int64)
+    width = block_rows(observed_keys)
+    for start in range(0, len(order), width):
+        ids = order[start : start + width]
+        observed_keys[start : start + width] = (
+            arrays["entity"][ids].astype(np.int64) * len(ends) + membership[arrays["step"][ids]]
+        )
+    choices = np.asarray(arrays["events"])
     choices = choices[choices[:, 3] == 2]
     moments = choices[:, 2] // 2
     categories = np.zeros(len(periods), np.int32)
     categories[moments] = choices[:, 6]
-    actor_decision = np.full((len(ends), size), -1, np.int32)
-    last_actor = np.full(size, -1, np.int32)
-    for turn, (start, end) in enumerate(zip(starts, ends)):
-        lo, hi = np.searchsorted(moments, (start, end + 1))
-        np.maximum.at(last_actor, choices[lo:hi, 0], moments[lo:hi])
-        actor_decision[turn] = last_actor
-    return dict(turn_starts=starts, turn_ends=ends, turn_membership=membership, turn_actor_decision=actor_decision,
-                turn_action_category=categories, turn_numbers=periods[starts], turn_observations=observed)
+    actor_keys = choices[:, 0].astype(np.int64) * len(ends) + membership[moments]
+    actors = np.argsort(actor_keys, kind="stable")
+    return dict(
+        turn_starts=starts,
+        turn_ends=ends,
+        turn_membership=membership,
+        turn_actor_keys=actor_keys[actors],
+        turn_actor_rows=moments[actors].astype(np.int32),
+        turn_action_category=categories,
+        turn_numbers=periods[starts],
+        turn_observation_keys=observed_keys,
+    )
 
 
 def marked_edges(pieces, turn, codes):
@@ -161,7 +331,13 @@ def marked_edges(pieces, turn, codes):
     flags = kernels.combined(ids, values[:, 2], count)
     kept = kernels.first_rows(ids, count)
     source, destination = values[kept, 0], values[kept, 1]
-    return ordered(source, destination, codes[flags[ids[kept]]], turn[destination] - turn[source], int(destination.max(initial=-1)) + 1)
+    return ordered(
+        source,
+        destination,
+        codes[flags[ids[kept]]],
+        turn[destination] - turn[source],
+        int(destination.max(initial=-1)) + 1,
+    )
 
 
 def ordered(source, destination, relation, gap, size):
@@ -176,33 +352,73 @@ def boundary_codes(registry):
     return np.asarray([-1] + [registry.code(name) for name in BOUNDARIES], np.int32)
 
 
-def coupling(arrays, registry, spec):
-    step, entity = arrays['step'], arrays['entity']
-    scheme = spec['coupling/scheme']
+def coupling_setting(spec, steps, rows):
+    scheme = spec["coupling/scheme"]
     chosen, width, cap, limit = np.zeros(0, np.int64), 0, 0, 0
-    if scheme in ('window', 'all'):
+    if scheme in ("window", "all"):
         mode = 0
-        width, cap = (spec['coupling/window'], spec['coupling/cap']) if scheme == 'window' else (len(arrays['period']), len(entity))
+        width, cap = (spec["coupling/window"], spec["coupling/cap"]) if scheme == "window" else (steps, rows)
     else:
-        chosen = np.asarray((1,) if scheme == 'ordinal' else lags(spec['coupling/max_lag']), np.int64)
-        if spec['coupling/unit'] == 'observation':
+        chosen = np.asarray((1,) if scheme == "ordinal" else lags(spec["coupling/max_lag"]), np.int64)
+        if spec["coupling/unit"] == "observation":
             mode = 1
-            limit = spec['coupling/lag_window'] if scheme == 'lags' else len(arrays['period'])
+            limit = spec["coupling/lag_window"] if scheme == "lags" else steps
         else:
             mode = 2
-    source, target = kernels.coupled(np.ascontiguousarray(entity, np.int64), np.ascontiguousarray(step, np.int64), chosen, mode,
-                                     width, cap, limit, len(arrays['entity_kind']))
-    periods = spec['coupling/periods']
-    return dict(coupling=np.stack((source, target), 1).astype(np.int32).reshape(-1, 2),
-                coupling_boundaries=observation_boundaries(arrays, registry, periods, spec['coupling/period_window']) if periods else np.zeros((0, 4), np.int32))
+    return chosen, mode, width, cap, limit
 
 
-def observation_boundaries(arrays, registry, lookback, window):
-    step, entity = arrays['step'], arrays['entity']
-    turns = arrays['period']
-    membership = np.cumsum(np.r_[0, np.diff(turns) != 0]).astype(np.int32)
-    groups = membership[step]
-    shape = (int(membership[-1]) + 1, len(arrays['entity_kind']))
+def coupling_edges(entity, step, spec, steps, rows, entities, budget):
+    chosen, mode, width, cap, limit = coupling_setting(spec, steps, rows)
+    return kernels.coupled(
+        np.ascontiguousarray(entity, np.int64),
+        np.ascontiguousarray(step, np.int64),
+        chosen,
+        mode,
+        width,
+        cap,
+        limit,
+        entities,
+        budget.pair_limit,
+    )
+
+
+def turn_groups(period):
+    return np.cumsum(np.r_[0, np.diff(period) != 0]).astype(np.int32)
+
+
+@timed("coupling")
+def coupling(arrays, registry, spec, budget):
+    step, entity = arrays["step"], arrays["entity"]
+    source, target = coupling_edges(
+        entity, step, spec, len(arrays["period"]), len(entity), len(arrays["entity_kind"]), budget
+    )
+    budget.retain(len(source), "temporal coupling")
+    periods = spec["coupling/periods"]
+    turns = arrays["period"]
+    return dict(
+        coupling=np.stack((source, target), 1).astype(np.int32).reshape(-1, 2),
+        coupling_boundaries=observation_boundaries(
+            entity,
+            step,
+            turn_groups(turns)[step],
+            turns[step],
+            periods,
+            spec["coupling/period_window"],
+            len(arrays["entity_kind"]),
+            int(turn_groups(turns)[-1]) + 1,
+            registry,
+            budget,
+        )
+        if periods
+        else np.zeros((0, 4), np.int32),
+    )
+
+
+def observation_boundaries(entity, step, groups, turn, lookback, window, entities, count, registry, budget):
+    shape = (count, entities)
+    budget.workspace(shape[0] * shape[1] * 8, "observation boundary tables")
+    budget.pairs(len(entity) * lookback * 2, "observation boundary edges")
     first = np.full(shape, len(entity), np.int32)
     last = np.full(shape, -1, np.int32)
     ids = np.arange(len(entity), dtype=np.int32)
@@ -218,163 +434,399 @@ def observation_boundaries(arrays, registry, lookback, window):
             source = source[valid]
             keep = step[selected] - step[source] < window
             pieces.append(np.column_stack((source[keep], selected[keep], np.full(keep.sum(), flag))))
-    return marked_edges(pieces, turns[step], boundary_codes(registry))
+    result = marked_edges(pieces, turn, boundary_codes(registry))
+    budget.retain(len(result), "observation boundary edges")
+    return result
 
 
-def event_graph(arrays, registry, spec):
-    events = np.asarray(arrays['events'])
-    member = np.isin(events[:, 3], [EVENT_KINDS.index(kind) for kind in spec['events/kinds'].split('+')])
-    link, window, cap = spec['events/link'], spec['events/window'], spec['events/cap']
-    chosen = np.asarray((1,) if link == 'next' else lags(spec['events/max_lag']) if link == 'lags' else (), np.int64)
+def event_setting(spec):
+    link = spec["events/link"]
+    chosen = np.asarray(
+        (1,) if link == "next" else lags(spec["events/max_lag"]) if link == "lags" else (), np.int64
+    )
+    return chosen, link == "window", spec["events/window"], spec["events/cap"]
+
+
+def event_members(events, spec):
+    return np.isin(events[:, 3], [EVENT_KINDS.index(kind) for kind in spec["events/kinds"].split("+")])
+
+
+def event_edges(events, member, spec, entities, budget):
+    chosen, windowed, window, cap = event_setting(spec)
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
-    before, after = kernels.event_dag(source, target, ticks, member, chosen, link == 'window', window, cap, len(arrays['entity_kind']))
-    periods = spec['events/periods']
-    return dict(event_dag=np.stack((before, after), 1).astype(np.int32).reshape(-1, 2), event_member=member,
-                event_boundaries=event_boundaries(arrays, registry, member, periods, spec['events/period_window']) if periods else np.zeros((0, 4), np.int32))
+    return kernels.event_dag(
+        source, target, ticks, member, chosen, windowed, window, cap, entities, budget.pair_limit
+    )
 
 
-def event_boundaries(arrays, registry, member, lookback, window):
-    events = np.asarray(arrays['events'])
-    turns = arrays['period']
-    membership = np.cumsum(np.r_[0, np.diff(turns) != 0]).astype(np.int32)
+@timed("event_graph")
+def event_graph(arrays, registry, spec, budget):
+    events = np.asarray(arrays["events"])
+    member = event_members(events, spec)
+    before, after = event_edges(events, member, spec, len(arrays["entity_kind"]), budget)
+    budget.retain(len(before), "event graph")
+    periods = spec["events/periods"]
+    turns = arrays["period"]
     moments = events[:, 2] // 2
+    return dict(
+        event_dag=np.stack((before, after), 1).astype(np.int32).reshape(-1, 2),
+        event_member=member,
+        event_boundaries=event_boundaries(
+            events,
+            member,
+            turn_groups(turns)[moments].astype(np.int64),
+            turns[moments],
+            periods,
+            spec["events/period_window"],
+            len(arrays["entity_kind"]),
+            registry,
+            budget,
+        )
+        if periods
+        else np.zeros((0, 4), np.int32),
+    )
+
+
+def event_boundaries(events, member, groups, turn, lookback, window, entities, registry, budget):
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
-    before, after, flags = kernels.boundaries(source, target, ticks, member, membership[moments].astype(np.int64), lookback, window,
-                                              len(arrays['entity_kind']))
-    turn = turns[moments]
+    before, after, flags = kernels.boundaries(
+        source,
+        target,
+        ticks,
+        member,
+        np.ascontiguousarray(groups, np.int64),
+        lookback,
+        window,
+        entities,
+        budget.pair_limit,
+    )
+    budget.retain(len(before), "event boundary edges")
     return ordered(before, after, boundary_codes(registry)[flags], turn[after] - turn[before], len(events))
 
 
-def neighbors(arrays, spec):
-    events, kinds = arrays['events'], spec['neighbors/kinds'].split('+')
-    use = (events[:, 3] == 2) & ('query' in kinds)
-    if 'relation' in kinds:
-        use |= (events[:, 3] == 1) & (spec['neighbors/removals'] | (events[:, 8] == 1))
+def neighbor_members(events, spec):
+    kinds = spec["neighbors/kinds"].split("+")
+    use = (events[:, 3] == 2) & ("query" in kinds)
+    if "relation" in kinds:
+        use |= (events[:, 3] == 1) & (spec["neighbors/removals"] | (events[:, 8] == 1))
+    return use
+
+
+def neighbor_lists(events, use, entities):
     ids = np.flatnonzero(use)
     source, target = events[ids, 0], events[ids, 1]
     distinct = target != source
     owner, event = np.r_[source, target[distinct]], np.r_[ids, ids[distinct]]
     order = np.lexsort((event, owner))
-    return dict(neighbor_ids=event[order].astype(np.int32),
-                neighbor_offsets=np.r_[0, np.cumsum(np.bincount(owner, minlength=len(arrays['entity_kind'])))].astype(np.int64))
+    return (
+        event[order].astype(np.int32),
+        np.r_[0, np.cumsum(np.bincount(owner, minlength=entities))].astype(np.int64),
+    )
 
 
-def walks(arrays, spec, seed):
-    bias, window, fanout = spec['walks/bias'], spec['walks/window'], spec['walks/fanout']
-    rows = len(arrays['query_step'])
-    roots = np.stack((arrays['actor'], arrays['subject']), 1).astype(np.int64)
-    query = np.asarray(arrays['query_step'], np.int64)
-    events = np.asarray(arrays['events'])
+@timed("neighbors")
+def neighbors(arrays, spec):
+    events = arrays["events"]
+    ids, offsets = neighbor_lists(events, neighbor_members(events, spec), len(arrays["entity_kind"]))
+    return dict(neighbor_ids=ids, neighbor_offsets=offsets)
+
+
+def walk_arrays(ids, offsets, events, roots, identities, query, prior, starts, ends, spec, seed, budget):
+    bias, window, fanout = spec["walks/bias"], spec["walks/window"], spec["walks/fanout"]
+    rows = len(query)
+    budget.workspace(
+        rows * 2 * WALK_SAMPLES * (1 + TURN_LOOKBACK) * (64 + WALK_HOPS * 4), "sampled walk representations"
+    )
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
-    ids, offsets = np.asarray(arrays['neighbor_ids']), np.asarray(arrays['neighbor_offsets'])
-    row, side, draw = (axis.reshape(-1) for axis in np.meshgrid(np.arange(rows), np.arange(2), np.arange(WALK_SAMPLES), indexing='ij'))
-    identity = np.stack((roots[row, side], query[row], side, draw), 1)
-    result = kernels.walked(ids, offsets, source, target, ticks, roots[row, side], np.maximum(0, (query[row] - window + 1) * 2), query[row] * 2 + 1,
-                            np.ones(len(row), np.bool_), identity, fanout, bias, seed, WALK_STREAM, WALK_HOPS)
-    prior = arrays['turn_membership'][query][:, None] - np.arange(1, TURN_LOOKBACK + 1)
-    ends, starts = arrays['turn_ends'][prior.clip(0)].astype(np.int64), arrays['turn_starts'][prior.clip(0)].astype(np.int64)
-    row, side, back, draw = (axis.reshape(-1) for axis in np.meshgrid(np.arange(rows), np.arange(2), np.arange(TURN_LOOKBACK), np.arange(WALK_SAMPLES), indexing='ij'))
-    identity = np.stack((roots[row, side], query[row], side, back, draw), 1)
-    turn_walks = kernels.walked(ids, offsets, source, target, ticks, roots[row, side], 2 * starts[row, back], 2 * ends[row, back] + 2,
-                                np.ascontiguousarray(prior[row, back] >= 0), identity, fanout, bias, seed, TURN_STREAM, WALK_HOPS)
-    return dict(walks=result.reshape((rows, 2, WALK_SAMPLES, WALK_HOPS)), turn_walks=turn_walks.reshape((rows, 2, TURN_LOOKBACK, WALK_SAMPLES, WALK_HOPS)))
+    row, side, draw = (
+        axis.reshape(-1)
+        for axis in np.meshgrid(np.arange(rows), np.arange(2), np.arange(WALK_SAMPLES), indexing="ij")
+    )
+    identity = np.stack((identities[row, side], query[row], side, draw), 1)
+    result = kernels.walked(
+        ids,
+        offsets,
+        source,
+        target,
+        ticks,
+        roots[row, side],
+        np.maximum(0, (query[row] - window + 1) * 2),
+        query[row] * 2 + 1,
+        np.ones(len(row), np.bool_),
+        identity,
+        fanout,
+        bias,
+        seed,
+        WALK_STREAM,
+        WALK_HOPS,
+    )
+    row, side, back, draw = (
+        axis.reshape(-1)
+        for axis in np.meshgrid(
+            np.arange(rows), np.arange(2), np.arange(TURN_LOOKBACK), np.arange(WALK_SAMPLES), indexing="ij"
+        )
+    )
+    identity = np.stack((identities[row, side], query[row], side, back, draw), 1)
+    turn_walks = kernels.walked(
+        ids,
+        offsets,
+        source,
+        target,
+        ticks,
+        roots[row, side],
+        2 * starts[row, back],
+        2 * ends[row, back] + 2,
+        np.ascontiguousarray(prior[row, back] >= 0),
+        identity,
+        fanout,
+        bias,
+        seed,
+        TURN_STREAM,
+        WALK_HOPS,
+    )
+    return dict(
+        walks=result.reshape((rows, 2, WALK_SAMPLES, WALK_HOPS)),
+        turn_walks=turn_walks.reshape((rows, 2, TURN_LOOKBACK, WALK_SAMPLES, WALK_HOPS)),
+    )
 
 
-def mixed(arrays, spec):
-    x, entity, offsets = arrays['x'], arrays['entity'], arrays['snapshot_offsets']
-    changes, trace, bundles = spec['mixed/changes'], spec['mixed/trace'], spec['mixed/bundles']
-    width = x.shape[1] // 2
-    decided = len(arrays['query']) > 0
+def prior_turns(membership, query):
+    return membership[query][:, None] - np.arange(1, TURN_LOOKBACK + 1)
+
+
+@timed("walks")
+def walks(arrays, spec, seed, budget):
+    roots = np.stack((arrays["actor"], arrays["subject"]), 1).astype(np.int64)
+    query = np.asarray(arrays["query_step"], np.int64)
+    prior = prior_turns(arrays["turn_membership"], query)
+    return walk_arrays(
+        np.asarray(arrays["neighbor_ids"]),
+        np.asarray(arrays["neighbor_offsets"]),
+        np.asarray(arrays["events"]),
+        roots,
+        roots,
+        query,
+        prior,
+        arrays["turn_starts"][prior.clip(0)].astype(np.int64),
+        arrays["turn_ends"][prior.clip(0)].astype(np.int64),
+        spec,
+        seed,
+        budget,
+    )
+
+
+def mixed_sizes(rows, moments, trace, changes, bundles, decided, carried=0):
+    groups = (rows + carried) // trace if trace else 0
+    limit = (
+        rows + (rows if changes else 0) + groups + (moments if bundles else 0) + (moments if decided else 0)
+    )
+    wires = (
+        rows + (2 * rows if changes else 0) + groups * (trace + 1) + (rows if bundles else 0) + 2 * moments
+    )
+    holders = rows + (2 * rows if changes else 0) + groups * trace + (rows if bundles else 0)
+    return limit, wires, holders
+
+
+def mixed_features(
+    kind, mode, fill, member_offset, member_id, rows, columns, query, offsets, spec, decided, base=0
+):
+    changes, trace, bundles = spec["mixed/changes"], spec["mixed/trace"], spec["mixed/bundles"]
+    width = columns // 2
+    features = allocate((len(kind), columns), np.float16)
+    chunk = block_rows(features)
+    for start in range(0, len(features), chunk):
+        stop = start + chunk
+        part = features[start:stop]
+        part[:] = 0
+        observed = mode[start:stop] == 0
+        part[observed] = rows(fill[start:stop][observed].astype(np.int64) + base)
+        if changes:
+            picked = np.flatnonzero(mode[start:stop] == 1) + start
+            if len(picked):
+                current = rows(member_id[member_offset[picked] + 1])
+                previous = rows(member_id[member_offset[picked]])
+                part[picked - start] = np.concatenate(
+                    (current[:, :width].astype(np.float32) - previous[:, :width], current[:, width:]), 1
+                ).astype(np.float16)
+        if decided:
+            picked = mode[start:stop] == 3
+            part[picked] = query[fill[start:stop][picked]]
+    if trace:
+        picked = np.flatnonzero(mode == 2)
+        chunk = max(1, chunk // trace)
+        for start in range(0, len(picked), chunk):
+            nodes = picked[start : start + chunk]
+            members = member_id[member_offset[nodes][:, None] + np.arange(trace)]
+            features[nodes] = rows(members.reshape(-1)).reshape(len(nodes), trace, -1).mean(1)
+    if bundles:
+        for node in np.flatnonzero(mode == 5):
+            features[node] = rows(np.arange(offsets[fill[node]], offsets[fill[node] + 1]) + base).mean(0)
+    return features
+
+
+@timed("mixed")
+def mixed(arrays, spec, budget):
+    x, entity, offsets = observed_features(arrays), arrays["entity"], arrays["snapshot_offsets"]
+    changes, trace, bundles = spec["mixed/changes"], spec["mixed/trace"], spec["mixed/bundles"]
+    decided = len(arrays["query"]) > 0
     rows, moments = len(entity), len(offsets) - 1
-    order = np.argsort(entity, kind='stable')
+    entities = len(arrays["entity_kind"])
+    order = np.argsort(entity, kind="stable")
     prior = np.full(rows, -1, np.int64)
     if rows > 1:
         same = entity[order][1:] == entity[order][:-1]
         prior[order[1:][same]] = order[:-1][same]
     altered = np.zeros(rows, bool)
     if changes:
-        seen = prior >= 0
-        altered[seen] = np.any(x[seen] != x[prior[seen]], 1)
-    groups = rows // trace if trace else 0
-    limit = rows + (rows if changes else 0) + groups + (moments if bundles else 0) + (moments if decided else 0)
-    wires = rows + (2 * rows if changes else 0) + groups * (trace + 1) + (rows if bundles else 0) + 2 * moments
-    holders = rows + (2 * rows if changes else 0) + groups * trace + (rows if bundles else 0)
-    actor = np.asarray(arrays['decision_actor'], np.int32) if decided else np.zeros(0, np.int32)
-    kind, tick, owner, mode, fill, member_offset, member_id, source, target, flag = kernels.bundled(
-        np.ascontiguousarray(entity, np.int64), np.ascontiguousarray(offsets, np.int64), prior, altered, actor,
-        trace, bundles, decided, len(arrays['entity_kind']), limit, wires, holders)
-    features = np.zeros((len(kind), x.shape[1]), np.float16)
-    observed = mode == 0
-    features[observed] = x[fill[observed]]
-    if changes:
-        picked = mode == 1
-        current = fill[picked]
-        features[picked] = np.concatenate((x[current, :width].astype(np.float32) - x[prior[current], :width], x[current, width:]), 1).astype(np.float16)
-    if trace:
-        picked = np.flatnonzero(mode == 2)
-        if len(picked):
-            features[picked] = x[member_id[member_offset[picked][:, None] + np.arange(trace)]].mean(1)
-    if bundles:
-        for node in np.flatnonzero(mode == 5):
-            features[node] = x[offsets[fill[node]]:offsets[fill[node] + 1]].mean(0)
-    if decided:
-        picked = mode == 3
-        features[picked] = arrays['query'][fill[picked]]
-    return dict(mixed_x=features.reshape(-1, x.shape[1]), mixed_kind=kind, mixed_tick=tick, mixed_entity=owner,
-                mixed_edges=np.stack((source, target, flag), 1).astype(np.int32).reshape(-1, 3),
-                mixed_member_ids=member_id, mixed_member_offsets=member_offset)
+        seen = np.flatnonzero(prior >= 0)
+        altered[seen] = changed(x, seen, prior[seen])
+    limit, wires, holders = mixed_sizes(rows, moments, trace, changes, bundles, decided)
+    budget.pairs(wires, "mixed representation edges")
+    budget.workspace(limit * (32 + x.shape[1] * 2) + wires * 12 + holders * 4, "mixed representation")
+    actor = np.asarray(arrays["decision_actor"], np.int32) if decided else np.zeros(0, np.int32)
+    span = trace if trace > 0 else 1
+    kind, tick, owner, mode, fill, member_offset, member_id, source, target, flag, _ = kernels.bundled(
+        np.ascontiguousarray(entity, np.int64),
+        np.ascontiguousarray(offsets, np.int64),
+        prior,
+        altered,
+        actor,
+        trace,
+        bundles,
+        decided,
+        limit,
+        wires,
+        holders,
+        np.int64(0),
+        np.int64(0),
+        np.full(entities, -1, np.int64),
+        np.empty((entities, span), np.int64),
+        np.empty((entities, span), np.int64),
+        np.zeros(entities, np.int64),
+        np.int64(-1),
+    )
+    features = mixed_features(
+        kind,
+        mode,
+        fill,
+        member_offset,
+        member_id,
+        lambda ids: x[ids],
+        x.shape[1],
+        arrays["query"],
+        offsets,
+        spec,
+        decided,
+    )
+    return dict(
+        mixed_x=features.reshape(-1, x.shape[1]),
+        mixed_kind=kind,
+        mixed_tick=tick,
+        mixed_entity=owner,
+        mixed_edges=np.stack((source, target, flag), 1).astype(np.int32).reshape(-1, 3),
+        mixed_member_ids=member_id,
+        mixed_member_offsets=member_offset,
+    )
 
 
-def build(graph, registry, spec, groups, categories, seed):
+@timed("build")
+def build(graph, registry, spec, groups, categories, seed, limits=DEFAULT_LIMITS):
     started = time.perf_counter()
+    budget = GraphBudget(limits)
     arrays = base(graph, registry, spec, categories)
-    parts = (('turns', True, lambda: turns(arrays)), ('coupling', 'coupling' in groups, lambda: coupling(arrays, registry, spec)),
-             ('events', 'events' in groups, lambda: event_graph(arrays, registry, spec)),
-             ('neighbors', 'neighbors' in groups or 'walks' in groups, lambda: neighbors(arrays, spec)),
-             ('walks', 'walks' in groups, lambda: walks(arrays, spec, seed)), ('mixed', 'mixed' in groups, lambda: mixed(arrays, spec)))
+    parts = (
+        ("turns", True, lambda: turns(arrays, budget)),
+        ("coupling", "coupling" in groups, lambda: coupling(arrays, registry, spec, budget)),
+        ("events", "events" in groups, lambda: event_graph(arrays, registry, spec, budget)),
+        ("neighbors", "neighbors" in groups or "walks" in groups, lambda: neighbors(arrays, spec)),
+        ("walks", "walks" in groups, lambda: walks(arrays, spec, seed, budget)),
+        ("mixed", "mixed" in groups, lambda: mixed(arrays, spec, budget)),
+    )
     for name, wanted, make in parts:
         if wanted:
             clock = time.perf_counter()
             arrays.update(make())
-            LOG.info('representation group exit graph=%s group=%s seconds=%.3f', graph.name, name, time.perf_counter() - clock)
-    LOG.info('representation exit graph=%s seconds=%.3f events=%d groups=%s', graph.name, time.perf_counter() - started, len(arrays['events']), '+'.join(groups))
+            LOG.info(
+                "representation group exit graph=%s group=%s seconds=%.3f",
+                graph.name,
+                name,
+                time.perf_counter() - clock,
+            )
+    LOG.info(
+        "representation exit graph=%s seconds=%.3f events=%d groups=%s",
+        graph.name,
+        time.perf_counter() - started,
+        len(arrays["events"]),
+        "+".join(groups),
+    )
     return arrays
 
 
+@timed("validate")
 def validate(arrays, graph, registry, spec, groups):
-    x, step, events, entity = arrays['x'], arrays['step'], arrays['events'], arrays['entity']
-    if not np.isfinite(x).all():
-        raise ValueError('nonfinite observation features in graph %s' % graph.name)
-    codes, rows = arrays['spatial'][:, 2], arrays['spatial_attribute_row']
-    by_code = arrays['spatial_order']
-    sorted_codes, sorted_rows = codes[by_code], rows[by_code]
+    x, step, events, entity = arrays["x_table"], arrays["step"], arrays["events"], arrays["entity"]
+    reference = arrays["x_ref"]
+    if len(reference) != len(entity) or (
+        len(reference) and (reference.min() < 0 or reference.max() >= len(x))
+    ):
+        raise ValueError("observation feature references out of range in graph %s" % graph.name)
+    if not finite(x):
+        raise ValueError("nonfinite observation features in graph %s" % graph.name)
+    limits = np.full(registry.relations, -1, np.int64)
     for edge in registry.edges:
-        use = np.concatenate([sorted_rows[lo:hi] for lo, hi in np.searchsorted(sorted_codes, np.asarray([[code, code + 1] for code in (edge.code, edge.reverse)], sorted_codes.dtype))])
-        if not edge.attributes and np.any(use != -1):
-            raise ValueError('relation %s carries attribute rows without attributes' % edge.name)
-        if edge.attributes and (np.any(use < 0) or np.any(use >= len(arrays['attributes_' + edge.name]))):
-            raise ValueError('attribute row out of range for relation %s' % edge.name)
-    turn = arrays['period']
-    if 'coupling' in groups:
-        source, destination = arrays['coupling'].T
+        if edge.attributes:
+            limits[[edge.code, edge.reverse]] = len(arrays["attributes_" + edge.name])
+    fault = kernels.misplaced_attributes(
+        np.asarray(arrays["spatial"]), np.asarray(arrays["spatial_attribute_row"]), limits
+    )
+    if fault >= 0:
+        raise ValueError("attribute rows of relation code %d are missing, unexpected or out of range" % fault)
+    turn = arrays["period"]
+    if "coupling" in groups:
+        source, destination = arrays["coupling"].T
         if np.any(step[source] >= step[destination]) or np.any(entity[source] != entity[destination]):
-            raise ValueError('coupling edges of graph %s must link an entity to its own earlier observation' % graph.name)
-        source, destination, relation, gaps = arrays['coupling_boundaries'].T
-        if (np.any(entity[source] != entity[destination]) or np.any(turn[step[source]] >= turn[step[destination]])
-                or not np.isin(relation, boundary_codes(registry)[1:]).all() or not np.array_equal(gaps, turn[step[destination]] - turn[step[source]])
-                or np.any(step[destination] - step[source] >= spec['coupling/period_window'] if spec['coupling/periods'] else False)):
-            raise ValueError('coupling boundary edges of graph %s are invalid' % graph.name)
-    if 'events' in groups:
-        member = arrays['event_member']
-        source, destination = arrays['event_dag'].T
-        if np.any(events[source, 2] >= events[destination, 2]) or not (member[source].all() and member[destination].all()):
-            raise ValueError('event graph of graph %s links a later, simultaneous or excluded event' % graph.name)
-        if kernels.check_boundaries(np.asarray(arrays['event_boundaries']), np.asarray(events), np.asarray(member), np.asarray(turn), boundary_codes(registry)[1:]):
-            raise ValueError('event boundary edges of graph %s are invalid' % graph.name)
-    if 'walks' in groups:
-        query = np.asarray(arrays['query_step'], np.int64)
-        for name, limit in (('walks', query[:, None, None] * 2), ('turn_walks', query[:, None, None, None] * 2)):
+            raise ValueError(
+                "coupling edges of graph %s must link an entity to its own earlier observation" % graph.name
+            )
+        source, destination, relation, gaps = arrays["coupling_boundaries"].T
+        if (
+            np.any(entity[source] != entity[destination])
+            or np.any(turn[step[source]] >= turn[step[destination]])
+            or not np.isin(relation, boundary_codes(registry)[1:]).all()
+            or not np.array_equal(gaps, turn[step[destination]] - turn[step[source]])
+            or np.any(
+                step[destination] - step[source] >= spec["coupling/period_window"]
+                if spec["coupling/periods"]
+                else False
+            )
+        ):
+            raise ValueError("coupling boundary edges of graph %s are invalid" % graph.name)
+    if "events" in groups:
+        member = arrays["event_member"]
+        source, destination = arrays["event_dag"].T
+        if np.any(events[source, 2] >= events[destination, 2]) or not (
+            member[source].all() and member[destination].all()
+        ):
+            raise ValueError(
+                "event graph of graph %s links a later, simultaneous or excluded event" % graph.name
+            )
+        if kernels.check_boundaries(
+            np.asarray(arrays["event_boundaries"]),
+            np.asarray(events),
+            np.asarray(member),
+            np.asarray(turn),
+            boundary_codes(registry)[1:],
+        ):
+            raise ValueError("event boundary edges of graph %s are invalid" % graph.name)
+    if "walks" in groups:
+        query = np.asarray(arrays["query_step"], np.int64)
+        for name, limit in (
+            ("walks", query[:, None, None] * 2),
+            ("turn_walks", query[:, None, None, None] * 2),
+        ):
             walks = arrays[name]
             times = np.where(walks >= 0, events[np.maximum(walks, 0), 2], -1)
-            if np.any(times[..., 0] > limit) or np.any((np.diff(times, axis=-1) >= 0) & (times[..., 1:] >= 0)):
-                raise ValueError('%s of graph %s are not strictly causal' % (name, graph.name))
+            if np.any(times[..., 0] > limit) or np.any(
+                (np.diff(times, axis=-1) >= 0) & (times[..., 1:] >= 0)
+            ):
+                raise ValueError("%s of graph %s are not strictly causal" % (name, graph.name))

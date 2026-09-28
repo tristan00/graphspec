@@ -1,0 +1,105 @@
+async (page) => {
+  const started = Date.now();
+  const checks = [];
+  const check = (condition,name) => { if (!condition) throw new Error(name); checks.push(name); };
+  page.setDefaultTimeout(2500);
+  await page.goto('http://127.0.0.1:8792/#run=search-alpha&view=trials&status=complete&sort=mse&dir=asc&page=99999');
+  await page.reload();
+  await page.locator('#search').waitFor();
+  await page.locator('#live').uncheck();
+  check((await page.locator('.pagination').innerText()).includes('Page 1 of 1'), 'Out-of-range URL pagination is clamped');
+  await page.locator('tbody [data-select]').first().check();
+  await page.route('**/api/run?*', route => route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Temporarily unavailable'})}));
+  await page.locator('#refresh').click();
+  await page.locator('#error').waitFor();
+  check((await page.locator('#error').innerText()).includes('last successful update'), 'Failed refresh explicitly marks the displayed data as stale');
+  check(await page.locator('tbody tr').count() > 0, 'Temporary errors retain useful previous results');
+  check(await page.locator('#compare-count').innerText() === '1', 'Temporary errors preserve comparison selections');
+  await page.unroute('**/api/run?*');
+  await page.locator('#refresh').click();
+  await page.waitForFunction(() => document.querySelector('#error').hidden && !document.querySelector('#refresh').disabled);
+  check(await page.locator('#status').inputValue() === 'complete', 'Recovery preserves active filters');
+  check(await page.locator('tbody [data-select]:checked').count() === 1, 'Recovery preserves selected rows');
+  await page.route('**/api/trial?*',route => route.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'Trial temporarily unavailable'})}));
+  await page.locator('tbody [data-trial]').first().click();
+  await page.locator('[data-action="retry-detail"]').waitFor();
+  check((await page.locator('#detail-body').innerText()).includes('Trial temporarily unavailable'), 'Failed detail loading provides a retry action');
+  await page.unroute('**/api/trial?*');
+  await page.locator('[data-action="retry-detail"]').click();
+  await page.locator('#detail-tab-summary').waitFor();
+  check(await page.locator('#detail-title').innerText() === 'Trial 004', 'Retry loads the originally requested trial');
+  await page.keyboard.press('Escape');
+  await page.locator('#run').selectOption('search-beta');
+  await page.locator('#trial-count').filter({hasText:'3'}).waitFor();
+  const alpha = await (await page.request.get('http://127.0.0.1:8792/api/run?id=search-alpha')).json();
+  let release;
+  const gate = new Promise(resolve => {release=resolve;});
+  let received;
+  const entered = new Promise(resolve => {received=resolve;});
+  let settled;
+  const delivered = new Promise(resolve => {settled=resolve;});
+  await page.route('**/api/run?id=search-alpha',async route => {
+    received();
+    await gate;
+    try {
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(alpha)});
+    } catch (error) {
+      if (!error.message.includes('already handled')) throw error;
+    } finally {
+      settled();
+    }
+  });
+  await page.locator('#run').selectOption('search-alpha');
+  await entered;
+  await page.locator('#run').selectOption('search-beta');
+  await page.locator('#trial-count').filter({hasText:'3'}).waitFor();
+  release();
+  await delivered;
+  await page.unroute('**/api/run?id=search-alpha');
+  check(await page.locator('#run').inputValue() === 'search-beta', 'Rapid switching keeps the latest selected run');
+  check(await page.locator('#trial-count').innerText() === '3', 'A delayed old response cannot overwrite another run');
+  await page.locator('nav [data-view="compare"]').click();
+  await page.goBack();
+  check(await page.locator('#page-title').innerText() === 'Explore the trials', 'Browser Back restores the previous view');
+  await page.goForward();
+  check(await page.locator('#page-title').innerText() === 'Compare trials', 'Browser Forward restores the next view');
+  await page.locator('#run').selectOption('search-alpha');
+  await page.locator('#trial-count').filter({hasText:'32'}).waitFor();
+  await page.locator('nav [data-view="trials"]').click();
+  await page.locator('#search').fill('snapshot');
+  await page.locator('tbody [data-select]').first().check();
+  const chosen = await page.locator('tbody [data-select]').first().getAttribute('data-select');
+  await page.clock.install();
+  await page.locator('#live').check();
+  await page.locator('tbody [data-select]').first().focus();
+  const updated = page.waitForResponse(response => response.url().includes('/api/run?') && response.status() === 200);
+  await page.clock.fastForward(5100);
+  await updated;
+  await page.waitForFunction(() => !document.querySelector('#refresh').disabled);
+  check(await page.locator('#search').inputValue() === 'snapshot', 'Automatic refresh preserves the current search');
+  check(await page.evaluate(() => document.activeElement.dataset.select) === chosen, 'Automatic refresh preserves keyboard focus on a row');
+  check(await page.locator(`input[data-select="${chosen}"]`).isChecked(), 'Automatic refresh preserves selected checkboxes');
+  await page.locator('#live').uncheck();
+  let requests = 0;
+  const listener = request => { if (request.url().includes('/api/run?')) requests++; };
+  page.on('request',listener);
+  await page.clock.fastForward(15000);
+  check(requests === 0, 'Pausing automatic refresh stops polling');
+  page.off('request',listener);
+  let releaseTimeout;
+  const timeoutGate = new Promise(resolve => {releaseTimeout=resolve;});
+  await page.route('**/api/run?*',async route => {
+    await timeoutGate;
+    try { await route.abort(); } catch (error) { if (!error.message.includes('already handled')) throw error; }
+  });
+  await page.locator('#refresh').click();
+  await page.waitForRequest(request => request.url().includes('/api/run?'));
+  await page.clock.fastForward(10001);
+  await page.locator('#error').waitFor();
+  check((await page.locator('#error').innerText()).includes('10 seconds'), 'A hung request becomes an explicit timeout');
+  check(!await page.locator('#refresh').isDisabled(), 'Timeout restores the Refresh control');
+  releaseTimeout();
+  await page.unrouteAll({behavior:'wait'});
+  await page.clock.resume();
+  return {checks,seconds:(Date.now()-started)/1000};
+}

@@ -1,7 +1,5 @@
 __pycache__/
 *.pyc
 .idea/
-.venv/
-artifacts/
-*.egg-info/
-.playwright-mcp/
+
+.claude/review/

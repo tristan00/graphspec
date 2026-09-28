@@ -21,7 +21,7 @@ def test_chebyshev_matches_dense_polynomial():
 
 def test_relation_aware_attention_runs_and_differs_by_relation():
     torch.manual_seed(3)
-    layer = Spatial(8, 'relational_attention', 3, {}, slots=5)
+    layer = Spatial(8, "relational_attention", 3, {}, slots=5)
     h = torch.randn(12, 8)
     source, destination = torch.randint(0, 12, (40,)), torch.randint(0, 12, (40,))
     first = layer(h, (source, destination), torch.zeros(40, dtype=torch.long))
@@ -33,15 +33,20 @@ def test_key_embedding_masks_negative_tokens():
     keys = KeyEmbedding(6, 16)
     token = torch.tensor([[3, -1], [19, 3]])
     out = keys(token)
-    assert out.shape == (2, 2, 6) and torch.equal(out[0, 1], torch.zeros(6)) and torch.equal(out[0, 0], out[1, 1]) and torch.equal(out[1, 0], out[0, 0])
+    assert (
+        out.shape == (2, 2, 6)
+        and torch.equal(out[0, 1], torch.zeros(6))
+        and torch.equal(out[0, 0], out[1, 1])
+        and torch.equal(out[1, 0], out[0, 0])
+    )
 
 
 def test_time_encoding_modes():
     gap = torch.tensor([0.0, 1.0, 100.0])
-    for mode in ('log_cosine', 'cosine', 'log_linear'):
+    for mode in ("log_cosine", "cosine", "log_linear"):
         out = TimeEncoding(5, mode)(gap)
         assert out.shape == (3, 5) and torch.isfinite(out).all()
-    assert torch.equal(TimeEncoding(5, 'log_cosine')(gap)[0], torch.ones(5))
+    assert torch.equal(TimeEncoding(5, "log_cosine")(gap)[0], torch.ones(5))
 
 
 def test_model_space_offers_the_additions(bank):
@@ -50,7 +55,9 @@ def test_model_space_offers_the_additions(bank):
 
     registry = Bank(bank).registry
     names = {parameter.name for parameter in space(registry)}
-    assert {'snapshot/chebyshev_order', 'time/encoding', 'keys/embedding', 'keys/table'} <= names
-    spec = configured(registry, {'view': 'snapshot', 'snapshot/spatial': 'chebyshev', 'keys/embedding': True})
-    assert spec['snapshot/chebyshev_order'] == 2 and spec['keys/table'] == 16384 and 'time/encoding' not in spec
-    assert configured(registry, {'view': 'tree'})['time/encoding'] == 'log_cosine'
+    assert {"snapshot/chebyshev_order", "time/encoding", "keys/embedding", "keys/table"} <= names
+    spec = configured(registry, {"view": "snapshot", "snapshot/spatial": "chebyshev", "keys/embedding": True})
+    assert (
+        spec["snapshot/chebyshev_order"] == 2 and spec["keys/table"] == 16384 and "time/encoding" not in spec
+    )
+    assert configured(registry, {"view": "tree"})["time/encoding"] == "log_cosine"

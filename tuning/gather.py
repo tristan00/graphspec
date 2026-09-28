@@ -43,7 +43,9 @@ def bound(neighbor_ids, ticks, lo, hi, value):
 
 
 @njit(cache=True)
-def neighbors(neighbor_ids, neighbor_offsets, ticks, entity, cutoff, floor, count, mode, decay, seed, stream, out):
+def neighbors(
+    neighbor_ids, neighbor_offsets, ticks, entity, cutoff, floor, count, mode, decay, seed, stream, out
+):
     lo = bound(neighbor_ids, ticks, neighbor_offsets[entity], neighbor_offsets[entity + 1], floor)
     hi = bound(neighbor_ids, ticks, lo, neighbor_offsets[entity + 1], cutoff)
     if mode == 0 or hi - lo <= count:
@@ -55,7 +57,7 @@ def neighbors(neighbor_ids, neighbor_offsets, ticks, entity, cutoff, floor, coun
     for slot in range(hi - lo):
         candidate = neighbor_ids[lo + slot]
         draw = uniform(seed, stream, entity, cutoff, candidate)
-        draw = min(draw + 2.0 ** -54, 1 - 2.0 ** -53)
+        draw = min(draw + 2.0**-54, 1 - 2.0**-53)
         logit = 0.0 if mode == 1 else -decay * (cutoff - ticks[candidate]) / 2.0
         keys[slot] = logit - np.log(-np.log(draw))
     order = np.argsort(-keys)
@@ -66,11 +68,26 @@ def neighbors(neighbor_ids, neighbor_offsets, ticks, entity, cutoff, floor, coun
 
 
 @njit(cache=True, parallel=True)
-def neighbor_table(neighbor_ids, neighbor_offsets, ticks, entities, cutoffs, floor, count, mode, decay, seed, stream):
+def neighbor_table(
+    neighbor_ids, neighbor_offsets, ticks, entities, cutoffs, floor, count, mode, decay, seed, stream
+):
     ids = np.full((len(entities), count), -1, np.int32)
     sizes = np.zeros(len(entities), np.int64)
     for row in prange(len(entities)):
-        sizes[row] = neighbors(neighbor_ids, neighbor_offsets, ticks, entities[row], cutoffs[row], floor, count, mode, decay, seed, stream, ids[row])
+        sizes[row] = neighbors(
+            neighbor_ids,
+            neighbor_offsets,
+            ticks,
+            entities[row],
+            cutoffs[row],
+            floor,
+            count,
+            mode,
+            decay,
+            seed,
+            stream,
+            ids[row],
+        )
     return ids, sizes
 
 
@@ -85,7 +102,9 @@ def tree_level(events, ids, sizes, entities, cutoffs, count, non_relation):
     for row in range(rows):
         for slot in range(sizes[row]):
             event = ids[row, slot]
-            children[row * count + slot] = events[event, 1] if events[event, 0] == entities[row] else events[event, 0]
+            children[row * count + slot] = (
+                events[event, 1] if events[event, 0] == entities[row] else events[event, 0]
+            )
             times[row * count + slot] = events[event, 2]
             mask[row, slot] = True
             gaps[row, slot] = cutoffs[row] - events[event, 2]
@@ -94,10 +113,38 @@ def tree_level(events, ids, sizes, entities, cutoffs, count, non_relation):
 
 
 @njit(cache=True)
-def partners(memo, entity, events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch):
+def partners(
+    memo,
+    entity,
+    events,
+    neighbor_ids,
+    neighbor_offsets,
+    ticks,
+    cutoff,
+    floor,
+    count,
+    mode,
+    decay,
+    seed,
+    stream,
+    scratch,
+):
     if entity in memo:
         return memo[entity]
-    size = neighbors(neighbor_ids, neighbor_offsets, ticks, entity, cutoff, floor, count, mode, decay, seed, stream, scratch)
+    size = neighbors(
+        neighbor_ids,
+        neighbor_offsets,
+        ticks,
+        entity,
+        cutoff,
+        floor,
+        count,
+        mode,
+        decay,
+        seed,
+        stream,
+        scratch,
+    )
     result = np.empty(size, np.int64)
     for slot in range(size):
         event = scratch[slot]
@@ -118,17 +165,79 @@ def overlap(first, second):
 
 
 @njit(cache=True)
-def two_hop(memo, entity, events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch):
-    first = partners(memo, entity, events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch)
-    take = max(1, int(count ** 0.5))
+def two_hop(
+    memo,
+    entity,
+    events,
+    neighbor_ids,
+    neighbor_offsets,
+    ticks,
+    cutoff,
+    floor,
+    count,
+    mode,
+    decay,
+    seed,
+    stream,
+    scratch,
+):
+    first = partners(
+        memo,
+        entity,
+        events,
+        neighbor_ids,
+        neighbor_offsets,
+        ticks,
+        cutoff,
+        floor,
+        count,
+        mode,
+        decay,
+        seed,
+        stream,
+        scratch,
+    )
+    take = max(1, int(count**0.5))
     start = max(0, len(first) - take)
     total = 0
     for other in first[start:]:
-        total += len(partners(memo, other, events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch))
+        total += len(
+            partners(
+                memo,
+                other,
+                events,
+                neighbor_ids,
+                neighbor_offsets,
+                ticks,
+                cutoff,
+                floor,
+                count,
+                mode,
+                decay,
+                seed,
+                stream,
+                scratch,
+            )
+        )
     collected = np.empty(total, np.int64)
     fill = 0
     for other in first[start:]:
-        for value in partners(memo, other, events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch):
+        for value in partners(
+            memo,
+            other,
+            events,
+            neighbor_ids,
+            neighbor_offsets,
+            ticks,
+            cutoff,
+            floor,
+            count,
+            mode,
+            decay,
+            seed,
+            stream,
+            scratch,
+        ):
             collected[fill] = value
             fill += 1
     return np.unique(collected)
@@ -143,7 +252,23 @@ def occurrences(values, target):
 
 
 @njit(cache=True)
-def history(events, neighbor_ids, neighbor_offsets, ticks, actor, subject, query_step, start, count, mode, decay, seed, stream, structure, selected):
+def history(
+    events,
+    neighbor_ids,
+    neighbor_offsets,
+    ticks,
+    actor,
+    subject,
+    query_step,
+    start,
+    count,
+    mode,
+    decay,
+    seed,
+    stream,
+    structure,
+    selected,
+):
     rows = len(actor)
     observed = np.full((rows, 2, count), -1, np.int64)
     interaction = np.zeros((rows, 2, count), np.bool_)
@@ -168,7 +293,20 @@ def history(events, neighbor_ids, neighbor_offsets, ticks, actor, subject, query
         first_events = np.empty(0, np.int32)
         for side in range(2):
             root = roots[side]
-            size = neighbors(neighbor_ids, neighbor_offsets, ticks, root, cutoff, floor, count, mode, decay, seed, stream, scratch)
+            size = neighbors(
+                neighbor_ids,
+                neighbor_offsets,
+                ticks,
+                root,
+                cutoff,
+                floor,
+                count,
+                mode,
+                decay,
+                seed,
+                stream,
+                scratch,
+            )
             chosen = scratch[:size].copy()
             if side == 0:
                 first_events = chosen
@@ -186,16 +324,109 @@ def history(events, neighbor_ids, neighbor_offsets, ticks, actor, subject, query
                     for end in range(2):
                         endpoint = np.int64(events[event, end])
                         for which in range(2):
-                            first = partners(memo, endpoint, events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch)
-                            second = partners(memo, roots[which], events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch)
-                            structural[i, side, slot, column] = occurrences(second, endpoint) / max(len(second), 1)
+                            first = partners(
+                                memo,
+                                endpoint,
+                                events,
+                                neighbor_ids,
+                                neighbor_offsets,
+                                ticks,
+                                cutoff,
+                                floor,
+                                count,
+                                mode,
+                                decay,
+                                seed,
+                                stream,
+                                scratch,
+                            )
+                            second = partners(
+                                memo,
+                                roots[which],
+                                events,
+                                neighbor_ids,
+                                neighbor_offsets,
+                                ticks,
+                                cutoff,
+                                floor,
+                                count,
+                                mode,
+                                decay,
+                                seed,
+                                stream,
+                                scratch,
+                            )
+                            structural[i, side, slot, column] = occurrences(second, endpoint) / max(
+                                len(second), 1
+                            )
                             structural[i, side, slot, column + 1] = overlap(first, second)
                             structural[i, side, slot, column + 2] = overlap(
-                                two_hop(memo, endpoint, events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch),
-                                two_hop(memo, roots[which], events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch))
+                                two_hop(
+                                    memo,
+                                    endpoint,
+                                    events,
+                                    neighbor_ids,
+                                    neighbor_offsets,
+                                    ticks,
+                                    cutoff,
+                                    floor,
+                                    count,
+                                    mode,
+                                    decay,
+                                    seed,
+                                    stream,
+                                    scratch,
+                                ),
+                                two_hop(
+                                    memo,
+                                    roots[which],
+                                    events,
+                                    neighbor_ids,
+                                    neighbor_offsets,
+                                    ticks,
+                                    cutoff,
+                                    floor,
+                                    count,
+                                    mode,
+                                    decay,
+                                    seed,
+                                    stream,
+                                    scratch,
+                                ),
+                            )
                             column += 3
-        first = partners(memo, roots[0], events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch)
-        second = partners(memo, roots[1], events, neighbor_ids, neighbor_offsets, ticks, cutoff, floor, count, mode, decay, seed, stream, scratch)
+        first = partners(
+            memo,
+            roots[0],
+            events,
+            neighbor_ids,
+            neighbor_offsets,
+            ticks,
+            cutoff,
+            floor,
+            count,
+            mode,
+            decay,
+            seed,
+            stream,
+            scratch,
+        )
+        second = partners(
+            memo,
+            roots[1],
+            events,
+            neighbor_ids,
+            neighbor_offsets,
+            ticks,
+            cutoff,
+            floor,
+            count,
+            mode,
+            decay,
+            seed,
+            stream,
+            scratch,
+        )
         shared = 0
         for value in np.unique(first):
             if occurrences(second, value) > 0:
@@ -220,7 +451,20 @@ def history(events, neighbor_ids, neighbor_offsets, ticks, actor, subject, query
             pair_gaps[i, filled - 1] = cutoff - previous
             for slot in range(filled):
                 pair_mask[i, slot] = True
-    return observed, interaction, query_tick, mask, gap, ids, structural, common_ids, common_frequency, common_stats, pair_gaps, pair_mask
+    return (
+        observed,
+        interaction,
+        query_tick,
+        mask,
+        gap,
+        ids,
+        structural,
+        common_ids,
+        common_frequency,
+        common_stats,
+        pair_gaps,
+        pair_mask,
+    )
 
 
 @njit(cache=True)
@@ -233,10 +477,10 @@ def reachable(owners, positions, times, roots, cutoffs):
     for row in range(len(roots)):
         pieces = np.empty(0, np.int64)
         for root in np.unique(roots[row]):
-            lo = np.searchsorted(sorted_owners, root, side='left')
-            hi = np.searchsorted(sorted_owners, root, side='right')
+            lo = np.searchsorted(sorted_owners, root, side="left")
+            hi = np.searchsorted(sorted_owners, root, side="right")
             members = sorted_positions[lo:hi]
-            stop = np.searchsorted(times[members], cutoffs[row], side='right')
+            stop = np.searchsorted(times[members], cutoffs[row], side="right")
             pieces = np.concatenate((pieces, members[:stop]))
         unique = np.unique(pieces)
         found.append(unique)
@@ -246,7 +490,7 @@ def reachable(owners, positions, times, roots, cutoffs):
         offsets[row + 1] = offsets[row] + counts[row]
     flat = np.empty(offsets[-1], np.int64)
     for row in range(len(roots)):
-        flat[offsets[row]:offsets[row + 1]] = found[row]
+        flat[offsets[row] : offsets[row + 1]] = found[row]
     return flat, offsets
 
 

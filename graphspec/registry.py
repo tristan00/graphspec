@@ -1,21 +1,25 @@
 import numpy as np
 
-from graph_tuning_infra.files import sha256_json
+from graphspec.infra.files import sha256_json
 
 from .declarations import EdgeType
+from .schema import LEVELS
 
 
 class Registry:
-
     def __init__(self, name, nodes, edges, width, markers, extras):
+        if type(width) is not int or width < 1:
+            raise ValueError("registry feature width must be a positive integer")
         self.name, self.width = name, width
         self.nodes, self.edges = tuple(nodes), tuple(edges)
+        if not self.nodes or len(set(self.nodes)) != len(self.nodes):
+            raise ValueError("registry node types must be nonempty and unique")
         self.features = 2 * width
         self.node_index = {node: i for i, node in enumerate(self.nodes)}
         self.relations = self._allocate()
         self.by_name = {edge.name: edge for edge in self.edges}
         if len(self.by_name) != len(self.edges):
-            raise ValueError('duplicate edge type name')
+            raise ValueError("duplicate edge type name")
         self.by_code = {}
         for edge in self.edges:
             self.by_code[edge.code] = edge
@@ -23,7 +27,7 @@ class Registry:
                 self.by_code[edge.reverse] = edge
             for endpoint in edge.sources + edge.targets:
                 if endpoint not in self.node_index:
-                    raise ValueError('edge %s names an undeclared node type %s' % (edge.name, endpoint))
+                    raise ValueError("edge %s names an undeclared node type %s" % (edge.name, endpoint))
         self.canonical = np.zeros(self.relations, bool)
         for edge in self.edges:
             self.canonical[edge.code] = True
@@ -33,15 +37,34 @@ class Registry:
                 self.flipped[edge.code], self.flipped[edge.reverse] = edge.reverse, edge.code
         self.attributed = tuple(edge.name for edge in self.edges if edge.attributes)
         self.markers = tuple(markers)
+        if len(set(self.markers)) != len(self.markers):
+            raise ValueError("duplicate relation marker name")
         self.marker_index = {marker: self.relations + i for i, marker in enumerate(self.markers)}
         self.relation_slots = self.relations + len(self.markers)
         self.extras = dict(extras)
+        if self.extras["level"] not in LEVELS:
+            raise ValueError(
+                "registry level must be one of %s, found %s" % (", ".join(LEVELS), self.extras["level"])
+            )
+        if not set(self.extras["protected"]) <= set(self.nodes):
+            raise ValueError("protected node types must be declared")
+        if not set(self.extras["base"]) <= set(self.by_name):
+            raise ValueError("base relation types must be declared")
 
     @classmethod
     def from_declaration(cls, declared):
-        edges = [EdgeType(e['name'], e['origin'], e['pairs'], e['attributes'], symmetric=e['symmetric'])
-                 for e in declared['edges']]
-        return cls(declared['name'], declared['nodes'], edges, declared['width'], declared['markers'], declared['extras'])
+        edges = [
+            EdgeType(e["name"], e["origin"], e["pairs"], e["attributes"], symmetric=e["symmetric"])
+            for e in declared["edges"]
+        ]
+        return cls(
+            declared["name"],
+            declared["nodes"],
+            edges,
+            declared["width"],
+            declared["markers"],
+            declared["extras"],
+        )
 
     def _allocate(self):
         code = 0
@@ -67,8 +90,16 @@ class Registry:
         return self.marker_index[name]
 
     def declaration(self):
-        return dict(name=self.name, width=self.width, features=self.features, nodes=list(self.nodes), relations=self.relations,
-                    markers=list(self.markers), edges=[edge.declaration() for edge in self.edges], extras=self.extras)
+        return dict(
+            name=self.name,
+            width=self.width,
+            features=self.features,
+            nodes=list(self.nodes),
+            relations=self.relations,
+            markers=list(self.markers),
+            edges=[edge.declaration() for edge in self.edges],
+            extras=self.extras,
+        )
 
     def fingerprint(self):
         return sha256_json(self.declaration())

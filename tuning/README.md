@@ -1,16 +1,24 @@
 **Model search**
 
-`tuning` turns a graph database into a frozen bank of truth graphs, then searches graph-transform specs and temporal graph models over it on a CUDA GPU. Models and the search read structure from the bank's pinned declaration. No code here names a node type, relation or attribute. The database contract and task file are in the [root README](../README.md), and the transforms in [graphspec/README.md](../graphspec/README.md).
+`tuning` turns staged graph tables or a graph database into a frozen bank of truth graphs, then searches graph-transform specs and temporal graph models over it on a CUDA GPU. Models and the search read structure from the bank's pinned declaration. No code here names a node type, relation or attribute. The database contract and task file are in the [root README](../README.md), and the transforms in [graphspec/README.md](../graphspec/README.md).
+
+Commands require an absolute `GRAPHSPEC_HOME` before Python starts. Use the checkout launcher with mandatory `-Home`, for example `./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/churn --output D:/graphspec-runtime/runs/churn-tuning --continuous --selector botorch --startup-trials 100 --random-params model/view`. Outputs stay outside code directories and, on Windows, on the configured runtime volume. Caches and temporary files live under that home. No profile settings or default home are consulted; see [storage](../docs/loader.md).
 
 **Bank**
 
-`python -m tuning.build` reads the database once and writes each graph's truth arrays under `truth/`. Training never touches the database. Labels live in `supervision.json`, apart from the model inputs. `Bank` refuses a manifest from another bank version or whose declaration does not reproduce its fingerprint.
+`python -m tuning.build` reads its explicit source once and writes each graph's truth arrays under `truth/`. Training never touches the database. Labels live in `supervision.json`, apart from the model inputs. `Bank` refuses a manifest from another bank version or whose declaration does not reproduce its fingerprint.
 
-A trial's configuration carries its spec under `graph`. `Bank.arrays` canonicalises the spec against the model's representation groups, then materialises the variant of a graph on first use under `variants/<digest>/graph_NNNN/`. The runner materialises every graph of a trial's variant in parallel before the worker starts (`--workers`, each process holding its share of the cores) and prunes the least recently used variants to the `--variant-gb` budget, so the fit budget is spent on training; a pruned variant is renamed into `trash/` beside the store and deleted by a background thread, and folder sizes are cached by entry count, so pruning takes well under a second of the trial clock. A variant's feature matrix and query matrix are hard links to the truth's files whenever the stages leave them unchanged. The digest covers the spec without the parameters read only when packing (`time/history`, `time/context`, `neighbors/order`, `neighbors/decay`), the groups and the `graphspec` and `graph_tuning_infra` sources, so trials that differ only in those share a variant until the transform code changes. A spec with `graphs/join` set to single has one graph, index 0, merged from every truth graph before the stages run; its training windows are laid out over the merged step axis. It memory-maps the arrays and keeps the 128 most recently opened graphs' stores; a graph that packing touches holds the arrays it searches in RAM and its feature matrices on the training device, through the infra layer's resident cache, which reads them with direct file reads, holds 256 graphs and evicts the one loaded first.
+`Bank.arrays` materialises graph variants under `cache/banks/<bank-digest>/variants/<digest>/graph_NNNN/`. The digest includes the transform source, representation groups, and graph parameters, excluding parameters used only during packing. The runner prepares variants with `--workers` and prunes them to `--variant-gb` between trials. Preparation counts against the trial deadline.
+
+`graphs/join=single` joins groups of `graphs/join_size` truth graphs, each onto one step axis, and builds each group campaign by campaign with the segment engine (see the graphspec README), so memory stays near one campaign whatever the group size. Groups build in parallel across `--workers`; when a split has fewer groups than workers, the workers are spread over its campaigns. Windows of a joined group use a window-local entity index: the entities the window references, renumbered, instead of every entity of the group, and the batch budget counts each window's distinct observed entities. A batch draws its windows from groups covering about 64 campaigns, as separate graphs do. Joined arrays up to 4 GiB are held on the training device, and resident joined graphs are evicted least recently used beyond 12 GiB. Large joined arrays use temporary memory-mapped files and bounded copies on the runtime volume. Turn history uses sorted observation and actor indexes. The array store retains 128 graph stores; the resident cache retains 192 graphs. Arrays over 64 MiB remain mapped, and packing transfers only requested feature rows to the training device. Observation features are stored once: a variant holds `x_ref`, one row number per observation, and the feature table `x_table`; a separate graph's table is a file copy of the truth graph's `obs_x` when no stage changed it. A batch selects rows from each graph's resident arrays and concatenates only what it selected.
 
 **Packing**
 
-`recipe` turns one training window into model inputs as numpy arrays and deferred gathers, with no torch work: every per-entity or per-event loop lives in a numba kernel in `gather.py` (the latest observation of an entity before a tick, neighbour sampling by recent, uniform or decay-weighted Gumbel top-k keyed by the seeded hash, the levels of a temporal-neighbour tree, interaction histories with their structural features, the events reachable from a prediction's entities, and walk identities), and edge tables are cut by binary search on their sorted columns. Feature rows are never copied on the CPU: a `Features` marker names the resident matrix, the row indices and a weight per row, and `materialise` resolves it on the device, so a masked gather, the mean of two endpoint rows or the average of an observation and a query are one device expression each. `recipe_batch` concatenates the windows of a batch in numpy; `materialise` sends every array of the batch in one bundled transfer and resolves the markers per batch rather than per window: the resident matrices of the batch's graphs are concatenated into one table per key, each window's indices are shifted by its graph's offset, and one gather serves every window. During a fit, `packing.Packer` runs the recipes in worker processes (`--workers` of them, sharing the machine's cores between their numba kernels) and writes each bundled batch into one of a fixed set of shared-memory slots (two per worker, grown to fit the largest batch seen) that the training process has registered with CUDA, so a batch moves to the device straight from the slot with no host copy and packing runs ahead of the GPU instead of alternating with it. A loader thread in the training process walks the batch schedule ahead of training and moves the resident matrices of coming graphs to the device over a side stream, throttled so that no graph still needed is evicted.
+`data.py` owns bank storage and variant identity, `inputs.py` builds model inputs from graph windows, and `tensors.py` resolves deferred gathers onto the training device. `batching.py` combines independent windows and `packing.py` owns worker processes and their transfer buffers.
+
+`recipe` prepares one window as NumPy arrays and deferred feature gathers. Numba kernels implement graph traversal and sampling; sorted indexes bound row searches. `recipe_batch` combines equal-length independent windows, and `materialise` resolves their gathers together while preserving row order and duplicates. Views whose rows do not interact (tree, walks, sequence, mixed, event graph) narrow a window's rows to the span of its supervised rows; memory and projection compute neighbour histories for supervised rows only. For the snapshot view, except with coupling edges, a batch builds each graph's overlapping frames once: the input and spatial layers run on those frames and the result is expanded to the windows, and per-window edges are built only for the graph-cell and evolving modes, which read them per frame.
+
+`packing.Packer` prepares batches in worker processes using two shared-memory slots per worker. Worker processes start with their numeric libraries limited to the worker's thread share, which keeps an idle worker near 1 GB. CUDA receives each packed batch from a registered slot. A prefetch thread loads upcoming resident arrays within the graph-cache window; large mapped tables gather rows on demand. Small feature tables remain on the training device.
 
 **Models**
 
@@ -27,7 +35,7 @@ A model is built from a model spec: a tree of parameters whose root, `view`, nam
 | `tree` | `neighbors` | Recursive attention over `neighbors` sampled partners at each partner's own time, `depth` levels, time and relation encodings on tokens. |
 | `walks` | `walks` | `count` causal walks of `hops` steps per endpoint, anonymised by hitting counts relative to both endpoints, encoded by a bidirectional LSTM and pooled by attention. |
 | `affinity` | — | A gated linear state per actor over query categories with a recent global profile buffer of `buffer` frames. Offered for query and graph targets with queries. |
-| `signal` | — | A learned directed top-`topk` adjacency over signal channels, `hops` mix-hop propagations and gated dilated convolutions, `layers` deep. Offered only with signals. |
+| `signal` | — | A learned directed top-`topk` adjacency over signal channels, `hops` mix-hop propagations and gated dilated convolutions, `layers` deep. Offered for query and graph targets with signals. |
 
 `hidden` sets every learned width except the affinity state, whose width is the number of query categories. `dropout` is present only where a component applies it: snapshot spatial layers, causal attention in the snapshot and sequence views, temporal-edge message layers in the snapshot and event-graph views, and mixed message layers. Event and token time gaps enter the memory, projection, sequence, tree, walk, event-graph and coupling components through `cos(w · log1p(gap) + b)` with learnable `w` and `b`; period gaps enter through linear maps of `log1p(gap)`; the mixed view carries its edge gap as a linear feature; the affinity and signal views read no gaps.
 
@@ -37,7 +45,8 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 
 **Training protocol**
 
-- Every fit sees every training row exactly once per epoch, for 2–12 complete epochs, and scores the complete validation split. Each epoch checks the exact row ids for omissions, duplicates and validation rows.
+- The optimizer is AdamW, fused on CUDA.
+- Every fit sees every training row exactly once per epoch, for every requested epoch, and scores the complete validation split. Each epoch checks the exact row ids for omissions, duplicates and validation rows.
 - A training window ends at a labelled step s and covers steps s−H+1 to s, with H = `time/history`. It supervises only the labels at s. A node-target window holds at most 1,024 labels, so a step with more labels gets several windows over the same steps.
 - With `time/context` c above 0, a window that starts in period p starts instead at the first step of period max(0, p−c). Each family gets its period-end readout. Replayed steps add no supervised rows.
 - A batch groups windows of equal length, `batch sequences × 16 // H` of them. It holds at most 1,024 frames, 1,024 prediction rows, 1,048,576 entity-frames and 4,194,304 facts, where a window contributes its steps times its graph's entity count and times its graph's facts per step from the manifest.
@@ -46,72 +55,83 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 - Sequence and memory states reset at window boundaries. Event models start from the last features known before the window.
 - Targets are standardised with the training mean and sample standard deviation. Predictions are converted back before scoring raw MSE and R².
 - The saved checkpoint is reloaded and must reproduce the first validation batch.
-- Each trial has a 600-second budget measured by the runner from the moment it starts selecting the trial's parameters to the moment the variant store has been pruned after the worker exits; it covers selection, the training layout, the source snapshot, the worker's start, building the graph variant, packing, every requested epoch, scoring the holdout and the pruning. At the deadline the runner kills the worker and records a timeout; a result recorded by a worker that finished inside its own deadline but whose trial ran over the budget is set aside as `late_result.json` and the trial counts as a timeout. There is no extension. A fit that cannot complete its requested epochs in time scores nothing, so the search learns to propose epochs and structures that fit. `trial.json` records the seconds of each phase.
+- The configured `--seconds` budget covers selection, layout, source capture, variant building, packing, training, and evaluation. At the deadline the runner records a timeout and waits for every owned worker to exit before continuing. Pruning runs after cleanup, outside the trial budget. Late outputs are retained with `late_` names; incomplete trials receive no prediction score. `trial.json` records phase timings.
 
 **Search**
 
 | Selector | How trials are chosen |
 |---|---|
-| `--selector tpe` | Optuna's multivariate, grouped TPE with 10 random startup trials and 64 expected-improvement candidates. Model parameters are named `model/<parameter>`, training parameters by their names and spec parameters `graph/<parameter>`. A model parameter enters a trial only while its condition holds; a spec parameter only when the model's view reads its group and its condition holds. |
+| `--selector forest` | SMAC-style selection: a random forest fitted to the log of completed scores predicts each candidate's MSE, the spread across its trees stands in for uncertainty, and a second forest fitted to all completed, failed and timed-out trials predicts completion. Log expected improvement over the best observed MSE, computed in log space, plus three times the log completion probability ranks 10000 uniformly drawn valid configurations. Parameters selected by `--random-params` are drawn first and held fixed. |
+| `--selector botorch` | The default for new runs. BoTorch fits a MAP-SAAS Gaussian process to completed scores and a separate feasibility model to all completed, failed and timed-out trials. Both models fit on the GPU, and log expected improvement ranks 10000 uniformly drawn valid configurations to pick one. Parameters selected by `--random-params` are drawn first and held fixed in every candidate evaluated by the model. |
+| `--mix` | Percent of trials after the startup phase handed to each selector, as `name=share` pairs summing to 100, for example `--mix random=80 forest=10 tpe=10`; a new run defaults to 100 for its `--selector`, otherwise the saved mix is kept. |
+| `--selector tpe` | Optuna's multivariate, grouped TPE with 10 random startup trials, 64 expected-improvement candidates, and a good set of the best 100 trials. Model parameters are named `model/<parameter>`, training parameters by their names and spec parameters `graph/<parameter>`. A model parameter enters a trial only while its condition holds; a spec parameter only when the model's view reads its group and its condition holds. |
 | `--selector random` | Each active model parameter, each training parameter and each active spec parameter drawn uniformly, in that order. |
-| `--random-trials N` | With `tpe`, the first N trials are uniform draws recorded with selector `random`; every later proposal is TPE over all completed and failed trials so far. A continued run keeps its N unless a new one is given. |
+| `--startup-trials N` | Minimum number of finished trials before BoTorch starts; defaults to 100. Completed, failed and timed-out trials count regardless of their original selector. Below this threshold new trials are random. Existing history is retained. `--random-trials` is an alias; plans retain the `random_trials` field. Legacy TPE uses this number as its initial trial-index threshold. |
+| `--random-params model/view ...` | Fully qualified parameter names or wildcard patterns to keep random after BoTorch starts. Model names use `model/`, graph names use `graph/`, and training names are unprefixed. Draws obey the proposal bounds and remain fixed whenever active. Omission preserves a continued run's setting; supplying the flag without names clears it. |
 
-For every proposal the runner rebuilds an in-memory study from the trial files; there is no external study database. A result enters the study only if it matches the frozen supervision fingerprint, covers every training row, scores the complete validation split and has a finite score. Otherwise the proposal fails. Timeouts and crashes enter TPE as failures ranked worse than every finite score. Interrupted trials are excluded.
+For every proposal the runner rebuilds the optimizer from the trial files; there is no external study database. A completed result must match the frozen supervision fingerprint, cover every training row, score the complete validation split and have a finite score. Otherwise loading the result fails. BoTorch learns from the original recorded configurations, including history outside the current proposal bounds. Bounds constrain new proposals, not historical training inputs. Categorical values use one-hot encoding; numeric inputs use their declared ranges and logarithmic scales, with activity indicators for conditional values. Failed trials train feasibility without invented prediction scores. TPE retains its existing failure ranking and bound filtering. Interrupted trials are excluded from both learning and BoTorch's startup count.
 
 `selection.json` records:
 
-- the selector and its seeds; for TPE also its settings, the proposed parameters and the failure history
+- the selector, seeds, settings, proposed parameters and failure history; BoTorch also records preset random values and every trial used for learning
 - the model digest, its description, the model parameters that differ from their defaults and the model space
 - the spec digest, the spec parameters that differ from their defaults, and the model's spec space
 - prior trial ids with result hashes
 - the bank manifest hash, the supervision hash and the declaration fingerprint
 
-Configuration and selection are saved before the worker starts, and a continued trial reuses them. `--bounds` narrows the space both selectors draw from and the distributions TPE is told about; the bounds are stored in `plan.json` and in every `selection.json`.
+Configuration and selection are saved before the worker starts, and a continued trial reuses them. `--bounds` narrows the space new proposals draw from; the bounds are stored in `plan.json` and in every `selection.json`.
+
+Each new trial saves its time limit in seconds as `config.json`'s `max_seconds`. The runner enforces that saved limit. Changing `--seconds` on continuation changes the limit for new proposals; omitting it keeps the run's current setting. The dashboard and result exports expose older trials' recorded budgets under the same parameter without rewriting their original configurations.
+
+To draw epochs and runtime randomly before BoTorch chooses the remaining parameters, use `--random-params model/view epochs max_seconds` with bounds `{"epochs":{"low":1,"high":5},"max_seconds":{"low":600,"high":1200}}`. Both ranges include every integer between their endpoints. The `max_seconds` bound takes precedence over `--seconds` for new proposals. BoTorch receives both preset values in every candidate and learns from historical runtime limits recorded with completed and failed trials. Missing historical limits remain unknown; the current plan's limit is never substituted for them.
 
 A trial's configuration holds the model spec under `model`, the graph spec under `graph`, the training parameters below at the top level and `seed`. Model parameters draw from these ranges; a parameter is drawn only while its condition holds. Spec parameters and their ranges are in [graphspec/README.md](../graphspec/README.md).
 
 | Parameter | Present when | Range |
 |---|---|---|
 | `view` | always | the views the bank offers |
-| `hidden` | always | 16, 24, 32, 48, 64 |
+| `hidden` | always | Every integer from 1 through 128; uniform integer sampling for random trials and an integer distribution for TPE. |
 | `dropout` | a component applies it | 0–0.5 |
 | `time/encoding` | a view encodes time gaps: `event_graph`, `memory`, `projection`, `sequence`, `tree`, `walks`, and `snapshot` with `coupling_edges` | log_cosine, cosine, log_linear |
-| `keys/embedding`, `keys/table` | a view embeds entities: every view but `affinity` and `signal`; table when on | off, on; 4096, 16384, 65536 |
+| `keys/embedding`, `keys/table` | a view embeds entities: every view but `affinity` and `signal`; table when on | off, on; 4096–65536 |
 | `snapshot/spatial`, `snapshot/layers` | view `snapshot`; layers when spatial is not `none` | none, mean, normalised, relational, attention, chebyshev, relational_attention; 1–3 |
 | `snapshot/chebyshev_order` | spatial `chebyshev` | 1–4 |
 | `snapshot/temporal` | view `snapshot` | graph_sequence, entity_gru, entity_tcn, entity_attention, graph_cell, evolving, coupling_edges |
 | `snapshot/sequence` | temporal `graph_sequence` | gru, lstm, attention |
 | `snapshot/temporal_layers` | temporal `entity_tcn`, `graph_cell`, `evolving`, `coupling_edges` | 1–4 |
 | `snapshot/diffusion_hops` | temporal `graph_cell` | 0–4 |
-| `snapshot/heads` | sequence `attention` or temporal `entity_attention` | 1, 2, 4 |
+| `snapshot/heads` | sequence `attention` or temporal `entity_attention` | 1–4 |
 | `snapshot/message` | temporal `coupling_edges` | gated, attention |
 | `mixed/aggregation`, `mixed/update`, `mixed/layers` | view `mixed` | mean, attention; gru, residual; 1–3 |
 | `event_graph/message`, `event_graph/layers` | view `event_graph` | gated, attention; 1–3 |
 | `memory/update` | view `memory` | mailbox_gru, mutual_rnn (with queries), intensity, antisymmetric |
 | `memory/embedding`, `memory/pair_terms` | update other than `mutual_rnn` | state, attention; on, off |
-| `memory/neighbors` | embedding `attention` or `pair_terms` on | 4, 8, 10, 12, 16, 20, 30, 32, 64 |
+| `memory/neighbors` | embedding `attention` or `pair_terms` on | 4–64 |
 | `memory/integration_steps`, `memory/damping` | update `antisymmetric` | 1–16; 0.001–1, logarithmic |
-| `projection/hops`, `projection/width`, `projection/decay`, `projection/neighbors` | view `projection` | 1–4; 16, 32, 64, 128, 256; 0.0000001–1, logarithmic; 4–64 as above |
+| `projection/hops`, `projection/width`, `projection/decay`, `projection/neighbors` | view `projection` | 1–4; 16–256; 0.0000001–1, logarithmic; 4–64 as above |
 | `sequence/operator`, `sequence/neighbors`, `sequence/layers`, `sequence/structure` | view `sequence` | mixer, transformer, ssm; 4–64 as above; 1–3; none, occurrence, overlap |
-| `sequence/patch`, `sequence/heads` | operator `transformer` | 1, 2, 4, 8, 16; 1, 2, 4 |
-| `sequence/state` | operator `ssm` | 4, 8, 16, 32, 64 |
-| `tree/depth`, `tree/neighbors` | view `tree` | 1–2; 4, 8, 12, 16, 20 |
-| `walks/count`, `walks/hops` | view `walks` | 1, 2, 4, 8, 16, 32; 1–4 |
-| `affinity/buffer` | view `affinity` | 1, 2, 4, 8, 16, 32 |
+| `sequence/patch`, `sequence/heads` | operator `transformer` | 1–16; 1–4 |
+| `sequence/state` | operator `ssm` | 4–64 |
+| `tree/depth`, `tree/neighbors` | view `tree` | 1–2; 4–20 |
+| `walks/count`, `walks/hops` | view `walks` | 1–32; 1–4 |
+| `affinity/buffer` | view `affinity` | 1–32 |
 | `signal/topk`, `signal/hops`, `signal/layers` | view `signal` | 1–20; 1–4; 1–3 |
 | `epochs`, `clip`, `lr`, `weight_decay` | training, always | 2–12; 0.5–2; 0.0001–0.005 and 0.0000001–0.01, logarithmic |
 
 **Run directory**
 
+The runner owns one trial at a time. Windows Job Objects and Linux process groups contain its descendants; uncertain cleanup stops the runner. `tuning.records` validates trial identity, complete epoch and row coverage, finite scores, and outcome files. Completed, failed, timed-out, and interrupted attempts stay distinct; a worker that exited without an outcome is interrupted. Older plan versions require explicit migration.
+
 | File | Contents |
 |---|---|
 | `plan.json` | Bank path and manifest hash, fingerprints, seed, budget, selector, workers, variant budget and every planned trial with its model digest and description. |
-| `runner.lock`, `running.json` | One runner per directory; the active worker's process id and trial. |
+| `runner.lock` | Per-run writer lock in the external run directory. Windows heavy-job singletons use user-SID named mutexes without lock files. |
+| `runner.json`, `running.json` | Runner lifecycle and owner identity; active worker identity and trial. |
 | `train_blocks_H.json` | The training windows for history H. |
 | `trial_NNNNNN_<selector>_<model digest>_<spec digest>/` | One trial. |
 | `trial_*/config.json`, `trial_*/selection.json` | The configuration, with its spec under `graph`, and how it was chosen. |
 | `trial_*/worker_NN.log` | JSON events, one per line: fit entry, training progress, epochs, validation and timing logs. A failing worker ends the log with its traceback. |
-| `trial_*/source/` | The `tuning`, `graphspec` and `graph_tuning_infra` sources the worker ran. |
+| `trial_*/source/` | The `tuning`, `graphspec` and `graphspec.infra` sources the worker ran. |
 | `trial_*/result.json`, `predictions.npz`, `checkpoint.pt` | Scores, timings, parameter count, peak GPU memory and row hashes; validation predictions; weights. |
 | `trial_*/failure.json`, `timeout.json`, `fit_progress.json` | Failure records and the budget heartbeat. |
 | `trial_*/trial.json`, `late_result.json` | The runner's phase timings for the whole trial, and a result that arrived after the budget. |

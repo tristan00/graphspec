@@ -3,85 +3,129 @@ import time
 
 import numpy as np
 
-from graph_tuning_infra.features import token
+from graphspec.infra.workspace import allocate, block_rows
 
-from .truth import ARRAYS, Graph, verify
-
+from . import spans
+from .truth import DENSE, Dense, verify_dense
 
 LOG = logging.getLogger(__name__)
 SCALE = float(1 << 53)
 
 
-def sampled(kind, key, fraction):
-    return token(kind + ':' + key) % (1 << 53) / SCALE < fraction
-
-
 def parameters(spec):
-    return {name: value for name, value in spec.items() if name.startswith('graphs/')}
+    return {name: value for name, value in spec.items() if name.startswith("graphs/")}
+
+
+def unify(graphs, registry, spec):
+    started = time.perf_counter()
+    connect = np.asarray([spec["graphs/connect/" + kind] for kind in registry.nodes], bool)
+    kinds = np.concatenate([np.asarray(graph.kinds) for graph in graphs]).astype(np.int64)
+    tokens = np.concatenate([np.asarray(graph.entity_token) for graph in graphs]).astype(np.uint64)
+    sampled = (tokens % np.uint64(1 << 53)).astype(np.float64) / SCALE < spec["graphs/connect_fraction"]
+    connected = connect[kinds] & sampled
+    chosen = np.flatnonzero(connected)
+    group, count = spans.identity(np.stack((kinds[chosen], tokens[chosen].view(np.int64)), 1))
+    first = np.full(count, len(kinds), np.int64)
+    np.minimum.at(first, group, chosen)
+    creator = ~connected
+    creator[first] = True
+    rank = np.cumsum(creator) - 1
+    ids = rank.copy()
+    ids[chosen] = rank[first[group]]
+    offsets = np.r_[0, np.cumsum([len(graph.kinds) for graph in graphs])]
+    LOG.info(
+        "unify exit seconds=%.3f graphs=%d entities=%d merged=%d connected=%d",
+        time.perf_counter() - started,
+        len(graphs),
+        len(kinds),
+        int(creator.sum()),
+        count,
+    )
+    return (
+        [ids[lo:hi] for lo, hi in zip(offsets[:-1], offsets[1:])],
+        kinds[creator],
+        tokens[creator],
+        connected[creator],
+    )
 
 
 def joined(graphs, registry, spec):
     started = time.perf_counter()
-    connect = {registry.kind(kind) for kind in registry.nodes if spec['graphs/connect/' + kind]}
-    fraction = spec['graphs/connect_fraction']
-    shared, kinds, keys, maps = {}, [], [], []
-    for graph in graphs:
-        table = np.empty(len(graph.kinds), np.int64)
-        for local, (kind, key) in enumerate(zip(graph.kinds.tolist(), graph.keys)):
-            name = registry.nodes[kind]
-            if kind in connect and sampled(name, key, fraction):
-                merged = shared.get((kind, key))
-                if merged is None:
-                    merged = shared[(kind, key)] = len(kinds)
-                    kinds.append(kind)
-                    keys.append(key)
-            else:
-                merged = len(kinds)
-                kinds.append(kind)
-                keys.append(key)
-            table[local] = merged
-        maps.append(table)
+    graphs = tuple(graphs)
+    if not graphs:
+        raise ValueError("joining requires at least one graph")
+    maps, kinds, tokens, connected = unify(graphs, registry, spec)
     step_offsets = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     period_offsets = np.r_[0, np.cumsum([int(graph.period.max(initial=-1)) + 1 for graph in graphs])]
-    pieces = {name: [] for name in ARRAYS}
-    for graph, table, step_offset, period_offset in zip(graphs, maps, step_offsets, period_offsets):
-        remap = lambda values: np.where(values >= 0, table[np.maximum(values, 0)], -1).astype(np.int32)
-        pieces['kinds'].append(np.zeros(0, np.int8))
-        pieces['period'].append((graph.period + period_offset).astype(np.int32))
-        pieces['obs_entity'].append(remap(graph.obs_entity))
-        pieces['obs_step'].append((graph.obs_step + step_offset).astype(np.int32))
-        pieces['obs_x'].append(graph.obs_x)
-        pieces['obs_anchor'].append(graph.obs_anchor)
-        pieces['fact_source'].append(remap(graph.fact_source))
-        pieces['fact_target'].append(remap(graph.fact_target))
-        pieces['fact_code'].append(graph.fact_code)
-        pieces['fact_step'].append((graph.fact_step + step_offset).astype(np.int32))
-        pieces['fact_present'].append(graph.fact_present)
-        pieces['fact_values'].append(graph.fact_values)
-        pieces['query_key'].append(graph.query_key)
-        pieces['query_category'].append(graph.query_category)
-        for role in ('actor', 'subject', 'context'):
-            pieces['query_' + role].append(remap(graph.arrays['query_' + role]))
-        pieces['query_x'].append(graph.query_x)
-        pieces['query_signals'].append(graph.query_signals)
-        pieces['label_entity'].append(remap(graph.label_entity))
-        pieces['label_step'].append((graph.label_step + step_offset).astype(np.int32))
-        pieces['label_row'].append(graph.label_row)
-        pieces['label_id'].append(graph.label_id)
-    arrays = {name: np.concatenate(values) for name, values in pieces.items() if name != 'kinds'}
-    arrays['kinds'] = np.asarray(kinds, np.int8)
-    result = Graph('joined', keys, int(step_offsets[-1]), **arrays)
-    verify(result, registry)
-    LOG.info('join exit seconds=%.3f graphs=%d entities=%d shared=%d steps=%d facts=%d', time.perf_counter() - started, len(graphs), len(kinds),
-             len(shared), result.steps, len(result.fact_step))
+    entities = {
+        "obs_entity",
+        "fact_source",
+        "fact_target",
+        "query_actor",
+        "query_subject",
+        "query_context",
+        "label_entity",
+    }
+    moments = {"obs_step", "fact_step", "label_step"}
+    references = dict(obs_ref="x_table", fact_ref="value_table")
+    tables = {
+        table: np.r_[0, np.cumsum([len(graph.arrays[table]) for graph in graphs])]
+        for table in references.values()
+    }
+    arrays = {}
+    for name in DENSE:
+        if name in ("kinds", "entity_token", "entity_connected", "step_campaign"):
+            continue
+        example = graphs[0].arrays[name]
+        column = allocate(
+            (sum(len(graph.arrays[name]) for graph in graphs),) + example.shape[1:], example.dtype
+        )
+        offset = 0
+        for member, (graph, table, step_offset, period_offset) in enumerate(
+            zip(graphs, maps, step_offsets, period_offsets)
+        ):
+            values = graph.arrays[name]
+            width = block_rows(values)
+            for start in range(0, len(values), width):
+                part = values[start : start + width]
+                if name in entities:
+                    part = np.where(part >= 0, table[np.maximum(part, 0)], -1)
+                elif name in moments:
+                    part = part + step_offset
+                elif name == "period":
+                    part = part + period_offset
+                elif name in references:
+                    part = np.where(part >= 0, part + tables[references[name]][member], -1)
+                column[offset : offset + len(part)] = part
+                offset += len(part)
+        arrays[name] = column
+    arrays["kinds"] = kinds.astype(np.int32)
+    arrays["entity_token"] = tokens
+    arrays["entity_connected"] = connected
+    arrays["step_campaign"] = np.repeat(
+        np.arange(len(graphs), dtype=np.int32), [graph.steps for graph in graphs]
+    )
+    result = Dense("joined", [], int(step_offsets[-1]), **arrays)
+    verify_dense(result, registry)
+    LOG.info(
+        "join exit seconds=%.3f graphs=%d entities=%d shared=%d steps=%d facts=%d",
+        time.perf_counter() - started,
+        len(graphs),
+        len(kinds),
+        int(connected.sum()),
+        result.steps,
+        len(result.fact_step),
+    )
     return result
 
 
 def layout(graphs, level):
     offsets = np.r_[0, np.cumsum([steps for steps, _, _ in graphs])]
-    if level == 'node':
+    if level in ("node", "path"):
         rows = np.concatenate([row_index for _, row_index, _ in graphs])
-        steps = np.concatenate([(row_steps + offset).astype(np.int32) for (_, _, row_steps), offset in zip(graphs, offsets)])
+        steps = np.concatenate(
+            [(row_steps + offset).astype(np.int32) for (_, _, row_steps), offset in zip(graphs, offsets)]
+        )
         return rows, steps
     rows = np.concatenate([row_index for _, row_index, _ in graphs])
     return rows, np.arange(int(offsets[-1]), dtype=np.int32)

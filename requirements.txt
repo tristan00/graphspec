@@ -1,5 +1,0 @@
--e ../graph_tuning_infra
-numpy>=2.1
-numba>=0.60
-torch>=2.4
-pyarrow>=25

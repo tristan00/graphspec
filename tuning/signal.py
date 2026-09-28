@@ -2,28 +2,33 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .layers import Head, normalization
 from .turns import EndContext, enabled
 
 
 class SignalNet(nn.Module):
-
     def __init__(self, cfg, registry, categories):
         super().__init__()
-        spec = cfg['model']
-        hidden, channels = spec['hidden'], registry.extras['signals']
+        spec = cfg["model"]
+        hidden, channels = spec["hidden"], registry.extras["signals"]
         self.channels = channels
         self.has_turns = enabled(cfg)
         if self.has_turns:
             self.turns = EndContext(hidden)
-        self.topk, self.mix_hops = spec['signal/topk'], spec['signal/hops']
-        self.left, self.right = nn.Parameter(torch.randn(channels, hidden)), nn.Parameter(torch.randn(channels, hidden))
+        self.topk, self.mix_hops = spec["signal/topk"], spec["signal/hops"]
+        self.left, self.right = (
+            nn.Parameter(torch.randn(channels, hidden)),
+            nn.Parameter(torch.randn(channels, hidden)),
+        )
         self.left_map, self.right_map = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
         self.input = nn.Linear(2, hidden)
-        self.convs = nn.ModuleList(nn.Conv2d(hidden, hidden * 2, (1, 3), dilation=(1, 2**i)) for i in range(spec['signal/layers']))
+        self.convs = nn.ModuleList(
+            nn.Conv2d(hidden, hidden * 2, (1, 3), dilation=(1, 2**i)) for i in range(spec["signal/layers"])
+        )
         self.mix = nn.ModuleList(nn.Linear(hidden * (1 + 2 * self.mix_hops), hidden) for _ in self.convs)
-        self.norms = nn.ModuleList(nn.LayerNorm(hidden) for _ in self.convs)
+        self.norms = nn.ModuleList(normalization(hidden) for _ in self.convs)
         self.query = nn.Linear(registry.features, hidden)
-        self.reward = nn.Sequential(nn.Linear(hidden * 2, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+        self.reward = Head(hidden * 2, spec, registry)
 
     def adjacency(self):
         left, right = self.left_map(self.left).tanh(), self.right_map(self.right).tanh()
@@ -34,9 +39,9 @@ class SignalNet(nn.Module):
         return scores / scores.sum(1, keepdim=True).clamp_min(1e-8)
 
     def forward(self, b):
-        raw = b['signal'].clone()
+        raw = b["signal"].clone()
         raw[:, :, 0] = raw[:, :, 0].sign() * raw[:, :, 0].abs().log1p()
-        h = self.input(raw).reshape(b['batch_size'], b['time_steps'], self.channels, -1)
+        h = self.input(raw).reshape(b["batch_size"], b["time_steps"], self.channels, -1)
         adjacency = self.adjacency()
         for i, (conv, mix, norm) in enumerate(zip(self.convs, self.mix, self.norms)):
             channels = h.permute(0, 3, 2, 1)
@@ -46,10 +51,10 @@ class SignalNet(nn.Module):
             for support in (adjacency, adjacency.T):
                 current = temporal
                 for _ in range(self.mix_hops):
-                    current = 0.05 * temporal + 0.95 * torch.einsum('ij,btjh->btih', support, current)
+                    current = 0.05 * temporal + 0.95 * torch.einsum("ij,btjh->btih", support, current)
                     states.append(current)
             h = norm(h + mix(torch.cat(states, -1)))
-        values = h.mean(2).reshape(b['frames'], -1)
+        values = h.mean(2).reshape(b["frames"], -1)
         if self.has_turns:
-            values = self.turns(values, values[b['end_steps'].clamp_min(0)], b['end_gaps'], b['end_mask'])
-        return self.reward(torch.cat((values, self.query(b['query'])), -1)).squeeze(-1)[b['selected']]
+            values = self.turns(values, values[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"])
+        return self.reward(torch.cat((values, self.query(b["query"])), -1)[b["selected"]], b)
