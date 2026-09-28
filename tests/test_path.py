@@ -198,10 +198,20 @@ def test_objective_blends_series_losses_by_their_weights(path_bank):
 
     opened = Bank(path_bank)
     assert objective.weights(opened, None) == {"level": 1.0, "trend": 1.0}
+    assert objective.weights(opened, ["trend=2"]) == {"level": 0.0, "trend": 2.0}
     chosen = objective.weights(opened, ["trend=3", "level=1"])
     result = dict(series=dict(level=dict(val_loss=2.0), trend=dict(val_loss=6.0)))
     assert objective.value(result, dict(objective=chosen)) == pytest.approx(5.0)
     assert objective.value(dict(raw_val_mse=0.5), dict(objective=None)) == 0.5
+    plan = dict(objective=chosen)
+    assert [entry["key"] for entry in objective.measures(plan)][2:4] == [
+        "series/level/skill",
+        "series/level/loss",
+    ]
+    assert objective.columns(plan) == ["series/level/skill", "series/trend/skill"]
+    full = dict(series=dict(level=dict(val_loss=2.0, val_r2=0.5), trend=dict(val_loss=6.0, val_r2=-0.1)))
+    assert objective.scores(full, plan)["series/trend/skill"] == -0.1
+    assert objective.scores(dict(error="x"), plan) == {} and objective.columns(dict(objective=None)) == []
     for given in (["other=1"], ["level=1", "level=2"], ["level=0"], ["level=-1", "trend=2"]):
         with pytest.raises(ValueError, match="objective"):
             objective.weights(opened, given)

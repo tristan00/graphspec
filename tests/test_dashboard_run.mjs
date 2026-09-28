@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {activeSelection,runSummary,currentRunView,botorchView,forestView,tpeView} from '../tuning/web/run-view.js';
+import {setMeasures} from '../tuning/web/parameters.js';
+
+setMeasures([{key:'mse',label:'Validation MSE',short:'MSE',better:'lower'},{key:'r2',label:'Validation R²',short:'R²',better:'higher'}]);
 
 const fixture = () => ({
   recorded_at:200, runner:{status:'running',started:new Date(100000).toISOString()},

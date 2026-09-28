@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {hierarchyParts,hierarchyEntries,evaluateParameter,rankParameters} from '../tuning/web/discovery.js';
-import {resultFields,valueOf} from '../tuning/web/parameters.js';
+import {resultFields,valueOf,setMeasures} from '../tuning/web/parameters.js';
+
+setMeasures([{key:'mse',label:'Validation MSE',short:'MSE',better:'lower'},{key:'r2',label:'Validation R²',short:'R²',better:'higher'}]);
 
 const rows = Array.from({length:120},(_,i)=>({id:`trial-${i}`,x:i,y:2+i/10}));
 

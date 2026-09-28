@@ -1,4 +1,4 @@
-import {METRICS, valueOf, fieldName, displayValue, valueKey, compareValues, matchesFilter, groupedResults} from '/parameters.js';
+import {METRICS, valueOf, fieldName, displayValue, valueKey, compareValues, matchesFilter, groupedResults, isMeasure, higherIsBetter} from '/parameters.js';
 import {hierarchyEntries} from '/discovery.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -60,11 +60,11 @@ export function analysisResults(rows,state) {
   if (!state.x) return '<div class="analysis-empty"><h2>What do you want to investigate?</h2><p>Choose any saved parameter in <strong>Plot by</strong> to graph its results and group trials by its values. Choose Trial order to see the search over time.</p></div>';
   const groups = groupedResults(rows,state.x,state.metric);
   const metric = metricName(state.metric);
-  return `<div class="analysis-heading"><h2>${esc(metric)} by ${esc(fieldName(state.x))}</h2><p>${rows.length} matching trials · values come directly from saved configurations and results</p></div>${plot(rows,state)}<div class="group-heading"><h3>Results grouped by ${esc(fieldName(state.x))}</h3><button class="button" data-action="export-groups"${rows.length ? '' : ' disabled'}>Export grouped CSV</button></div><p class="analysis-note">Each row is one exact value. Counts include unsuccessful trials; score summaries use recorded ${['mse','r2'].includes(state.metric) ? 'completed' : ''} results. Other parameters may differ.</p><div class="table-wrap grouped-results"><table aria-label="Results by parameter"><thead><tr><th scope="col">${esc(fieldName(state.x))}</th><th scope="col">Trials</th><th scope="col">With measure</th><th scope="col">${state.metric === 'r2' ? 'Maximum' : 'Minimum'}</th><th scope="col">Median</th><th scope="col">Inspect</th></tr></thead><tbody>${groups.map(group => `<tr><td class="parameter-value">${esc(displayValue(group.value))}</td><td>${group.count}</td><td>${group.scored}</td><td>${score(group.best)}</td><td>${score(group.median)}</td><td><button class="text-button" data-group-value="${esc(group.key)}">View ${group.count} trials</button></td></tr>`).join('') || '<tr><td colspan="6">No matching trials. Change or reset the filters.</td></tr>'}</tbody></table></div>`;
+  return `<div class="analysis-heading"><h2>${esc(metric)} by ${esc(fieldName(state.x))}</h2><p>${rows.length} matching trials · values come directly from saved configurations and results</p></div>${plot(rows,state)}<div class="group-heading"><h3>Results grouped by ${esc(fieldName(state.x))}</h3><button class="button" data-action="export-groups"${rows.length ? '' : ' disabled'}>Export grouped CSV</button></div><p class="analysis-note">Each row is one exact value. Counts include unsuccessful trials; score summaries use recorded ${isMeasure(state.metric) ? 'completed' : ''} results. Other parameters may differ.</p><div class="table-wrap grouped-results"><table aria-label="Results by parameter"><thead><tr><th scope="col">${esc(fieldName(state.x))}</th><th scope="col">Trials</th><th scope="col">With measure</th><th scope="col">${higherIsBetter(state.metric) ? 'Maximum' : 'Minimum'}</th><th scope="col">Median</th><th scope="col">Inspect</th></tr></thead><tbody>${groups.map(group => `<tr><td class="parameter-value">${esc(displayValue(group.value))}</td><td>${group.count}</td><td>${group.scored}</td><td>${score(group.best)}</td><td>${score(group.median)}</td><td><button class="text-button" data-group-value="${esc(group.key)}">View ${group.count} trials</button></td></tr>`).join('') || '<tr><td colspan="6">No matching trials. Change or reset the filters.</td></tr>'}</tbody></table></div>`;
 }
 
 function plot(rows,state) {
-  const measured = rows.filter(trial => numeric(valueOf(trial,state.metric)) && (!['mse','r2'].includes(state.metric) || trial.status === 'complete'));
+  const measured = rows.filter(trial => numeric(valueOf(trial,state.metric)) && (!isMeasure(state.metric) || trial.status === 'complete'));
   const trials = measured.filter(trial => valueOf(trial,state.x) !== undefined);
   const missing = measured.length-trials.length;
   const note = `${trials.length} plotted · ${rows.length-measured.length} without a recorded measure · ${missing} without this parameter. Select a point to inspect; arrow keys move between trials.`;
@@ -77,7 +77,7 @@ function plot(rows,state) {
   const left = 74, right = width-28, top = 24, bottom = 250;
   let low = Math.min(...trials.map(trial => valueOf(trial,state.metric))), high = Math.max(...trials.map(trial => valueOf(trial,state.metric)));
   const pad = (high-low || Math.max(Math.abs(high)*.1,.01))*.1;
-  low = state.metric === 'r2' ? low-pad : Math.max(0,low-pad);
+  low = higherIsBetter(state.metric) ? low-pad : Math.max(0,low-pad);
   high += pad;
   const minX = continuous ? Math.min(...values) : 0, maxX = continuous ? Math.max(...values) : categories.length-1;
   const x = value => minX === maxX ? (left+right)/2 : left+((continuous ? value : positions.get(valueKey(value)))-minX)/(maxX-minX)*(right-left);
@@ -86,10 +86,10 @@ function plot(rows,state) {
   const ticks = continuous ? categories.length <= 10 ? categories : Array.from({length:6},(_,index) => minX+(maxX-minX)*index/5) : categories;
   const labels = ticks.map(value => `<text x="${x(value)}" y="${bottom+24}" text-anchor="middle"><title>${esc(displayValue(value))}</title>${esc(continuous ? score(value) : displayValue(value).length>17 ? displayValue(value).slice(0,16)+'…' : displayValue(value))}</text>`).join('');
   let path = '';
-  if (state.x === 'number' && ['mse','r2'].includes(state.metric)) {
-    let best = state.metric === 'r2' ? -Infinity : Infinity;
+  if (state.x === 'number' && isMeasure(state.metric)) {
+    let best = higherIsBetter(state.metric) ? -Infinity : Infinity;
     for (const trial of [...trials].sort((a,b) => a.number-b.number)) {
-      best = state.metric === 'r2' ? Math.max(best,valueOf(trial,state.metric)) : Math.min(best,valueOf(trial,state.metric));
+      best = higherIsBetter(state.metric) ? Math.max(best,valueOf(trial,state.metric)) : Math.min(best,valueOf(trial,state.metric));
       path += path ? `H${x(trial.number)}V${y(best)}` : `M${x(trial.number)},${y(best)}`;
     }
   }

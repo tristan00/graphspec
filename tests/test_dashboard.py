@@ -160,7 +160,11 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(Dashboard(empty).runs({})["runs"], [])
 
     def test_statuses_metrics_and_no_invented_scores(self):
-        rows = self.dashboard.snapshot({"id": "search-alpha"})["trials"]
+        snapshot = self.dashboard.snapshot({"id": "search-alpha"})
+        rows = snapshot["trials"]
+        self.assertEqual([entry["key"] for entry in snapshot["measures"]], ["mse", "r2"])
+        self.assertEqual(snapshot["columns"], [])
+        self.assertEqual(rows[0]["scores"], {})
         self.assertEqual([row["status"] for row in rows], ["complete"] * 5 + ["timeout", "failed", "pending"])
         self.assertEqual(rows[0]["r2"], -0.5)
         self.assertEqual(rows[3]["mse"], 0)

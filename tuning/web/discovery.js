@@ -1,4 +1,4 @@
-import {parameterFields,valueOf,valueKey,RESULTS} from './parameters.js';
+import {parameterFields,valueOf,valueKey,RESULTS,isMeasure} from './parameters.js';
 
 export function hierarchyParts(field) {
   return field.startsWith('config/') ? field.slice(7).split(/[/:]/) : ['Results',...(field.startsWith('result/') ? field.slice(7).split(/[/:]/) : [field])];
@@ -119,7 +119,7 @@ export function evaluateParameter(rows,categoricalTarget=false) {
 export function rankParameters(trials,metric) {
   const started = performance.now();
   if (!Object.hasOwn(RESULTS,metric) && !/^(config|result)\//.test(metric)) throw new Error('Choose a supported metric.');
-  const measured = trials.filter(trial=>valueOf(trial,metric) !== undefined && valueOf(trial,metric) !== null && (!['mse','r2'].includes(metric) || trial.status === 'complete'));
+  const measured = trials.filter(trial=>valueOf(trial,metric) !== undefined && valueOf(trial,metric) !== null && (!isMeasure(metric) || trial.status === 'complete'));
   const categorical = !measured.every(trial=>typeof valueOf(trial,metric) === 'number' && Number.isFinite(valueOf(trial,metric)));
   const targetCounts = new Map();
   measured.forEach(trial=>{const key=valueKey(valueOf(trial,metric));targetCounts.set(key,(targetCounts.get(key) || 0)+1);});

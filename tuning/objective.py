@@ -1,5 +1,7 @@
 import math
 
+SERIES = "series/%s/%s"
+
 
 def weights(bank, given):
     if bank.level != "path":
@@ -8,11 +10,13 @@ def weights(bank, given):
         return None
     if not given:
         return {name: 1.0 for name in bank.series_names}
-    parsed = {}
+    parsed = dict.fromkeys(bank.series_names, 0.0)
+    named = set()
     for item in given:
         name, _, share = item.partition("=")
-        if name in parsed or name not in bank.series_names:
+        if name in named or name not in parsed:
             raise ValueError("objective names each series of %s at most once" % ", ".join(bank.series_names))
+        named.add(name)
         parsed[name] = float(share)
     if (
         any(not math.isfinite(share) or share < 0 for share in parsed.values())
@@ -28,3 +32,42 @@ def value(result, plan):
         return result["raw_val_mse"]
     series = result["series"]
     return sum(share * series[name]["val_loss"] for name, share in chosen.items()) / sum(chosen.values())
+
+
+def measures(plan):
+    if plan["objective"] is None:
+        return [
+            dict(key="mse", label="Validation MSE", short="MSE", better="lower"),
+            dict(key="r2", label="Validation R²", short="R²", better="higher"),
+        ]
+    found = [
+        dict(key="mse", label="Loss, weighted mean of series", short="Loss", better="lower"),
+        dict(key="r2", label="Skill vs persistence, mean of series", short="Skill", better="higher"),
+    ]
+    for name in plan["objective"]:
+        found.append(
+            dict(
+                key=SERIES % (name, "skill"),
+                label=name + " skill vs persistence",
+                short=name + " skill",
+                better="higher",
+            )
+        )
+        found.append(
+            dict(key=SERIES % (name, "loss"), label=name + " loss", short=name + " loss", better="lower")
+        )
+    return found
+
+
+def columns(plan):
+    return [] if plan["objective"] is None else [SERIES % (name, "skill") for name in plan["objective"]]
+
+
+def scores(result, plan):
+    if plan["objective"] is None or "series" not in result:
+        return {}
+    return {
+        SERIES % (name, part): result["series"][name][field]
+        for name in plan["objective"]
+        for part, field in (("skill", "val_r2"), ("loss", "val_loss"))
+    }

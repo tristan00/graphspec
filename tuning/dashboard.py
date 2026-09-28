@@ -76,6 +76,7 @@ class Dashboard:
                     selector=trial.item["selector"],
                     mse=objective.value(outcome, run.plan) if trial.status == Status.COMPLETE else None,
                     r2=outcome.get("val_r2"),
+                    scores=objective.scores(outcome, run.plan) if trial.status == Status.COMPLETE else {},
                     seconds=record.get("seconds"),
                     parameters=outcome.get("parameters"),
                     started=record.get("started") if not trial.running else trial.running["started"],
@@ -92,7 +93,9 @@ class Dashboard:
                             "error",
                             "traceback",
                             "raw_val_mse",
+                            "val_loss",
                             "val_r2",
+                            "series",
                             "parameters",
                         )
                     },
@@ -103,6 +106,8 @@ class Dashboard:
         plan = run.plan
         return dict(
             id=query["id"],
+            measures=objective.measures(plan),
+            columns=objective.columns(plan),
             path=str(run.directory),
             recorded_at=time.time(),
             runner=run.runner(),

@@ -1,4 +1,4 @@
-import {RESULTS, METRICS, valueOf, fieldName, parameterFields, resultFields, displayValue, groupedResults} from '/parameters.js';
+import {RESULTS, METRICS, MEASURES, setMeasures, isMeasure, higherIsBetter, valueOf, fieldName, parameterFields, resultFields, displayValue, groupedResults} from '/parameters.js';
 import {analysisView, analysisResults, filterRows, sortedRows, fieldPicker, pickerOptions, pickerState, resetPickers, filterToolbar} from '/explore.js';
 import {discoveryView, discoveryResults} from '/discover-view.js';
 import {currentRunView, botorchView, forestView, tpeView} from '/run-view.js';
@@ -30,6 +30,7 @@ let poll = null;
 let toastTimer = null;
 let discovery = {key:'',result:null,busy:false,error:'',query:'',positive:true,limit:30,at:''};
 let rankingWorker = null;
+let defaultsApplied = '';
 
 function readLocation() {
   const params = new URLSearchParams(location.hash.slice(1));
@@ -38,13 +39,13 @@ function readLocation() {
   state.proposal = params.get('proposal') || '';
   state.query = params.get('q') || '';
   state.status = ['all','complete','running','pending','failed','timeout','interrupted'].includes(params.get('status')) ? params.get('status') : 'all';
-  state.sort = Object.hasOwn(RESULTS,params.get('sort')) || /^(config|result)\//.test(params.get('sort') || '') ? params.get('sort') : 'number';
+  state.sort = Object.hasOwn(RESULTS,params.get('sort')) || /^(config|result|series)\//.test(params.get('sort') || '') || ['mse','r2'].includes(params.get('sort')) ? params.get('sort') : 'number';
   state.direction = params.get('dir') === 'asc' ? 'asc' : 'desc';
   state.page = Math.max(1, Math.min(1000000, Number.parseInt(params.get('page'), 10) || 1));
-  state.metric = Object.hasOwn(RESULTS,params.get('metric')) || /^(config|result)\//.test(params.get('metric') || '') ? params.get('metric') : 'mse';
+  state.metric = Object.hasOwn(RESULTS,params.get('metric')) || /^(config|result|series)\//.test(params.get('metric') || '') || params.get('metric') === 'r2' ? params.get('metric') : 'mse';
   state.x = params.get('x') || '';
   state.target = params.get('target') || '';
-  state.columns = [...new Set(params.getAll('column'))].filter(field => /^(config|result)\//.test(field));
+  state.columns = [...new Set(params.getAll('column'))].filter(field => /^(config|result|series)\//.test(field));
   state.conditions = params.getAll('where').flatMap(text => {
     try {
       const condition = JSON.parse(text);
@@ -143,6 +144,11 @@ async function refresh(includeCatalog = false) {
       const result = await api('/api/run?' + new URLSearchParams({id:identity}), controller.signal);
       if (controller !== request || identity !== state.run) return;
       data = result;
+      setMeasures(data.measures);
+      if (defaultsApplied !== identity) {
+        defaultsApplied = identity;
+        if (!state.columns.length) state.columns = [...data.columns];
+      }
       if (OPTIMIZER_VIEWS.includes(state.view)) {
         const optimizer = await api('/api/optimizer?' + new URLSearchParams({id:identity}), controller.signal);
         if (controller !== request || identity !== state.run) return;
@@ -178,6 +184,9 @@ function switchRun(identity, push = true) {
   state.query = '';
   state.status = 'all';
   state.conditions = [];
+  state.columns = [];
+  if (!['number','mse','r2'].includes(state.sort)) state.sort = 'number';
+  if (!['mse','r2'].includes(state.metric)) state.metric = 'mse';
   filterDraft = {field:'',op:'eq',value:''};
   resetPickers();
   state.page = 1;
@@ -232,7 +241,7 @@ function rankParameters() {
     rankingWorker = worker;
     worker.onmessage = event=>finish(worker,event.data);
     worker.onerror = ()=>finish(worker,{error:'Parameter ranking could not finish.'});
-    worker.postMessage({trials:filterRows(data.trials,state),metric:state.target});
+    worker.postMessage({trials:filterRows(data.trials,state),metric:state.target,measures:MEASURES});
   } catch (error) {
     finish(rankingWorker,{error:error.message});
   }
@@ -269,7 +278,7 @@ function trialResults() {
 function trialTable(rows, sortable) {
   const columns = ['number','status','selector',...state.columns,'mse','r2','seconds','parameters'];
   const heading = key => `<th scope="col" aria-sort="${state.sort === key ? state.direction === 'asc' ? 'ascending' : 'descending' : 'none'}"><button class="sort-button${state.sort === key ? ' active' : ''}" data-sort="${esc(key)}">${esc(fieldName(key))}${state.sort === key ? state.direction === 'asc' ? ' ↑' : ' ↓' : ' ↕'}</button></th>`;
-  const cell = (trial,key) => key === 'number' ? trialButton(trial) : key === 'status' ? badge(trial.status) : key === 'selector' ? esc(SELECTORS[trial.selector] || label(trial.selector)) : key === 'seconds' ? duration(trial.seconds) : key === 'parameters' ? number(trial.parameters) : key === 'mse' || key === 'r2' ? score(trial[key]) : esc(displayValue(valueOf(trial,key)));
+  const cell = (trial,key) => key === 'number' ? trialButton(trial) : key === 'status' ? badge(trial.status) : key === 'selector' ? esc(SELECTORS[trial.selector] || label(trial.selector)) : key === 'seconds' ? duration(trial.seconds) : key === 'parameters' ? number(trial.parameters) : isMeasure(key) ? score(valueOf(trial,key)) : esc(displayValue(valueOf(trial,key)));
   return `<div class="table-wrap"><table aria-label="All matching trials"><thead><tr><th scope="col">Compare</th>${columns.map(heading).join('')}</tr></thead><tbody>${rows.map(trial => `<tr><td><input type="checkbox" data-select="${esc(trial.id)}" aria-label="Compare trial ${trial.number}"${state.selected.includes(trial.id) ? ' checked' : ''}></td>${columns.map(key => `<td class="${key.startsWith('config/') ? 'parameter-value' : 'numeric'}" data-column="${esc(key)}">${cell(trial,key)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -297,7 +306,7 @@ function compareView() {
     return `<tr${different ? ' class="different"' : ''}><th scope="row">${esc(key)}</th>${values.map(value => `<td>${esc(value ?? 'Not used')}</td>`).join('')}</tr>`;
   }).join('');
   const row = (title, fn) => `<tr><th scope="row">${title}</th>${trials.map(trial => `<td>${fn(trial)}</td>`).join('')}</tr>`;
-  return `<section class="panel"><div class="panel-head"><div><h2>${trials.length} trial${trials.length === 1 ? '' : 's'}, side by side</h2><p>Changed parameters are highlighted. Missing settings are marked “Not used”.</p></div><button class="button" data-view="trials">Add trials</button></div><div class="filters"><label class="live-switch small"><input type="checkbox" id="differences"${state.differences ? ' checked' : ''}> Only differing parameters</label><button class="button quiet" data-action="clear-selection">Clear selection</button><button class="button" data-action="export-configs">Export configurations</button></div><div class="table-wrap"><table class="compare-table" aria-label="Trial comparison"><thead><tr><th scope="col">Result / parameter</th>${trials.map(trial => `<th scope="col"><div class="compare-heading">${trialButton(trial)}<button class="button quiet" data-remove="${esc(trial.id)}" aria-label="Remove trial ${trial.number}">×</button></div></th>`).join('')}</tr></thead><tbody>${row('Status', t => badge(t.status))}${row('Validation MSE ↓', t => score(t.mse))}${row('Validation R² ↑', t => score(t.r2))}${row('Duration', t => duration(t.seconds))}${row('Parameters', t => number(t.parameters))}${row('Chosen by', t => esc(SELECTORS[t.selector] || label(t.selector)))}<tr class="group"><td colspan="${trials.length+1}">Configuration · ${visible} ${state.differences ? 'differing ' : ''}parameters</td></tr>${configRows || `<tr><td colspan="${trials.length+1}">No differing parameters in this selection.</td></tr>`}</tbody></table></div></section>`;
+  return `<section class="panel"><div class="panel-head"><div><h2>${trials.length} trial${trials.length === 1 ? '' : 's'}, side by side</h2><p>Changed parameters are highlighted. Missing settings are marked “Not used”.</p></div><button class="button" data-view="trials">Add trials</button></div><div class="filters"><label class="live-switch small"><input type="checkbox" id="differences"${state.differences ? ' checked' : ''}> Only differing parameters</label><button class="button quiet" data-action="clear-selection">Clear selection</button><button class="button" data-action="export-configs">Export configurations</button></div><div class="table-wrap"><table class="compare-table" aria-label="Trial comparison"><thead><tr><th scope="col">Result / parameter</th>${trials.map(trial => `<th scope="col"><div class="compare-heading">${trialButton(trial)}<button class="button quiet" data-remove="${esc(trial.id)}" aria-label="Remove trial ${trial.number}">×</button></div></th>`).join('')}</tr></thead><tbody>${row('Status', t => badge(t.status))}${MEASURES.map(measure => row(esc(METRICS[measure.key]), t => score(valueOf(t,measure.key)))).join('')}${row('Duration', t => duration(t.seconds))}${row('Parameters', t => number(t.parameters))}${row('Chosen by', t => esc(SELECTORS[t.selector] || label(t.selector)))}<tr class="group"><td colspan="${trials.length+1}">Configuration · ${visible} ${state.differences ? 'differing ' : ''}parameters</td></tr>${configRows || `<tr><td colspan="${trials.length+1}">No differing parameters in this selection.</td></tr>`}</tbody></table></div></section>`;
 }
 
 function render() {
@@ -405,7 +414,7 @@ function renderDetail() {
   } else {
     const timings = result?.fit_phases || detailData.progress?.phase_seconds || {};
     const max = Math.max(1,...Object.values(timings).filter(finite));
-    body = `<div class="run-meta">${badge(detailData.status)}<span>${esc(detailData.id)}</span></div>${result?.error ? `<div class="notice">${esc(result.error)}</div>` : ''}<dl class="result-lines">${fields({'Validation MSE ↓':score(trial.mse),'Validation R² ↑':score(trial.r2),'Trial duration':duration(trial.seconds)})}</dl><dl class="settings-grid">${fields({'Chosen by':SELECTORS[trial.selector] || label(trial.selector),'Time limit':duration(detailData.config.max_seconds),'Parameters':number(trial.parameters),'Epochs':result?.epochs === undefined ? `${detailData.progress?.epoch_seconds?.length || 0} / ${trial.config.epochs}` : `${result.epochs} / ${result.requested_epochs}`,'Optimizer updates':number(result?.optimizer_updates),'Peak GPU memory':finite(result?.peak_cuda_bytes) ? (result.peak_cuda_bytes/1073741824).toFixed(2)+' GiB' : 'Not recorded','Training rows':number(result?.train_unique_rows),'Holdout rows':number(result?.holdout_rows)})}</dl>${Object.keys(timings).length ? `<hr class="subtle-divider"><h3>Where the time went</h3>${Object.entries(timings).filter(([,value]) => finite(value)).map(([name,value]) => `<div class="timing-row"><span>${esc(label(name))}</span><div class="family-bar"><span style="width:${value/max*100}%"></span></div><span>${duration(value)}</span></div>`).join('')}` : '<p class="small muted">Phase timings have not been recorded yet.</p>'}${result?.epoch_losses?.length ? `<hr class="subtle-divider"><h3>Training loss by epoch</h3><div class="loss-list">${result.epoch_losses.map((loss,i) => `<span>Epoch ${i+1} · ${score(loss)}</span>`).join('')}</div><p class="small muted section-gap">Training losses are separate from the final holdout metrics.</p>` : ''}<details id="trial-record"><summary>Saved trial record</summary><pre>${esc(JSON.stringify(detailData.record,null,2))}</pre></details>`;
+    body = `<div class="run-meta">${badge(detailData.status)}<span>${esc(detailData.id)}</span></div>${result?.error ? `<div class="notice">${esc(result.error)}</div>` : ''}<dl class="result-lines">${fields({...Object.fromEntries(MEASURES.map(measure => [METRICS[measure.key],score(valueOf(trial,measure.key))])),'Trial duration':duration(trial.seconds)})}</dl><dl class="settings-grid">${fields({'Chosen by':SELECTORS[trial.selector] || label(trial.selector),'Time limit':duration(detailData.config.max_seconds),'Parameters':number(trial.parameters),'Epochs':result?.epochs === undefined ? `${detailData.progress?.epoch_seconds?.length || 0} / ${trial.config.epochs}` : `${result.epochs} / ${result.requested_epochs}`,'Optimizer updates':number(result?.optimizer_updates),'Peak GPU memory':finite(result?.peak_cuda_bytes) ? (result.peak_cuda_bytes/1073741824).toFixed(2)+' GiB' : 'Not recorded','Training rows':number(result?.train_unique_rows),'Holdout rows':number(result?.holdout_rows)})}</dl>${Object.keys(timings).length ? `<hr class="subtle-divider"><h3>Where the time went</h3>${Object.entries(timings).filter(([,value]) => finite(value)).map(([name,value]) => `<div class="timing-row"><span>${esc(label(name))}</span><div class="family-bar"><span style="width:${value/max*100}%"></span></div><span>${duration(value)}</span></div>`).join('')}` : '<p class="small muted">Phase timings have not been recorded yet.</p>'}${result?.epoch_losses?.length ? `<hr class="subtle-divider"><h3>Training loss by epoch</h3><div class="loss-list">${result.epoch_losses.map((loss,i) => `<span>Epoch ${i+1} · ${score(loss)}</span>`).join('')}</div><p class="small muted section-gap">Training losses are separate from the final holdout metrics.</p>` : ''}<details id="trial-record"><summary>Saved trial record</summary><pre>${esc(JSON.stringify(detailData.record,null,2))}</pre></details>`;
   }
   $('#detail-body').innerHTML = `<div class="detail-tabs" role="tablist" aria-label="Trial information">${['summary','config','logs'].map(tab => `<button id="detail-tab-${tab}" role="tab" aria-selected="${detailTab === tab}" aria-controls="detail-panel" tabindex="${detailTab === tab ? 0 : -1}" data-detail-tab="${tab}">${{summary:'Summary',config:'Configuration',logs:'Worker log'}[tab]}</button>`).join('')}</div><div id="detail-panel" class="detail-content" role="tabpanel" aria-labelledby="detail-tab-${detailTab}" tabindex="0">${body}</div>`;
   $('#detail').scrollTop = scroll;
@@ -431,7 +440,7 @@ function download(name, content, type) {
 
 function exportCsv() {
   const keys = ['number','id','status',...state.columns,'selector','mse','r2','seconds','parameters','config'];
-  download(`${state.run}-trials.csv`,[keys.map(csvCell).join(','),...filtered().map(trial => keys.map(key => csvCell(/^(config|result)\//.test(key) ? valueOf(trial,key) : trial[key])).join(','))].join('\r\n'),'text/csv;charset=utf-8');
+  download(`${state.run}-trials.csv`,[keys.map(csvCell).join(','),...filtered().map(trial => keys.map(key => csvCell(/^(config|result)\//.test(key) || isMeasure(key) ? valueOf(trial,key) : trial[key])).join(','))].join('\r\n'),'text/csv;charset=utf-8');
 }
 
 function csvCell(value) {
@@ -442,7 +451,7 @@ function csvCell(value) {
 
 function exportGroups() {
   const groups = groupedResults(filterRows(data.trials,state),state.x,state.metric);
-  const rows = [[fieldName(state.x),'trials','with_measure',state.metric === 'r2' ? 'maximum' : 'minimum','median'],...groups.map(group => [displayValue(group.value),group.count,group.scored,group.best,group.median])];
+  const rows = [[fieldName(state.x),'trials','with_measure',higherIsBetter(state.metric) ? 'maximum' : 'minimum','median'],...groups.map(group => [displayValue(group.value),group.count,group.scored,group.best,group.median])];
   download(`${state.run}-grouped.csv`,rows.map(row => row.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');
 }
 
@@ -524,7 +533,7 @@ document.addEventListener('click',event => {
   if (button.id === 'sort-direction') { state.direction = state.direction === 'asc' ? 'desc' : 'asc'; state.page = 1; render(); }
   if (button.dataset.sort) {
     if (state.sort === button.dataset.sort) state.direction = state.direction === 'asc' ? 'desc' : 'asc';
-    else { state.sort = button.dataset.sort; state.direction = state.sort === 'r2' ? 'desc' : 'asc'; }
+    else { state.sort = button.dataset.sort; state.direction = higherIsBetter(state.sort) ? 'desc' : 'asc'; }
     state.page = 1;
     render();
     [...document.querySelectorAll('[data-sort]')].find(element => element.dataset.sort === state.sort)?.focus({preventScroll:true});
