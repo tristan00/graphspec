@@ -236,11 +236,11 @@ def sweep(trash):
     LOG.debug("sweep exit trash=%s removed=%d seconds=%.3f", trash, removed, time.perf_counter() - started)
 
 
-def prune(root, limit, keep, stamp):
+def prune(root, limit, keep, stamp, pattern="*"):
     started = time.perf_counter()
     root = Path(root)
     trash = root.parent / "trash"
-    folders = [folder for folder in root.iterdir() if folder.is_dir() and folder != keep]
+    folders = [folder for folder in root.glob(pattern) if folder.is_dir() and folder != keep]
     unstamped = [folder for folder in folders if not (folder / stamp).exists()]
     if unstamped:
         raise ValueError(

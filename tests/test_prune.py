@@ -51,3 +51,14 @@ def test_prune_rejects_unstamped_folders(tmp_path):
     (root / "stray").mkdir()
     with pytest.raises(ValueError, match="stray"):
         files.prune(root, 0, keep, "variant.json")
+
+
+def test_prune_budget_spans_every_bank_and_evicts_the_least_recent_first(tmp_path):
+    banks = tmp_path / "banks"
+    stale = variant(banks / "first" / "variants", "stale", 2, 100, 500)
+    recent = variant(banks / "second" / "variants", "recent", 2, 100, 50)
+    keep = variant(banks / "first" / "variants", "keep", 1, 100, 0)
+    assert files.prune(banks, 500, keep, "variant.json", "*/variants/*") == (304, 1)
+    assert not stale.exists() and recent.exists() and keep.exists()
+    files.SWEEPERS[tmp_path / "trash"].join(10)
+    assert list((tmp_path / "trash").iterdir()) == []
