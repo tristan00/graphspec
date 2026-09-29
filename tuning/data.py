@@ -27,7 +27,7 @@ from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.resources import GraphLimits
-from graphspec.transform import SEED, SOURCE, materialize
+from graphspec.transform import SEED, materialize
 from graphspec.truth import Facts, Graph, admitted
 from graphspec.view import STATEMENT, Looking, sequences, view
 
@@ -529,7 +529,6 @@ class Deriver(Bank):
         result = dict(
             spec=specs.materialized(spec),
             groups=list(chosen),
-            source=SOURCE,
             device=self.device,
             splits=cfg["splits"],
         )

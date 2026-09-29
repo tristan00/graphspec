@@ -1,17 +1,13 @@
 import logging
 import time
-from pathlib import Path
 
 import numpy as np
-
-from graphspec.infra.sources import digest
 
 from . import operators, representations, sets
 from .infra.timing import measure, timed
 from .truth import conforms, referring, unobserved, unresolved, verify_dense
 
 LOG = logging.getLogger(__name__)
-SOURCE = digest((Path(__file__).parent,))
 SEED = 0x6772617068
 STAGES = (
     ("periods", operators.periods),

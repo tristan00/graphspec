@@ -69,7 +69,7 @@ The markers `non_relation` and `period_context` take codes above every relation.
 - `canonical` refuses a missing active parameter, an inactive or unknown one, and an out-of-range value.
 - `digest` is the SHA-256 of the sorted JSON.
 - Every hashed or sampled choice in the stages and representations uses one fixed seed, `transform.SEED`, so changing one parameter never reshuffles the random choices of another.
-- `materialized` drops the parameters read only when packing: `time/history`, `time/context`, `neighbors/order` and `neighbors/decay`. Its digest, with the groups and the `graphspec` and `graphspec.infra` sources, names a cached variant.
+- `materialized` drops the parameters read only when packing: `time/history`, `time/context`, `neighbors/order` and `neighbors/decay`. Its digest, with the groups, the device and what the splits may see, names a cached variant inside the folder of its bank, which is keyed by the fingerprint of the manifest and the digest of the sources of `graphspec` and `tuning`.
 
 **Stages.** `transform.derive` applies seven stages in a fixed order. Each stage reads the graph the stage before it produced. A stage that returns its input unchanged is not verified again, and a relation whose edge filters sit at their identity values is left untouched.
 

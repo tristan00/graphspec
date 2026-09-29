@@ -113,6 +113,8 @@ def test_the_key_of_a_variant_holds_the_device(bank):
     central, graphic = Deriver(bank, "cpu", RESIDENT), Deriver(bank, "cuda", RESIDENT)
     left, right = central.identity(cfg), graphic.identity(cfg)
     assert {name for name in left if left[name] != right[name]} == {"device"}
+    assert sorted(left) == ["device", "groups", "spec", "splits"]
+    assert central.variant(cfg)[0].parent == central.cache / "variants"
     assert central.variant(cfg)[0] != graphic.variant(cfg)[0]
     assert central.variant(cfg)[0] == Deriver(bank, "cpu", RESIDENT).variant(cfg)[0]
     with pytest.raises(ValueError, match="the device of graph limits is None"):
