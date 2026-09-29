@@ -88,7 +88,7 @@ def keys(name, facts):
     return () if name is None else tuple(TIES.named(name).keys(facts))
 
 
-def untied(graph, label, ties, owner, since, facts):
+def untied(graph, named, ties, owner, since, facts):
     started = time.perf_counter()
     held = keys(ties, facts)
     columns = [np.asarray(owner, np.int64)] + [np.asarray(key, np.int64) for key in held]
@@ -98,25 +98,19 @@ def untied(graph, label, ties, owner, since, facts):
     for column in columns:
         same &= column[order][1:] == column[order][:-1]
     if same.any():
-        moment = np.asarray(since, np.int64)[order][1:][same][0]
+        row = int(order[1:][same][0])
         raise ValueError(
-            "two %s of graph %s hold from %s and %s"
+            "two facts about %s of graph %s hold from %s and %s"
             % (
-                label,
+                named(row),
                 graph,
-                shown(moment),
+                shown(np.asarray(since, np.int64)[row]),
                 "the schema states no rule for ties"
                 if ties is None
                 else "the rule %s for ties leaves them unordered" % ties,
             )
         )
-    LOG.debug(
-        "untied exit graph=%s label=%s rows=%d seconds=%.4f",
-        graph,
-        label,
-        len(order),
-        time.perf_counter() - started,
-    )
+    LOG.debug("untied exit graph=%s rows=%d seconds=%.4f", graph, len(order), time.perf_counter() - started)
 
 
 @timed("clock.filled")
@@ -159,8 +153,12 @@ def visible(since, until, known, replaced, permitted, moments, looking):
         raise ValueError("the times a view shows, and the times of looking, never decrease")
     if np.any(looking < moments):
         raise ValueError("a view shows no time later than the time of looking at it")
-    begun = np.maximum(np.searchsorted(moments, since, "left"), np.searchsorted(looking, known, "left"))
-    ended = np.minimum(np.searchsorted(moments, until, "left"), np.searchsorted(looking, replaced, "left"))
+    since, until = np.asarray(since, np.int64), np.asarray(until, np.int64)
+    first = np.searchsorted(moments, since, "left")
+    begun = np.maximum(first, np.searchsorted(looking, known, "left"))
+    held = np.searchsorted(moments, until, "left")
+    held = np.where(until == since + 1, np.minimum(first + 1, len(moments)), held)
+    ended = np.minimum(held, np.searchsorted(looking, replaced, "left"))
     ended = np.maximum(np.where(permitted, ended, begun), begun)
     LOG.debug(
         "visible exit facts=%d moments=%d seconds=%.4f",

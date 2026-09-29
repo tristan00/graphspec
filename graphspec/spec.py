@@ -370,10 +370,9 @@ def space(registry, groups):
     steps = offered(registry)
     if not steps:
         raise ValueError("no choice of steps serves the graphs of the bank %s" % registry.name)
-    parameters += [
-        choice("time/steps", steps, steps[0]),
-        choice("time/several", SEVERAL.names(), SEVERAL.names()[-1]),
-    ]
+    parameters.append(choice("time/steps", steps, steps[0]))
+    if extras["several"]:
+        parameters.append(choice("time/several", SEVERAL.names(), None))
     parameters += [
         choice(sets.PARAMETER % kind, sets.offered(registry, kind), None) for kind in registry.schema.sets
     ]

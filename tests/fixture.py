@@ -22,7 +22,7 @@ UNSPLIT = "spread_indices"
 ROW_KEYS = dict(decision="key", turn="grouping")
 QUERY_COLUMNS = dict(key="key", period="grouping")
 UNIT = "step"
-VIEW = {"time/steps": "tasks", "time/several": "last", "nodes/referenced": "keep"}
+VIEW = {"time/steps": "tasks", "nodes/referenced": "keep"}
 MOMENT = "step"
 LEVELS = dict(query="task", node="node", graph="graph", path="path")
 KINDS = ("events/kinds", "neighbors/kinds")

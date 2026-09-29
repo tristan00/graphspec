@@ -301,10 +301,14 @@ class Bank:
     def viewed(self, cfg):
         spec = self.stated(cfg)[1]
         storage = sets.chosen(self.registry, spec)
-        key = (spec["time/steps"], spec["time/several"], specs.digest(storage), specs.digest(cfg["splits"]))
+        key = (spec["time/steps"], self.several(spec), specs.digest(storage), specs.digest(cfg["splits"]))
         if key not in self._viewed:
             self._viewed[key] = Viewed(self, *key[:2], storage, self.looking(cfg)[0])
         return self._viewed[key]
+
+    @timed("bank.several")
+    def several(self, spec):
+        return spec["time/several"] if self.registry.extras["several"] else None
 
     @timed("bank.view")
     def view(self, index, cfg):
@@ -364,7 +368,7 @@ class Bank:
         spec, viewed = self.stated(cfg)[1], self.viewed(cfg)
         size = (
             spec["time/steps"],
-            spec["time/several"],
+            self.several(spec),
             specs.digest(sets.chosen(self.registry, spec)),
             specs.digest(cfg["splits"]),
             spec["graphs/join_size"],

@@ -1348,7 +1348,7 @@ def check(graph, registry, splits, observers):
     if np.any(graph.target_known <= graph.task_time[graph.target_task]):
         raise ValueError("a target of graph %s is known no later than the time of its task" % name)
     place = ranks(graph.keys)
-    for group, label in (("obs", "facts about one node"), ("fact", "facts about edges")):
+    for group in GROUPS:
         stamps = graph.stamps(group)
         if np.any(stamps["until"] <= stamps["since"]) or np.any(stamps["replaced"] <= stamps["known"]):
             raise ValueError("a fact of graph %s holds, or is known, over no time at all" % name)
@@ -1363,15 +1363,29 @@ def check(graph, registry, splits, observers):
         if group == "obs":
             owner = np.asarray(graph.obs_entity, np.int64)
             facts = dict(seq=graph.obs_seq, code=graph.kinds[owner], source=place[owner], target=place[owner])
+
+            def named(row):
+                entity = int(graph.obs_entity[row])
+                return "the node %s of the kind %s" % (graph.keys[entity], registry.nodes[graph.kinds[entity]])
+
         else:
-            owner = np.asarray(graph.fact_present, np.int64)
+            identity = np.stack((graph.fact_code, graph.fact_source, graph.fact_target, graph.fact_present), 1)
+            owner = np.unique(identity.astype(np.int64), axis=0, return_inverse=True)[1].reshape(-1)
             facts = dict(
                 seq=graph.fact_seq,
                 code=graph.fact_code,
                 source=place[graph.fact_source],
                 target=place[graph.fact_target],
             )
-        clock.untied(name, label, schema.ties, owner, stamps["since"], facts)
+
+            def named(row):
+                return "the edge of %s from %s to %s" % (
+                    registry.by_code[int(graph.fact_code[row])].name,
+                    graph.keys[int(graph.fact_source[row])],
+                    graph.keys[int(graph.fact_target[row])],
+                )
+
+        clock.untied(name, named, schema.ties, owner, stamps["since"], facts)
     LOG.debug("check exit graph=%s seconds=%.4f", name, time.perf_counter() - started)
 
 

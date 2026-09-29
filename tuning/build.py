@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from graphspec import Registry, graphdb, staged, vocabulary
+from graphspec.clock import ALWAYS, NEVER
 from graphspec.infra.files import read_json, sha256_file, write_json
 from graphspec.infra.log import configure
 from graphspec.infra.processes import parallel
@@ -71,6 +72,29 @@ def observing(tables):
     return sorted(found)
 
 
+def overlapping(stated, tables):
+    started = time.perf_counter()
+    parts = []
+    for kind in stated.entities():
+        table = tables["observations"][kind]
+        stamps = [
+            np.asarray(table.column(name).fill_null(base).to_numpy(zero_copy_only=False), np.int64)
+            if name in table.column_names
+            else np.full(table.num_rows, base, np.int64)
+            for name, base in (("since", ALWAYS), ("until", NEVER))
+        ]
+        parts.append((np.asarray(table.column("entity").to_numpy(), np.int64), *stamps))
+    empty = np.zeros(0, np.int64)
+    entity, since, until = (np.concatenate([part[at] for part in parts] + [empty]) for at in range(3))
+    order = np.lexsort((since, entity))
+    entity, since, until = entity[order], since[order], until[order]
+    result = bool(np.any((entity[1:] == entity[:-1]) & (since[1:] < until[:-1])))
+    LOG.debug(
+        "overlapping exit facts=%d several=%s seconds=%.4f", len(order), result, time.perf_counter() - started
+    )
+    return result
+
+
 def scanned(job):
     index, until = job
     started = time.perf_counter()
@@ -84,6 +108,7 @@ def scanned(job):
             if entry["column"] is not None
         },
         observing(tables),
+        overlapping(stated, tables),
     )
     LOG.info("bank scan exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
     return result
@@ -108,7 +133,7 @@ def related(stated, found):
         if entry["column"] is None:
             result[table] = [table]
             continue
-        names = {name for _, relations, _ in found for name in relations[table]}
+        names = {name for _, relations, _, _ in found for name in relations[table]}
         if None in names:
             raise ValueError(
                 "rows of the edge table %s name no relation in the column %s" % (table, entry["column"])
@@ -398,7 +423,7 @@ def build(task_path, output, workers, trained):
     stated = Schema(task["schema"])
     encoding = fitted(stated, merged(stated, [entry[0] for entry in found]), related(stated, found))
     observers = sorted({name for entry in found for name in entry[2]})
-    registry = vocabulary.registry(task, encoding, alone)
+    registry = vocabulary.registry(task, encoding, alone, any(entry[3] for entry in found))
     (output / "truth").mkdir(parents=True)
     write_json(output / "supervision.json", rows)
     jobs = [(index, names[index], ids, members) for index, ids, members, _ in groups]

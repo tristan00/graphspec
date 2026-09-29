@@ -144,7 +144,7 @@ Facts with the same time are ordered by the rule the schema names. Rules are reg
 | `sequence` | `seq INT32`, stated by every fact | `seq` |
 | `key` | nothing | the relation, then the key of the source, then the key of the target |
 
-Two facts about edges of one graph, both present or both absent, or two facts about one node or one set edge, that hold from the same time and that the rule leaves equal stop the build with an error naming the graph and the time. With no rule named, any two such facts that hold from the same time stop it.
+Order matters only between facts about one entity. Two facts about one node or one set edge, or two facts about one edge, of one relation between the same two ends and both present or both absent, that hold from the same time and that the rule leaves equal stop the build with an error naming the node and its kind or the edge, the graph and the time. With no rule named, any two such facts that hold from the same time stop it. Facts about different entities or different edges are never compared: a graph without time and without a rule for ties holds any number of edges, each stated once.
 
 **Shorthand forms**
 
@@ -211,7 +211,7 @@ A table the schema states and the source lacks, a column of a table that the sch
 
 **Bank version 8**
 
-`tuning.build_bank(task, output, workers, trained)` reads the source twice: once to find the dictionaries, the relations taken from columns, the names of the observers and the values of the rows trained on, and once to write the graphs. `trained` names the splits trained on, each a split the source holds. Every series needs two targets that differ in those splits. Every graph written is also shown once under the first choice of steps, with every kind of set edge under the form `node`, which shows every fact, member and edge about a set edge, and with no rule stated for any split, so that a graph the operations cannot read stops the build. A bank of another version is refused with an error naming the version found.
+`tuning.build_bank(task, output, workers, trained)` reads the source twice: once to find the dictionaries, the relations taken from columns, the names of the observers and the values of the rows trained on, and once to write the graphs. `trained` names the splits trained on, each a split the source holds. Every series needs two targets that differ in those splits. Every graph written is also shown once under the shipped choice of steps `tasks`, with the shipped rule `first` for several facts where the bank holds them, with every kind of set edge under the form `node`, which shows every fact, member and edge about a set edge, and with no rule stated for any split, so that a graph the operations cannot read stops the build; what else is registered does not change it. A bank of another version is refused with an error naming the version found.
 
 A source with kinds of set edge or held graphs is read from a staging directory; a database source stating either stops with an error naming them.
 
@@ -225,6 +225,7 @@ A source with kinds of set edge or held graphs is read from a staging directory;
 | `base` | The relations stated or taken, then the relations of the forms of storage of every kind of set edge. |
 | `events` | Whether a kind of task is seen as an event. |
 | `single` | Whether every time of every graph and observer holds exactly one task and every kind states a target. |
+| `several` | Whether a graph of the bank holds two facts about one node or set edge whose intervals overlap. |
 
 `supervision.json` holds `rows` and `split`. There is one row per number of a target, in the order of the `target` table. A row holds `graph`, `kind`, the key of its task and, where one is stated, its grouping, under the names the schema states, `time` unless the model is `none`, `y`, `weight` where the kind states one and `known` where the target states one; rows of paths add `tau` and `series`. `split` holds `indices`, the rows of every split by name, and `series`, a list with one entry per series of `name`, `mean` and `sd` over the rows of the splits trained on.
 
@@ -253,8 +254,8 @@ Steps are not stored. The operations read a view: the facts of a graph shown at 
 
 | Parameter | Choices | Meaning |
 |---|---|---|
-| `time/steps` | registered in `graphspec.STEPS`; shipped: `tasks`, `changes` | `tasks`: one step per time at which a task sits, shown as the tasks of that time saw it. `changes`: one step per time at which a fact starts, ends, becomes known or is replaced, or at which a task sits. Under both, the tasks of each observer form a sequence of their own, and so do the tasks that name none. |
-| `time/several` | registered in `graphspec.SEVERAL`; shipped: `first`, `last` | Which of several facts about one node at one step the view shows, in the order of the time they hold from, then of the rule for ties. |
+| `time/steps` | registered in `graphspec.STEPS`; shipped: `tasks`, `changes` | `tasks`: one step per time at which a task sits, shown as the tasks of that time saw it. `changes`: one step per time at which a fact starts, ends, becomes known or is replaced, or at which a task sits. Under both, the tasks of each observer form a sequence of their own, and so do the tasks that name none. A step covers the times after the step before it up to and including its own. An event, a fact that holds from a time until the next whole time, is shown at the first step at or after its time, where the step's tasks know it; any other fact is shown at the steps whose time it holds at. |
+| `time/several` | registered in `graphspec.SEVERAL`; shipped: `first`, `last`; no default | Which of several facts about one node at one step the view shows, in the order of the time they hold from, then of the rule for ties. The parameter exists only where the extra `several` of the bank holds, and a configuration that does not state it then stops naming it. Where it does not hold, the facts of a node shown at one step hold from different times, the latest of them being events the step covers, and the view shows the one that holds from the latest time. |
 | `sets/<kind>/storage`, per kind of set edge | the forms of `graphspec.STORAGE` offered for the kind; no default | The form of storage of the set edges of the kind. |
 
 A choice of steps gives, for one graph, one sequence per observer: the observer, the times it shows, the time of looking at each, its tasks and the step of each. A step may hold no task and may hold several. A choice that leaves a task that holds a target without a step stops with an error.

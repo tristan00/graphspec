@@ -369,6 +369,7 @@ def registry(name, nodes, edges):
         base=[edge.name for edge in base],
         events=False,
         single=False,
+        several=False,
     )
     result = Registry(name, encoding, edges, [], extras)
     LOG.debug("registry exit seconds=%.4f", time.perf_counter() - started)
@@ -390,13 +391,20 @@ def normal(tasks, schema):
     return dict(tasks, references=references)
 
 
+def several(registry):
+    started = time.perf_counter()
+    result = {"time/several": "last"} if registry.extras["several"] else {}
+    LOG.debug("several exit stated=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def shown(opened, index):
     from conftest import SPLITS
     from graphspec.truth import Graph
     from tuning.model_spec import configuration
 
     started = time.perf_counter()
-    cfg = configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS)
+    cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)
     result = Graph.load(opened.view(index, cfg))
     LOG.debug("shown exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
     return result

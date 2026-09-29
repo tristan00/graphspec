@@ -152,7 +152,9 @@ class Changes:
         return result
 
 
-STEPS.register("tasks", Tasks())
+TASKS = "tasks"
+VALIDATED = "first"
+STEPS.register(TASKS, Tasks())
 STEPS.register("changes", Changes())
 
 
@@ -456,7 +458,12 @@ def view(facts, registry, held, several):
         raise ValueError("the view of graph %s shows no step" % facts.name)
     if np.any(np.diff(held["task_step"]) < 0):
         raise ValueError("the tasks of the view of graph %s are not in the order of its steps" % facts.name)
-    choose, place = SEVERAL.named(several), ranks(facts.keys)
+    if several is None and registry.extras["several"]:
+        raise ValueError(
+            "the bank of graph %s holds several facts about one entity at one time, and no time/several is "
+            "stated; it is one of %s" % (facts.name, ", ".join(SEVERAL.names()))
+        )
+    place = ranks(facts.keys)
     seen = permitted(facts, registry, held)
     row, step, since = shown(facts, "obs", held, observer, seen["obs"])
     entity = np.asarray(facts.obs_entity, np.int64)[row]
@@ -472,7 +479,19 @@ def view(facts, registry, held, several):
     order = np.lexsort(tuple(keys[::-1]) + (since, entity, step))
     first = np.r_[True, (step[order][1:] != step[order][:-1]) | (entity[order][1:] != entity[order][:-1])]
     starts = np.flatnonzero(first[: len(order)])
-    chosen = order[choose(starts, np.r_[starts[1:], len(order)][: len(starts)])]
+    stops = np.r_[starts[1:], len(order)][: len(starts)]
+    if several is None:
+        tied = np.flatnonzero((stops - starts > 1) & (since[order[stops - 1]] == since[order[stops - 2]]))
+        if len(tied):
+            who = int(entity[order[starts[tied[0]]]])
+            raise ValueError(
+                "the view of graph %s shows at %s several facts about the node %s that hold from one time, "
+                "and no time/several is stated"
+                % (facts.name, clock.shown(held["moments"][step[order[starts[tied[0]]]]]), facts.keys[who])
+            )
+        chosen = order[stops - 1]
+    else:
+        chosen = order[SEVERAL.named(several)(starts, stops)]
     observed = spans.observation_spans(
         entity[chosen].astype(np.int32),
         step[chosen].astype(np.int32),
@@ -566,14 +585,9 @@ def view(facts, registry, held, several):
 
 def validate(facts, registry, splits):
     started = time.perf_counter()
-    names = offered(registry)
-    if not names:
-        raise ValueError("no choice of steps serves the graphs of this bank")
     facts = stored(facts, registry, {kind: NODE for kind in registry.schema.sets})
-    result = [
-        view(facts, registry, held, SEVERAL.names()[0])
-        for held in sequences(facts, registry, names[0], unstated(splits))
-    ]
+    several = VALIDATED if registry.extras["several"] else None
+    result = [view(facts, registry, held, several) for held in sequences(facts, registry, TASKS, unstated(splits))]
     LOG.debug(
         "validate exit graph=%s views=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started
     )

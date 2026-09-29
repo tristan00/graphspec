@@ -15,7 +15,7 @@ from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed as clocked
 from graphspec.schema import VERSION, Schema
 from graphspec.truth import Facts, Graph
-from graphspec.view import sequences, view
+from graphspec.view import sequences, unstated, view
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration
@@ -294,6 +294,17 @@ def seen():
         )
     )
     graphs.append(graph("several", "tick", values, edges, MOMENTS, [None] * len(MOMENTS)))
+    values, edges = steady("between", True)
+    edges.append(
+        statement(
+            "event",
+            {},
+            dict(source=["m2"], target=["s2"], present=[True], weight=[3.0], at=[5], seq=[41]),
+            table="serves",
+            ends=("maker", "site"),
+        )
+    )
+    graphs.append(graph("between", "tick", values, edges, MOMENTS, [None] * len(MOMENTS)))
     return dict(schema=stated("clocks", ["tick"], "sequence", True), graphs=graphs)
 
 
@@ -306,7 +317,7 @@ def timeless():
             del held["rows"]["since"], held["rows"]["until"]
             held["form"] = None
         graphs.append(graph(name, None, values, edges, [None] * len(MOMENTS), None))
-    return dict(schema=stated("none", [], "key", False), graphs=graphs)
+    return dict(schema=stated("none", [], None, False), graphs=graphs)
 
 
 @clocked("time.ordered")
@@ -347,9 +358,10 @@ def banks(cases, tmp_path_factory):
 
 
 @clocked("time.opened")
-def opened(banks, name):
+def opened(banks, name, **values):
     held = Deriver(banks[name], "cpu", RESIDENT)
-    return held, configuration(held.registry, dict(view="snapshot"), {}, 5, SPLITS)
+    stated = dict(support.several(held.registry), **values)
+    return held, configuration(held.registry, dict(view="snapshot"), stated, 5, SPLITS)
 
 
 @clocked("time.truths")
@@ -692,20 +704,93 @@ def test_a_bank_holds_graphs_of_different_units_and_states_no_period(banks):
         )
 
 
-def test_facts_with_the_same_time_and_no_rule_stop_naming_the_graph_and_the_time(banks):
-    case = shaped()
-    case["schema"] = stated("clock", ["hour", "day"], None, False)
+def test_facts_about_one_entity_at_one_time_stop_naming_it_where_no_rule_orders_them(banks):
+    held, _ = opened(banks, "timeless")
+    assert held.registry.schema.ties is None and held.registry.schema.model == "none"
+    assert len(truths(held)["still"].fact_source) == 2
+    case = timeless()
+    rows = case["graphs"][0]["edges"][0]["rows"]
+    for name in rows:
+        rows[name] = rows[name] + rows[name][:1]
     root = banks["forms"].parent
-    with pytest.raises(ValueError, match="two facts about edges of graph state hold from the time 0 and"):
+    with pytest.raises(
+        ValueError,
+        match="two facts about the edge of serves from m0 to s0 of graph still hold from the time before every "
+        "time and the schema states no rule for ties",
+    ):
         build(synthetic.stage(root, "untied", case), root / "untied", 1, ("train",))
     case = seen()
     case["graphs"][3]["values"][-1]["rows"]["seq"] = [50, 50, 52]
     with pytest.raises(
         ValueError,
-        match="two facts about one node of graph several hold from the time 2 and "
+        match="two facts about the node s0 of the kind site of graph several hold from the time 2 and "
         "the rule sequence for ties leaves them unordered",
     ):
         build(synthetic.stage(root, "tied", case), root / "tied", 1, ("train",))
+
+
+@clocked("time.looked")
+def looked(held, cfg, name):
+    for entry in held.viewed(cfg).graphs:
+        if held.manifest["graphs"][entry["source"]]["name"] == name and entry["observer"] == -1:
+            return Graph.load(held.view(entry["index"], cfg))
+    raise KeyError("the bank shows no graph %s" % name)
+
+
+def test_an_event_between_two_steps_is_shown_at_the_first_step_at_or_after_its_time(banks):
+    held, cfg = opened(banks, "seen")
+    truth = truths(held)["between"]
+    found = {}
+    for steps in ("tasks", "changes"):
+        held, cfg = opened(banks, "seen", **{"time/steps": steps})
+        (sequence,) = sequences(truth, held.registry, steps, held.looking(cfg)[0])
+        graph = looked(held, cfg, "between")
+        found[steps] = [
+            int(sequence["moments"][step])
+            for step in range(graph.steps)
+            if ("m2", "s2") in serving(held, graph, step)
+        ]
+    assert found == dict(tasks=[6], changes=[5])
+    begun, ended = clock.visible([5], [6], [5], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
+    assert begun.tolist() == [1] and ended.tolist() == [2]
+    begun, ended = clock.visible([5], [6], [7], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
+    assert begun.tolist() == ended.tolist() == [2]
+
+
+def broken(starts, stops):
+    raise AssertionError("a rule registered first is not the rule of validation")
+
+
+class Broken:
+    def serves(self, registry):
+        return True
+
+    def __call__(self, facts, registry):
+        raise AssertionError("a choice of steps registered first is not the choice of validation")
+
+
+def test_the_rule_for_several_facts_is_stated_where_a_bank_holds_them_and_validation_names_its_own(
+    banks, monkeypatch
+):
+    from graphspec.view import validate
+
+    seen, forms_bank = Deriver(banks["seen"], "cpu", RESIDENT), Deriver(banks["forms"], "cpu", RESIDENT)
+    assert seen.registry.extras["several"] is True and forms_bank.registry.extras["several"] is False
+    with pytest.raises(
+        ValueError, match=r"the pipeline states no time/several, which has no default; it is one of \['first'"
+    ):
+        configuration(seen.registry, dict(view="snapshot"), {}, 5, SPLITS)
+    assert "time/several" not in {parameter.name for parameter in specs.space(forms_bank.registry, ())}
+    truth = truths(seen)["several"]
+    before = validate(truth, seen.registry, seen.splits)
+    monkeypatch.setattr(SEVERAL, "held", dict(broken=broken, **SEVERAL.held))
+    monkeypatch.setattr(STEPS, "held", dict(broken=Broken(), **STEPS.held))
+    after = validate(truth, seen.registry, seen.splits)
+    assert len(before) == len(after) > 0
+    for left, right in zip(before, after):
+        assert all(np.array_equal(left.arrays[name], right.arrays[name], equal_nan=True) for name in left.arrays)
+    with pytest.raises(ValueError, match="holds several facts about one entity at one time, and no time/several"):
+        view(truth, seen.registry, sequences(truth, seen.registry, "tasks", unstated(seen.splits))[0], None)
 
 
 def test_periods_are_a_view_and_need_not_increase(banks):

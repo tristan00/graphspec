@@ -154,11 +154,14 @@ def ground():
 
 
 def stated(directory, view):
+    from support import several
+
     from tuning.data import Bank
     from tuning.model_spec import configuration
 
     started = time.perf_counter()
-    cfg = configuration(Bank(directory).registry, dict(view=view), {"time/history": 4}, 5, SPLITS)
+    registry = Bank(directory).registry
+    cfg = configuration(registry, dict(view=view), {"time/history": 4, **several(registry)}, 5, SPLITS)
     LOG.debug("stated exit view=%s seconds=%.4f", view, time.perf_counter() - started)
     return cfg
 
