@@ -1,23 +1,21 @@
 import fnmatch
 import math
 import time
-from importlib import import_module
 
 import numpy as np
 
 from graphspec import spec as specs
-from graphspec.infra import search
 from graphspec.infra.files import JsonCache, read_json, sha256_file, write_json
 from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 from graphspec.view import STEPS
 
-from . import objective
+from . import objective, tpe
 from .model_spec import TRAINING, describe, groups
 from .model_spec import space as model_space
 from .records import Run, Status
 
-SURROGATES = dict(botorch="bayesian", forest="forest")
+SURROGATES = ("botorch", "forest")
 SETTINGS = dict(n_startup_trials=10, n_ei_candidates=64, multivariate=True, group=True, good_set=100)
 FAILURE_POLICY = dict(
     version=1,
@@ -29,10 +27,10 @@ FAILURE_POLICY = dict(
 
 def distribution(parameter):
     if parameter.kind in ("bool", "choice"):
-        return search.categorical(parameter.options)
+        return tpe.categorical(parameter.options)
     if parameter.kind == "int":
-        return search.integer(parameter.low, parameter.high)
-    return search.real(parameter.low, parameter.high, log=parameter.log)
+        return tpe.integer(parameter.low, parameter.high)
+    return tpe.real(parameter.low, parameter.high, log=parameter.log)
 
 
 @timed("selector.stepped")
@@ -112,7 +110,7 @@ def observation(registry, config, value, bounds, **attrs):
     enter("graph/", graph_space(registry, config["model"], bounds), config["graph"])
     if "max_seconds" in config:
         enter("", (runtime_parameter(config["max_seconds"]),), {"max_seconds": config["max_seconds"]})
-    return search.record(value, params, distributions, config=config, **attrs)
+    return tpe.record(value, params, distributions, config=config, **attrs)
 
 
 def outside(parameters, spec):
@@ -192,11 +190,11 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
                 outcome=entry["status"],
             )
         )
-    study = search.study(seed, SETTINGS, records)
+    study = tpe.study(seed, SETTINGS, records)
     trial = study.ask()
     config = configuration(
         registry,
-        lambda prefix, parameter: search.propose(trial, prefix + parameter.name, distribution(parameter)),
+        lambda prefix, parameter: tpe.propose(trial, prefix + parameter.name, distribution(parameter)),
         training_seed,
         bounds,
         seconds,
@@ -214,7 +212,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
         observations=used["complete"],
         failed_observations=used["failed"],
         excluded=left_out,
-        optuna_version=search.VERSION,
+        optuna_version=tpe.VERSION,
         phase="tpe" if len(records) >= SETTINGS["n_startup_trials"] else "random_startup",
         seconds=time.perf_counter() - started,
     )
@@ -317,7 +315,9 @@ def append_trial(directory, plan, registry, stated):
     if selector == "random":
         config, selection = random_suggest(registry, selector_seed, training_seed, bounds, stated.seconds)
     elif selector in SURROGATES:
-        surrogate_suggest = import_module("tuning." + SURROGATES[selector]).suggest
+        from .surrogates import suggest_botorch, suggest_forest
+
+        surrogate_suggest = dict(botorch=suggest_botorch, forest=suggest_forest)[selector]
         progress_started = time.time()
 
         def progress(value):

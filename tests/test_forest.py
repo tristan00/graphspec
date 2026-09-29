@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 
 from graphspec.infra.files import read_json
-from graphspec.infra.forest import COMPLETION_WEIGHT, Forest, log_expected_improvement
-from tuning import forest, selector, space
+from tuning import selector, space, surrogates
 from tuning.data import Bank
 from tuning.statement import state
+from tuning.surrogates import COMPLETION_WEIGHT, Forest, log_expected_improvement
 
 
 def test_log_expected_improvement_matches_the_closed_form_and_stays_finite_far_away():
@@ -76,7 +76,7 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
     bounds = {"epochs": {"low": 1, "high": 3}}
     encoding = space.Space(registry, bounds, 600, ())
     progress = []
-    config, selection = forest.suggest(
+    config, selection = surrogates.suggest_forest(
         registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu", 600, progress=progress.append
     )
     assert selection["sampler"] == "SMAC"
@@ -108,7 +108,7 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
         "Ranking candidates",
         "Proposal ready",
     ]
-    repeated, _ = forest.suggest(registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu", 600)
+    repeated, _ = surrogates.suggest_forest(registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu", 600)
     assert repeated == config
 
 
@@ -118,7 +118,7 @@ def test_startup_counts_toward_the_forest_selector(bank, tmp_path, monkeypatch, 
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(40)]
     failures = [dict(config=config, status="failed", trial="bad-" + str(i)) for i in range(60)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, failures, [], []))
-    monkeypatch.setattr(forest, "suggest", lambda *args, **kwargs: (config, dict(metadata, phase="forest")))
+    monkeypatch.setattr(surrogates, "suggest_forest", lambda *args, **kwargs: (config, dict(metadata, phase="forest")))
     plan = dict(
         selector="forest",
         random_trials=100,

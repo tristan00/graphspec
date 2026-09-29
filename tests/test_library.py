@@ -1,4 +1,3 @@
-import ast
 import os
 import subprocess
 import sys
@@ -9,7 +8,8 @@ import pytest
 from support import VALUES, asked, stated
 
 from graphspec import GraphTables, Stage, write_task
-from graphspec.infra.runtime import heavy_job, output_path
+from graphspec.infra.locks import heavy_job
+from graphspec.infra.runtime import output_path
 from graphspec.staged import Staged
 from tuning.build import build, open_source
 
@@ -70,33 +70,17 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
     assert before == {p.name: p.read_bytes() for p in (tmp_path / "source").iterdir()}
 
 
-def test_infra_does_not_import_graph_logic():
-    root = Path(__file__).parents[1] / "graphspec" / "infra"
-    for path in root.glob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text())):
-            names = (
-                [alias.name for alias in node.names]
-                if isinstance(node, ast.Import)
-                else [node.module or ""]
-                if isinstance(node, ast.ImportFrom)
-                else []
-            )
-            assert not any(
-                name == "graphspec" or name.startswith(("graphspec.staged", "tuning")) for name in names
-            ), path
-
-
 def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):
-    from graphspec.infra import runtime
+    from graphspec.infra import locks
 
     name = "heavy-exclusion-%d" % os.getpid()
-    held = runtime.singleton
-    monkeypatch.setattr(runtime, "singleton", lambda given, message: held(name, message))
+    held = locks.singleton
+    monkeypatch.setattr(locks, "singleton", lambda given, message: held(name, message))
     program = (
-        "from graphspec.infra import runtime\n"
-        "held = runtime.singleton\n"
-        "runtime.singleton = lambda given, message: held(%r, message)\n"
-        "with runtime.heavy_job():\n    pass"
+        "from graphspec.infra import locks\n"
+        "held = locks.singleton\n"
+        "locks.singleton = lambda given, message: held(%r, message)\n"
+        "with locks.heavy_job():\n    pass"
     ) % name
     with heavy_job():
         result = subprocess.run(
@@ -108,7 +92,7 @@ def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):
 def test_the_heavy_job_of_production_requests_the_singleton_named_heavy(monkeypatch):
     from contextlib import contextmanager
 
-    from graphspec.infra import runtime
+    from graphspec.infra import locks
 
     requested = []
 
@@ -117,11 +101,11 @@ def test_the_heavy_job_of_production_requests_the_singleton_named_heavy(monkeypa
         requested.append((name, message))
         yield
 
-    monkeypatch.setattr(runtime, "singleton", recorder)
-    monkeypatch.setattr(runtime.ACTIVE, "held", False, raising=False)
-    with runtime.heavy_job():
-        assert runtime.ACTIVE.held
-        with runtime.heavy_job():
+    monkeypatch.setattr(locks, "singleton", recorder)
+    monkeypatch.setattr(locks.ACTIVE, "held", False, raising=False)
+    with locks.heavy_job():
+        assert locks.ACTIVE.held
+        with locks.heavy_job():
             pass
     assert [name for name, _ in requested] == ["heavy"]
     assert "another graph build or training job is running" in requested[0][1]

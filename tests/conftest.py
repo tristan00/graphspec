@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from graphspec.infra import runtime
-from graphspec.infra.processes import Lock, LockBusy
+from graphspec.infra import locks
+from graphspec.infra.locks import Lock, LockBusy
 
 WORKER = "PYTEST_XDIST_WORKER" in os.environ
 LOG = logging.getLogger(__name__)
@@ -19,14 +19,14 @@ SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, life
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
 
 
-def suite_singleton(name, message, original=runtime.singleton):
+def suite_singleton(name, message, original=locks.singleton):
     started = time.perf_counter()
     lock = original(SUITE.get(name, name), message)
     LOG.debug("suite_singleton exit name=%s seconds=%.4f", name, time.perf_counter() - started)
     return lock
 
 
-runtime.singleton = suite_singleton
+locks.singleton = suite_singleton
 
 
 def pytest_configure(config):
@@ -46,7 +46,7 @@ def pytest_collection_modifyitems(items):
 
 
 @contextmanager
-def shared_heavy_job(original=runtime.heavy_job):
+def shared_heavy_job(original=locks.heavy_job):
     while True:
         job = original()
         try:
@@ -62,7 +62,7 @@ def shared_heavy_job(original=runtime.heavy_job):
         job.__exit__(None, None, None)
 
 
-runtime.heavy_job = shared_heavy_job
+locks.heavy_job = shared_heavy_job
 
 
 def suite():

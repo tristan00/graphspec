@@ -26,6 +26,16 @@ FACTS = ("present",)
 STAMP = "INT64"
 SEQUENCE = dict(seq="INT32")
 WATCHERS = "STRING[]"
+WRITTEN = {
+    STAMP: pa.int64(),
+    "INT32": pa.int32(),
+    "FLOAT": pa.float32(),
+    "DOUBLE": pa.float64(),
+    "BOOL": pa.bool_(),
+    "STRING": pa.string(),
+    WATCHERS: pa.list_(pa.string()),
+}
+NAMED = {kind: name for name, kind in WRITTEN.items()}
 TABLES = ("graph", "observation", "task", TARGET, LINK)
 PREFIXES = (EDGE, OBSERVED, TASK, MEMBER, INNER)
 TARGETS = ("number", "path")
@@ -55,6 +65,16 @@ ENCODERS = Names("encoder")
 
 def absent(column):
     return np.asarray(column.is_null().to_numpy(zero_copy_only=False), bool)
+
+
+def typename(kind):
+    if pa.types.is_fixed_size_list(kind) and kind.value_type == pa.float32():
+        return "FLOAT[%d]" % kind.list_size
+    if pa.types.is_list(kind) and kind.value_type == pa.string():
+        return WATCHERS
+    if kind not in NAMED:
+        raise ValueError("unsupported graph property type: " + str(kind))
+    return NAMED[kind]
 
 
 class Number:

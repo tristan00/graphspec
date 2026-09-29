@@ -32,9 +32,8 @@ from graphspec.transform import SEED, materialize
 from graphspec.truth import Facts, Graph, admitted, inputs
 from graphspec.view import STATEMENT, Looking, finished, sampled, sequences, view
 
-from .training import PACKAGES
-
 LOG = logging.getLogger(__name__)
+PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / "graphspec")
 CODE = sources.digest(PACKAGES)
 ROWS = 1024
 JOINED_RESIDENT = 4 << 30

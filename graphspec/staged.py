@@ -12,29 +12,25 @@ from graphspec.infra.sources import digest
 from graphspec.infra.staging import manifest
 
 from .references import SORTS
-from .schema import EDGE, FACTS, INNER, LINK, MEMBER, OBSERVED, TARGET, TASK, VALUE, WITHIN, inward, outward
+from .schema import (
+    EDGE,
+    FACTS,
+    INNER,
+    LINK,
+    MEMBER,
+    OBSERVED,
+    TARGET,
+    TASK,
+    VALUE,
+    WITHIN,
+    inward,
+    outward,
+    typename,
+)
 
 LOG = logging.getLogger(__name__)
 CODE = digest((Path(__file__).parent,))
 IDS = 32
-TYPES = {
-    pa.int64(): "INT64",
-    pa.int32(): "INT32",
-    pa.float32(): "FLOAT",
-    pa.float64(): "DOUBLE",
-    pa.bool_(): "BOOL",
-    pa.string(): "STRING",
-}
-
-
-def typename(kind):
-    if pa.types.is_fixed_size_list(kind) and kind.value_type == pa.float32():
-        return "FLOAT[%d]" % kind.list_size
-    if pa.types.is_list(kind) and kind.value_type == pa.string():
-        return "STRING[]"
-    if kind not in TYPES:
-        raise ValueError("unsupported graph property type: " + str(kind))
-    return TYPES[kind]
 
 
 def numbers(table, name):

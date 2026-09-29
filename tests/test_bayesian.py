@@ -4,11 +4,11 @@ import numpy as np
 import pytest
 import torch
 
-from graphspec.infra.bayesian import Search
 from graphspec.infra.files import read_json
-from tuning import bayesian, forest, selector, space
+from tuning import selector, space, surrogates
 from tuning.data import Bank
 from tuning.statement import state
+from tuning.surrogates import Search
 
 
 @pytest.fixture(autouse=True)
@@ -104,7 +104,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
             self.best = 1.0
             return 0, 0.0
 
-    monkeypatch.setattr(bayesian, "Search", InspectSearch)
+    monkeypatch.setattr(surrogates, "Search", InspectSearch)
     monkeypatch.setattr(space, "CANDIDATES", 12)
     bounds = {"epochs": {"low": 1, "high": 3}, "hidden": 37}
     encoding = space.Space(registry, bounds, 600, [entry["config"] for entry in original])
@@ -112,7 +112,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     preceding = {name: names[: names.index(name)] for name in ("epochs", "max_seconds")}
     random_params = ["model/view", "lr", "epochs", "max_seconds"]
     progress = []
-    config, selection = bayesian.suggest(
+    config, selection = surrogates.suggest_botorch(
         registry, observations, failures, 42, 7, bounds, random_params, "cpu", 600, progress=progress.append
     )
     assert selection["observations"] == selection["failed_observations"] == 4
@@ -140,7 +140,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
         "Proposal ready",
     ]
     assert progress[-1]["stage"] == "Proposal ready"
-    repeated, repeated_selection = bayesian.suggest(
+    repeated, repeated_selection = surrogates.suggest_botorch(
         registry, observations, failures, 42, 7, bounds, random_params, "cpu", 600
     )
     assert repeated == config
@@ -173,7 +173,7 @@ def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, state
         config["max_seconds"] = 843
         return config, dict(metadata, phase="botorch")
 
-    monkeypatch.setattr(bayesian, "suggest", propose)
+    monkeypatch.setattr(surrogates, "suggest_botorch", propose)
     plan = dict(
         selector="botorch",
         random_trials=100,
@@ -238,7 +238,7 @@ def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(20)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, [], [], []))
     monkeypatch.setattr(selector, "suggest", lambda *args, **kwargs: (config, dict(metadata, phase="tpe")))
-    monkeypatch.setattr(forest, "suggest", lambda *args, **kwargs: (config, dict(metadata, phase="forest")))
+    monkeypatch.setattr(surrogates, "suggest_forest", lambda *args, **kwargs: (config, dict(metadata, phase="forest")))
     rolls = iter(np.random.default_rng(0).random(40))
     monkeypatch.setattr(selector, "roll", lambda: next(rolls))
     plan = dict(

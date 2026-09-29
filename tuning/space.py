@@ -12,6 +12,7 @@ import numpy as np
 from graphspec import spec as specs
 from graphspec.infra.log import emit
 from graphspec.infra.processes import guarded, spawned
+from graphspec.names import carried, restored
 
 from .model_spec import TRAINING, groups
 from .model_spec import space as model_space
@@ -139,7 +140,7 @@ POOL = {}
 def pool():
     if "executor" not in POOL:
         started = time.perf_counter()
-        POOL["executor"] = ProcessPoolExecutor(os.cpu_count(), **spawned(None, ()))
+        POOL["executor"] = ProcessPoolExecutor(os.cpu_count(), **spawned(None, (), carried, restored))
         atexit.register(POOL["executor"].shutdown, wait=False, cancel_futures=True)
         emit("candidate_pool_started", workers=os.cpu_count(), seconds=time.perf_counter() - started)
     return POOL["executor"]

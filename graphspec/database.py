@@ -6,7 +6,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .infra.database import connect, copy
-from .infra.runtime import exclusive, output_path
+from .infra.locks import exclusive
+from .infra.runtime import output_path
 from .infra.staging import Stage
 
 LOG = logging.getLogger(__name__)

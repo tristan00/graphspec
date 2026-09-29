@@ -1,7 +1,8 @@
 import logging
 import time
 
-from graphspec.infra.runtime import exclusive, output_path
+from graphspec.infra.locks import exclusive
+from graphspec.infra.runtime import output_path
 
 LOG = logging.getLogger(__name__)
 

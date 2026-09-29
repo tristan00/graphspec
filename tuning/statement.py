@@ -4,6 +4,8 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from graphspec.infra.log import emit
+
 LOG = logging.getLogger(__name__)
 VERSION = 1
 SEEDS = 2**32
@@ -156,3 +158,19 @@ def stated(value):
         raise TypeError("a statement built by tuning.statement.state is required, found %r" % (value,))
     LOG.debug("stated exit seconds=%.4f", time.perf_counter() - started)
     return value
+
+
+def seen(given):
+    started = time.perf_counter()
+    result = None
+    if given is not None:
+        result = {}
+        for item in given:
+            name, stated, rules = item.partition("=")
+            if not stated or name in result:
+                raise ValueError(
+                    "what a split may see is stated once for each split as split=rule,rule; found %r" % item
+                )
+            result[name] = [rule for rule in rules.split(",") if rule]
+    emit("sees_parsed", seconds=time.perf_counter() - started)
+    return result

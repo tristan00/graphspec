@@ -358,10 +358,10 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path, s
 
 
 def test_tpe_good_set_is_the_best_hundred_trials():
-    from graphspec.infra import search
+    from tuning import tpe
     from tuning.selector import SETTINGS
 
-    study = search.study(1, SETTINGS, [])
+    study = tpe.study(1, SETTINGS, [])
     assert study.sampler._gamma(410) == 100
     assert study.sampler._gamma(40) == 40
     assert SETTINGS["good_set"] == 100

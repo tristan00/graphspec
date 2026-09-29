@@ -21,6 +21,7 @@ PIECES = (
 COMPILERS = ("njit", "jit")
 LOADERS = ("import_module", "__import__", "run_module")
 LOCAL = re.compile(r"(^|[\\/])local([\\/]|$)")
+INFRA = "graphspec/infra"
 
 
 def compiled(node):
@@ -151,6 +152,50 @@ def named(root, places, excluded):
     return found
 
 
+def resolved(root, name):
+    started = time.perf_counter()
+    path = root.joinpath(*name.split("."))
+    found = None
+    if path.with_suffix(".py").is_file():
+        found = path.with_suffix(".py")
+    elif (path / "__init__.py").is_file():
+        found = path / "__init__.py"
+    LOG.debug("resolved exit name=%s seconds=%.4f", name, time.perf_counter() - started)
+    return None if found is None else found.relative_to(root).as_posix()
+
+
+def imports(root, folders):
+    started = time.perf_counter()
+    found = []
+    for place, source in sources(root, folders):
+        package = place[: -len(".py")].split("/")[:-1]
+        for node in ast.walk(ast.parse(source)):
+            targets = []
+            if isinstance(node, ast.Import):
+                targets = [resolved(root, alias.name) for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    base = ".".join(package[: len(package) - node.level + 1] + ([base] if base else []))
+                targets = [
+                    resolved(root, base + "." + alias.name) or resolved(root, base) for alias in node.names
+                ]
+            found.extend((place, node.lineno, target) for target in targets if target is not None)
+    LOG.debug("imports exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def outside(root, folders):
+    started = time.perf_counter()
+    found = [
+        (place, line, target)
+        for place, line, target in imports(root, folders)
+        if place.startswith(INFRA + "/") and not target.startswith(INFRA + "/")
+    ]
+    LOG.debug("outside exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
 def write(root, place, source):
     started = time.perf_counter()
     path = root / place
@@ -244,4 +289,22 @@ def test_graphspec_does_not_import_tuning_and_nothing_reads_local(tmp_path):
         "graphspec/named.py",
         "tuning/imports.py",
         "tuning/reads.py",
+    ]
+
+
+def test_infra_imports_nothing_else_of_the_library(tmp_path):
+    assert outside(ROOT, CODE) == []
+    write(tmp_path, "graphspec/__init__.py", "")
+    write(tmp_path, "graphspec/names.py", "VALUE = 1\n")
+    write(tmp_path, "graphspec/infra/__init__.py", "")
+    write(tmp_path, "graphspec/infra/files.py", "VALUE = 1\n")
+    write(tmp_path, "graphspec/infra/pools.py", "from ..names import VALUE\nfrom .files import VALUE as SAME\n")
+    write(tmp_path, "graphspec/infra/inside.py", "def work():\n    import tuning.run\n\n    return tuning.run\n")
+    write(tmp_path, "graphspec/infra/whole.py", "from graphspec import names\nfrom graphspec.infra import files\n")
+    write(tmp_path, "tuning/__init__.py", "")
+    write(tmp_path, "tuning/run.py", "from graphspec.infra.files import VALUE\n")
+    assert outside(tmp_path, CODE) == [
+        ("graphspec/infra/inside.py", 2, "tuning/run.py"),
+        ("graphspec/infra/pools.py", 1, "graphspec/names.py"),
+        ("graphspec/infra/whole.py", 1, "graphspec/names.py"),
     ]

@@ -3,7 +3,7 @@ from importlib.metadata import version
 
 import numpy as np
 
-from .timing import timed
+from graphspec.infra.timing import timed
 
 VERSION = version("optuna")
 

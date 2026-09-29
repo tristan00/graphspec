@@ -5,7 +5,7 @@ import threading
 import time
 from ctypes import wintypes
 
-from .processes import LockBusy
+from .locks import LockBusy
 
 LOG = logging.getLogger(__name__)
 KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)

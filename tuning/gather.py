@@ -2,15 +2,15 @@ import numpy as np
 from numba import njit, prange, types
 from numba.typed import Dict
 
-from graphspec.kernels import mix
+from graphspec.infra.hashing import mixed
 
 
 @njit(cache=True)
 def uniform(seed, stream, first, second, third):
-    value = mix(np.uint64(seed ^ stream))
-    value = mix(value ^ np.uint64(np.int64(first)))
-    value = mix(value ^ np.uint64(np.int64(second)))
-    value = mix(value ^ np.uint64(np.int64(third)))
+    value = mixed(np.uint64(seed ^ stream))
+    value = mixed(value ^ np.uint64(np.int64(first)))
+    value = mixed(value ^ np.uint64(np.int64(second)))
+    value = mixed(value ^ np.uint64(np.int64(third)))
     return np.float64(value >> np.uint64(11)) / np.float64(1 << 53)
 
 

@@ -1,6 +1,8 @@
 import numpy as np
 from numba import njit, prange
 
+from graphspec.infra.hashing import mixed
+
 
 @njit(cache=True)
 def lower(ids, offsets, ticks, entity, bound):
@@ -45,9 +47,9 @@ def walked(
                 lo = hi - fanout
             if hi <= lo:
                 break
-            value = mix(np.uint64(seed ^ (stream + hop)))
+            value = mixed(np.uint64(seed ^ (stream + hop)))
             for column in range(identity.shape[1]):
-                value = mix(value ^ np.uint64(identity[row, column]))
+                value = mixed(value ^ np.uint64(identity[row, column]))
             draw = np.float64(value >> np.uint64(11)) / np.float64(1 << 53)
             count = hi - lo
             best = -np.inf
@@ -76,14 +78,6 @@ def walked(
 
 
 @njit(cache=True)
-def mix(value):
-    value = value + np.uint64(0x9E3779B97F4A7C15)
-    value = (value ^ (value >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
-    value = (value ^ (value >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
-    return value ^ (value >> np.uint64(31))
-
-
-@njit(cache=True)
 def keyed(first, second, third):
     rows = len(first)
     capacity = 16
@@ -96,7 +90,7 @@ def keyed(first, second, third):
     count = 0
     for row in range(rows):
         a, b, c = np.int64(first[row]), np.int64(second[row]), np.int64(third[row])
-        slot = np.int64(mix(mix(mix(np.uint64(a)) ^ np.uint64(b)) ^ np.uint64(c)) & mask)
+        slot = np.int64(mixed(mixed(mixed(np.uint64(a)) ^ np.uint64(b)) ^ np.uint64(c)) & mask)
         while True:
             group = slots[slot]
             if group < 0:
@@ -126,7 +120,7 @@ def keyed2(first, second):
     count = 0
     for row in range(rows):
         a, b = np.int64(first[row]), np.int64(second[row])
-        slot = np.int64(mix(mix(np.uint64(a)) ^ np.uint64(b)) & mask)
+        slot = np.int64(mixed(mixed(np.uint64(a)) ^ np.uint64(b)) & mask)
         while True:
             group = slots[slot]
             if group < 0:
@@ -148,7 +142,7 @@ def rehash(slots, keys_low, keys_high, count):
     capacity = len(slots)
     mask = np.uint64(capacity - 1)
     for index in range(count):
-        slot = np.int64(mix(mix(np.uint64(keys_low[index])) ^ np.uint64(keys_high[index])) & mask)
+        slot = np.int64(mixed(mixed(np.uint64(keys_low[index])) ^ np.uint64(keys_high[index])) & mask)
         while slots[slot] != 0:
             slot = (slot + 1) & (capacity - 1)
         slots[slot] = index + 1
@@ -161,7 +155,7 @@ def novel(slots, keys_low, keys_high, count, low, high):
     fresh = np.zeros(len(low), np.bool_)
     for row in range(len(low)):
         a, b = np.int64(low[row]), np.int64(high[row])
-        slot = np.int64(mix(mix(np.uint64(a)) ^ np.uint64(b)) & mask)
+        slot = np.int64(mixed(mixed(np.uint64(a)) ^ np.uint64(b)) & mask)
         while True:
             stored = slots[slot]
             if stored == 0:
@@ -949,7 +943,7 @@ def replayed(
     for index in range(len(initial_state)):
         left, right, code = initial_source[index], initial_target[index], initial_code[index]
         slot = np.int64(
-            mix(mix(mix(np.uint64(left)) ^ np.uint64(right)) ^ np.uint64(code)) & np.uint64(capacity - 1)
+            mixed(mixed(mixed(np.uint64(left)) ^ np.uint64(right)) ^ np.uint64(code)) & np.uint64(capacity - 1)
         )
         while slots[slot] != 0:
             slot = (slot + 1) & (capacity - 1)
@@ -1001,7 +995,7 @@ def replayed(
                         )
                     origin, destination = last[left], last[right]
                 slot = np.int64(
-                    mix(mix(mix(np.uint64(left)) ^ np.uint64(right)) ^ np.uint64(code))
+                    mixed(mixed(mixed(np.uint64(left)) ^ np.uint64(right)) ^ np.uint64(code))
                     & np.uint64(capacity - 1)
                 )
                 while True:

@@ -16,9 +16,10 @@ from graphspec.infra.files import (
     sha256_file,
     write_json,
 )
+from graphspec.infra.locks import Lock, exclusive
 from graphspec.infra.log import configure, emit
-from graphspec.infra.processes import Lock, WorkerProcess
-from graphspec.infra.runtime import exclusive, output_path
+from graphspec.infra.processes import WorkerProcess
+from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import Timeline, measure, timed
 from graphspec.names import carried, restored
 from graphspec.spec import digest
@@ -26,9 +27,10 @@ from graphspec.spec import digest
 from . import objective
 from . import statement as statements
 from .budget import TIMEOUT_EXIT_CODE
+from .data import PACKAGES
 from .records import VERSION, Outcome, worker_alive
 from .report import report
-from .training import PACKAGES, fit
+from .training import fit
 
 REFERENCE_HISTORY = 16
 
@@ -132,22 +134,6 @@ def counted(manifest, names):
         )
     result = sum(manifest["split_rows"][name] for name in names)
     emit("splits_counted", rows=result, seconds=time.perf_counter() - started)
-    return result
-
-
-def seen(given):
-    started = time.perf_counter()
-    result = None
-    if given is not None:
-        result = {}
-        for item in given:
-            name, stated, rules = item.partition("=")
-            if not stated or name in result:
-                raise ValueError(
-                    "what a split may see is stated once for each split as split=rule,rule; found %r" % item
-                )
-            result[name] = [rule for rule in rules.split(",") if rule]
-    emit("sees_parsed", seconds=time.perf_counter() - started)
     return result
 
 
@@ -265,7 +251,7 @@ def flags(args):
         batch_sequences=args.batch_sequences,
         trained=args.trained,
         scored=args.scored,
-        sees=seen(args.sees),
+        sees=statements.seen(args.sees),
     )
     result = {name: value for name, value in given.items() if value is not None}
     emit("statement_flags", fields=sorted(result), seconds=time.perf_counter() - started)

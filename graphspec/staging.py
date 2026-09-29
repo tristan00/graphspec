@@ -10,7 +10,7 @@ from .clock import UNITED
 from .infra.files import write_json
 from .infra.runtime import output_path
 from .references import SORTS
-from .schema import EDGE, LINK, OBSERVED, STAMP, TARGET, TASK
+from .schema import EDGE, LINK, OBSERVED, TARGET, TASK, WRITTEN
 
 LOG = logging.getLogger(__name__)
 
@@ -25,16 +25,6 @@ def write_task(path, name, staging, schema):
     write_json(path, dict(name=name, staging=location, schema=schema.mapping()))
     LOG.debug("write_task exit path=%s seconds=%.4f", path, time.perf_counter() - started)
     return path
-
-
-WRITTEN = {STAMP: pa.int64(), "INT32": pa.int32(), "STRING[]": pa.list_(pa.string())}
-FIELDS = dict(
-    WRITTEN,
-    STRING=pa.string(),
-    FLOAT=pa.float32(),
-    DOUBLE=pa.float64(),
-    BOOL=pa.bool_(),
-)
 
 
 class GraphTables:
@@ -287,7 +277,7 @@ class GraphTables:
                         {held: kind[0] for held, kind in entry["required"].items() if type(kind) is not str}
                     )
                     fields = ([("from", pa.int64()), ("to", pa.int64())] if source is not None else []) + [
-                        (held, FIELDS[kind]) for held, kind in required.items()
+                        (held, WRITTEN[kind]) for held, kind in required.items()
                     ]
                     fields += [(held, schema.kind(held).written) for held in entry["columns"]]
                     self.tables[(name, source, target)] = pa.table(

@@ -15,7 +15,7 @@ from graphspec.infra.files import Arrays
 from graphspec.infra.processes import guarded, spawned, worker_threads
 from graphspec.infra.timing import measure, timed
 
-from . import join, kernels, representations, transform
+from . import join, kernels, names, representations, transform
 from .carry import Segment, Table, encode
 from .operators import (
     FACTS,
@@ -1256,7 +1256,9 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
             return job, stage, arguments
         return None
 
-    executors = [ProcessPoolExecutor(1, **spawned(attach, initargs)) for _ in range(workers)]
+    executors = [
+        ProcessPoolExecutor(1, **spawned(attach, initargs, names.carried, names.restored)) for _ in range(workers)
+    ]
     try:
         with worker_threads(initargs[-1]):
             while stitched < len(jobs):

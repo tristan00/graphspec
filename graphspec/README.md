@@ -1,6 +1,6 @@
 **Graph spec core**
 
-Domain-free machinery that reads a typed temporal truth graph from staged Parquet or an optional LadybugDB database and derives the graph variants a model search explores. Structure comes from the schema a task file states, documented in [the contract](../docs/contract.md). Mechanism lives in the `graphspec.infra` package: files and arrays, database access, hashing and the feature encoder.
+Domain-free machinery that reads a typed temporal truth graph from staged Parquet or an optional LadybugDB database and derives the graph variants a model search explores. Structure comes from the schema a task file states, documented in [the contract](../docs/contract.md). Mechanism lives in the `graphspec.infra` package: files and arrays, database access and hashing.
 
 Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launching Python. There is no default home or profile configuration. On Windows, output must resolve to that runtime volume; managed caches and temporary files stay beneath the home. The checkout launcher accepts mandatory `-Home`; see the [storage and loader guide](../docs/loader.md).
 

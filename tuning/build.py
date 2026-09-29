@@ -13,9 +13,11 @@ import numpy as np
 from graphspec import Registry, graphdb, staged, vocabulary
 from graphspec.clock import ALWAYS, NEVER
 from graphspec.infra.files import read_json, sha256_file, write_json
+from graphspec.infra.locks import exclusive
 from graphspec.infra.log import configure
 from graphspec.infra.processes import pooled
-from graphspec.infra.runtime import exclusive, output_path
+from graphspec.infra.runtime import output_path
+from graphspec.names import carried, restored
 from graphspec.schema import Encoding, Schema
 from graphspec.truth import VERSION, distinct, parse
 from graphspec.view import validate
@@ -387,7 +389,7 @@ def build(task_path, output, workers, trained):
         location = source.location
     attached = (str(task_path), str(output), LOG.getEffectiveLevel())
     try:
-        with pooled(workers, len(groups), attach, attached) as mapped:
+        with pooled(workers, len(groups), attach, attached, carried, restored) as mapped:
             found = mapped(scanned, [index for index, _, _, _ in groups])
             stated = Schema(task["schema"])
             encoding = Encoding(

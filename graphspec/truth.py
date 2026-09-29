@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from graphspec.infra.features import token
 from graphspec.infra.files import Mapped, load_arrays, read_json, save_arrays, write_json
+from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import finite
 

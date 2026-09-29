@@ -21,7 +21,7 @@ def child(code, name, directory):
 
 
 def test_singleton_rejects_local_reentry_without_profile_access(monkeypatch):
-    from graphspec.infra.runtime import Path, singleton
+    from graphspec.infra.locks import Path, singleton
 
     def forbidden():
         raise AssertionError("Windows singleton must not access the user profile")
@@ -37,13 +37,13 @@ def test_singleton_rejects_local_reentry_without_profile_access(monkeypatch):
 
 
 def test_singleton_excludes_other_home_and_releases(tmp_path, monkeypatch):
-    from graphspec.infra.runtime import singleton
+    from graphspec.infra.locks import singleton
 
     name = uuid.uuid4().hex
     monkeypatch.setenv("GRAPHSPEC_HOME", str(tmp_path / "first"))
     code = """
 import sys
-from graphspec.infra.runtime import singleton
+from graphspec.infra.locks import singleton
 try:
     with singleton(sys.argv[1], "busy"):
         print("acquired")

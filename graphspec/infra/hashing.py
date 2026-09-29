@@ -1,7 +1,15 @@
+import hashlib
+from functools import lru_cache
+
 import numpy as np
 from numba import njit, prange
 
 from .timing import timed
+
+
+@lru_cache(maxsize=200000)
+def token(text):
+    return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "little")
 
 
 @njit(cache=True, inline="always")

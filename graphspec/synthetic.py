@@ -6,8 +6,9 @@ import numpy as np
 import pyarrow as pa
 
 from graphspec.infra.files import write_json
+from graphspec.infra.locks import exclusive
 from graphspec.infra.log import configure
-from graphspec.infra.runtime import exclusive, output_path
+from graphspec.infra.runtime import output_path
 from graphspec.infra.staging import Stage
 from graphspec.infra.timing import timed
 
@@ -21,11 +22,11 @@ from .schema import (
     LINK,
     MEMBER,
     OBSERVED,
-    STAMP,
     TARGET,
     TASK,
     VERSION,
     WITHIN,
+    WRITTEN,
     Schema,
     inward,
     outward,
@@ -46,7 +47,6 @@ REFERENCES = dict(
 HOLDER = "holder"
 UNIT = "step"
 TIME = dict(model="clock", units=[UNIT], ties="sequence")
-WRITTEN = {STAMP: pa.int64(), "INT32": pa.int32(), "STRING[]": pa.list_(pa.string())}
 
 
 def edge(source, target, columns, directed=True, relation=DECLARED):

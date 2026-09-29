@@ -4,15 +4,10 @@ import os
 import secrets
 import sys
 import tempfile
-import threading
 import time
-from contextlib import contextmanager
-from functools import wraps
 from pathlib import Path
 
 LOG = logging.getLogger(__name__)
-ACTIVE = threading.local()
-SERIAL = threading.RLock()
 
 
 def configured_home():
@@ -80,53 +75,3 @@ def identities():
 
 def cache_path(namespace, identity):
     return home() / "cache" / namespace / identity
-
-
-@contextmanager
-def singleton(name, message):
-    from .processes import Lock, LockBusy
-
-    if os.name == "nt":
-        from .windows_mutex import Mutex
-
-        lock = Mutex(name)
-    else:
-        directory = Path.home() / ".graphspec" / "locks"
-        directory.mkdir(parents=True, exist_ok=True)
-        lock = Lock(directory / (name + ".lock"))
-    try:
-        lock.__enter__()
-    except LockBusy as error:
-        raise RuntimeError(message) from error
-    try:
-        yield
-    finally:
-        lock.__exit__(None, None, None)
-
-
-@contextmanager
-def heavy_job():
-    with SERIAL:
-        if getattr(ACTIVE, "held", False):
-            yield
-            return
-        started = time.perf_counter()
-        with singleton(
-            "heavy", "another graph build or training job is running; finish it before starting this job"
-        ):
-            ACTIVE.held = True
-            LOG.info("heavy job enter pid=%d seconds=%.3f", os.getpid(), time.perf_counter() - started)
-            try:
-                yield
-            finally:
-                ACTIVE.held = False
-                LOG.info("heavy job exit pid=%d seconds=%.3f", os.getpid(), time.perf_counter() - started)
-
-
-def exclusive(function):
-    @wraps(function)
-    def run(*args, **kwargs):
-        with heavy_job():
-            return function(*args, **kwargs)
-
-    return run

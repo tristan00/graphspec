@@ -10,6 +10,7 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.log import emit
 from graphspec.infra.processes import parallel
 from graphspec.infra.timing import Timeline, measure
+from graphspec.names import carried, restored
 
 from .data import Bank, Deriver
 
@@ -56,6 +57,8 @@ def prepare(bank_directory, cfg, workers, device, timing_directory=None):
                 workers,
                 attach,
                 (str(bank_directory), threads, device, timing_directory),
+                carried,
+                restored,
             )
         )
     os.utime(root / "variant.json")

@@ -1,4 +1,3 @@
-import errno
 import logging
 import os
 import subprocess
@@ -11,49 +10,11 @@ from pathlib import Path
 
 import psutil
 
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
-
-from ..names import carried, restored
 from .files import write_json
 from .timing import timed
 
 LOG = logging.getLogger(__name__)
 FAILED = []
-
-
-class LockBusy(OSError):
-    pass
-
-
-class Lock:
-    def __init__(self, path):
-        self.path = Path(path)
-
-    def __enter__(self):
-        self.stream = self.path.open("a+b")
-        self.stream.seek(0)
-        try:
-            if os.name == "nt":
-                msvcrt.locking(self.stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            self.stream.close()
-            if error.errno in (errno.EACCES, errno.EAGAIN):
-                raise LockBusy(str(self.path)) from error
-            raise
-        return self
-
-    def __exit__(self, *exception):
-        self.stream.seek(0)
-        if os.name == "nt":
-            msvcrt.locking(self.stream.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
-        self.stream.close()
 
 
 def command(pid):
@@ -159,10 +120,10 @@ def worker_threads(threads):
                 os.environ[name] = value
 
 
-def attached(entries, initializer, initargs):
+def attached(entries, restore, initializer, initargs):
     started = time.perf_counter()
     try:
-        restored(entries)
+        restore(entries)
         if initializer is not None:
             initializer(*initargs)
     except BaseException as error:
@@ -176,12 +137,12 @@ def guarded(function, *arguments):
     return function(*arguments)
 
 
-def spawned(initializer, initargs):
-    return dict(initializer=attached, initargs=(carried(), initializer, initargs))
+def spawned(initializer, initargs, carry, restore):
+    return dict(initializer=attached, initargs=(carry(), restore, initializer, initargs))
 
 
 @contextmanager
-def pooled(workers, jobs, initializer, initargs):
+def pooled(workers, jobs, initializer, initargs, carry, restore):
     started = time.perf_counter()
     count = min(workers, jobs)
     if count <= 1:
@@ -190,12 +151,12 @@ def pooled(workers, jobs, initializer, initargs):
     else:
         with (
             worker_threads(max(1, (os.cpu_count() or 1) // workers)),
-            ProcessPoolExecutor(max_workers=count, **spawned(initializer, initargs)) as pool,
+            ProcessPoolExecutor(max_workers=count, **spawned(initializer, initargs, carry, restore)) as pool,
         ):
             yield lambda function, items: list(pool.map(partial(guarded, function), items))
     LOG.debug("pooled exit jobs=%d workers=%d seconds=%.3f", jobs, count, time.perf_counter() - started)
 
 
-def parallel(function, jobs, workers, initializer, initargs):
-    with pooled(workers, len(jobs), initializer, initargs) as mapped:
+def parallel(function, jobs, workers, initializer, initargs, carry, restore):
+    with pooled(workers, len(jobs), initializer, initargs, carry, restore) as mapped:
         return mapped(function, jobs)

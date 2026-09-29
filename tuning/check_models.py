@@ -8,13 +8,15 @@ from graphspec import spec as specs
 from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, write_json
+from graphspec.infra.locks import exclusive
 from graphspec.infra.log import configure, emit
-from graphspec.infra.runtime import exclusive, output_path
+from graphspec.infra.runtime import output_path
 
 from .batching import pack_batch
 from .data import Deriver
 from .model_spec import configuration, describe, groups, samples
 from .models import build
+from .statement import seen
 from .training import loss
 
 
@@ -106,8 +108,6 @@ def main():
     parser.add_argument("--spec")
     args = parser.parse_args()
     configure()
-    from .run import seen
-
     splits = dict(trained=args.trained, scored=args.scored, sees=seen(args.sees))
     check(args.directory, args.output, args.device, args.seed, splits, args.graph, args.spec)
 

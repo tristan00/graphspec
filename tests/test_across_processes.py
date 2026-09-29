@@ -28,6 +28,7 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.processes import guarded, parallel, spawned
 from graphspec.infra.timing import timed
+from graphspec.names import carried, restored
 from graphspec.schema import VERSION
 from tuning.build import build
 from tuning.data import Deriver
@@ -231,13 +232,13 @@ def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(
             match="the rule of what a split may see local is registered from outside the library and cannot be "
             "passed to the processes the library starts",
         ):
-            parallel(abs, [1, 2], 2, registered.ready, ())
+            parallel(abs, [1, 2], 2, registered.ready, (), carried, restored)
     finally:
         del SEES.held["local"]
     registered.Vanished = type("Vanished", (), {"__module__": registered.__name__})
     SEES.register("vanished", registered.Vanished())
     try:
-        started = spawned(registered.ready, ())
+        started = spawned(registered.ready, (), carried, restored)
     finally:
         del SEES.held["vanished"]
         del registered.Vanished

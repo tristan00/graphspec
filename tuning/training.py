@@ -16,6 +16,8 @@ from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.spec import digest
 
+from .data import PACKAGES
+
 if TYPE_CHECKING:
     from torch import Tensor, nn
     from torch.optim import Optimizer
@@ -24,7 +26,6 @@ if TYPE_CHECKING:
     from .data import Deriver
     from .packing import Packer
 
-PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / "graphspec")
 Block = Sequence[int]
 
 
