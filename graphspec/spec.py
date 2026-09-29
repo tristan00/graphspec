@@ -147,7 +147,9 @@ def space(registry, groups):
     ungrouped = "truth" if grouped else "steps"
 
     def periodic(spec):
-        return spec["time/periods"] == "truth" or spec.get("time/period_length", 1) > 1
+        return spec["time/periods"] == "truth" or (
+            spec["time/periods"] == "every" and spec["time/period_length"] > 1
+        )
 
     def projectable(spec, edge):
         relation, position, first, second = (

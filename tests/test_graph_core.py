@@ -116,6 +116,16 @@ def test_bounds_that_leave_out_a_default_leave_the_parameter_without_one():
     assert spec.configured(left, {"view": "tree", "enabled": True}) == {"view": "tree", "enabled": True}
 
 
+def test_a_period_length_read_where_it_is_absent_stops_naming_it():
+    registry = registered("test", ["person"], [EdgeType("rel", ("base", "rel"), [("person", "person")])])
+    unit = next(parameter for parameter in spec.space(registry, ()) if parameter.name == "time/unit")
+    window = {"time/scheme": "window"}
+    assert unit.active(dict(window, **{"time/periods": "every", "time/period_length": 2}))
+    assert not unit.active(dict(window, **{"time/periods": "steps"}))
+    with pytest.raises(KeyError, match="time/period_length"):
+        unit.active(dict(window, **{"time/periods": "every"}))
+
+
 def test_graph_registry_rejects_duplicate_relations():
     edge = EdgeType("rel", ("base", "rel"), [("person", "person")])
     with pytest.raises(ValueError, match="duplicate edge type name"):
