@@ -577,23 +577,6 @@ Started detached. Waits on B2.
 
 12.2 Fallbacks. First, every site under `graphspec/` and `tuning/` where code puts a value in place of one that is missing is listed in this plan by file and line; done when the list is in the plan. Then each is removed or becomes a stated rule; done when a test that searches for the listed patterns finds none. A rule that becomes a field of the statement is added to the list of 8.12.
 
----|---|---|
-| Graph | Nodes by kind and key, and facts by relation, at every time of the three runs | Equal as sets |
-| Run in progress | The graph built time by time from a run as it was recorded | Equal at every time to the first times of the graph built from the whole run |
-| Encoding | Feature vectors computed at 32 bits from the staged tables | Slots of names equal; numbers within 1e-6 relative |
-| Targets | Points, offsets, differences, means and deviations | Points equal as sets; values within 1e-6 relative |
-| Preparation | For each sampled kind, the entities kept; then the prepared graph | Given the same kept entities, equal as sets of nodes and edges; the fraction the implementation keeps by its own hash of keys is within 0.02 of the design's |
-| Libraries | The packages of 1.3 installed into a copy of that project's environment and imported | Every import succeeds |
-| Model | Outputs on the reference inputs, at the trial's validation points and at offsets 1,460 to 1,820 in steps of 30 and 1,825 | Within 1e-4 standardised |
-| Gradients | Gradients of the loss on one reference batch from the reference parameters, before the optimiser's update | Within 1e-6 absolute plus 1e-4 relative |
-| Batches | Composition of the batches of the first epoch | Equal as sets |
-| Fit on the trial's runs | Final training loss of five fits of this library with different seeds on the runs the trial trained on | Five fits of the implementation on the same runs have a mean within two pooled deviations of the reference mean |
-| Fit on all runs | The same, on all runs, with scaling from all runs | The same |
-| Options | Predictions for 8 options at each of 20 decisions | For each series and each offset of the Model row, the same order of options by predicted value, options closer than 1e-4 counted as tied; values within 1e-3 |
-| Cost | Time and memory per decision for 2 to 50 options, measured by that agent | Under 5 seconds per decision, the limit of that project without a progress stamp |
-
-12.2 Review. When that agent sends the paths of its files and its own comparison, this plan's agent reads the code in the order of the stages and reports each difference with the line in that code, the line in this library it departs from, and what it changes in the model's input or output. It edits nothing in that project and queries nothing in its database. Done when a reading reports no difference.
-
 ---
 
 **Public data**
@@ -643,4 +626,10 @@ Left out by choice: MAG240M (167 GB), from the same source as the open graph ben
 
 Order is 1 to 12. Every section waits on B1, which holds no longer: no search is running.
 
-As of 2026-09-28 at 21:00: `main` is at `32af441`. The work of 28 September is uncommitted and stays so: 1.1 keeps a copy of it; 2.7 replaces `tuning/offers.py`; section 3 and 8.3 to 8.9 replace the scoring of spread and the modules of measures; 7.3 replaces the changes to the third adapter. The search on the third dataset was killed by the owner at 101 recorded trials, which remain under the runtime home. Nothing of this plan has been built.
+As of 2026-09-28 at 21:00: `main` is at `32af441`. The work of 28 September is uncommitted and stays so: 1.1 keeps a copy of it; 2.7 replaces `tuning/offers.py`; section 3 and 8.3 to 8.9 replace the scoring of spread and the modules of measures; 7.3 replaces the changes to the third adapter. The search on the third dataset was killed by the owner at 101 recorded trials, which remain under the runtime home.
+
+As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, untracked files included, was committed as `9794d2c` on the branch `snapshot-20260928`; `main` is unchanged. This replaces the statement above that the work stays uncommitted. The work of this plan is done on the branch `generalise`, made from that commit.
+
+| Subsection | State | Evidence |
+|---|---|---|
+| 1.1 | done | Copy at `D:/graphspec-runtime/ground/worktree-20260928`; fingerprint of source and copy `391a6b3d3531b6d6930e357df5bc8dd1816367d56156f64ab888f1ab5a76b319` over 1,921 files, `__pycache__` and `*.pyc` left out; recorded in `D:/graphspec-runtime/ground/README.txt` |
