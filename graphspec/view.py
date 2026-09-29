@@ -669,14 +669,15 @@ def finished(shown, registry, inner):
     return graph
 
 
-def sampled(facts, shown, held, registry):
+def sampled(facts, registry, held, several):
     started = time.perf_counter()
     schema, layout = registry.schema, registry.encoding.layout
     result = {name: [] for name in schema.columns}
     split = np.asarray(facts.task_split)
     trained = np.isin(split[np.asarray(facts.target_task, np.int64)[held["labels"]]], held["trained"])
-    steps = np.asarray(shown.task_step, np.int64)
     if trained.any():
+        shown = view(facts, registry, held, several)
+        steps = np.asarray(shown.task_step, np.int64)
         bound = int(steps[np.asarray(shown.label_task, np.int64)[trained]].max())
         tasks = (steps <= bound) & (
             np.isin(split[held["tasks"]], held["trained"]) | (split[held["tasks"]] < 0)

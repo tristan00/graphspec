@@ -29,7 +29,7 @@ from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.resources import GraphLimits
 from graphspec.schema import Encoding, fitted
 from graphspec.transform import SEED, materialize
-from graphspec.truth import HELD, WITHIN, Facts, Graph, Shown, admitted, inputs
+from graphspec.truth import Facts, Graph, admitted, inputs
 from graphspec.view import STATEMENT, Looking, finished, sampled, sequences, view
 
 from .training import PACKAGES
@@ -197,41 +197,36 @@ class Viewed:
         started = time.perf_counter()
         registry, entries = bank.registry, []
         samples = {name: [] for name in registry.schema.columns}
+        for stored in bank.manifest["graphs"]:
+            facts = sets.stored(Facts.load(bank.truth(stored["index"])), registry, storage)
+            for held in sequences(facts, registry, steps, looking):
+                for name, found in sampled(facts, registry, held, several).items():
+                    samples[name] += found
+        encoding = fitted(registry.encoding, samples)
         self.folder.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="stated.", dir=self.folder) as scratch:
-            for stored in bank.manifest["graphs"]:
-                facts = sets.stored(Facts.load(bank.truth(stored["index"])), registry, storage)
-                for held in sequences(facts, registry, steps, looking):
-                    graph = view(facts, registry, held, several)
-                    for name, found in sampled(facts, graph, held, registry).items():
-                        samples[name] += found
-                    graph.save(Path(scratch) / ("graph_%04d" % len(entries)))
-                    entries.append(
-                        dict(
-                            index=len(entries),
-                            name=graph.name,
-                            source=stored["index"],
-                            observer=held["observer"],
-                            split=held["split"],
-                            steps=graph.steps,
-                            entities=len(graph.kinds),
-                            observations=int((graph.obs_stop.astype(np.int64) - graph.obs_start).sum()),
-                            facts=int((graph.fact_stop.astype(np.int64) - graph.fact_start).sum())
-                            + len(graph.removal_step),
-                            labels=len(graph.label_task),
-                        )
+        write_json(self.folder / "encoders.json", dict(states=encoding.states))
+        chosen = registry.fitted(encoding)
+        for stored in bank.manifest["graphs"]:
+            facts = sets.stored(Facts.load(bank.truth(stored["index"])), registry, storage)
+            inner = inputs(chosen, facts.kinds, facts.arrays)
+            for held in sequences(facts, registry, steps, looking):
+                graph = finished(view(facts, registry, held, several), chosen, inner)
+                written(self.path(len(entries)), graph.save)
+                entries.append(
+                    dict(
+                        index=len(entries),
+                        name=graph.name,
+                        source=stored["index"],
+                        observer=held["observer"],
+                        split=held["split"],
+                        steps=graph.steps,
+                        entities=len(graph.kinds),
+                        observations=int((graph.obs_stop.astype(np.int64) - graph.obs_start).sum()),
+                        facts=int((graph.fact_stop.astype(np.int64) - graph.fact_start).sum())
+                        + len(graph.removal_step),
+                        labels=len(graph.label_task),
                     )
-            encoding = fitted(registry.encoding, samples)
-            write_json(self.folder / "encoders.json", dict(states=encoding.states))
-            chosen, inner = registry.fitted(encoding), {}
-            for entry in entries:
-                if entry["source"] not in inner:
-                    held = load_arrays(bank.truth(entry["source"]), ("kinds",) + HELD + WITHIN)
-                    inner = {entry["source"]: inputs(chosen, held["kinds"], held)}
-                graph = finished(
-                    Shown.load(Path(scratch) / ("graph_%04d" % entry["index"])), chosen, inner[entry["source"]]
                 )
-                written(self.path(entry["index"]), graph.save)
         write_json(output_path(self.folder / "index.json"), entries)
         LOG.info("views built exit seconds=%.3f graphs=%d", time.perf_counter() - started, len(entries))
 
