@@ -1,18 +1,20 @@
 import logging
 import os
+import shutil
 import time
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from importlib import import_module
+from pathlib import Path
 
 import pytest
 
 from graphspec.infra import runtime
-from graphspec.infra.processes import LockBusy
+from graphspec.infra.processes import Lock, LockBusy
 
 WORKER = "PYTEST_XDIST_WORKER" in os.environ
 LOG = logging.getLogger(__name__)
-SUITE = {"heavy": "heavy-tests"}
+SUITE = {"heavy": "heavy-tests-" + os.environ.get("PYTEST_XDIST_WORKER", "serial")}
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
 
@@ -63,15 +65,54 @@ def shared_heavy_job(original=runtime.heavy_job):
 runtime.heavy_job = shared_heavy_job
 
 
-@pytest.fixture(scope="session")
-def bank(tmp_path_factory):
+def suite():
+    return Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "tmp" / "suite" / os.environ["GRAPHSPEC_SUITE_RUN"]
+
+
+def shared(name, make):
+    started = time.perf_counter()
+    root = suite() / name
+    root.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            with Lock(root.parent / (name + ".lock")):
+                if not (root / "made").exists():
+                    root.mkdir()
+                    make(root)
+                    (root / "made").write_text("")
+            break
+        except LockBusy:
+            time.sleep(0.01)
+    LOG.debug("shared exit name=%s seconds=%.4f", name, time.perf_counter() - started)
+    return root
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    started = time.perf_counter()
+    if not WORKER and suite().exists():
+        shutil.rmtree(suite())
+    LOG.debug("suite removed seconds=%.4f", time.perf_counter() - started)
+
+
+def synthetic_bank(root, level):
     from graphspec.synthetic import generate, uniform
     from tuning.build import build
 
-    root = tmp_path_factory.mktemp("bank")
-    task = generate(root, "tiny", 4, 1, uniform(4, 2, "task"), **SETTINGS)
+    started = time.perf_counter()
+    task = generate(root, "tiny", 4, 1, uniform(4, 2, level), **SETTINGS)
     build(task, root / "bank", 1, ("train",))
-    return root / "bank"
+    LOG.debug("synthetic bank exit level=%s seconds=%.4f", level, time.perf_counter() - started)
+
+
+@pytest.fixture(scope="session")
+def bank():
+    return shared("bank", lambda root: synthetic_bank(root, "task")) / "bank"
+
+
+@pytest.fixture(scope="session")
+def path_bank():
+    return shared("path", lambda root: synthetic_bank(root, "path")) / "bank"
 
 
 @pytest.fixture(scope="session")
@@ -87,8 +128,6 @@ def varied(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def ground():
-    from pathlib import Path
-
     place = Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "ground" / "fixture"
     if not (place / "fixture.json").exists():
         raise FileNotFoundError("the fixture of the ground is absent: %s" % place)
