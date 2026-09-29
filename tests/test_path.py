@@ -46,7 +46,6 @@ def test_path_bank_records_one_row_per_point_and_splits_by_task(path_bank):
         )
     cfg = configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS)
     shown = opened.viewed(cfg)
-    assert shown.single
     for index in range(4):
         points, places = shown.labels[index]
         steps = shown.row_steps[index][places]

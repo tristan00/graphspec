@@ -21,7 +21,6 @@ class AffinityNet(nn.Module):
             self.periods = EndContext(kinds * 2)
         self.xh, self.hh, self.xs, self.hs, self.gs = (nn.Linear(kinds, kinds, bias=False) for _ in range(5))
         self.bh, self.bs = nn.Parameter(torch.zeros(kinds)), nn.Parameter(torch.zeros(kinds))
-        self.register_buffer("seen", torch.as_tensor(registry.seen), persistent=False)
         self.task = nn.Linear(registry.features, hidden)
         self.asked = Asked(registry, hidden)
         self.references = References(registry, kinds * 2, kinds * 2)
@@ -32,16 +31,16 @@ class AffinityNet(nn.Module):
         state = b["global_affinity"].new_zeros(b["entities"], kinds)
         overall = b["global_affinity"].new_zeros(b["predictions"], kinds)
         owner, entity = b["member_row"], b["member_entity"]
-        place = torch.zeros_like(b["row_kind"])
+        part = b["row_frames"] // b["time_steps"]
+        frames = b["frame_affinity"].reshape(b["batch_size"], b["time_steps"], kinds)
         buffer, values, order = deque(maxlen=self.buffer_size), [], []
         for time_step in range(b["time_steps"]):
             step, chosen = b["frame_rows"][time_step], b["frame_members"][time_step]
-            place[step] = torch.arange(len(step), device=place.device)
             profile = b["member_affinity"][chosen]
             x = profile.log1p()
-            known = torch.stack(tuple(buffer)).mean(0) if buffer else x.new_zeros(len(step), kinds)
-            overall[step] = known
-            around = known[place[owner[chosen]]]
+            known = torch.stack(tuple(buffer)).mean(0) if buffer else frames.new_zeros(b["batch_size"], kinds)
+            overall[step] = known[part[step]]
+            around = known[part[owner[chosen]]]
             held, inverse = torch.unique(entity[chosen], return_inverse=True)
             keep = (self.xh(x) + self.hh(state[entity[chosen]]) + self.bh).sigmoid()
             hidden = keep * state[entity[chosen]] + (1 - keep) * x
@@ -60,10 +59,7 @@ class AffinityNet(nn.Module):
             values.append(value)
             order.append(chosen)
             state = state.index_copy(0, held, mean(hidden, inverse, len(held)))
-            row = mean(profile, place[owner[chosen]], len(step))
-            code = self.seen[b["row_kind"][step]]
-            events = torch.nn.functional.one_hot(code.clamp_min(0), kinds) * (code >= 0)[:, None]
-            buffer.append((row + events).log1p())
+            buffer.append(frames[:, time_step].log1p())
         members = torch.cat(values)[torch.argsort(torch.cat(order))]
         whole = torch.cat((b["global_affinity"].log1p(), overall), -1)[b["whole_row"]]
         features = torch.cat(

@@ -1,4 +1,5 @@
 import copy
+import gc
 import logging
 import time
 
@@ -24,7 +25,7 @@ LOG = logging.getLogger(__name__)
 SPLITS = dict(trained=["train"], scored=["test"], sees=dict(train=[], test=[]))
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
 TIMES, THIRD, KIND, VALUE = 4, 1, 3, 2
-FEW, MANY = 5, 50
+FEW, MANY, CROWDED = 5, 50, (0, 1, 1, 2)
 EDGES = ("snapshot", "event_graph", "memory", "projection", "sequence", "tree", "walks")
 SHARED = dict(
     snapshot="plain",
@@ -88,9 +89,9 @@ def stated(order):
 
 
 @timed("references.graph")
-def graph(name, changed=False, era=1.0, values=FEW):
+def graph(name, changed=False, era=1.0, values=FEW, times=tuple(range(TIMES))):
     pairs = [(MAKERS[at], SITES[at]) for at in range(4)] + [(MAKERS[at], SITES[(at + 1) % 4]) for at in range(4)]
-    links = [(MAKERS[at % 4], SITES[at // 4 % 4], "v%02d" % (at % values), 0) for at in range(max(values, 16))]
+    links = [(MAKERS[at % 4], SITES[at // 4 % 4], "v%02d" % (at % values), 0) for at in range(max(values, 8))]
     links.append((MAKERS[VALUE], SITES[(VALUE + 1) % 4], "v%02d" % (2 if changed else 1), VALUE))
     return dict(
         name=name,
@@ -157,7 +158,7 @@ def graph(name, changed=False, era=1.0, values=FEW):
         tasks=dict(
             key=list(range(TIMES)),
             kind=["down" if changed and at == KIND else "up" for at in range(TIMES)],
-            time=list(range(TIMES)),
+            time=list(times),
             split=["train" if at < 3 else "test" for at in range(TIMES)],
             weight=[None] * TIMES,
             ask=[0.25 * at for at in range(TIMES)],
@@ -181,24 +182,31 @@ def graph(name, changed=False, era=1.0, values=FEW):
 
 NAMES = ("r0", "r1", "r2", "r3", "r4", "r5")
 CASES = dict(
-    stated=lambda: dict(schema=stated(NAMES), graphs=[graph("main"), graph("era")]),
-    changed=lambda: dict(schema=stated(NAMES), graphs=[graph("main", changed=True), graph("era", era=2.0)]),
+    stated=lambda: dict(schema=stated(NAMES), graphs=[graph("main"), graph("era", times=CROWDED)]),
+    changed=lambda: dict(
+        schema=stated(NAMES), graphs=[graph("main", changed=True), graph("era", era=2.0, times=CROWDED)]
+    ),
     reordered=lambda: dict(schema=stated(("r4", "r5", "r2", "r0", "r3", "r1")), graphs=[graph("main")]),
-    wide=lambda: dict(schema=stated(NAMES), graphs=[graph("main", values=MANY)]),
 )
+WIDE = dict(wide=lambda: dict(schema=stated(NAMES), graphs=[graph("main", values=MANY)]))
 
 
-def made(root):
-    started = time.perf_counter()
-    for name, case in CASES.items():
-        build(synthetic.stage(root, name, case()), root / name, 1, ("train",))
-    LOG.info("banks of references exit seconds=%.3f", time.perf_counter() - started)
+def made(cases):
+    def make(root):
+        started = time.perf_counter()
+        for name, case in cases.items():
+            build(synthetic.stage(root, name, case()), root / name, 1, ("train",))
+        LOG.info("banks of references exit banks=%d seconds=%.3f", len(cases), time.perf_counter() - started)
+
+    return make
 
 
 @pytest.fixture(scope="module")
 def banks():
-    root = shared("references", made)
-    return {name: root / name for name in CASES}
+    root = shared("references", made(CASES))
+    yield {name: root / name for name in CASES}
+    OPENED.clear()
+    gc.collect()
 
 
 @timed("references.opened")
@@ -282,10 +290,34 @@ def sizes(banks, name):
 
 @pytest.mark.xdist_group("references-plain")
 def test_a_relation_taken_from_a_column_has_the_parameters_arrays_and_weights_of_its_table(banks):
+    banks = dict(banks, wide=shared("references-wide", made(WIDE)) / "wide")
     few, many = sizes(banks, "stated"), sizes(banks, "wide")
     assert few.pop("values") == FEW and many.pop("values") == MANY and few == many
     assert "relations/links/keep" in [parameter.name for parameter in specs.space(opened(banks, "wide").registry, ())]
     assert "attributes_links" in few["arrays"] and set(few["weights"]) == set(VIEWS)
+
+
+@pytest.mark.xdist_group("references-plain")
+def test_a_frame_of_a_sequence_over_graphs_reads_every_task_seen_as_an_event_at_its_step(banks):
+    held = opened(banks, "stated")
+    assert set(views(held.registry)) == set(VIEWS)
+    stated = dict(view="snapshot", **{"snapshot/temporal": "graph_sequence"})
+    cfg = configuration(held.registry, stated, {"time/history": 2}, 5, copy.deepcopy(SPLITS))
+    torch.manual_seed(5)
+    net = network(cfg, held.fitted(cfg))
+    era = [graph["index"] for graph in held.viewed(cfg).graphs if graph["name"] == "era"]
+    blocks = [block for partition in (0, 1) for block in held.blocks(partition, 2, cfg) if block[0] in era]
+    found = [pack_batch(held, group, cfg, "cpu") for group in batches(blocks, 1, held.sizes(cfg), frame_budget=1024)]
+    b = next(batch for batch in found if torch.bincount(batch["frame_event"]).max() == 2)
+    frame = int(torch.bincount(b["frame_event"]).argmax())
+    second = (b["frame_event"] == frame).nonzero().flatten()[1]
+    moved = dict(b, frame_task=b["frame_task"].clone())
+    moved["frame_task"][second] += 1
+    predicted, changed = net(b), net(moved)
+    rows = (b["row_frames"][b["selected"]] == frame).nonzero().flatten()
+    assert len(rows) == 2 and torch.isfinite(predicted).all() and (predicted[rows] != changed[rows]).all()
+    sum(net(batch).sum() for batch in found).backward()
+    assert all(torch.isfinite(parameter.grad).all() for parameter in net.parameters() if parameter.grad is not None)
 
 
 @pytest.mark.parametrize("family", FAMILIES)

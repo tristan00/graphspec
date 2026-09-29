@@ -922,7 +922,6 @@ def test_the_steps_of_a_view_may_be_the_times_of_change(tmp_path):
     task = write_task(tmp_path / "task.json", "plain", tmp_path / "source", schema)
     manifest = build(task, tmp_path / "bank", 1, ("train",))
     assert manifest["spec"]["extras"]["target"] == "number" and manifest["graphs"][0]["tasks"] == 4
-    assert manifest["spec"]["extras"]["single"] is False
     held = Deriver(tmp_path / "bank", "cpu", RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), {"time/steps": "changes"}, 5, SPLITS)
     assert cfg["graph"]["time/periods"] == "steps"

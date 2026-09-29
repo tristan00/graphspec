@@ -262,7 +262,7 @@ def test_the_table_of_tasks_reads_back_from_the_bank_equal_to_what_was_stated(ba
     held, _ = opened(bank)
     manifest, schema = held.manifest, held.registry.schema
     assert manifest["version"] == 8 and manifest["splits"] == ["east", "north", "south", "west"]
-    assert manifest["trained"] == ["north", "south"] and manifest["spec"]["extras"]["single"] is False
+    assert manifest["trained"] == ["north", "south"]
     assert manifest["split_rows"] == dict(east=6, north=6, south=6, west=6)
     assert manifest["spec"]["extras"]["series"] == ["total", "mark", "wide"]
     written = support.written(bank.parent / "tasks.staging", schema)
@@ -316,7 +316,7 @@ def test_a_view_holds_times_without_a_task_and_several_tasks_at_one_time(bank):
     assert sorted(set(range(len(STEPS))) - set(view.task_step.tolist())) == [0, 2, 3, 5, 6, 7]
     kinds = [held.registry.tasks[code] for code in view.task_kind.tolist()]
     assert kinds == ["total", "mark", "mark", "wide", "mark", "wide", "joint"]
-    assert view.label_task.tolist() == [2, 3, 4] and not held.viewed(cfg).single
+    assert view.label_task.tolist() == [2, 3, 4]
     held, cfg = opened(bank)
     assert cfg["graph"]["time/steps"] == "tasks"
     view = shown(held, cfg, "two", "north")

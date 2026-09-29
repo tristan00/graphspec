@@ -43,7 +43,7 @@ DTYPES = dict(entity_kind=torch.long)
 VIEW = 3
 
 
-def layout(index, rows, steps, labels, partitions, partition, history, single):
+def layout(index, rows, steps, labels, partitions, partition, history, windowed):
     started = time.perf_counter()
     if labels is None:
         chosen = np.flatnonzero(rows >= 0)
@@ -55,7 +55,7 @@ def layout(index, rows, steps, labels, partitions, partition, history, single):
     result = []
     for moment in np.unique(moments).tolist():
         start, stop = max(0, moment - history + 1), moment + 1
-        if labels is None and not single:
+        if labels is None and not windowed:
             members = chosen[moments == moment]
             for piece in range(0, len(members), ROWS):
                 part = members[piece : piece + ROWS]
@@ -169,7 +169,6 @@ class Viewed:
             )
         )
         self.row_index, self.row_steps, self.labels, self.entities = {}, {}, {}, {}
-        self.single = True
         for graph in self.graphs:
             index = graph["index"]
             held = load_arrays(self.path(index), ("task_kind", "task_step", "label_task", "label_row"))
@@ -180,7 +179,6 @@ class Viewed:
             self.row_index[index][place[held["label_task"]]] = held["label_row"]
             self.labels[index] = (held["label_row"], place[held["label_task"]])
             self.entities[index] = graph["entities"]
-            self.single &= np.array_equal(self.row_steps[index], np.arange(graph["steps"]))
         LOG.info(
             "viewed exit seconds=%.3f steps=%s several=%s graphs=%d",
             time.perf_counter() - started,
@@ -466,8 +464,10 @@ class Bank:
 
     @timed("blocks")
     def blocks(self, partition, history, cfg):
+        from .model_spec import windowed
+
         started = time.perf_counter()
-        viewed, partitions = self.viewed(cfg), self.partitions(cfg)
+        partitions = self.partitions(cfg)
         result = []
         for index in self.graphs(cfg):
             rows, moments = self.points(index, cfg)
@@ -480,7 +480,7 @@ class Bank:
                     partitions,
                     partition,
                     history,
-                    viewed.single,
+                    windowed(cfg["model"]),
                 )
             )
         LOG.info(

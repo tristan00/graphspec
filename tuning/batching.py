@@ -213,6 +213,7 @@ def recipe_batch(bank, blocks, cfg):
         "signal",
         "member_affinity",
         "global_affinity",
+        "frame_affinity",
         "x",
         "kind",
         "relation",
@@ -278,12 +279,8 @@ def recipe_batch(bank, blocks, cfg):
         b.update(shared(parts))
     if "window" in parts[0] or "x" in b:
         if "frame_starts" in parts[0]:
-            b["frame_starts"] = np.concatenate(
-                [
-                    np.where(p["frame_starts"] >= 0, p["frame_starts"] + int(offset), -1)
-                    for p, offset in zip(parts, nodes)
-                ]
-            )
+            b["frame_starts"] = np.concatenate([p["frame_starts"] + int(offset) for p, offset in zip(parts, nodes)])
+            b["frame_event"] = np.concatenate([p["frame_event"] + i * t for i, p in enumerate(parts)])
         b["step"] = np.concatenate([p["step"] + i * t for i, p in enumerate(parts)])
         b["align"] = np.concatenate(
             [

@@ -17,11 +17,11 @@ from tuning.packing import Packer
 from tuning.periods import blocks as period_blocks
 
 
-def registry(single=True, events=True, signals=2):
+def registry(events=True, signals=2):
     kinds = dict(ask=dict(target=dict(kind="number"), references=("unit",), absent="stop"))
     return SimpleNamespace(
         name="stated",
-        extras=dict(single=single, events=events, signals=signals, target="number"),
+        extras=dict(events=events, signals=signals, target="number"),
         schema=SimpleNamespace(tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node")))),
     )
 
@@ -69,10 +69,10 @@ def test_all_model_samples_are_canonical_and_cover_each_available_view():
     }
 
 
-def test_several_tasks_at_a_step_offer_only_the_families_that_read_them():
-    assert "signal" not in views(registry(False))
-    assert "affinity" not in views(registry(False))
-    assert "affinity" not in views(registry(True, False)) and "signal" in views(registry(True, False))
+def test_signal_is_offered_where_tasks_carry_signals_and_affinity_where_tasks_are_seen_as_events():
+    assert {"signal", "affinity"} <= set(views(registry()))
+    assert "affinity" not in views(registry(False)) and "signal" in views(registry(False))
+    assert "signal" not in views(registry(True, 0)) and "affinity" in views(registry(True, 0))
 
 
 def test_antisymmetric_state_readout_has_no_unused_time_encoding():

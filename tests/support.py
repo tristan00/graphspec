@@ -368,7 +368,6 @@ def registry(name, nodes, edges):
         signals=0,
         base=[edge.name for edge in base],
         events=False,
-        single=False,
         several=False,
         untasked=[],
     )

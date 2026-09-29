@@ -13,6 +13,7 @@ from graphspec import ENCODERS, TYPES, inspect, join, synthetic
 from graphspec import spec as specs
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
+from graphspec.registry import EXTRAS
 from graphspec.schema import VALUE, Encoding, Schema, fitted
 from graphspec.truth import VERSION, Facts, conforms, distinct
 from tuning.build import build
@@ -250,7 +251,7 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
     declared = manifest["spec"]
     assert manifest["version"] == VERSION == 8 and manifest["trained"] == ["train"]
     assert declared["schema"] == synthetic.varied("task")["schema"]
-    assert manifest["splits"] == ["train", "validation"] and declared["extras"]["single"] is True
+    assert manifest["splits"] == ["train", "validation"] and list(declared["extras"]) == list(EXTRAS)
     assert declared["extras"]["events"] is True and declared["extras"]["target"] == "number"
     assert declared["encoding"]["states"] is None and "widths" not in declared
     edges = {edge["name"]: edge for edge in declared["edges"]}

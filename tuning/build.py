@@ -140,31 +140,6 @@ def related(stated, found):
     return result
 
 
-def single(stated, found):
-    started = time.perf_counter()
-    owners = found.column("graph").to_numpy().astype(np.int64)
-    timed = "time" in found.column_names
-    moments = found.column("time").to_numpy().astype(np.int64) if timed else np.zeros(len(owners), np.int64)
-    looking = (
-        np.unique(np.asarray(found.column("observer").to_pylist(), object).astype(str), return_inverse=True)[
-            1
-        ]
-        if "observer" in found.column_names
-        else np.zeros(len(owners), np.int64)
-    )
-    places = np.stack((owners, looking.reshape(-1), moments), 1)
-    aimed = set(stated.aimed_kinds())
-    result = bool(
-        len(places)
-        and len(np.unique(places, axis=0)) == len(places)
-        and all(kind in aimed for kind in found.column("kind").to_pylist())
-    )
-    LOG.debug(
-        "single exit tasks=%d single=%s seconds=%.4f", len(owners), result, time.perf_counter() - started
-    )
-    return result
-
-
 def untasked(tasks, names):
     started = time.perf_counter()
     asked = set(tasks.column("graph").to_numpy().astype(np.int64).tolist())
@@ -300,7 +275,7 @@ def supervision(source, trained, names):
         len(rows),
         ",".join(found_splits),
     )
-    return result, groups, found_splits, single(stated, tasks), untasked(tasks, names)
+    return result, groups, found_splits, untasked(tasks, names)
 
 
 def attach(task_path, output, level):
@@ -408,7 +383,7 @@ def build(task_path, output, workers, trained):
         names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
         if len(set(names.values())) != len(names):
             raise ValueError("graph names must be unique")
-        rows, groups, splits, alone, bare = supervision(source, trained, names)
+        rows, groups, splits, bare = supervision(source, trained, names)
         location = source.location
     attached = (str(task_path), str(output), LOG.getEffectiveLevel())
     try:
@@ -419,7 +394,7 @@ def build(task_path, output, workers, trained):
                 stated, merged(stated, [entry[0] for entry in found]), None, related(stated, found)
             )
             observers = sorted({name for entry in found for name in entry[2]})
-            registry = vocabulary.registry(task, encoding, alone, any(entry[3] for entry in found), bare)
+            registry = vocabulary.registry(task, encoding, any(entry[3] for entry in found), bare)
             (output / "truth").mkdir(parents=True)
             write_json(output / "supervision.json", rows)
             metrics = mapped(

@@ -6,7 +6,7 @@ from graphspec.infra.timing import timed
 from .declarations import EdgeType
 from .schema import TARGETS, Encoding, Schema
 
-EXTRAS = ("target", "series", "signals", "base", "events", "single", "several", "untasked")
+EXTRAS = ("target", "series", "signals", "base", "events", "several", "untasked")
 STORED = ("member", "pairs")
 FITTED = ("features", "values", "widths")
 

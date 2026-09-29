@@ -48,9 +48,9 @@ def views(registry):
     started = time.perf_counter()
     extras = registry.extras
     excluded = set()
-    if not extras["signals"] or not extras["single"]:
+    if not extras["signals"]:
         excluded.add("signal")
-    if not extras["single"] or not extras["events"]:
+    if not extras["events"]:
         excluded.add("affinity")
     result = tuple(view for view in VIEWS if view not in excluded)
     LOG.debug("views exit offered=%d seconds=%.4f", len(result), time.perf_counter() - started)
@@ -212,7 +212,11 @@ def blocks(spec):
         return frozenset(("tree", "period_history"))
     if kind == "walks":
         return frozenset(("walks",))
-    return {"affinity": frozenset(("events", "affinity")), "signal": frozenset()}[kind]
+    return {"affinity": frozenset(("events", "affinity")), "signal": frozenset(("signal",))}[kind]
+
+
+def windowed(spec):
+    return spec["view"] == "affinity"
 
 
 def shared_frames(spec):

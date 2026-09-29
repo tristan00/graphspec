@@ -188,12 +188,12 @@ class Window:
 
     @classmethod
     def open(cls, bank, block, cfg):
-        from .model_spec import row_local
+        from .model_spec import row_local, windowed
 
         graph, start, stop, _, _, row_lo, row_hi = block
         held = bank.resident(graph, cfg, "cpu")
         lo, hi = (int(value) for value in held.numpy("snapshot_offsets")[[start, stop]])
-        if bank.viewed(cfg).single or bank.path:
+        if windowed(cfg["model"]) or bank.path:
             first, last = between(held.numpy("row_step"), start, stop)
         else:
             first, last = row_lo, row_hi
@@ -249,23 +249,21 @@ def snapshot_inputs(b, window):
 def frame_inputs_of(window):
     started = time.perf_counter()
     graph, start, stop, lo, held = window.graph, window.start, window.stop, window.lo, window.held
-    n = stop - start
     left, right = between(held.column("events", 2), start * 2, stop * 2)
     seen = held.numpy("events")[left:right]
     seen = seen[seen[:, 3] == 2]
-    frames = seen[:, 2] // 2 - start
-    if len(np.unique(frames)) != len(frames):
-        raise ValueError(
-            "graph %d holds several tasks seen as events at one step, and the family snapshot with a "
-            "sequence over graphs reads at most one" % graph
-        )
-    task, starts = np.full(n, -1, np.int64), np.full((n, 2), -1, np.int64)
-    task[frames] = seen[:, 7]
-    starts[frames] = seen[:, 4:6] - lo
     result = dict(
-        frame_task=features(graph, (n,), ("task", task, 1.0)), frame_starts=array(starts, torch.long)
+        frame_event=array(seen[:, 2] // 2 - start, torch.long),
+        frame_task=features(graph, (len(seen),), ("task", seen[:, 7], 1.0)),
+        frame_starts=array(seen[:, 4:6] - lo, torch.long),
     )
-    LOG.debug("frame inputs exit graph=%d frames=%d seconds=%.4f", graph, n, time.perf_counter() - started)
+    LOG.debug(
+        "frame inputs exit graph=%d frames=%d events=%d seconds=%.4f",
+        graph,
+        stop - start,
+        len(seen),
+        time.perf_counter() - started,
+    )
     return result
 
 
@@ -599,7 +597,6 @@ def base_inputs(bank, block, window):
         series=array(bank.series[rows], torch.long),
         task=features(graph, (m,), ("task", held.numpy("row_task")[first:last], 1.0)),
         row_kind=array(kinds, torch.long),
-        signal=array(held.numpy("signals")[first:last]),
         **member_inputs(window, first, last),
     )
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
@@ -654,6 +651,54 @@ def neighbor_history_inputs(b, window, blocks):
         b["history_token"] = np.where(b["history_ids"] >= 0, tokens[np.maximum(b["history_ids"], 0)], -1)
 
 
+def pooled_frames(window, values):
+    started = time.perf_counter()
+    steps = window.held.numpy("row_step")
+    first, last = between(steps, window.start, window.stop)
+    frames, local = window.stop - window.start, steps[first:last].astype(np.int64) - window.start
+    total = np.zeros((frames,) + values.shape[1:], np.float32)
+    np.add.at(total, local, values)
+    count = np.maximum(np.bincount(local, minlength=frames), 1).reshape((-1,) + (1,) * (values.ndim - 1))
+    LOG.debug(
+        "pooled frames exit graph=%d rows=%d frames=%d seconds=%.4f",
+        window.graph,
+        len(local),
+        frames,
+        time.perf_counter() - started,
+    )
+    return (total / count).astype(np.float32)
+
+
+def signal_inputs(b, window):
+    started = time.perf_counter()
+    first, last = between(window.held.numpy("row_step"), window.start, window.stop)
+    b["signal"] = pooled_frames(window, np.asarray(window.held.numpy("signals")[first:last], np.float32))
+    LOG.debug("signal inputs exit graph=%d seconds=%.4f", window.graph, time.perf_counter() - started)
+
+
+def affinity_frames(window):
+    from .period_inputs import profiles
+
+    started = time.perf_counter()
+    held = window.held
+    steps = held.numpy("row_step").astype(np.int64)
+    first, last = between(steps, window.start, window.stop)
+    left, right = between(held.numpy("member_row"), first, last)
+    shown = held.numpy("member_observed")[left:right] >= 0
+    owner = held.numpy("member_row")[left:right][shown].astype(np.int64) - first
+    profile = profiles(held, held.numpy("member_entity")[left:right][shown], 2 * steps[first:last][owner])
+    rows = np.zeros((last - first, profile.shape[1]), np.float32)
+    np.add.at(rows, owner, profile)
+    rows /= np.maximum(np.bincount(owner, minlength=last - first), 1)[:, None]
+    code = window.registry.seen[held.numpy("row_kind")[first:last].astype(np.int64)]
+    rows[np.flatnonzero(code >= 0), code[code >= 0]] += 1
+    result = pooled_frames(window, rows)
+    LOG.debug(
+        "affinity frames exit graph=%d rows=%d seconds=%.4f", window.graph, last - first, time.perf_counter() - started
+    )
+    return result
+
+
 def affinity_inputs(b, window):
     from .period_inputs import profiles
 
@@ -663,6 +708,7 @@ def affinity_inputs(b, window):
     b.update(
         member_affinity=profiles(held, b["member_entity"], 2 * moment[b["member_row"]]),
         global_affinity=np.asarray(held.numpy("affinity_steps")[moment], np.float32),
+        frame_affinity=affinity_frames(window),
     )
     LOG.debug(
         "affinity inputs exit graph=%d members=%d seconds=%.4f",
@@ -759,6 +805,8 @@ def recipe(bank, block, cfg):
         events_inputs(b, window, blocks)
     if "affinity" in blocks:
         affinity_inputs(b, window)
+    if "signal" in blocks:
+        signal_inputs(b, window)
     if "tree" in blocks:
         tree_inputs(b, window)
     if "history" in blocks:

@@ -135,23 +135,16 @@ class SnapshotNet(nn.Module):
             )
         return self.references(b, members, whole)
 
+    def framed(self, h, b):
+        seen, event, frames = b["frame_starts"], b["frame_event"], b["frames"]
+        return mean(h[seen[:, 0]], event, frames), mean(h[seen[:, 1]], event, frames), mean(h, b["step"], frames)
+
     def graph_sequence(self, h, b):
-        seen = b["frame_starts"]
-        known = seen >= 0
-        index = torch.where(known, seen, len(h))
-        padded = torch.cat((h, h.new_zeros(1, h.shape[-1])))
-        pooled = mean(h, b["step"], b["frames"])
-        action = self.action_round(
-            torch.cat((self.task(b["frame_task"]), padded[index[:, 0]], padded[index[:, 1]], pooled), -1)
-        )
-        feedback = h.new_zeros(h.shape).index_add_(
-            0, seen[known[:, 0], 0], self.feedback(action[known[:, 0]])
-        )
-        h = h + feedback
-        padded = torch.cat((h, h.new_zeros(1, h.shape[-1])))
-        action = self.action_round(
-            torch.cat((action, padded[index[:, 0]], padded[index[:, 1]], mean(h, b["step"], b["frames"])), -1)
-        )
+        event = b["frame_event"]
+        task = self.task(mean(b["frame_task"], event, b["frames"]))
+        action = self.action_round(torch.cat((task, *self.framed(h, b)), -1))
+        h = h + h.new_zeros(h.shape).index_add_(0, b["frame_starts"][:, 0], self.feedback(action[event]))
+        action = self.action_round(torch.cat((action, *self.framed(h, b)), -1))
         frames = action.reshape(b["batch_size"], b["time_steps"], -1)
         if self.sequence_mode == "attention":
             sequence = self.temporal(

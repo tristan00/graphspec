@@ -10,7 +10,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `inspect.py` | `inspect` prints the schema of a task file or of a bank. |
 | `graphdb.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. Both go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `graphspec.infra.staging`. |
 | `references.py` | The sorts of reference, registered: what a task may refer to, how it is stored and how it resolves at the time of the task. |
-| `vocabulary.py` | `registry(task, encoding, single)`: the relations stated or taken from a column, and every relation a spec can derive. |
+| `vocabulary.py` | `registry(task, encoding, several, untasked)`: the relations stated or taken from a column, and every relation a spec can derive. |
 | `declarations.py`, `registry.py` | `EdgeType` and `Registry`, which allocates relation codes, indexes types and fingerprints the declaration. `Registry.from_declaration` rebuilds a registry from a pinned declaration. |
 | `clock.py` | The models of time, the rules for ties and the choices among several facts, each a registry; `visible` and `allowed`, the one guard that says which facts a task sees. |
 | `forms.py` | The shorthand forms, registered, each reducing rows to facts with intervals. |
@@ -59,9 +59,9 @@ The markers `non_relation` and `period_context` take codes above every relation.
 
 - the kind of target, a number or a path, and the series
 - whether a kind of task is seen as an event
-- whether every time holds exactly one task
 - the signal width
 - the base relations
+- whether a step can show several facts about one entity, and the graphs that hold no task
 
 `declaration()` serialises everything and `fingerprint()` hashes it. The bank manifest, the run plan and every trial's `selection.json` pin that hash.
 

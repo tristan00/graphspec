@@ -226,7 +226,6 @@ A source with kinds of set edge or held graphs is read from a staging directory;
 | `signals` | The width of the signals. |
 | `base` | The relations stated or taken, then the relations of the forms of storage of every kind of set edge. |
 | `events` | Whether a kind of task is seen as an event. |
-| `single` | Whether every time of every graph and observer holds exactly one task and every kind states a target. |
 | `several` | Whether a shipped choice of steps can show two facts about one node or set edge of a graph of the bank at one step: two whose intervals overlap, or, under `tasks`, two that hold from after one time of a task of an observer up to and including its next, the earlier an event and the later an event or still holding at that next time. Times of tasks are those the source states; when a fact is known, whether it was replaced and who may see it are not read. |
 | `untasked` | The names of the graphs that hold no task, in the order of the source. |
 
@@ -333,4 +332,6 @@ Every family reads of a task:
 | `affinity` | a gated state of its node over its counts, by kind, of the tasks seen as events it was first of, with the recent profile of the graph; with a context, gated by those counts at the ends of earlier periods | the counts of every node, with the recent profile | nothing |
 | `signal` | its features | the state of the frame of the signals | nothing |
 
-`tuning.model_spec.views` offers every family to configurations and searches, `signal` where `single` holds and the tasks carry signals, and `affinity` where `single` holds and a kind of task is seen as an event. No family refuses a sort, a number of references or an absent node, and a search offers every family under every value of `time/context`.
+`tuning.model_spec.views` offers every family to configurations and searches, `signal` where the tasks carry signals, and `affinity` where a kind of task is seen as an event. No family refuses a sort, a number of references or an absent node, and a search offers every family under every value of `time/context`.
+
+A step may hold any number of tasks, and a family reads all of them. Where a family reads a step as a whole, it pools what the tasks of the step give by their mean, as it pools the members of a reference, and a step without a task gives zero: under `snapshot` with `graph_sequence` the frame of a step reads the features of every task seen as an event at the step and the states of their two nodes, and feeds back to the first node of each; `signal` reads at every step the mean of the signals of the tasks of the step; `affinity` reads as the recent profile of the graph, at every step, the mean over the tasks of the step of the counts of their members plus their kind where it is seen as an event, and its state reads every task of its window.
