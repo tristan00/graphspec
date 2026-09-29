@@ -19,7 +19,7 @@ from graphspec.truth import Facts, Graph
 from graphspec.view import Looking
 from tuning.build import build
 from tuning.data import Deriver
-from tuning.model_spec import configuration, readable, views
+from tuning.model_spec import VIEWS, configuration, readable, reading, refusal, views
 from tuning.statement import state
 from tuning.training import fit
 
@@ -555,26 +555,18 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
     assert names["nodes/referenced"].options == ("keep",)
 
 
-def test_a_family_asked_to_read_a_reference_it_cannot_stops_naming_it(bank):
+def test_a_family_asked_to_read_a_reference_it_cannot_stops_naming_it_and_is_not_offered(bank):
     held, cfg = opened(bank)
-    assert views(held.registry) == (
-        "snapshot",
-        "mixed",
-        "event_graph",
-        "memory",
-        "projection",
-        "sequence",
-        "tree",
-        "walks",
-    )
+    assert views(held.registry) == ("snapshot",)
+    for family in VIEWS[:8]:
+        assert (refusal(held.registry, family, reading(family, 0)) is None) == (family == "snapshot")
     readable(held.registry, cfg)
-    tree = configuration(held.registry, dict(view="tree"), {}, 5, copy.deepcopy(SPLITS))
-    with pytest.raises(
-        ValueError,
-        match="the family tree reads references of the sorts node and cannot read the reference whole "
-        "of the kind of task total, which is of the sort graph",
-    ):
-        readable(held.registry, tree)
+    assert refusal(held.registry, "tree", reading("tree", 0)) == (
+        "the family tree reads references of the sorts node and cannot read the reference whole "
+        "of the kind of task total, which is of the sort graph"
+    )
+    with pytest.raises(ValueError, match=r"view must be one of \['snapshot'\], found 'tree'"):
+        configuration(held.registry, dict(view="tree"), {}, 5, copy.deepcopy(SPLITS))
     context = configuration(
         held.registry, dict(view="snapshot"), {"time/context": 1}, 5, copy.deepcopy(SPLITS)
     )

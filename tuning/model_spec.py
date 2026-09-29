@@ -2,6 +2,7 @@ import logging
 import time
 
 from graphspec import spec as specs
+from graphspec.infra.timing import timed
 from graphspec.references import SORTS
 from graphspec.spec import GROUPS, among, choice, draw, equals, flag, number, real
 
@@ -50,29 +51,36 @@ SINGLE = ("signal", "affinity")
 
 
 def views(registry):
+    started = time.perf_counter()
     extras = registry.extras
     excluded = set()
     if not extras["signals"] or not extras["single"]:
         excluded.add("signal")
     if not extras["single"] or not extras["events"]:
         excluded.add("affinity")
-    return tuple(view for view in VIEWS if view not in excluded)
-
-
-def reads(cfg):
-    started = time.perf_counter()
-    spec = cfg["model"]
-    result = dict(STARTS)
-    if spec["view"] == "snapshot" and cfg["graph"]["time/context"] == 0:
-        result = dict(sorts=SORTS.names(), least=0, most=None, absent=True)
-    LOG.debug("reads exit view=%s seconds=%.4f", spec["view"], time.perf_counter() - started)
+    refusals = {view: refusal(registry, view, reading(view, 0)) for view in VIEWS if view not in excluded}
+    result = tuple(view for view, refused in refusals.items() if refused is None)
+    if not result:
+        raise ValueError(
+            "no family reads the tasks of the bank %s: %s" % (registry.name, "; ".join(refusals.values()))
+        )
+    LOG.debug("views exit offered=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
-def readable(registry, cfg):
-    started = time.perf_counter()
-    held, stated = reads(cfg), registry.schema.tasks
-    family = cfg["model"]["view"]
+@timed("model_spec.reading")
+def reading(view, context):
+    if view == "snapshot" and context == 0:
+        return dict(sorts=SORTS.names(), least=0, most=None, absent=True)
+    return dict(STARTS)
+
+
+def reads(cfg):
+    return reading(cfg["model"]["view"], cfg["graph"]["time/context"])
+
+
+def refusals(registry, family, held):
+    stated = registry.schema.tasks
     for kind, entry in stated["kinds"].items():
         if entry["target"] is None:
             continue
@@ -80,23 +88,41 @@ def readable(registry, cfg):
         for name in names:
             sort = stated["references"][name]["sort"]
             if sort not in held["sorts"]:
-                raise ValueError(
+                yield (
                     "the family %s reads references of the sorts %s and cannot read the reference %s "
                     "of the kind of task %s, which is of the sort %s"
                     % (family, ", ".join(held["sorts"]), name, kind, sort)
                 )
         if len(names) < held["least"] or (held["most"] is not None and len(names) > held["most"]):
-            raise ValueError(
-                "the family %s reads from %d to %d references and the kind of task %s states %d: %s"
-                % (family, held["least"], held["most"], kind, len(names), ", ".join(names) or "none")
+            yield "the family %s reads from %d to %d references and the kind of task %s states %d: %s" % (
+                family,
+                held["least"],
+                held["most"],
+                kind,
+                len(names),
+                ", ".join(names) or "none",
             )
         if entry["absent"] != "stop" and not held["absent"]:
-            raise ValueError(
+            yield (
                 "the family %s reads the nodes of the references %s of the kind of task %s as they are "
                 "observed at the time of the task, and the kind states that an absent node is kept"
                 % (family, ", ".join(names), kind)
             )
-    LOG.debug("readable exit family=%s seconds=%.4f", family, time.perf_counter() - started)
+
+
+def refusal(registry, family, held):
+    started = time.perf_counter()
+    result = next(refusals(registry, family, held), None)
+    LOG.debug("refusal exit family=%s seconds=%.4f", family, time.perf_counter() - started)
+    return result
+
+
+def readable(registry, cfg):
+    started = time.perf_counter()
+    found = refusal(registry, cfg["model"]["view"], reads(cfg))
+    if found is not None:
+        raise ValueError(found)
+    LOG.debug("readable exit family=%s seconds=%.4f", cfg["model"]["view"], time.perf_counter() - started)
 
 
 def view(*names):

@@ -103,6 +103,19 @@ def test_configuration_rejects_unused_overrides():
         spec.narrow(parameters, {"enabled": []})
 
 
+def test_bounds_that_leave_out_a_default_leave_the_parameter_without_one():
+    parameters = (spec.choice("view", ("snapshot", "memory", "tree"), "snapshot"), spec.flag("enabled", False))
+    kept = spec.narrow(parameters, {"view": ["snapshot", "tree"]})
+    assert kept[0].default == "snapshot" and kept[0].options == ("snapshot", "tree")
+    left = spec.narrow(parameters, {"view": ["memory", "tree"], "enabled": True})
+    assert left[0].default is None and left[1].default is None and left[1].options == (True,)
+    with pytest.raises(
+        ValueError, match=r"the pipeline states no view, which has no default; it is one of \['memory', 'tree'\]"
+    ):
+        spec.default(left)
+    assert spec.configured(left, {"view": "tree", "enabled": True}) == {"view": "tree", "enabled": True}
+
+
 def test_graph_registry_rejects_duplicate_relations():
     edge = EdgeType("rel", ("base", "rel"), [("person", "person")])
     with pytest.raises(ValueError, match="duplicate edge type name"):

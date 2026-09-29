@@ -31,8 +31,8 @@ class Parameter:
             raise ValueError("numeric parameters require ordered bounds: " + name)
         if log and (kind != "float" or low <= 0):
             raise ValueError("logarithmic parameters require positive float bounds: " + name)
-        if default is None and kind != "choice":
-            raise ValueError("only a choice may be stated by the pipeline without a default: " + name)
+        if default is None and kind not in ("bool", "choice"):
+            raise ValueError("only a choice or a flag may be stated by the pipeline without a default: " + name)
         self.name, self.kind, self.default = name, kind, default
         self.low, self.high, self.log, self.options = low, high, log, tuple(options)
         self.condition = condition
@@ -415,9 +415,7 @@ def narrow(parameters, bounds):
             )
             if not options:
                 raise ValueError("parameter bounds cannot be empty: " + parameter.name)
-            default = (
-                parameter.default if parameter.default is None or parameter.default in options else options[0]
-            )
+            default = parameter.default if parameter.default in options else None
             result.append(
                 Parameter(
                     parameter.name, parameter.kind, default, options=options, condition=parameter.condition

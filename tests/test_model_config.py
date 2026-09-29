@@ -18,7 +18,12 @@ from tuning.periods import blocks as period_blocks
 
 
 def registry(single=True, events=True, signals=2):
-    return SimpleNamespace(extras=dict(single=single, events=events, signals=signals, target="number"))
+    kinds = dict(ask=dict(target=dict(kind="number"), references=("unit",), absent="stop"))
+    return SimpleNamespace(
+        name="stated",
+        extras=dict(single=single, events=events, signals=signals, target="number"),
+        schema=SimpleNamespace(tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node")))),
+    )
 
 
 @pytest.fixture(scope="module")

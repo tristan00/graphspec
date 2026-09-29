@@ -82,7 +82,7 @@ For every proposal the runner rebuilds the optimizer from the trial files; there
 - prior trial ids with result hashes
 - the bank manifest hash, the supervision hash and the declaration fingerprint
 
-Configuration and selection are saved before the worker starts, and a continued trial reuses them. `--bounds` narrows the space new proposals draw from; the bounds are stored in `plan.json` and in every `selection.json`.
+Configuration and selection are saved before the worker starts, and a continued trial reuses them. `--bounds` narrows the space new proposals draw from; the bounds are stored in `plan.json` and in every `selection.json`. A bound on a choice or a flag that leaves out its default leaves the narrowed parameter without one, so that nothing reads a value the bound excluded.
 
 The time limit of every trial is the `seconds` of the statement, and `--seconds` is required. `plan.json` holds copies of the statement's seed, seconds, workers, variant bytes, batch sequences, splits trained on, splits scored on and what each split may see; on continuation each copy must equal the statement given, and a copy that differs or a field that the plan lacks stops the run with an error naming it. A new run states `--selector`, `--startup-trials`, `--mix` and `--random-params`; a continued run keeps the saved ones unless new ones are given. The dashboard and result exports expose older trials' recorded budgets under the same parameter without rewriting their original configurations.
 

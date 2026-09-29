@@ -306,7 +306,7 @@ A configuration carries the same three under `splits`, and a fit whose configura
 
 **What a family reads**
 
-A model receives the references of the tasks of a batch as a mapping from the name of each reference to its members: `row`, the task of the batch each belongs to, and, unless the reference is the graph itself, `entity` and `index`, the node and its observation in the batch, -1 where the node is not observed. An edge gives its two nodes. A set edge gives its node where the form of storage makes one, and is not observed where it makes none. `tuning.model_spec.reads` states what each family reads, and `tuning.model_spec.readable` stops a fit of a kind of task whose references the family cannot read, naming the reference.
+A model receives the references of the tasks of a batch as a mapping from the name of each reference to its members: `row`, the task of the batch each belongs to, and, unless the reference is the graph itself, `entity` and `index`, the node and its observation in the batch, -1 where the node is not observed. An edge gives its two nodes. A set edge gives its node where the form of storage makes one, and is not observed where it makes none. `tuning.model_spec.reads` states what each family reads, and `tuning.model_spec.readable` stops a fit of a kind of task whose references the family cannot read, naming the reference. `tuning.model_spec.views` offers to configurations and searches only the families that read every kind of task of the bank, `snapshot` as it reads without a context of earlier periods; where no family does, it stops naming why each cannot.
 
 | Family | Reads |
 |---|---|
