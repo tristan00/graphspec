@@ -17,12 +17,12 @@ def configured_home():
     value = os.environ.get("GRAPHSPEC_HOME")
     if not value or not Path(value).is_absolute():
         raise ValueError("GRAPHSPEC_HOME must name an absolute directory outside the code checkout")
-    return Path(value).resolve()
+    return Path(os.path.abspath(value))
 
 
 def output_path(path):
-    path = Path(path).expanduser().resolve()
-    code = Path(__file__).resolve().parents[2]
+    path = Path(os.path.abspath(Path(path).expanduser()))
+    code = Path(os.path.abspath(__file__)).parents[2]
     if path.is_relative_to(code) or any((parent / ".git").exists() for parent in (path, *path.parents)):
         raise ValueError("runtime output must be outside the code directory: %s" % path)
     if os.name == "nt" and path.drive.casefold() != configured_home().drive.casefold():

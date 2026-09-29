@@ -78,7 +78,7 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     bank = Bank.__new__(Bank)
     bank.registry = registry()
     bank.cache = Path(tmp_path)
-    bank.variants = {}
+    bank.variants, bank.roots, bank.device, bank.directory = {}, {}, "cpu", Path(tmp_path)
     monkeypatch.setattr(
         specs, "space", lambda declaration, groups: (specs.number("time/history", 1, 32, 16),)
     )

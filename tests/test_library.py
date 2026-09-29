@@ -90,6 +90,28 @@ def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):
     assert result.returncode != 0 and "another graph build or training job" in result.stderr
 
 
+def test_the_heavy_job_of_production_requests_the_singleton_named_heavy(monkeypatch):
+    from contextlib import contextmanager
+
+    from graphspec.infra import runtime
+
+    requested = []
+
+    @contextmanager
+    def recorder(name, message):
+        requested.append((name, message))
+        yield
+
+    monkeypatch.setattr(runtime, "singleton", recorder)
+    monkeypatch.setattr(runtime.ACTIVE, "held", False, raising=False)
+    with runtime.heavy_job():
+        assert runtime.ACTIVE.held
+        with runtime.heavy_job():
+            pass
+    assert [name for name, _ in requested] == ["heavy"]
+    assert "another graph build or training job is running" in requested[0][1]
+
+
 def test_database_export_and_staging_read_the_same_graph(bank, tmp_path):
     pytest.importorskip("ladybug")
     from graphspec.database import export

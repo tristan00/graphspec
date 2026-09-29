@@ -78,6 +78,21 @@ def test_a_bank_opened_without_a_device_cannot_derive(bank):
         Bank(bank).limits()
 
 
+def test_the_key_of_a_variant_holds_the_device(bank):
+    from tuning.model_spec import configuration
+
+    cfg = configuration(Bank(bank).registry, dict(view="snapshot"), {"time/history": 4}, 5)
+    central, graphic = Bank(bank, device="cpu"), Bank(bank, device="cuda")
+    left, right = central.identity(cfg), graphic.identity(cfg)
+    assert {name for name in left if left[name] != right[name]} == {"device"}
+    assert central.variant(cfg)[0] != graphic.variant(cfg)[0]
+    assert central.variant(cfg)[0] == Bank(bank, device="cpu").variant(cfg)[0]
+    for derive in (Bank.identity, Bank.variant, Bank.stamp):
+        with pytest.raises(ValueError, match="no device was stated"):
+            derive(Bank(bank), cfg)
+    assert Bank(bank).joining(cfg) is False
+
+
 def test_the_device_is_not_carried_by_the_environment():
     name = "GRAPHSPEC_" + "DEVICE"
     root = Path(__file__).parent.parent

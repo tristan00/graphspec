@@ -396,7 +396,8 @@ def execute(directory, plan, continuous, registry, stated):
             stage = time.perf_counter()
             with Timeline(directory / item["directory"] / "maintenance_timing.json"), measure("maintenance"):
                 with measure("cache_prune"):
-                    prune(plan["bank"], stated.variant_cache_bytes, Bank(plan["bank"]).stamp(config))
+                    keep = Bank(plan["bank"], device=stated.device).stamp(config)
+                    prune(plan["bank"], stated.variant_cache_bytes, keep)
                 emit("trial_prune", seconds=time.perf_counter() - stage)
                 with measure("report"):
                     report(directory)

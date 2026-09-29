@@ -139,8 +139,8 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
                 raise RuntimeError("OS refused process termination")
 
     class Bank:
-        def __init__(self, path):
-            pass
+        def __init__(self, path, device):
+            assert device == "cpu"
 
         def stamp(self, config):
             return directory

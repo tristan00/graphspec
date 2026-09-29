@@ -149,6 +149,7 @@ class Bank:
                 self.row_steps[index] = np.arange(graph["steps"], dtype=np.int32)
             self.entities[index] = graph["entities"]
         self.variants, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES, resident)
+        self.roots = {}
         self._groups = {}
         self._shared_kinds = None
         self._tokens = WeakKeyDictionary()
@@ -211,10 +212,10 @@ class Bank:
         return self._tokens[held]
 
     def joining(self, cfg):
-        return self.variant(cfg)[1]["graphs/join"] == "single"
+        return self.stated(cfg)[1]["graphs/join"] == "single"
 
     def groups(self, cfg):
-        size = self.variant(cfg)[1]["graphs/join_size"]
+        size = self.stated(cfg)[1]["graphs/join_size"]
         if size not in self._groups:
             started = time.perf_counter()
             splits = {}
@@ -311,29 +312,40 @@ class Bank:
             for group, members in enumerate(self.groups(cfg))
         }
 
-    def variant(self, cfg):
+    def stated(self, cfg):
         from .model_spec import groups
 
         chosen = groups(cfg["model"])
         key = (chosen, specs.digest(cfg["graph"]))
         if key not in self.variants:
-            spec = specs.canonical(specs.space(self.registry, chosen), cfg["graph"])
-            self.variants[key] = (
-                self.cache
-                / "variants"
-                / specs.digest(dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE)),
-                spec,
-                chosen,
+            started = time.perf_counter()
+            self.variants[key] = (specs.canonical(specs.space(self.registry, chosen), cfg["graph"]), chosen)
+            LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)
+        return key, *self.variants[key]
+
+    def identity(self, cfg):
+        started = time.perf_counter()
+        _, spec, chosen = self.stated(cfg)
+        if self.device is None:
+            raise ValueError(
+                "the key of a variant of bank %s holds the device of dense algebra and no device was stated"
+                % self.directory
             )
-        return self.variants[key]
+        result = dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE, device=self.device)
+        LOG.debug("bank identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
+        return result
+
+    def variant(self, cfg):
+        key, spec, chosen = self.stated(cfg)
+        if key not in self.roots:
+            self.roots[key] = self.cache / "variants" / specs.digest(self.identity(cfg))
+        return self.roots[key], spec, chosen
 
     def stamp(self, cfg):
-        root, spec, chosen = self.variant(cfg)
+        root = self.variant(cfg)[0]
         root.mkdir(parents=True, exist_ok=True)
         if not (root / "variant.json").exists():
-            write_json(
-                root / "variant.json", dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE)
-            )
+            write_json(root / "variant.json", self.identity(cfg))
         return root
 
     @timed("arrays")

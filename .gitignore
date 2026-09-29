@@ -4,3 +4,6 @@ __pycache__/
 
 .claude/review/
 local/
+.playwright-mcp/
+dur.txt
+purge_local_history.py

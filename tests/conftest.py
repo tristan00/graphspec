@@ -60,8 +60,7 @@ def shared_heavy_job(original=runtime.heavy_job):
         job.__exit__(None, None, None)
 
 
-if WORKER:
-    runtime.heavy_job = shared_heavy_job
+runtime.heavy_job = shared_heavy_job
 
 
 @pytest.fixture(scope="session")
@@ -98,8 +97,7 @@ def varied(tmp_path_factory):
 def ground():
     from pathlib import Path
 
-    home = Path(os.environ["GRAPHSPEC_HOME"])
-    place = (home.parents[1] if WORKER else home) / "ground" / "fixture"
+    place = Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "ground" / "fixture"
     if not (place / "fixture.json").exists():
         raise FileNotFoundError("the fixture of the ground is absent: %s" % place)
     return place

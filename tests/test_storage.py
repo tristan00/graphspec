@@ -46,6 +46,31 @@ def test_runtime_output_rejects_another_windows_volume(tmp_path, monkeypatch):
             runtime.output_path(Path(other) / "graphspec-storage-boundary-probe")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the final path name is a Windows call")
+def test_runtime_output_survives_a_path_that_vanishes_while_it_is_resolved(tmp_path, monkeypatch):
+    import ntpath
+
+    calls, final = [], ntpath._getfinalpathname
+
+    def vanishing(path):
+        calls.append(path)
+        if len(calls) % 2 == 0:
+            raise OSError(2, "gone", path, 2)
+        return final(path)
+
+    checkout = Path(runtime.__file__).parents[2]
+    with monkeypatch.context() as patch:
+        patch.setenv("GRAPHSPEC_HOME", str(tmp_path))
+        patch.setattr(ntpath, "_getfinalpathname", vanishing)
+        for index in range(4):
+            found = runtime.output_path(tmp_path / ("run-%d" % index))
+            assert found == tmp_path / ("run-%d" % index)
+            assert not str(found).startswith("\\\\?\\") and found.drive == tmp_path.drive
+            assert not str(runtime.home()).startswith("\\\\?\\")
+            with pytest.raises(ValueError, match="outside the code directory"):
+                runtime.output_path(checkout / "artifacts" / ("trial-%d" % index))
+
+
 def test_initialization_redirects_cached_temporary_and_dependency_storage(tmp_path, monkeypatch):
     root = tmp_path / "runtime"
     stale = tmp_path / "stale"

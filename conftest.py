@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
-worker = os.environ.get("PYTEST_XDIST_WORKER")
-if worker:
-    os.environ["GRAPHSPEC_HOME"] = str(Path(os.environ["GRAPHSPEC_HOME"]) / "workers" / worker)
+if "GRAPHSPEC_SUITE_HOME" not in os.environ:
+    os.environ["GRAPHSPEC_SUITE_HOME"] = os.environ["GRAPHSPEC_HOME"]
+os.environ["GRAPHSPEC_HOME"] = str(
+    Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "workers" / os.environ.get("PYTEST_XDIST_WORKER", "serial")
+)
