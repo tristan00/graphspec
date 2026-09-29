@@ -8,6 +8,7 @@ from graphspec.infra.bayesian import Search
 from graphspec.infra.files import read_json
 from tuning import bayesian, forest, selector, space
 from tuning.data import Bank
+from tuning.statement import state
 
 
 @pytest.fixture(autouse=True)
@@ -64,10 +65,10 @@ def test_failed_trials_train_feasibility_without_fake_objective_values():
 def test_history_and_candidates_preserve_parameters_and_condition_on_random_values(
     bank, candidate_pool, monkeypatch
 ):
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     observations, failures = [], []
     for index, view in enumerate(("snapshot", "mixed", "sequence", "memory")):
-        config, _ = selector.random_suggest(registry, index, index + 1, {"view": view, "epochs": 4})
+        config, _ = selector.random_suggest(registry, index, index + 1, {"view": view, "epochs": 4}, 600)
         config["max_seconds"] = 600 + 400 * index
         entry = dict(config=config, status="complete", trial=str(index), objective=float(index + 1))
         observations.append(entry)
@@ -111,7 +112,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     random_params = ["model/view", "lr", "epochs", "max_seconds"]
     progress = []
     config, selection = bayesian.suggest(
-        registry, observations, failures, 42, 7, bounds, random_params, "cpu", progress=progress.append
+        registry, observations, failures, 42, 7, bounds, random_params, "cpu", 600, progress=progress.append
     )
     assert selection["observations"] == selection["failed_observations"] == 4
     assert selection["excluded"] == []
@@ -139,14 +140,14 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     ]
     assert progress[-1]["stage"] == "Proposal ready"
     repeated, repeated_selection = bayesian.suggest(
-        registry, observations, failures, 42, 7, bounds, random_params, "cpu"
+        registry, observations, failures, 42, 7, bounds, random_params, "cpu", 600
     )
     assert repeated == config
     assert repeated_selection["fixed_params"] == selection["fixed_params"]
 
 
 def test_random_view_covers_snapshot_and_other_choices(bank):
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     encoding = space.Space(registry, {})
     parameter = encoding.proposal_parameters["model/view"]
     values = {parameter.uniform(np.random.default_rng(seed)) for seed in range(200)}
@@ -158,16 +159,16 @@ def test_random_view_covers_snapshot_and_other_choices(bank):
 
 
 @pytest.mark.parametrize("finished,expected", [(99, "random"), (100, "botorch")])
-def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, finished, expected):
-    registry = Bank(bank).registry
-    config, metadata = selector.random_suggest(registry, 1, 2, {})
+def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, statement, finished, expected):
+    registry = Bank(bank, device="cpu").registry
+    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(40)]
     failures = [dict(config=config, status="failed", trial="bad-" + str(i)) for i in range(finished - 40)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, failures, [], []))
     calls = []
 
-    def propose(*args, progress=None, seconds=600):
-        calls.append(args[-2:])
+    def propose(*args, progress=None):
+        calls.append(args[-3:])
         config["max_seconds"] = 843
         return config, dict(metadata, phase="botorch")
 
@@ -184,12 +185,12 @@ def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, finis
         bank_manifest_sha256="bank",
         supervision_sha256="labels",
     )
-    selector.append_trial(tmp_path, plan, registry, "cpu")
+    selector.append_trial(tmp_path, plan, registry, state(dict(statement, seconds=1200)))
     item = plan["trials"][-1]
     assert item["selector"] == expected
     selection = read_json(tmp_path / item["directory"] / "selection.json")
     assert selection["startup_trials_finished"] == finished
-    assert calls == ([(["model/view"], "cpu")] if expected == "botorch" else [])
+    assert calls == ([(["model/view"], "cpu", 1200)] if expected == "botorch" else [])
     saved = read_json(tmp_path / item["directory"] / "config.json")
     assert saved["max_seconds"] == (843 if expected == "botorch" else 1200)
 
@@ -210,8 +211,8 @@ def test_acquisition_conditions_remaining_choices_on_epochs_and_runtime():
 
 
 def test_unknown_historical_runtime_stays_unknown(bank):
-    registry = Bank(bank).registry
-    config, _ = selector.random_suggest(registry, 1, 2, {})
+    registry = Bank(bank, device="cpu").registry
+    config, _ = selector.random_suggest(registry, 1, 2, {}, 600)
     unknown = copy.deepcopy(config)
     del unknown["max_seconds"]
     encoding = space.Space(registry, {"max_seconds": {"low": 600, "high": 1200}})
@@ -221,8 +222,8 @@ def test_unknown_historical_runtime_stays_unknown(bank):
 
 
 def test_inactive_parameters_are_distinct_from_active_minimum_values(bank):
-    registry = Bank(bank).registry
-    config, _ = selector.random_suggest(registry, 1, 2, {"view": "mixed"})
+    registry = Bank(bank, device="cpu").registry
+    config, _ = selector.random_suggest(registry, 1, 2, {"view": "mixed"}, 600)
     other = copy.deepcopy(config)
     other["model"]["snapshot/layers"] = 1
     encoding = space.Space(registry, {})
@@ -230,9 +231,9 @@ def test_inactive_parameters_are_distinct_from_active_minimum_values(bank):
     assert not np.array_equal(encoded[0], encoded[1])
 
 
-def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch):
-    registry = Bank(bank).registry
-    config, metadata = selector.random_suggest(registry, 1, 2, {})
+def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch, statement):
+    registry = Bank(bank, device="cpu").registry
+    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(20)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, [], [], []))
     monkeypatch.setattr(selector, "suggest", lambda *args, **kwargs: (config, dict(metadata, phase="tpe")))
@@ -252,7 +253,7 @@ def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch
         supervision_sha256="labels",
     )
     for _ in range(40):
-        selector.append_trial(tmp_path, plan, registry, "cpu")
+        selector.append_trial(tmp_path, plan, registry, state(dict(statement, seconds=600)))
     chosen = [item["selector"] for item in plan["trials"]]
     expected = [
         "random" if value < 0.8 else "forest" if value < 0.9 else "tpe"

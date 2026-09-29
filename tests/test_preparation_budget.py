@@ -19,7 +19,7 @@ def test_parent_stops_preparation_even_when_heartbeat_stalls(tmp_path, monkeypat
             raise subprocess.TimeoutExpired("worker", timeout)
 
     with pytest.raises(budget.PreparationTimeout, match="300-second"):
-        budget.wait_worker(Worker(), 1210, tmp_path)
+        budget.wait_worker(Worker(), 1210, tmp_path, 300)
     assert clock[0] == 310
 
 
@@ -34,7 +34,7 @@ def test_finished_preparation_does_not_limit_training(tmp_path, monkeypatch):
         def wait(self, timeout):
             return 0
 
-    assert budget.wait_worker(Worker(), 1210, tmp_path) == 0
+    assert budget.wait_worker(Worker(), 1210, tmp_path, 300) == 0
 
 
 def test_trial_deadline_can_expire_before_preparation_limit(tmp_path, monkeypatch):
@@ -50,7 +50,7 @@ def test_trial_deadline_can_expire_before_preparation_limit(tmp_path, monkeypatc
             raise subprocess.TimeoutExpired("worker", timeout)
 
     with pytest.raises(subprocess.TimeoutExpired) as caught:
-        budget.wait_worker(Worker(), 15, tmp_path)
+        budget.wait_worker(Worker(), 15, tmp_path, 300)
     assert not isinstance(caught.value, budget.PreparationTimeout)
     assert clock[0] == 15
 
@@ -59,7 +59,7 @@ def test_worker_publishes_stage_deadline_and_rejects_late_completion(tmp_path, m
     clock = [10.0]
     monkeypatch.setattr(budget.time, "perf_counter", lambda: clock[0])
     with pytest.raises(TimeoutError, match="graph preparation"):
-        with budget.FitBudget(tmp_path, 1210) as recorder:
+        with budget.FitBudget(tmp_path, 1210, 300) as recorder:
             with recorder.measure("graph_prepare"):
                 saved = read_json(tmp_path / "fit_progress.json")
                 assert saved["graph_preparation"] == dict(started=10, deadline=310, finished=None)

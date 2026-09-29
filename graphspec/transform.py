@@ -6,7 +6,6 @@ from graphspec.infra.sources import digest
 
 from . import operators, representations
 from .infra.timing import measure, timed
-from .resources import DEFAULT_LIMITS
 from .truth import verify_dense
 
 LOG = logging.getLogger(__name__)
@@ -24,7 +23,7 @@ STAGES = (
 
 
 @timed("graph_transform")
-def derive(graph, registry, spec, limits=DEFAULT_LIMITS, carry=None, known=None, stages=STAGES, check=True):
+def derive(graph, registry, spec, limits, carry=None, known=None, stages=STAGES, check=True):
     started, given = time.perf_counter(), graph
     for name, stage in stages:
         clock = time.perf_counter()
@@ -47,7 +46,7 @@ def derive(graph, registry, spec, limits=DEFAULT_LIMITS, carry=None, known=None,
 
 
 @timed("materialize")
-def materialize(graph, registry, spec, groups, categories, limits=DEFAULT_LIMITS):
+def materialize(graph, registry, spec, groups, categories, limits):
     started = time.perf_counter()
     derived = derive(graph, registry, spec, limits)
     arrays = representations.build(derived, registry, spec, groups, categories, SEED, limits)

@@ -20,7 +20,7 @@ def test_diffusion_top_matches_stable_sort_with_ties(width):
         np.float64,
     )
     values, indices = torch.sort(torch.from_numpy(scores), dim=1, descending=True, stable=True)
-    actual_indices, actual_values = compute.top(scores, width)
+    actual_indices, actual_values = compute.top(scores, width, "cpu")
     np.testing.assert_array_equal(actual_indices, indices[:, :width].numpy())
     np.testing.assert_array_equal(actual_values, values[:, :width].numpy())
 
@@ -63,7 +63,7 @@ def test_rewiring_rejects_dense_workspace_before_allocating(monkeypatch):
             present[1:],
             len(present),
             np.random.default_rng(0),
-            GraphBudget(),
+            GraphBudget(GraphLimits("cpu")),
         )
 
 
@@ -78,13 +78,13 @@ def test_rewiring_does_not_allocate_for_isolated_nodes(mode):
         empty,
         len(present),
         np.random.default_rng(0),
-        GraphBudget(GraphLimits(max_working_bytes=2048)),
+        GraphBudget(GraphLimits("cpu", max_working_bytes=2048)),
     )
     assert not len(added[0]) and not len(added[1]) and not len(removed)
 
 
 def test_resource_budget_is_shared_across_expansions():
-    budget = GraphBudget(GraphLimits(max_facts=10, max_working_bytes=1 << 20))
+    budget = GraphBudget(GraphLimits("cpu", max_facts=10, max_working_bytes=1 << 20))
     budget.retain(6, "projection")
     budget.retain(4, "completion")
     with pytest.raises(GraphCapacityError, match="remaining graph budget permits 0"):

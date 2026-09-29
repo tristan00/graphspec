@@ -21,7 +21,7 @@ def registry(level="query", queries=True, signals=2):
 
 @pytest.fixture(scope="module")
 def opened(bank):
-    return Bank(bank)
+    return Bank(bank, device="cpu")
 
 
 @pytest.mark.parametrize(

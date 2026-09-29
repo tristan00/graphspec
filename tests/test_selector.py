@@ -11,10 +11,11 @@ from tuning.data import Bank
 from tuning.model_spec import space
 from tuning.run import run
 from tuning.selector import distribution, random_suggest, suggest
+from tuning.statement import state
 
 
 def test_numeric_parameters_use_full_integer_domains(bank):
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     parameters = space(registry) + specs.space(registry, specs.GROUPS)
     expected = {
         "snapshot/heads": (1, 4),
@@ -52,7 +53,7 @@ def test_numeric_parameters_use_full_integer_domains(bank):
 
 
 def test_random_and_tpe_accept_non_power_of_two_settings(bank):
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     bounds = {
         "view": "sequence",
         "sequence/operator": "transformer",
@@ -62,12 +63,12 @@ def test_random_and_tpe_accept_non_power_of_two_settings(bank):
         "keys/embedding": True,
         "keys/table": 12345,
     }
-    random, _ = random_suggest(registry, 10, 11, bounds)
+    random, _ = random_suggest(registry, 10, 11, bounds, 600)
     records = []
     for index in range(12):
-        config, _ = random_suggest(registry, index, index, bounds)
+        config, _ = random_suggest(registry, index, index, bounds, 600)
         records.append(dict(config=config, status="complete", trial=str(index), objective=float(index)))
-    tpe, metadata = suggest(registry, records, [], 12, 13, bounds)
+    tpe, metadata = suggest(registry, records, [], 12, 13, bounds, 600)
     assert metadata["phase"] == "tpe" and metadata["observations"] == 12
     assert all(config["model"][key] == value for config in (random, tpe) for key, value in bounds.items())
 
@@ -86,6 +87,7 @@ def arguments(bank, output, **overrides):
         output=str(output),
         device="cpu",
         seed=3,
+        preparation_seconds=300,
         batch_sequences=8,
         continuous=False,
         trials=None,
@@ -104,7 +106,7 @@ def arguments(bank, output, **overrides):
 
 
 def test_hidden_covers_every_integer_and_uses_integer_tpe_distribution(bank):
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     hidden = next(parameter for parameter in space(registry) if parameter.name == "hidden")
     domain = distribution(hidden)
     assert isinstance(domain, IntDistribution)
@@ -112,16 +114,16 @@ def test_hidden_covers_every_integer_and_uses_integer_tpe_distribution(bank):
     rng = np.random.default_rng(73)
     assert {hidden.uniform(rng) for _ in range(4096)} == set(range(1, 129))
     bounds = {"hidden": {"low": 37, "high": 37}}
-    random, _ = random_suggest(registry, 10, 11, bounds)
-    tpe, _ = suggest(registry, [], [], 12, 13, bounds)
+    random, _ = random_suggest(registry, 10, 11, bounds, 600)
+    tpe, _ = suggest(registry, [], [], 12, 13, bounds, 600)
     assert random["model"]["hidden"] == tpe["model"]["hidden"] == 37
 
 
 def test_tpe_learns_from_every_recorded_trial_inside_the_bounds(bank):
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     records = []
     for index in range(14):
-        config, _ = random_suggest(registry, 100 + index, 200 + index, {})
+        config, _ = random_suggest(registry, 100 + index, 200 + index, {}, 600)
         config["epochs"] = 1 + index % 4
         status = "complete" if index % 5 else "failed"
         records.append(
@@ -130,7 +132,7 @@ def test_tpe_learns_from_every_recorded_trial_inside_the_bounds(bank):
     bounds = {"epochs": {"low": 1, "high": 2}}
     completed = [entry for entry in records if entry["status"] == "complete"]
     failures = [dict(entry, objective=None) for entry in records if entry["status"] != "complete"]
-    config, selection = suggest(registry, completed, failures, 7, 8, bounds)
+    config, selection = suggest(registry, completed, failures, 7, 8, bounds, 600)
     inside = [entry for entry in records if entry["config"]["epochs"] <= 2]
     assert selection["observations"] == sum(entry["status"] == "complete" for entry in inside)
     assert selection["failed_observations"] == sum(entry["status"] != "complete" for entry in inside)
@@ -141,7 +143,7 @@ def test_tpe_learns_from_every_recorded_trial_inside_the_bounds(bank):
     assert 1 <= config["epochs"] <= 2
     assert selection["phase"] == "random_startup" and len(inside) < 10
 
-    config, selection = suggest(registry, completed, failures, 7, 8, {})
+    config, selection = suggest(registry, completed, failures, 7, 8, {}, 600)
     assert (
         selection["excluded"] == []
         and selection["observations"] == len(completed)
@@ -151,13 +153,13 @@ def test_tpe_learns_from_every_recorded_trial_inside_the_bounds(bank):
 
 
 def test_tpe_excludes_recorded_trials_that_lack_an_active_parameter(bank):
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     records = []
     for index in range(3):
-        config, _ = random_suggest(registry, 300 + index, 400 + index, {"graphs/join": "single"})
+        config, _ = random_suggest(registry, 300 + index, 400 + index, {"graphs/join": "single"}, 600)
         records.append(dict(config=config, status="complete", trial="trial_%d" % index, objective=1.0))
     del records[0]["config"]["graph"]["graphs/join_size"]
-    _, selection = suggest(registry, records, [], 7, 8, {})
+    _, selection = suggest(registry, records, [], 7, 8, {}, 600)
     assert selection["excluded"] == [
         dict(trial="trial_0", status="complete", parameters=["graphs/join_size"])
     ]
@@ -206,7 +208,7 @@ def test_random_parameter_settings_persist_and_can_be_cleared(bank, tmp_path):
 def test_random_epoch_and_runtime_ranges_persist_and_use_inclusive_integer_draws(bank, tmp_path):
     from tuning.space import Space
 
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     bounds = {"epochs": {"low": 1, "high": 5}, "max_seconds": {"low": 600, "high": 1200}}
     bounds_path = tmp_path / "bounds.json"
     write_json(bounds_path, bounds)
@@ -246,10 +248,10 @@ def test_time_limit_changes_on_resume_and_omission_preserves_it(bank, tmp_path):
     assert read_json(output / "plan.json")["seconds"] == 1800
 
 
-def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path):
+def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path, statement):
     from tuning.selector import append_trial
 
-    registry = Bank(bank).registry
+    registry = Bank(bank, device="cpu").registry
     plan = dict(
         selector="random",
         seed=5,
@@ -268,16 +270,16 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path):
         limit=None,
     )
     write_json(tmp_path / "plan.json", plan)
-    append_trial(tmp_path, plan, registry, "cpu")
+    append_trial(tmp_path, plan, registry, state(dict(statement, seconds=1200)))
     first_path = tmp_path / plan["trials"][0]["directory"] / "config.json"
     assert read_json(first_path)["max_seconds"] == 1200
     plan["seconds"] = 1800
     write_json(tmp_path / "plan.json", plan)
-    append_trial(tmp_path, plan, registry, "cpu")
+    append_trial(tmp_path, plan, registry, state(dict(statement, seconds=1800)))
     second = read_json(tmp_path / plan["trials"][1]["directory"] / "config.json")
     assert second["max_seconds"] == 1800
     assert read_json(first_path)["max_seconds"] == 1200
-    values = {random_suggest(registry, seed, 1, plan["bounds"])[0]["epochs"] for seed in range(40)}
+    values = {random_suggest(registry, seed, 1, plan["bounds"], 600)[0]["epochs"] for seed in range(40)}
     assert values == {1, 2, 3, 4, 5}
 
 

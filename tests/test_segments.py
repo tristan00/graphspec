@@ -3,6 +3,7 @@ import pytest
 
 from graphspec import join, representations, segments, transform
 from graphspec import spec as specs
+from graphspec.resources import GraphLimits
 from graphspec.truth import DENSE, Graph
 from tuning.data import Bank, identical
 
@@ -22,7 +23,7 @@ def shortened(graph, stop):
 
 @pytest.mark.parametrize("draw", range(6))
 def test_segment_engine_equals_the_physical_join(bank, draw):
-    opened = Bank(bank)
+    opened = Bank(bank, device="cpu")
     registry = opened.registry
     rng = np.random.default_rng(draw)
     spec = specs.draw(
@@ -31,18 +32,18 @@ def test_segment_engine_equals_the_physical_join(bank, draw):
     )
     graphs = [Graph.load(opened.truth(index)).dense() for index in range(4)]
     graphs = [shortened(graph, int(rng.integers(1, graph.steps + 1))) for graph in graphs]
-    derived = transform.derive(join.joined(graphs, registry, spec), registry, spec)
+    derived = transform.derive(join.joined(graphs, registry, spec), registry, spec, GraphLimits("cpu"))
     reference = representations.build(
-        derived, registry, spec, specs.GROUPS, opened.categories, transform.SEED
+        derived, registry, spec, specs.GROUPS, opened.categories, transform.SEED, GraphLimits("cpu")
     )
     plan = segments.Plan(graphs, registry, spec)
-    outputs = segments.derived(plan, graphs, registry, spec)
+    outputs = segments.derived(plan, graphs, registry, spec, GraphLimits("cpu"))
     stitched = segments.stitch(plan, graphs, outputs)
     assert all(
         identical(np.asarray(derived.arrays[name]), np.asarray(stitched.arrays[name])) for name in DENSE
     )
     engine = segments.represented(
-        plan, outputs, registry, spec, specs.GROUPS, opened.categories, transform.SEED
+        plan, outputs, registry, spec, specs.GROUPS, opened.categories, transform.SEED, GraphLimits("cpu")
     )
     assert sorted(engine) == sorted(reference)
     assert [

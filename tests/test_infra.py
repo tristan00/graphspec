@@ -140,11 +140,21 @@ def test_bank_build_closes_source_when_validation_fails(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "options", [{"workers": 0}, {"seconds": -1}, {"seconds": float("inf")}, {"batch_sequences": 0}]
+    "changes,options,message",
+    [
+        ({"workers": 0}, {}, "the statement's workers is 0"),
+        ({"seconds": -1}, {}, "the statement's seconds is -1"),
+        ({"seconds": float("inf")}, {}, "the statement's seconds is inf"),
+        ({}, {"batch_sequences": 0}, "fit batch_sequences"),
+    ],
 )
-def test_fit_rejects_invalid_resource_inputs_before_opening_bank(tmp_path, options):
-    with pytest.raises(ValueError, match="fit "):
-        api.fit.__wrapped__(tmp_path / "missing-bank", {}, tmp_path / "fit", "cpu", **options)
+def test_fit_rejects_invalid_resource_inputs_before_opening_bank(
+    tmp_path, statement, changes, options, message
+):
+    with pytest.raises(ValueError, match=message):
+        api.fit.__wrapped__(
+            tmp_path / "missing-bank", {}, tmp_path / "fit", dict(statement, **changes), **options
+        )
 
 
 def test_dense_algebra_gives_the_same_bits_at_any_thread_count():
@@ -163,13 +173,13 @@ def test_dense_algebra_gives_the_same_bits_at_any_thread_count():
     before = torch.get_num_threads()
     for threads in (1, 6, 24):
         torch.set_num_threads(threads)
-        values, vectors = compute.eigh(transition)
+        values, vectors = compute.eigh(transition, "cpu")
         found.append(
             (
-                compute.inverse(np.eye(300) - 0.6 * transition),
+                compute.inverse(np.eye(300) - 0.6 * transition, "cpu"),
                 values,
                 vectors,
-                compute.compose(vectors, np.exp(-values)),
+                compute.compose(vectors, np.exp(-values), "cpu"),
             )
         )
         assert torch.get_num_threads() == threads

@@ -51,7 +51,7 @@ from .representations import (
     turns,
     walk_arrays,
 )
-from .resources import DEFAULT_LIMITS, GraphBudget
+from .resources import GraphBudget
 from .truth import DENSE, Dense, Graph, verify_dense
 
 LOG = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ def derive_segment(plan, index, graph, state, registry, spec, limits):
     return carry, result
 
 
-def derived(plan, graphs, registry, spec, limits=DEFAULT_LIMITS):
+def derived(plan, graphs, registry, spec, limits):
     started = time.perf_counter()
     state = {}
     outputs = [
@@ -715,7 +715,7 @@ def represent_segment(carry, graph, registry, spec, groups, categories, seed, li
     return piece
 
 
-def represented(plan, outputs, registry, spec, groups, categories, seed, limits=DEFAULT_LIMITS):
+def represented(plan, outputs, registry, spec, groups, categories, seed, limits):
     started = time.perf_counter()
     state, context = {}, Context(plan, spec, groups)
     pieces = [
@@ -818,7 +818,7 @@ def finished(appender, context, groups):
     appender.close()
 
 
-def build(members, registry, spec, groups, categories, seed, spill, destination=None, limits=DEFAULT_LIMITS):
+def build(members, registry, spec, groups, categories, seed, spill, limits, destination=None):
     started = time.perf_counter()
     plan = Plan(members, registry, spec)
     transform_state, representation_state, context = {}, {}, Context(plan, spec, groups)
@@ -1184,7 +1184,7 @@ def balanced(rows, count):
     return [tuple(shard) for shard in shards]
 
 
-def build_parallel(jobs, registry, spec, groups, categories, seed, workers, limits=DEFAULT_LIMITS):
+def build_parallel(jobs, registry, spec, groups, categories, seed, workers, limits):
     started = time.perf_counter()
     count = min(SHARDS, sum(filtering(spec, edge.name) for edge in registry.edges))
     deriving = derivation(registry, spec) is not None

@@ -8,13 +8,14 @@ from graphspec.infra.files import JsonCache, read_json, sha256_json, write_json
 from tuning import run as runner
 from tuning.budget import FitBudget
 from tuning.records import VERSION, Outcome, Run, Status
+from tuning.statement import state as stated
 
 
 def test_fit_progress_survives_failure_with_partial_timings(tmp_path, monkeypatch):
     clock = [10.0]
     monkeypatch.setattr("tuning.budget.time.perf_counter", lambda: clock[0])
     with pytest.raises(RuntimeError, match="failed batch"):
-        with FitBudget(tmp_path, 100) as budget:
+        with FitBudget(tmp_path, 100, 300) as budget:
             clock[0] = 13.0
             budget.timings["prepare"] = 3.0
             budget.pulse("training")
@@ -35,7 +36,7 @@ def test_preparation_failure_preserves_its_stage_and_elapsed_time(tmp_path, monk
     clock = [10.0]
     monkeypatch.setattr("tuning.budget.time.perf_counter", lambda: clock[0])
     with pytest.raises(MemoryError):
-        with FitBudget(tmp_path, 100):
+        with FitBudget(tmp_path, 100, 300):
             clock[0] = 14.0
             raise MemoryError()
     progress = read_json(tmp_path / "fit_progress.json")
@@ -48,7 +49,7 @@ def test_active_measurement_is_saved_before_it_finishes(tmp_path, monkeypatch):
     clock = [10.0]
     monkeypatch.setattr("tuning.budget.time.perf_counter", lambda: clock[0])
     with pytest.raises(MemoryError):
-        with FitBudget(tmp_path, 100) as budget:
+        with FitBudget(tmp_path, 100, 300) as budget:
             budget.pulse("training")
             with budget.measure("train_compute"):
                 clock[0] = 15.0
@@ -70,7 +71,7 @@ def plan_at(directory):
     for name in ("opaque-first", "opaque-second"):
         trial = directory / name
         trial.mkdir()
-        write_json(trial / "config.json", dict(model={"view": "sequence"}, graph={}, epochs=1))
+        write_json(trial / "config.json", dict(seed=5, model={"view": "sequence"}, graph={}, epochs=1))
         write_json(trial / "selection.json", {"graph_summary": {}})
         items.append(
             dict(
@@ -147,7 +148,9 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
     monkeypatch.setattr(runner, "WorkerProcess", Worker)
     monkeypatch.setattr(
         "tuning.budget.wait_worker",
-        lambda process, deadline, directory: process.wait(timeout=max(0.0, deadline - time.perf_counter())),
+        lambda process, deadline, directory, preparation: process.wait(
+            timeout=max(0.0, deadline - time.perf_counter())
+        ),
     )
     monkeypatch.setattr(runner, "training_layout", layout)
     monkeypatch.setattr(runner.sources, "snapshot", lambda *args: None)
@@ -156,11 +159,12 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
     monkeypatch.setattr("tuning.variants.prune", lambda *args: None)
 
 
-def test_timeout_is_recorded_then_joined_before_the_next_trial(tmp_path, monkeypatch):
+def test_timeout_is_recorded_then_joined_before_the_next_trial(tmp_path, monkeypatch, statement):
+    statement = dict(statement, seconds=10)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
-    runner.execute(tmp_path, plan, False, None, "cpu")
+    runner.execute(tmp_path, plan, False, None, stated(statement))
     assert events == [
         ("start", "opaque-first"),
         ("joined", "opaque-first"),
@@ -173,7 +177,8 @@ def test_timeout_is_recorded_then_joined_before_the_next_trial(tmp_path, monkeyp
     assert Outcome.read(tmp_path / "opaque-second", JsonCache()).status == Status.COMPLETE
 
 
-def test_saved_trial_limit_controls_deadline_and_all_terminal_records(tmp_path, monkeypatch):
+def test_saved_trial_limit_controls_deadline_and_all_terminal_records(tmp_path, monkeypatch, statement):
+    statement = dict(statement, seconds=10)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
@@ -182,14 +187,14 @@ def test_saved_trial_limit_controls_deadline_and_all_terminal_records(tmp_path, 
         write_json(path, dict(read_json(path), max_seconds=limit))
     deadlines = []
 
-    def wait(process, deadline, directory):
+    def wait(process, deadline, directory, preparation):
         config = read_json(directory / "config.json")
         assert read_json(tmp_path / "running.json")["max_seconds"] == config["max_seconds"]
         deadlines.append(deadline - time.perf_counter())
         return process.wait(timeout=1)
 
     monkeypatch.setattr("tuning.budget.wait_worker", wait)
-    runner.execute(tmp_path, plan, False, None, "cpu")
+    runner.execute(tmp_path, plan, False, None, stated(statement))
     assert 44 < deadlines[0] <= 45
     assert 74 < deadlines[1] <= 75
     assert read_json(tmp_path / "opaque-first" / "timeout.json")["budget"] == 45
@@ -198,42 +203,48 @@ def test_saved_trial_limit_controls_deadline_and_all_terminal_records(tmp_path, 
     assert plan["seconds"] == 10
 
 
-def test_legacy_pending_trial_gets_limit_before_worker_start(tmp_path, monkeypatch):
+def test_legacy_pending_trial_gets_limit_before_worker_start(tmp_path, monkeypatch, statement):
+    statement = dict(statement, seconds=10)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
 
-    def wait(process, deadline, directory):
+    def wait(process, deadline, directory, preparation):
         assert read_json(directory / "config.json")["max_seconds"] == 10
         return process.wait(timeout=1)
 
     monkeypatch.setattr("tuning.budget.wait_worker", wait)
-    runner.execute(tmp_path, plan, False, None, "cpu")
+    runner.execute(tmp_path, plan, False, None, stated(statement))
     assert len(events) == 4
 
 
-def test_cleanup_failure_preserves_timeout_and_stops_before_another_trial(tmp_path, monkeypatch):
+def test_cleanup_failure_preserves_timeout_and_stops_before_another_trial(tmp_path, monkeypatch, statement):
+    statement = dict(statement, seconds=10)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events, cleanup_error=True)
     with pytest.raises(RuntimeError, match="OS refused"):
-        runner.execute(tmp_path, plan, False, None, "cpu")
+        runner.execute(tmp_path, plan, False, None, stated(statement))
     assert events == [("start", "opaque-first"), ("joined", "opaque-first")]
     assert Outcome.read(tmp_path / "opaque-first", JsonCache()).status == Status.TIMEOUT
     state = read_json(tmp_path / "runner.json")
     assert state["status"] == "failed" and "OS refused" in state["error"]
 
 
-def test_expired_preparation_never_launches_a_worker(tmp_path, monkeypatch):
+def test_expired_preparation_never_launches_a_worker(tmp_path, monkeypatch, statement):
+    statement = dict(statement, seconds=10)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
-    runner.execute_trial(tmp_path, plan, plan["trials"][0], 0, time.perf_counter() - 11, {}, "cpu")
+    runner.execute_trial(
+        tmp_path, plan, plan["trials"][0], 0, time.perf_counter() - 11, {}, stated(statement)
+    )
     assert events == []
     assert Outcome.read(tmp_path / "opaque-first", JsonCache()).status == Status.TIMEOUT
 
 
-def test_worker_deadline_exit_becomes_timeout_and_continues(tmp_path, monkeypatch):
+def test_worker_deadline_exit_becomes_timeout_and_continues(tmp_path, monkeypatch, statement):
+    statement = dict(statement, seconds=10)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
@@ -241,7 +252,7 @@ def test_worker_deadline_exit_becomes_timeout_and_continues(tmp_path, monkeypatc
     monkeypatch.setattr(
         runner.WorkerProcess, "__exit__", lambda self, *args: events.append(("joined", self.trial.name))
     )
-    runner.execute(tmp_path, plan, False, None, "cpu")
+    runner.execute(tmp_path, plan, False, None, stated(statement))
     assert len(events) == 4
     assert all(
         Outcome.read(tmp_path / item["directory"], JsonCache()).status == Status.TIMEOUT

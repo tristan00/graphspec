@@ -7,7 +7,7 @@ from importlib import import_module
 
 import pytest
 
-from graphspec.infra import compute, runtime
+from graphspec.infra import runtime
 from graphspec.infra.processes import LockBusy
 
 WORKER = "PYTEST_XDIST_WORKER" in os.environ
@@ -23,7 +23,6 @@ def suite_singleton(name, message, original=runtime.singleton):
 
 
 runtime.singleton = suite_singleton
-compute.state("cpu")
 
 
 def pytest_configure(config):
@@ -109,9 +108,9 @@ def packers(bank):
 
     held = {}
     for view in ("snapshot", "event_graph"):
-        cfg = configuration(Bank(bank).registry, dict(view=view), {"time/history": 4}, 5)
-        prepare(bank, cfg, 1)
-        held[view] = cfg, Packer(Bank(bank), cfg, "cpu", 1)
+        cfg = configuration(Bank(bank, device="cpu").registry, dict(view=view), {"time/history": 4}, 5)
+        prepare(bank, cfg, 1, "cpu")
+        held[view] = cfg, Packer(Bank(bank, device="cpu"), cfg, "cpu", 1)
     started = time.perf_counter()
     for cfg, packer in held.values():
         opened = packer.bank
@@ -121,6 +120,21 @@ def packers(bank):
     yield held
     for _, packer in held.values():
         packer.close()
+
+
+@pytest.fixture
+def statement():
+    from tuning.statement import VERSION
+
+    return dict(
+        version=VERSION,
+        device="cpu",
+        seed=5,
+        seconds=30,
+        preparation_seconds=300,
+        workers=1,
+        variant_cache_bytes=1 << 30,
+    )
 
 
 @pytest.fixture

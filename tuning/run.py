@@ -9,19 +9,19 @@ from pathlib import Path
 
 from graphspec.infra import files, sources
 from graphspec.infra.files import (
-    BUDGET,
     JsonCache,
     read_json,
     sha256_file,
     write_json,
 )
 from graphspec.infra.log import configure, emit
-from graphspec.infra.processes import WORKERS, Lock, WorkerProcess
+from graphspec.infra.processes import Lock, WorkerProcess
 from graphspec.infra.runtime import exclusive, output_path
 from graphspec.infra.timing import Timeline, measure, timed
 from graphspec.spec import digest
 
 from . import objective
+from . import statement as statements
 from .budget import TIMEOUT_EXIT_CODE
 from .records import VERSION, Outcome, worker_alive
 from .report import report
@@ -60,8 +60,7 @@ def worker(args):
             blocks,
             args.batch_sequences,
             args.deadline,
-            args.workers,
-            args.device,
+            read_json(args.statement),
         )
     except TimeoutError as error:
         emit("worker_timeout", error=str(error), deadline=args.deadline)
@@ -83,23 +82,21 @@ def worker(args):
 
 @exclusive
 def run(args):
-    from .budget import POLICY
+    given = flags(args)
+    directory = output_path(args.output)
+    path = directory / "plan.json"
+    stated = None if path.exists() else statements.state(given)
+    from .budget import policy
     from .data import Bank
     from .selector import FAILURE_POLICY, SURROGATES, check_bounds, check_mix
 
-    for name in ("workers", "batch_sequences", "variant_gb"):
-        if type(getattr(args, name)) is not int or getattr(args, name) < 1:
-            raise ValueError(name + " must be a positive integer")
+    if type(args.batch_sequences) is not int or args.batch_sequences < 1:
+        raise ValueError("batch_sequences must be a positive integer")
     for name in ("trials", "random_trials"):
         value = getattr(args, name)
         if value is not None and (type(value) is not int or value < 0):
             raise ValueError(name + " must be a nonnegative integer")
-    if args.seconds is not None and (type(args.seconds) is not int or args.seconds < 1):
-        raise ValueError("seconds must be a positive integer")
-    directory = output_path(args.output)
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "plan.json"
-    bank = Bank(args.bank)
+    bank = Bank(args.bank, device=args.device)
     bounds = read_json(args.bounds) if args.bounds else {}
     mix = None
     if args.mix is not None:
@@ -113,8 +110,14 @@ def run(args):
             raise ValueError("this run was written by another plan version; choose a new output")
         if plan["bank_manifest_sha256"] != sha256_file(Path(args.bank) / "manifest.json"):
             raise ValueError("this run belongs to a different bank")
+        given.setdefault("seconds", plan["seconds"])
+        stated = statements.state(given)
+        if stated.seed != plan["seed"]:
+            raise ValueError(
+                "this run was started with seed %r and the statement says %r" % (plan["seed"], stated.seed)
+            )
         plan["bank"] = str(Path(args.bank).resolve())
-        plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30, limit=args.trials)
+        plan.update(workers=stated.workers, variant_bytes=stated.variant_cache_bytes, limit=args.trials)
         plan.setdefault("random_params", [])
         plan.setdefault("mix", {plan["selector"]: 100})
         for name, value in (
@@ -122,7 +125,7 @@ def run(args):
             ("random_trials", args.random_trials),
             ("mix", mix),
             ("random_params", args.random_params),
-            ("seconds", args.seconds),
+            ("seconds", stated.seconds),
             ("bounds", bounds if args.bounds else None),
             ("objective", chosen if args.objective else None),
         ):
@@ -132,20 +135,20 @@ def run(args):
     else:
         plan = dict(
             version=VERSION,
-            seed=args.seed,
+            seed=stated.seed,
             bank=str(Path(args.bank).resolve()),
             selector=args.selector or "botorch",
             trials=[],
             batch_sequences=args.batch_sequences,
-            workers=args.workers,
-            variant_bytes=args.variant_gb << 30,
+            workers=stated.workers,
+            variant_bytes=stated.variant_cache_bytes,
             random_trials=STARTUP if args.random_trials is None else args.random_trials,
             random_params=args.random_params or [],
             mix=mix or ({args.selector: 100} if args.selector else dict(MIX)),
             bounds=bounds,
             objective=chosen,
             limit=args.trials,
-            seconds=600 if args.seconds is None else args.seconds,
+            seconds=stated.seconds,
             train_rows=bank.manifest["train_rows"],
             holdout_rows=bank.manifest["validation_rows"],
             supervision_sha256=bank.manifest["supervision_sha256"],
@@ -155,7 +158,8 @@ def run(args):
     if plan["selector"] in SURROGATES:
         from .space import Space
 
-        Space(bank.registry, plan["bounds"], plan["seconds"]).random_names(plan["random_params"])
+        Space(bank.registry, plan["bounds"], stated.seconds).random_names(plan["random_params"])
+    directory.mkdir(parents=True, exist_ok=True)
     with Lock(directory / "runner.lock"):
         running = directory / "running.json"
         if running.exists():
@@ -164,12 +168,28 @@ def run(args):
                 raise RuntimeError("the previous worker is still running; wait for it before continuing")
         plan.update(
             bank_manifest_sha256=sha256_file(Path(plan["bank"]) / "manifest.json"),
-            budget_policy=POLICY,
+            budget_policy=policy(stated.preparation_seconds),
             failure_policy=FAILURE_POLICY,
         )
         discard_unfinished(directory, plan)
         write_json(path, plan)
-        execute(directory, plan, args.continuous, bank.registry, args.device)
+        execute(directory, plan, args.continuous, bank.registry, stated)
+
+
+def flags(args):
+    started = time.perf_counter()
+    given = dict(
+        version=statements.VERSION,
+        device=args.device,
+        seed=args.seed,
+        seconds=args.seconds,
+        preparation_seconds=args.preparation_seconds,
+        workers=args.workers,
+        variant_cache_bytes=None if args.variant_gb is None else args.variant_gb << 30,
+    )
+    result = {name: value for name, value in given.items() if value is not None}
+    emit("statement_flags", fields=sorted(result), seconds=time.perf_counter() - started)
+    return result
 
 
 def discard_unfinished(directory, plan):
@@ -186,7 +206,7 @@ def discard_unfinished(directory, plan):
 
 
 @timed("layout")
-def training_layout(directory, plan, config):
+def training_layout(directory, plan, config, device):
     from .data import Bank
 
     started = time.perf_counter()
@@ -197,7 +217,7 @@ def training_layout(directory, plan, config):
         "train_blocks_%s.json" % digest(dict(history=history, join=parameters(config["graph"])))[:12]
     )
     if not path.exists():
-        bank = Bank(plan["bank"])
+        bank = Bank(plan["bank"], device=device)
         if bank.manifest["supervision_sha256"] != plan["supervision_sha256"]:
             raise ValueError("training layout changed supervision")
         blocks = bank.blocks(0, history, config)
@@ -229,28 +249,29 @@ def mark_timeout(trial, max_seconds, started, phases, error):
     )
 
 
-def execute_trial(directory, plan, item, index, started, phases, device):
+def execute_trial(directory, plan, item, index, started, phases, stated):
     with Timeline(directory / item["directory"] / "runner_timing.json"), measure("trial_runner"):
-        return execute_trial_body(directory, plan, item, index, started, phases, device)
+        return execute_trial_body(directory, plan, item, index, started, phases, stated)
 
 
-def execute_trial_body(directory, plan, item, index, started, phases, device):
+def execute_trial_body(directory, plan, item, index, started, phases, stated):
     from .budget import wait_worker
 
     trial = directory / item["directory"]
     opened = datetime.now(timezone.utc).isoformat()
     config = read_json(trial / "config.json")
     if "max_seconds" not in config:
-        config["max_seconds"] = plan["seconds"]
+        config["max_seconds"] = stated.seconds
         write_json(trial / "config.json", config)
     max_seconds = config["max_seconds"]
     if type(max_seconds) is not int or max_seconds < 1:
         raise ValueError("max_seconds must be a positive integer")
+    write_json(trial / "statement.json", stated.replace(seed=config["seed"], seconds=max_seconds).mapping())
     deadline = started + max_seconds
     timeout = None
     try:
         stage = time.perf_counter()
-        blocks, batch_size = training_layout(directory, plan, config)
+        blocks, batch_size = training_layout(directory, plan, config, stated.device)
         phases["layout"] = time.perf_counter() - stage
         arguments = [
             "worker",
@@ -262,10 +283,8 @@ def execute_trial_body(directory, plan, item, index, started, phases, device):
             str(blocks.resolve()),
             "--batch-sequences",
             str(batch_size),
-            "--workers",
-            str(plan["workers"]),
-            "--device",
-            device,
+            "--statement",
+            str((trial / "statement.json").resolve()),
             "--deadline",
             repr(deadline),
         ]
@@ -298,7 +317,7 @@ def execute_trial_body(directory, plan, item, index, started, phases, device):
                 )
                 try:
                     with measure("worker_wait"):
-                        code = wait_worker(process, deadline, trial)
+                        code = wait_worker(process, deadline, trial, stated.preparation_seconds)
                 except subprocess.TimeoutExpired as error:
                     timeout = error
                     mark_timeout(trial, max_seconds, started, phases, error)
@@ -343,7 +362,7 @@ def execute_trial_body(directory, plan, item, index, started, phases, device):
     return config
 
 
-def execute(directory, plan, continuous, registry, device):
+def execute(directory, plan, continuous, registry, stated):
     from .data import Bank
     from .selector import append_trial
     from .variants import prune
@@ -355,7 +374,7 @@ def execute(directory, plan, continuous, registry, device):
         "run_enter",
         trials=len(plan["trials"]),
         limit=plan["limit"],
-        seconds_per_trial=plan["seconds"],
+        seconds_per_trial=stated.seconds,
         continuous=continuous,
     )
     index = 0
@@ -367,17 +386,17 @@ def execute(directory, plan, continuous, registry, device):
             if index == len(plan["trials"]):
                 if not continuous:
                     break
-                append_trial(directory, plan, registry, device)
+                append_trial(directory, plan, registry, stated)
                 phases["select"] = time.perf_counter() - trial_started
             item = plan["trials"][index]
             index += 1
             if Outcome.read(directory / item["directory"], JsonCache()) is not None:
                 continue
-            config = execute_trial(directory, plan, item, index, trial_started, phases, device)
+            config = execute_trial(directory, plan, item, index, trial_started, phases, stated)
             stage = time.perf_counter()
             with Timeline(directory / item["directory"] / "maintenance_timing.json"), measure("maintenance"):
                 with measure("cache_prune"):
-                    prune(plan["bank"], plan["variant_bytes"], Bank(plan["bank"]).stamp(config))
+                    prune(plan["bank"], stated.variant_cache_bytes, Bank(plan["bank"]).stamp(config))
                 emit("trial_prune", seconds=time.perf_counter() - stage)
                 with measure("report"):
                     report(directory)
@@ -404,14 +423,15 @@ def main():
     run_parser.add_argument("--bank", required=True)
     run_parser.add_argument("--output", required=True)
     run_parser.add_argument("--device", required=True)
-    run_parser.add_argument("--seed", type=int, default=20260909)
+    run_parser.add_argument("--seed", type=int, required=True)
+    run_parser.add_argument("--preparation-seconds", type=int, required=True)
     run_parser.add_argument("--batch-sequences", type=int, default=64)
     run_parser.add_argument("--continuous", action="store_true")
     run_parser.add_argument("--trials", type=int)
     run_parser.add_argument(
         "--seconds",
         type=int,
-        help="time limit for new trials; defaults to 600 for a new run, otherwise keeps the saved limit",
+        help="time limit for new trials; required for a new run, otherwise keeps the saved limit when omitted",
     )
     run_parser.add_argument(
         "--selector",
@@ -441,16 +461,15 @@ def main():
         help="series=weight pairs that blend per-series validation losses into the trial score; every series weighs 1 when omitted on a new run",
     )
     run_parser.add_argument("--bounds")
-    run_parser.add_argument("--workers", type=int, default=WORKERS)
-    run_parser.add_argument("--variant-gb", type=int, default=BUDGET >> 30)
+    run_parser.add_argument("--workers", type=int, required=True)
+    run_parser.add_argument("--variant-gb", type=int, required=True)
     worker_parser = subparsers.add_parser("worker")
     worker_parser.add_argument("--bank", required=True)
     worker_parser.add_argument("--output", required=True)
     worker_parser.add_argument("--training-blocks", required=True)
     worker_parser.add_argument("--batch-sequences", type=int, required=True)
     worker_parser.add_argument("--deadline", type=float, required=True)
-    worker_parser.add_argument("--workers", type=int, required=True)
-    worker_parser.add_argument("--device", required=True)
+    worker_parser.add_argument("--statement", required=True)
     report_parser = subparsers.add_parser("report")
     report_parser.add_argument("directory")
     args = parser.parse_args()

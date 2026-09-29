@@ -171,7 +171,7 @@ def test_mixed_nodes_without_an_entity_carry_no_token(bank):
     from tuning.inputs import recipe
     from tuning.model_spec import configuration
 
-    opened = Bank(bank)
+    opened = Bank(bank, device="cpu")
     cfg = configuration(opened.registry, {"view": "mixed", "keys/embedding": True}, {"time/history": 4}, 5)
     block = opened.blocks(1, 4, cfg)[-1]
     held = opened.resident(block[0], cfg, "cpu")

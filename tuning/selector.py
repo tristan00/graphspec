@@ -143,7 +143,7 @@ def metadata(registry, config, seed, training_seed, bounds, **extra):
     )
 
 
-def configuration(registry, choose, training_seed, bounds, seconds=600):
+def configuration(registry, choose, training_seed, bounds, seconds):
     models, trainings = spaces(registry, bounds)
     model = specs.draw(models, lambda parameter: choose("model/", parameter))
     config = dict(
@@ -156,7 +156,7 @@ def configuration(registry, choose, training_seed, bounds, seconds=600):
     return config
 
 
-def suggest(registry, observations, failures, seed, training_seed, bounds, seconds=600):
+def suggest(registry, observations, failures, seed, training_seed, bounds, seconds):
     started = time.perf_counter()
     check_bounds(registry, bounds)
     records, left_out, used = [], [], dict(complete=0, failed=0)
@@ -204,7 +204,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
     )
 
 
-def random_suggest(registry, seed, training_seed, bounds, seconds=600):
+def random_suggest(registry, seed, training_seed, bounds, seconds):
     started = time.perf_counter()
     check_bounds(registry, bounds)
     rng = np.random.default_rng(seed)
@@ -279,11 +279,11 @@ def pick(mix):
     return list(mix)[-1]
 
 
-def append_trial(directory, plan, registry, device):
+def append_trial(directory, plan, registry, stated):
     started = time.perf_counter()
     observations, failures, history, failure_history = load_history(directory, plan)
     index = len(plan["trials"])
-    rng = np.random.default_rng(np.random.SeedSequence([plan["seed"], index, 1]))
+    rng = np.random.default_rng(np.random.SeedSequence([stated.seed, index, 1]))
     selector_seed, training_seed = (int(v) for v in rng.integers(1, 2**31, size=2))
     bounds = plan["bounds"]
     finished = len(observations) + len(failures)
@@ -292,7 +292,7 @@ def append_trial(directory, plan, registry, device):
     )
     selector = "random" if startup else pick(plan["mix"])
     if selector == "random":
-        config, selection = random_suggest(registry, selector_seed, training_seed, bounds, plan["seconds"])
+        config, selection = random_suggest(registry, selector_seed, training_seed, bounds, stated.seconds)
     elif selector in SURROGATES:
         surrogate_suggest = import_module("tuning." + SURROGATES[selector]).suggest
         progress_started = time.time()
@@ -312,9 +312,9 @@ def append_trial(directory, plan, registry, device):
                 training_seed,
                 bounds,
                 plan["random_params"],
-                device,
+                stated.device,
+                stated.seconds,
                 progress=progress,
-                seconds=plan["seconds"],
             )
         except BaseException as error:
             progress(dict(stage="Selection failed", error=str(error)))
@@ -322,7 +322,7 @@ def append_trial(directory, plan, registry, device):
         selection["failure_history"] = failure_history
     else:
         config, selection = suggest(
-            registry, observations, failures, selector_seed, training_seed, bounds, plan["seconds"]
+            registry, observations, failures, selector_seed, training_seed, bounds, stated.seconds
         )
         selection["failure_history"] = failure_history
     selection.update(

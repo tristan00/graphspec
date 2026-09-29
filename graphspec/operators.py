@@ -6,7 +6,7 @@ from graphspec.infra.workspace import allocate, concatenate, scatter, take
 
 from . import kernels
 from .carry import FOREVER, Table
-from .resources import DEFAULT_LIMITS, GraphBudget, GraphCapacityError
+from .resources import GraphBudget, GraphCapacityError
 from .vocabulary import UNTYPED, completion, hop
 
 FACTS = ("fact_source", "fact_target", "fact_code", "fact_step", "fact_present", "fact_ref")
@@ -223,7 +223,7 @@ def held(graph, carry):
     return graph, obs, facts
 
 
-def window(graph, registry, spec, seed, limits=DEFAULT_LIMITS, carry=None):
+def window(graph, registry, spec, seed, limits, carry=None):
     if (
         spec["time/scheme"] == "window"
         and spec.get("time/unit", "step") == "step"
@@ -586,16 +586,16 @@ def blocks(labels):
     return [order[lo:hi] for lo, hi in zip(bounds[:-1], bounds[1:]) if hi - lo > 1]
 
 
-def diffusion_scores(adjacency, spec):
+def diffusion_scores(adjacency, spec, device):
     count = len(adjacency)
     scale = 1 / np.sqrt(adjacency.sum(1))
     transition = scale[:, None] * adjacency * scale[None, :]
     if spec["derive/diffusion"] == "ppr":
         alpha = spec["derive/ppr_alpha"]
-        scores = alpha * compute.inverse(np.eye(count) - (1 - alpha) * transition)
+        scores = alpha * compute.inverse(np.eye(count) - (1 - alpha) * transition, device)
     else:
-        values, vectors = compute.eigh(transition)
-        scores = compute.compose(vectors, np.exp(-spec["derive/heat_time"] * (1 - values)))
+        values, vectors = compute.eigh(transition, device)
+        scores = compute.compose(vectors, np.exp(-spec["derive/heat_time"] * (1 - values)), device)
     scores[adjacency] = -np.inf
     np.fill_diagonal(scores, -np.inf)
     return scores
@@ -614,9 +614,9 @@ def diffuse(registry, spec, present, u, v, entities, budget):
         )
         adjacency = np.zeros((len(members), len(members)), bool)
         adjacency[source, target] = adjacency[target, source] = True
-        scores = diffusion_scores(adjacency, spec)
+        scores = diffusion_scores(adjacency, spec, budget.limits.device)
         width = min(spec["derive/diffusion_top_k"], len(members) - 1)
-        chosen, ranked = compute.top(scores, width)
+        chosen, ranked = compute.top(scores, width, budget.limits.device)
         valid = np.isfinite(ranked)
         rows = np.broadcast_to(np.arange(len(members))[:, None], chosen.shape)
         sources.append(present[members[rows[valid]]])
@@ -640,12 +640,12 @@ def curvature(adjacency, i, j):
     return float(forman(adjacency, np.asarray([i], np.int64), np.asarray([j], np.int64))[0])
 
 
-def spectral(adjacency, members):
+def spectral(adjacency, members, device):
     local = adjacency[np.ix_(members, members)]
     if local.sum() == len(members) * (len(members) - 1):
         return None
     scale = 1 / np.sqrt(local.sum(1) + 1.0)
-    values, vectors = compute.eigh(scale[:, None] * (local + np.eye(len(members))) * scale[None, :])
+    values, vectors = compute.eigh(scale[:, None] * (local + np.eye(len(members))) * scale[None, :], device)
     fiedler = vectors[:, -2] * scale
     scores = np.outer(fiedler, fiedler)
     scores[local] = np.inf
@@ -654,11 +654,11 @@ def spectral(adjacency, members):
     return float(values[-1] - values[-2]), members[i], members[j]
 
 
-def fosr(adjacencies, found):
+def fosr(adjacencies, found, device):
     best = None
     for label, adjacency in enumerate(adjacencies):
         if label not in found:
-            found[label] = spectral(adjacency, np.arange(len(adjacency)))
+            found[label] = spectral(adjacency, np.arange(len(adjacency)), device)
         candidate = found[label]
         if candidate is not None and (best is None or candidate[0] < best[1][0] - 1e-9):
             best = label, candidate
@@ -719,7 +719,7 @@ def rewire(spec, present, u, v, entities, rng, budget):
     found = {}
     for _ in range(spec["derive/rewiring_budget"]):
         if spec["derive/rewiring"] == "fosr":
-            best = fosr(adjacencies, found)
+            best = fosr(adjacencies, found, budget.limits.device)
             if best is None:
                 break
             label, (_, i, j) = best
@@ -819,7 +819,7 @@ def derive_prepare(graph, registry, spec, carry=None):
     return recency
 
 
-def derive_steps(graph, registry, spec, seed, recency, step0=0, limits=DEFAULT_LIMITS):
+def derive_steps(graph, registry, spec, seed, recency, step0, limits):
     projected, selected, within = derivation(registry, spec)
     steps, entities = graph.steps, len(graph.kinds)
     stated, kept = derivable(graph, registry, spec)
@@ -973,7 +973,7 @@ def derive_finish(graph, found, removed, budget, carry=None):
     return derived_rows(graph, found, stop, budget)
 
 
-def derive(graph, registry, spec, seed, limits=DEFAULT_LIMITS, carry=None):
+def derive(graph, registry, spec, seed, limits, carry=None):
     if derivation(registry, spec) is None:
         return graph
     recency = derive_prepare(graph, registry, spec, carry)

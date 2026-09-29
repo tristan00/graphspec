@@ -23,17 +23,17 @@ from .tensors import keys, prepare, resolve
 LOG = logging.getLogger(__name__)
 
 
-def serve(bank_directory, cfg, threads, resident, jobs, results, timing_directory=None):
+def serve(bank_directory, cfg, threads, resident, device, jobs, results, timing_directory=None):
     path = None if timing_directory is None else Path(timing_directory) / ("packing-%s.json" % os.getpid())
     with Timeline(path), measure("packing_worker"):
-        serve_batches(bank_directory, cfg, threads, resident, jobs, results)
+        serve_batches(bank_directory, cfg, threads, resident, device, jobs, results)
 
 
-def serve_batches(bank_directory, cfg, threads, resident, jobs, results):
+def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results):
     configure(json_lines=True)
     numba.set_num_threads(threads)
     torch.set_num_threads(1)
-    bank = Bank(bank_directory, resident)
+    bank = Bank(bank_directory, resident, device)
     slots = {}
     while True:
         with measure("queue_wait"):
@@ -95,7 +95,16 @@ class Packer:
                 reader, writer = context.Pipe(duplex=False)
                 process = context.Process(
                     target=serve,
-                    args=(str(bank.directory), cfg, threads, resident, self.jobs, writer, timing_directory),
+                    args=(
+                        str(bank.directory),
+                        cfg,
+                        threads,
+                        resident,
+                        bank.device,
+                        self.jobs,
+                        writer,
+                        timing_directory,
+                    ),
                     daemon=True,
                 )
                 self.results.append(reader)

@@ -17,6 +17,7 @@ from graphspec.infra.files import ArrayStore, load_arrays, read_json, save_array
 from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
+from graphspec.resources import GraphLimits
 from graphspec.transform import SEED, SOURCE, materialize
 from graphspec.truth import VERSION, Graph
 
@@ -108,9 +109,10 @@ class Windows:
 
 
 class Bank:
-    def __init__(self, directory, resident=RESIDENT):
+    def __init__(self, directory, resident=RESIDENT, device=None):
         started = time.perf_counter()
         self.directory = Path(directory)
+        self.device = device
         self.manifest = read_json(self.directory / "manifest.json")
         self.cache = cache_path("banks", sha256_file(self.directory / "manifest.json"))
         if self.manifest["version"] != VERSION:
@@ -258,6 +260,16 @@ class Bank:
             self.level,
         )
 
+    def limits(self):
+        started = time.perf_counter()
+        if self.device is None:
+            raise ValueError(
+                "bank %s was opened without a device and cannot derive a variant" % self.directory
+            )
+        result = GraphLimits(self.device)
+        LOG.debug("bank limits exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
+        return result
+
     @timed("segmented")
     def segmented(self, indices, cfg, workers):
         started = time.perf_counter()
@@ -274,7 +286,9 @@ class Bank:
                 paths = [self.truth(member) for member in self.groups(cfg)[index]]
                 members = [Graph.load(path, mapped=True) for path in paths]
                 jobs.append(dict(members=members, paths=paths, spill=spill, destination=temporary))
-            segments.build_parallel(jobs, self.registry, spec, chosen, self.categories, SEED, workers)
+            segments.build_parallel(
+                jobs, self.registry, spec, chosen, self.categories, SEED, workers, self.limits()
+            )
             for (temporary, final), job in zip(folders, jobs):
                 shutil.rmtree(job["spill"])
                 temporary.replace(final)
@@ -340,7 +354,7 @@ class Bank:
             self.stamp(cfg)
             with measure("truth_load"):
                 truth = Graph.load(self.truth(index)).dense()
-            arrays = materialize(truth, self.registry, spec, chosen, self.categories)
+            arrays = materialize(truth, self.registry, spec, chosen, self.categories, self.limits())
             with measure("feature_deduplication"):
                 linked = []
                 for name, held, source in (("query", "query_x", "query_x"), ("x_table", "x_table", "obs_x")):
@@ -368,7 +382,15 @@ class Bank:
                         paths = [self.truth(member) for member in self.groups(cfg)[index]]
                         members = [Graph.load(path, mapped=True) for path in paths]
                         segments.build(
-                            members, self.registry, spec, chosen, self.categories, SEED, spill, destination
+                            members,
+                            self.registry,
+                            spec,
+                            chosen,
+                            self.categories,
+                            SEED,
+                            spill,
+                            self.limits(),
+                            destination,
                         )
                     except BaseException as error:
                         traceback.clear_frames(error.__traceback__)

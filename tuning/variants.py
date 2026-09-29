@@ -15,10 +15,10 @@ from .data import Bank
 WORKER = {}
 
 
-def attach(bank_directory, threads, timing_directory=None):
+def attach(bank_directory, threads, device, timing_directory=None):
     numba.set_num_threads(threads)
     torch.set_num_threads(threads)
-    WORKER["bank"] = Bank(bank_directory)
+    WORKER["bank"] = Bank(bank_directory, device=device)
     WORKER["timeline"] = Timeline(
         None if timing_directory is None else Path(timing_directory) / ("graph-%s.json" % os.getpid())
     )
@@ -32,11 +32,11 @@ def materialize(job):
     return index, time.perf_counter() - started
 
 
-def prepare(bank_directory, cfg, workers, timing_directory=None):
+def prepare(bank_directory, cfg, workers, device, timing_directory=None):
     started = time.perf_counter()
     if workers < 1:
         raise ValueError("variant preparation requires at least one worker")
-    bank = Bank(bank_directory)
+    bank = Bank(bank_directory, device=device)
     root = bank.stamp(cfg)
     missing = [index for index in bank.graphs(cfg) if not (root / ("graph_%04d" % index)).exists()]
     seconds = 0.0
@@ -54,7 +54,7 @@ def prepare(bank_directory, cfg, workers, timing_directory=None):
                 [(index, cfg) for index in missing],
                 workers,
                 attach,
-                (str(bank_directory), threads, timing_directory),
+                (str(bank_directory), threads, device, timing_directory),
             )
         )
     os.utime(root / "variant.json")

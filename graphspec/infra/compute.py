@@ -11,7 +11,6 @@ LOG = logging.getLogger(__name__)
 GPU_FROM = 1024
 FRACTION = 0.9
 THREADS = 2
-SETTING = "GRAPHSPEC_DEVICE"
 
 
 def require(device):
@@ -25,29 +24,15 @@ def require(device):
     return kind
 
 
-def state(device):
-    started = time.perf_counter()
-    require(device)
-    os.environ[SETTING] = str(device)
-    LOG.info("state exit device=%s seconds=%.3f", device, time.perf_counter() - started)
-
-
-def stated():
-    if SETTING not in os.environ:
-        raise RuntimeError("the device of dense algebra is not stated: " + SETTING)
-    return os.environ[SETTING]
-
-
-def device_for(size):
-    device = stated()
+def device_for(size, device):
     if size < GPU_FROM or torch.device(device).type == "cpu":
         return "cpu"
     require(device)
     return device
 
 
-def matrix(values):
-    return torch.as_tensor(np.asarray(values), dtype=torch.float64, device=device_for(len(values)))
+def matrix(values, device):
+    return torch.as_tensor(np.asarray(values), dtype=torch.float64, device=device_for(len(values), device))
 
 
 @contextmanager
@@ -62,26 +47,26 @@ def single():
         LOG.debug("single exit threads=%d seconds=%.4f", threads, time.perf_counter() - started)
 
 
-def inverse(values):
+def inverse(values, device):
     started = time.perf_counter()
     with single():
-        result = torch.linalg.inv(matrix(values)).cpu().numpy()
+        result = torch.linalg.inv(matrix(values, device)).cpu().numpy()
     LOG.debug("inverse exit size=%d seconds=%.4f", len(values), time.perf_counter() - started)
     return result
 
 
-def eigh(values):
+def eigh(values, device):
     started = time.perf_counter()
     with single():
-        eigenvalues, eigenvectors = torch.linalg.eigh(matrix(values))
+        eigenvalues, eigenvectors = torch.linalg.eigh(matrix(values, device))
     LOG.debug("eigh exit size=%d seconds=%.4f", len(values), time.perf_counter() - started)
     return eigenvalues.cpu().numpy(), eigenvectors.cpu().numpy()
 
 
-def compose(vectors, weights):
+def compose(vectors, weights, device):
     started = time.perf_counter()
     with single():
-        basis = matrix(vectors)
+        basis = matrix(vectors, device)
         scaled = basis * torch.as_tensor(weights, dtype=torch.float64, device=basis.device)
         result = (scaled @ basis.T).cpu().numpy()
     LOG.debug("compose exit size=%d seconds=%.4f", len(vectors), time.perf_counter() - started)
@@ -152,11 +137,11 @@ def top_rows(scores, width):
     return indices, values
 
 
-def top(scores, width):
+def top(scores, width, device):
     started = time.perf_counter()
     scores = np.asarray(scores, dtype=np.float64)
-    if device_for(len(scores)) != "cpu":
-        values, indices = torch.sort(matrix(scores), dim=1, descending=True, stable=True)
+    if device_for(len(scores), device) != "cpu":
+        values, indices = torch.sort(matrix(scores, device), dim=1, descending=True, stable=True)
         result = indices[:, :width].cpu().numpy(), values[:, :width].cpu().numpy()
     else:
         result = top_rows(scores, min(width, scores.shape[1]))

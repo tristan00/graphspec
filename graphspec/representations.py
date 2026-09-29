@@ -9,7 +9,7 @@ from graphspec.infra.workspace import allocate, block_rows, changed, finite
 
 from . import kernels
 from .operators import enabled
-from .resources import DEFAULT_LIMITS, GraphBudget
+from .resources import GraphBudget
 from .vocabulary import BOUNDARIES
 
 LOG = logging.getLogger(__name__)
@@ -730,7 +730,7 @@ def mixed(arrays, spec, budget):
 
 
 @timed("build")
-def build(graph, registry, spec, groups, categories, seed, limits=DEFAULT_LIMITS):
+def build(graph, registry, spec, groups, categories, seed, limits):
     started = time.perf_counter()
     budget = GraphBudget(limits)
     arrays = base(graph, registry, spec, categories)

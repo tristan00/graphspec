@@ -56,9 +56,8 @@ def probe(bank, block, cfg, device):
 def check(directory, output, device, graph=None, spec_path=None):
     entered = time.perf_counter()
     output = output_path(output)
-    compute.state(device)
     compute.reserve(device)
-    bank = Bank(directory)
+    bank = Bank(directory, device=device)
     chosen = (
         max(bank.manifest["graphs"], key=lambda entry: entry["observations"])["index"]
         if graph is None

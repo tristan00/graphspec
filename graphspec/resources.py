@@ -7,10 +7,13 @@ class GraphCapacityError(ValueError):
 
 @dataclass(frozen=True)
 class GraphLimits:
+    device: str
     max_facts: int = 200_000_000
     max_working_bytes: int = 1 << 30
 
     def __post_init__(self):
+        if type(self.device) is not str or self.device.split(":")[0] not in ("cpu", "cuda"):
+            raise ValueError("the device of graph limits is %r and must be cpu, cuda or cuda:N" % self.device)
         if (
             type(self.max_facts) is not int
             or type(self.max_working_bytes) is not int
@@ -20,11 +23,8 @@ class GraphLimits:
             raise ValueError("graph resource limits must be positive")
 
 
-DEFAULT_LIMITS = GraphLimits()
-
-
 class GraphBudget:
-    def __init__(self, limits=DEFAULT_LIMITS, fact_bytes=21):
+    def __init__(self, limits, fact_bytes=21):
         self.limits = limits
         self.fact_bytes = fact_bytes
         self.facts = 0

@@ -6,7 +6,7 @@ from graphspec.infra import workspace
 from graphspec.infra.arrays import MappedRows, join_tensors
 from graphspec.infra.files import ArrayStore, save_arrays
 from graphspec.representations import turns
-from graphspec.resources import GraphBudget
+from graphspec.resources import GraphBudget, GraphLimits
 from tuning.turn_inputs import prior_rows
 
 
@@ -22,7 +22,7 @@ def test_sparse_turn_lookup_matches_dense_history():
         step=step,
         events=np.array([[2, 0, 0, 2, 0, 0, 1], [0, 0, 6, 2, 0, 0, 2]]),
     )
-    arrays.update(turns(arrays, GraphBudget()))
+    arrays.update(turns(arrays, GraphBudget(GraphLimits("cpu"))))
     held = SimpleNamespace(numpy=arrays.__getitem__)
     for actor in (False, True):
         expected = np.full((3, 5), -1, np.int32)

@@ -180,8 +180,8 @@ def propose(
     bounds,
     random_params,
     device,
+    seconds,
     progress=None,
-    seconds=600,
 ):
     started = time.perf_counter()
     check_bounds(registry, bounds)

@@ -39,13 +39,26 @@ Use the public configuration builder for one model fit on either adapter's bank:
 from graphspec import configuration, fit
 
 bank = runtime / "banks" / "example"
-config = configuration(
-    bank, model={"view": "snapshot", "hidden": 16}, graph={"time/history": 1}, training={"epochs": 1}
+statement = dict(
+    version=1,
+    device="cpu",
+    seed=1,
+    seconds=600,
+    preparation_seconds=300,
+    workers=1,
+    variant_cache_bytes=1 << 30,
 )
-result = fit(bank, config, runtime / "runs" / "example-fit", workers=1)
+config = configuration(
+    bank,
+    model={"view": "snapshot", "hidden": 16},
+    graph={"time/history": 1},
+    training={"epochs": 1},
+    seed=statement["seed"],
+)
+result = fit(bank, config, runtime / "runs" / "example-fit", statement)
 ```
 
-Put multiprocessing workflows inside a `main` function called under `if __name__ == "__main__":` when saving them as Python scripts. `fit` requires CUDA and scores every validation label after full training epochs. The same bank can also be passed to the search CLI; [tuning/README.md](../tuning/README.md) describes the model and graph parameter names.
+Put multiprocessing workflows inside a `main` function called under `if __name__ == "__main__":` when saving them as Python scripts. `fit` takes its statement, in which every field is required and an absent field stops the fit with an error naming it; it runs on the device the statement names and scores every validation label after full training epochs. The same bank can also be passed to the search CLI; [tuning/README.md](../tuning/README.md) describes the model and graph parameter names.
 
 For multiple graphs, use consecutive graph indices from zero. Each graph writes its own tables into the same Stage, in graph order. A source that produces its tables by query can call `Stage.write` directly with Arrow tables keyed by `(table, source_type, target_type)`. `Stage.merge` combines manifests from shards below the staging directory without copying their Parquet data.
 

@@ -1,6 +1,6 @@
 **graphspec**
 
-Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. The learning objective is scalar regression on nodes, queries, or graphs, or paths: many `(series, tau, y)` points per query, each predicted from the query's embedding, a learned embedding of the series and an encoding of the elapsed time `tau`; training requires CUDA.
+Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. The learning objective is scalar regression on nodes, queries, or graphs, or paths: many `(series, tau, y)` points per query, each predicted from the query's embedding, a learned embedding of the series and an encoding of the elapsed time `tau`. A fit and a search run on the device their statement names, `cpu` or `cuda`, and stop with an error when it names a GPU and none is present.
 
 **Install and storage**
 
@@ -19,8 +19,8 @@ There is no required database round trip. LadybugDB remains an optional way to q
 ```powershell
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --graphs 4 --entities 40 --steps 12 --features 8
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime build --task D:/graphspec-runtime/datasets/demo/demo.task.json --output D:/graphspec-runtime/banks/demo --workers 1
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --continuous --selector botorch --startup-trials 100 --random-params model/view
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json --device cpu
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --device cuda --seed 1 --seconds 600 --preparation-seconds 300 --workers 4 --variant-gb 64 --continuous --selector botorch --startup-trials 100 --random-params model/view
 ```
 
 Replace the Windows paths with your external workspace. The API also exposes `build_bank`, `open_bank`, and `fit`. New bank and fit output directories must not already exist. Searches resume when their existing run directory is supplied. Put a STOP file in a run to stop after its current trial.

@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import threading
 import time
@@ -5,23 +6,31 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from graphspec.infra.files import JsonCache
-from graphspec.infra.processes import Heartbeat, wait
+from graphspec.infra.processes import Heartbeat
 from graphspec.infra.timing import Timeline
 
+LOG = logging.getLogger(__name__)
 TIMEOUT_EXIT_CODE = 124
-GRAPH_PREPARATION_SECONDS = 300
-POLICY = dict(
-    version=4,
-    graph_preparation_seconds=GRAPH_PREPARATION_SECONDS,
-    at_deadline="The trial is recorded as timed out. Its owned worker group is terminated and joined before the next trial starts.",
-    scope="Selection, layout, source snapshot, variant preparation, packing, fitting and scoring count. Cleanup and cache pruning follow the trial budget.",
-)
+REASON = "graph preparation exceeded its %d-second limit"
+
+
+def policy(preparation_seconds):
+    started = time.perf_counter()
+    result = dict(
+        version=4,
+        graph_preparation_seconds=preparation_seconds,
+        at_deadline="The trial is recorded as timed out. Its owned worker group is terminated and joined before the next trial starts.",
+        scope="Selection, layout, source snapshot, variant preparation, packing, fitting and scoring count. Cleanup and cache pruning follow the trial budget.",
+    )
+    LOG.debug("policy exit seconds=%.4f", time.perf_counter() - started)
+    return result
 
 
 class FitBudget:
-    def __init__(self, directory, deadline):
+    def __init__(self, directory, deadline, preparation_seconds):
         self.timeline = Timeline()
         self.deadline = deadline
+        self.preparation_seconds = preparation_seconds
         self.graph_preparation = None
         self.timeout_reason = None
         self.heartbeat = Heartbeat(Path(directory) / "fit_progress.json", deadline)
@@ -70,7 +79,7 @@ class FitBudget:
             if name == "graph_prepare":
                 self.graph_preparation = dict(
                     started=self.active[name],
-                    deadline=self.active[name] + GRAPH_PREPARATION_SECONDS,
+                    deadline=self.active[name] + self.preparation_seconds,
                     finished=None,
                 )
                 self.pulse()
@@ -78,7 +87,7 @@ class FitBudget:
             with self.timeline.measure(name):
                 yield
                 if name == "graph_prepare" and time.perf_counter() >= self.graph_preparation["deadline"]:
-                    self.timeout_reason = "graph preparation exceeded its 300-second limit"
+                    self.timeout_reason = REASON % self.preparation_seconds
                     raise TimeoutError(self.timeout_reason)
         finally:
             with self.lock:
@@ -125,12 +134,10 @@ class FitBudget:
 
 class PreparationTimeout(subprocess.TimeoutExpired):
     def __str__(self):
-        return "graph preparation exceeded its 300-second limit"
+        return REASON % self.timeout
 
 
-def wait_worker(process, deadline, directory=None):
-    if directory is None:
-        return wait(process, deadline)
+def wait_worker(process, deadline, directory, preparation_seconds):
     cache = JsonCache()
     while True:
         now = time.perf_counter()
@@ -142,7 +149,7 @@ def wait_worker(process, deadline, directory=None):
         if preparation is not None:
             finished = preparation["finished"]
             if (now if finished is None else finished) >= preparation["deadline"]:
-                raise PreparationTimeout("graph preparation", GRAPH_PREPARATION_SECONDS)
+                raise PreparationTimeout("graph preparation", preparation_seconds)
             if finished is None:
                 remaining = min(remaining, preparation["deadline"] - now)
         try:

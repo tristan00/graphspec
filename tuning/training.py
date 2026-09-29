@@ -115,7 +115,7 @@ class Schedule:
 
 
 class TrainingSession:
-    def __init__(self, bank_directory, directory, config: dict, budget, workers: int, device):
+    def __init__(self, bank_directory, directory, config: dict, budget, stated):
         import torch
 
         from .data import Bank
@@ -125,12 +125,12 @@ class TrainingSession:
 
         self.entered = time.perf_counter()
         self.directory = output_path(directory)
-        self.device = device
-        self.cuda = compute.require(device) == "cuda"
-        compute.state(device)
+        self.stated = stated
+        self.device = stated.device
+        self.cuda = compute.require(self.device) == "cuda"
         self.budget: FitBudget = budget
         with self.budget.measure("graph_prepare"):
-            prepare(bank_directory, config, workers, self.directory / "timing_workers")
+            prepare(bank_directory, config, stated.workers, self.device, self.directory / "timing_workers")
         self.budget.check()
         with measure("source_digest"):
             self.revision = sources.digest(PACKAGES)
@@ -139,11 +139,11 @@ class TrainingSession:
         self.history = config["graph"]["time/history"]
         self.description = describe(config["model"])
         with measure("device_setup"):
-            torch.manual_seed(config["seed"])
-            np.random.seed(config["seed"])
-            compute.reserve(device)
+            torch.manual_seed(stated.seed)
+            np.random.seed(stated.seed)
+            compute.reserve(self.device)
         with measure("bank_load_and_verify"):
-            self.bank: Bank = Bank(bank_directory)
+            self.bank: Bank = Bank(bank_directory, device=self.device)
             self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
@@ -157,7 +157,7 @@ class TrainingSession:
                 fused=self.cuda,
             )
         if self.cuda:
-            torch.cuda.reset_peak_memory_stats(device)
+            torch.cuda.reset_peak_memory_stats(self.device)
         self.timing = self.budget.timings
         self.timing.update(
             packer=0.0,
@@ -190,7 +190,7 @@ class TrainingSession:
                 training.extend(
                     (epoch, group)
                     for group in batches(
-                        context, batch_size, sizes, self.config["seed"] + epoch, frame_budget=1024
+                        context, batch_size, sizes, self.stated.seed + epoch, frame_budget=1024
                     )
                 )
                 ends.add(len(training))
@@ -367,7 +367,7 @@ class TrainingSession:
     def save_result(self, indices: np.ndarray, values: np.ndarray, batch_size: int) -> dict:
         import torch
 
-        from .budget import POLICY
+        from .budget import policy
 
         self.budget.pulse("scoring")
         ordering = np.argsort(indices)
@@ -412,7 +412,8 @@ class TrainingSession:
             epochs=len(self.epoch_losses),
             requested_epochs=self.config["epochs"],
             epoch_seconds=self.budget.epoch_seconds,
-            budget_policy=POLICY,
+            budget_policy=policy(self.stated.preparation_seconds),
+            statement=self.stated.mapping(),
             epoch_losses=self.epoch_losses,
             batch_sequences=batch_size,
             training_coverage_complete=True,
@@ -443,20 +444,28 @@ class TrainingSession:
         return result
 
 
-def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, workers, device):
+def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, statement):
     from .budget import FitBudget
     from .packing import Packer
+    from .statement import state
 
-    with FitBudget(directory, deadline) as budget:
+    stated = state(statement)
+    compute.require(stated.device)
+    if config["seed"] != stated.seed:
+        raise ValueError(
+            "the seed of the configuration is %r and the seed of the statement is %r"
+            % (config["seed"], stated.seed)
+        )
+    with FitBudget(directory, deadline, stated.preparation_seconds) as budget:
         with budget.measure("prepare"):
-            session = TrainingSession(bank_directory, directory, config, budget, workers, device)
+            session = TrainingSession(bank_directory, directory, config, budget, stated)
         budget.pulse("scheduling")
         schedule = session.schedule(training_blocks, batch_size)
         session.net.train()
         budget.pulse("packer_setup")
         with budget.measure("packer"):
             packer = Packer(
-                session.bank, config, session.device, workers, session.directory / "timing_workers"
+                session.bank, config, stated.device, stated.workers, session.directory / "timing_workers"
             )
         try:
             session.train(packer, schedule)
