@@ -87,11 +87,30 @@ def shared(name, make):
     return root
 
 
+def cleared(checkout):
+    started = time.perf_counter()
+    removed = []
+    for worker in sorted(checkout.iterdir()):
+        places = [place for place in sorted(worker.iterdir()) if place.name != "cache"]
+        if (worker / "cache").is_dir():
+            places += [place for place in sorted((worker / "cache").iterdir()) if place.name != "numba"]
+        for place in places:
+            if place.is_dir():
+                shutil.rmtree(place)
+            else:
+                place.unlink()
+            removed.append(place)
+    LOG.debug("cleared exit removed=%d seconds=%.4f", len(removed), time.perf_counter() - started)
+    return removed
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config):
     started = time.perf_counter()
-    if not WORKER and suite().exists():
-        shutil.rmtree(suite())
+    if not WORKER:
+        if suite().exists():
+            shutil.rmtree(suite())
+        cleared(Path(os.environ["GRAPHSPEC_HOME"]).parent)
     LOG.debug("suite removed seconds=%.4f", time.perf_counter() - started)
 
 

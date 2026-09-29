@@ -1,6 +1,7 @@
-from .infra.runtime import initialize_storage
+from .infra.runtime import identities, initialize_storage
 
 initialize_storage()
+identities()
 
 from .clock import ABOUT, SEVERAL, TIES
 from .declarations import EdgeType

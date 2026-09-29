@@ -8,12 +8,14 @@ import pyarrow.parquet as pq
 
 from graphspec.infra.files import sha256_json
 from graphspec.infra.runtime import cache_path
+from graphspec.infra.sources import digest
 from graphspec.infra.staging import manifest
 
 from .references import SORTS
 from .schema import EDGE, FACTS, INNER, LINK, MEMBER, OBSERVED, TARGET, TASK, VALUE, WITHIN, inward, outward
 
 LOG = logging.getLogger(__name__)
+CODE = digest((Path(__file__).parent,))
 IDS = 32
 TYPES = {
     pa.int64(): "INT64",
@@ -111,7 +113,7 @@ class Staged:
             for name in entry["files"]
         ]
         self.index_path = (
-            cache_path("partitions", sha256_json(dict(version=2, entries=entries, files=metadata)))
+            cache_path("partitions", sha256_json(dict(version=2, entries=entries, files=metadata, code=CODE)))
             / "partition.npz"
         )
         self.units = [Unit(self.directory, entry) for entry in entries]

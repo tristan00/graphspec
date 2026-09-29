@@ -12,8 +12,17 @@ from numba import njit
 
 from graphspec import Registry, join, segments, sets
 from graphspec import spec as specs
+from graphspec.infra import sources
 from graphspec.infra.arrays import Residents, between
-from graphspec.infra.files import ArrayStore, load_arrays, read_json, save_arrays, sha256_file, write_json
+from graphspec.infra.files import (
+    ArrayStore,
+    load_arrays,
+    read_json,
+    save_arrays,
+    sha256_file,
+    sha256_json,
+    write_json,
+)
 from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
@@ -22,7 +31,10 @@ from graphspec.transform import SEED, SOURCE, materialize
 from graphspec.truth import Facts, Graph, admitted
 from graphspec.view import STATEMENT, Looking, sequences, view
 
+from .training import PACKAGES
+
 LOG = logging.getLogger(__name__)
+CODE = sources.digest(PACKAGES)
 ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
@@ -203,7 +215,9 @@ class Bank:
         started = time.perf_counter()
         self.directory = Path(directory)
         self.manifest = admitted(self.directory, read_json(self.directory / "manifest.json"))
-        self.cache = cache_path("banks", sha256_file(self.directory / "manifest.json"))
+        self.cache = cache_path(
+            "banks", sha256_json(dict(manifest=sha256_file(self.directory / "manifest.json"), code=CODE))
+        )
         self.registry = Registry.from_declaration(self.manifest["spec"])
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")

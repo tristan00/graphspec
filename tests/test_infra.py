@@ -10,6 +10,69 @@ from graphspec.infra import files, runtime, sources, staging
 from tuning import api, build
 
 
+def test_the_identities_of_compiled_functions_start_far_from_one_and_differ_between_seedings():
+    from numba.core.bytecode import FunctionIdentity
+
+    assert next(FunctionIdentity._unique_ids) > 1 << 20
+    first, second = runtime.identities(), runtime.identities()
+    assert first != second and next(FunctionIdentity._unique_ids) == second
+
+
+def test_the_home_of_the_suite_is_named_by_the_checkout_and_the_worker(request):
+    import os
+
+    root = Path(__file__).parent.parent
+    named = [
+        plugin
+        for plugin in request.config.pluginmanager.get_plugins()
+        if getattr(plugin, "__file__", None) and Path(plugin.__file__) == root / "conftest.py"
+    ]
+    home = named[0].home
+    suite = Path(os.environ["GRAPHSPEC_SUITE_HOME"])
+    assert home(suite, root, "gw0") == home(suite, root / "tests" / "..", "gw0")
+    assert home(suite, root, "gw0") != home(suite, root.parent / "elsewhere" / root.name, "gw0")
+    assert home(suite, root, "gw0").parent == home(suite, root, "serial").parent
+    assert home(suite, root, "gw0").parent.parent == suite / "workers"
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "serial")
+    assert Path(os.environ["GRAPHSPEC_HOME"]) == home(suite, root, worker)
+
+
+def test_the_suite_clears_what_it_made_under_its_homes_except_compiled_code(tmp_path):
+    from conftest import cleared
+
+    for worker in ("gw0", "serial"):
+        for place in ("tmp/pytest", "cache/banks/one", "cache/numba/graphspec_1", "cache/partitions/two"):
+            (tmp_path / worker / place).mkdir(parents=True)
+        (tmp_path / worker / "cache" / "numba" / "graphspec_1" / "kernel.nbi").write_text("")
+        (tmp_path / worker / "stray.txt").write_text("")
+    removed = cleared(tmp_path)
+    assert len(removed) == 8
+    found = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
+    assert found == [
+        "gw0",
+        "gw0/cache",
+        "gw0/cache/numba",
+        "gw0/cache/numba/graphspec_1",
+        "gw0/cache/numba/graphspec_1/kernel.nbi",
+        "serial",
+        "serial/cache",
+        "serial/cache/numba",
+        "serial/cache/numba/graphspec_1",
+        "serial/cache/numba/graphspec_1/kernel.nbi",
+    ]
+
+
+def test_the_caches_of_a_bank_are_keyed_by_the_code_that_made_them(bank, monkeypatch):
+    from graphspec import staged
+    from tuning import data
+
+    assert data.CODE == sources.digest(data.PACKAGES)
+    assert staged.CODE == sources.digest((Path(staged.__file__).parent,))
+    before = data.Bank(bank).cache
+    monkeypatch.setattr(data, "CODE", "0" * 64)
+    assert data.Bank(bank).cache != before and data.Bank(bank).cache.parent == before.parent
+
+
 def test_json_write_failure_preserves_prior_record_and_removes_temporary(tmp_path):
     path = tmp_path / "record.json"
     files.write_json(path, {"value": 1})

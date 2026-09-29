@@ -1,5 +1,7 @@
+import itertools
 import logging
 import os
+import secrets
 import sys
 import tempfile
 import threading
@@ -64,6 +66,16 @@ def initialize_storage():
     if "numba" in sys.modules:
         sys.modules["numba"].config.CACHE_DIR = os.environ["NUMBA_CACHE_DIR"]
     LOG.info("storage ready root=%s seconds=%.3f", root, time.perf_counter() - started)
+
+
+def identities():
+    from numba.core.bytecode import FunctionIdentity
+
+    started = time.perf_counter()
+    start = 1 + secrets.randbits(40)
+    FunctionIdentity._unique_ids = itertools.count(start)
+    LOG.info("identities of compiled functions start=%d seconds=%.3f", start, time.perf_counter() - started)
+    return start
 
 
 def cache_path(namespace, identity):
