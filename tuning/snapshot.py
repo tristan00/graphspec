@@ -41,15 +41,16 @@ class SnapshotNet(nn.Module):
         self.task = nn.Linear(registry.features, hidden)
         self.asked = Asked(registry, hidden)
         self.keys = keys_of(spec, hidden)
-        attributes = {name: registry.attribute_width(name) for name in registry.attributed}
+        attributes = {group: registry.attribute_width(group) for group in registry.valued}
         self.widths = list(attributes.values())
+        self.register_buffer("grouped", torch.as_tensor(registry.grouped), persistent=False)
         self.spatial = nn.ModuleList()
         if spec["snapshot/spatial"] != "none":
             self.spatial.extend(
                 Spatial(
                     hidden,
                     spec["snapshot/spatial"],
-                    registry.relations,
+                    registry.group_codes,
                     attributes,
                     spec["dropout"],
                     spec.get("snapshot/chebyshev_order", 0),
@@ -95,7 +96,7 @@ class SnapshotNet(nn.Module):
                 )
                 for _ in range(spec["snapshot/temporal_layers"])
             )
-            self.final_spatial = Spatial(hidden, "mean", registry.relations, {}, spec["dropout"])
+            self.final_spatial = Spatial(hidden, "mean", registry.group_codes, {}, spec["dropout"])
         self.references = References(registry, hidden, hidden * 3)
         self.head = Head(hidden * 4, spec, registry)
 
@@ -212,6 +213,7 @@ class SnapshotNet(nn.Module):
             groups = Groups(
                 b["edges"],
                 b["relation"],
+                self.grouped,
                 len(h),
                 b["attribute_values"],
                 b["attribute_edges"],

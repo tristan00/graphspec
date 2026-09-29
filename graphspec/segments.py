@@ -28,7 +28,7 @@ from .operators import (
     edges_survive,
     enabled,
     fact_bytes,
-    filtering,
+    filtered_names,
     prune_mask,
     select,
 )
@@ -716,8 +716,8 @@ def represent_segment(carry, graph, registry, spec, groups, seed, limits, state,
     )
     context.period_starts.append(work["period_starts"])
     context.period_ends.append(work["period_ends"])
-    for name in registry.attributed:
-        context.attributes[name] = context.attributes.get(name, 0) + len(own["attributes_" + name])
+    for group in registry.valued:
+        context.attributes[group] = context.attributes.get(group, 0) + len(own["attributes_" + group])
     context.obs0 += rows
     context.events0 += count
     context.periods += work["periods"]
@@ -808,9 +808,6 @@ def stitched_arrays(plan, arrays, tables, registry, spec, groups, limits, contex
     kinds = plan.kinds.astype(np.int32)
     entity, step = arrays["entity"], arrays["step"]
     observation_ids, observation_offsets = kernels.grouped(np.asarray(entity), len(kinds))
-    spatial_order, spatial_code_offsets = kernels.grouped_column(
-        np.asarray(arrays["spatial"]), 2, registry.relations
-    )
     arrays.update(
         x_table=table,
         entity_token=(plan.tokens & np.uint64((1 << 62) - 1)).astype(np.int64),
@@ -818,8 +815,6 @@ def stitched_arrays(plan, arrays, tables, registry, spec, groups, limits, contex
         snapshot_offsets=np.searchsorted(step, np.arange(context.steps + 1)).astype(np.int64),
         observation_ids=observation_ids,
         observation_offsets=observation_offsets,
-        spatial_order=spatial_order,
-        spatial_code_offsets=spatial_code_offsets,
     )
     budget = GraphBudget(limits)
     arrays.update(periods(arrays, len(registry.events), budget))
@@ -906,7 +901,7 @@ def attach(jobs, registry, spec, groups, seed, limits, threads):
         groups=groups,
         seed=seed,
         limits=limits,
-        filtering=any(filtering(spec, edge.name) for edge in registry.edges),
+        filtering=bool(filtered_names(registry, spec)),
     )
 
 
@@ -1104,7 +1099,7 @@ def assemble_task(job, index):
     park(job, index, "assembled", packed(carry, graph, known, survives=survives))
     rows = np.bincount(graph.fact_code, minlength=registry.relations)
     return dict(
-        rows={edge.name: int(rows[edge.code]) for edge in registry.edges if filtering(spec, edge.name)}
+        rows={name: int(rows[registry.coded[name]].sum()) for name in filtered_names(registry, spec)}
     )
 
 
@@ -1204,7 +1199,7 @@ def balanced(rows, count):
 
 def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
     started = time.perf_counter()
-    count = min(SHARDS, sum(filtering(spec, edge.name) for edge in registry.edges))
+    count = min(SHARDS, len(filtered_names(registry, spec)))
     deriving = derivation(registry, spec) is not None
     stages = CHAIN[:3] + tuple("edges%d" % shard for shard in range(count)) + CHAIN[3:]
     plans = [Plan(job["members"], registry, spec) for job in jobs]

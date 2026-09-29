@@ -10,6 +10,7 @@ from .layers import (
     Asked,
     Head,
     References,
+    Relations,
     Spatial,
     TemporalEdges,
     TimeEncoding,
@@ -20,6 +21,7 @@ from .layers import (
     mean,
     normalization,
     padded,
+    related,
 )
 from .periods import EndContext, enabled, lookback
 
@@ -37,6 +39,7 @@ class EventGraphNet(nn.Module):
         self.input = nn.Linear(registry.features, hidden)
         self.asked = Asked(registry, hidden)
         self.kind = nn.Embedding(5 if self.has_periods else 4, hidden)
+        self.relation = Relations(registry, hidden)
         self.keys = keys_of(spec, hidden)
         self.layers = nn.ModuleList(
             TemporalEdges(
@@ -53,7 +56,7 @@ class EventGraphNet(nn.Module):
         self.head = Head(hidden * 4, spec, registry)
 
     def forward(self, b):
-        event = self.input(b["event_x"]) + self.kind(b["events"][:, 3])
+        event = self.input(b["event_x"]) + self.kind(b["events"][:, 3]) + self.relation(related(b["events"]))
         initial = self.input(b["initial"]) + self.kind.weight[3]
         if self.keys is not None:
             token = b["entity_token"]
@@ -123,21 +126,13 @@ class MailboxGRU(Rule):
     @timed("events.mailboxgru")
     def __init__(self, hidden, registry):
         super().__init__()
-        self.non_relation = registry.marker("non_relation")
         self.event_kind = nn.Embedding(3, hidden)
-        self.relation = nn.Embedding(registry.relation_slots, hidden)
         self.status = nn.Embedding(3, hidden)
         self.message = nn.Sequential(nn.Linear(hidden * 5, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
         self.update = nn.GRUCell(hidden, hidden)
 
     def prepare(self, events, raw):
-        kind = events[:, 3]
-        rel = torch.where(
-            kind == 1,
-            events[:, 6] + 1,
-            torch.where(kind == 2, torch.full_like(kind, self.non_relation), torch.zeros_like(kind)),
-        )
-        return self.event_kind(kind) + self.relation(rel) + self.status(events[:, 8] + 1)
+        return self.event_kind(events[:, 3]) + self.status(events[:, 8] + 1)
 
     def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
         source, destination = events[:, 0], events[:, 1]
@@ -197,7 +192,7 @@ class Intensity(Rule):
         super().__init__()
         self.processes = nn.ModuleList(nn.Linear(hidden * 4, hidden) for _ in range(2))
         self.intensity = nn.ModuleList(nn.Linear(hidden * 2, 1) for _ in range(2))
-        self.structural = Spatial(hidden, "attention", registry.relations, {})
+        self.structural = Spatial(hidden, "attention", registry.group_codes, {})
         self.state_map = nn.Linear(hidden, hidden)
         self.change_status = nn.Embedding(3, hidden)
 
@@ -266,6 +261,7 @@ class MemoryNet(nn.Module):
         self.input = nn.Linear(registry.features, hidden)
         self.asked = Asked(registry, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
+        self.relation = Relations(registry, hidden)
         self.keys = keys_of(spec, hidden)
         if update != "antisymmetric" or self.attention:
             self.time = TimeEncoding(hidden, spec["time/encoding"])
@@ -288,7 +284,7 @@ class MemoryNet(nn.Module):
     def readout(self, values, neighbors, end_values, b):
         if self.attention:
             values = values + self.input(b["member_x"])
-            neighbors = neighbors + self.time(b["history_gap"])
+            neighbors = neighbors + self.time(b["history_gap"]) + self.relation(b["history_relation"])
             scores = (self.query_key(values)[:, None] * neighbors).sum(-1) / math.sqrt(values.shape[-1])
             weights = masked_weights(scores, b["history_mask"])
             values = values + (self.query_value(neighbors) * weights[..., None]).sum(1)
@@ -325,7 +321,7 @@ class MemoryNet(nn.Module):
         memory = self.rule.initial(state, self.input(b["initial"]), b["initial"][:, self.values :].any(-1))
         last = state.new_full((b["entities"],), float(b["start"] * 2 - 1))
         groups = {tick: (index, begin, end) for index, (tick, begin, end) in enumerate(b["event_groups"])}
-        encoded = self.input(b["event_x"])
+        encoded = self.input(b["event_x"]) + self.relation(related(b["events"]))
         static = self.rule.prepare(b["events"], encoded)
         sizes = torch.as_tensor([end - begin for _, begin, end in b["event_groups"]], device=state.device)
         member = torch.repeat_interleave(
@@ -417,6 +413,7 @@ class ProjectionNet(nn.Module):
         self.asked = Asked(registry, hidden)
         self.keys = keys_of(spec, hidden)
         self.time = TimeEncoding(hidden, spec["time/encoding"])
+        self.relation = Relations(registry, hidden)
         self.projection = nn.Sequential(nn.Linear((hops + 1) ** 2, hidden), nn.SiLU(), normalization(hidden))
         self.crossing = nn.Sequential(nn.Linear((hops + 1) ** 2, hidden), nn.SiLU(), normalization(hidden))
         self.whole = nn.Linear(registry.features, hidden * 2)
@@ -490,7 +487,7 @@ class ProjectionNet(nn.Module):
             structural = self.periods(
                 structural, self.projection(ended), b["end_gaps"][owner], b["end_mask"][owner]
             )
-        history = self.input(b["history_x"]) + self.time(b["history_gap"])
+        history = self.input(b["history_x"]) + self.time(b["history_gap"]) + self.relation(b["history_relation"])
         roots = self.input(b["member_x"]) + masked_mean(history, b["history_mask"], 1)
         if self.keys is not None:
             roots = roots + self.keys(b["entity_token"][b["member_entity"]])

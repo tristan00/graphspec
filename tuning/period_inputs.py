@@ -189,6 +189,7 @@ def history_tokens(b, window):
     ]
     b["history_mask"] = np.concatenate((b["history_mask"], valid), 1)
     b["history_gap"] = np.concatenate((b["history_gap"], gaps[..., 0] * 2 + 1), 1)
+    b["history_relation"] = np.concatenate((b["history_relation"], np.full((count, depth), -1, np.int64)), 1)
     end_time = np.zeros((count, original + depth, 3), np.float32)
     end_time[:, original:] = gaps
     b["history_end_time"] = end_time
@@ -205,6 +206,7 @@ def history_tokens(b, window):
     for key in (
         "history_mask",
         "history_gap",
+        "history_relation",
         "history_end_time",
         "history_period_kind",
         "occurrence",

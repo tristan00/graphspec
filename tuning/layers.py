@@ -102,10 +102,13 @@ def attribute_inputs(values, counts, widths, device):
 
 
 class Groups:
-    def __init__(self, edges, relation, size, values=None, attribute_edges=None, counts=None, widths=None):
+    def __init__(
+        self, edges, relation, grouped, size, values=None, attribute_edges=None, counts=None, widths=None
+    ):
         source, destination = edges
-        order = torch.argsort(relation)
-        kinds, held = torch.unique_consecutive(relation[order], return_counts=True)
+        self.relation, group = relation, grouped[relation]
+        order = torch.argsort(group)
+        kinds, held = torch.unique_consecutive(group[order], return_counts=True)
         self.relational = segments(order, held.tolist(), source, destination, size, kinds)
         self.degree = (
             torch.zeros(size, device=source.device)
@@ -180,6 +183,20 @@ class References(nn.Module):
         pooled = mean(torch.cat((members, whole)), keys, b["predictions"] * self.names)
         pooled = pooled.reshape(b["predictions"], self.names, pooled.shape[-1])
         return torch.einsum("rnw,nwo->ro", pooled, self.project)
+
+
+class Relations(nn.Module):
+    @timed("layers.relations")
+    def __init__(self, registry, hidden):
+        super().__init__()
+        self.embedding = nn.Embedding(registry.relation_slots, hidden)
+
+    def forward(self, code):
+        return self.embedding(code.clamp_min(0)) * (code >= 0)[..., None]
+
+
+def related(events):
+    return torch.where(events[:, 3] == 1, events[:, 6], -1)
 
 
 class Asked(nn.Module):
@@ -274,8 +291,8 @@ class Spatial(nn.Module):
             nn.init.xavier_uniform_(self.weights)
         elif mode in ("attention", "relational_attention"):
             self.query, self.key = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
-            if mode == "relational_attention":
-                self.relation = nn.Embedding(slots, hidden)
+        if mode in ("relational", "relational_attention"):
+            self.relation = nn.Embedding(slots, hidden)
 
     def forward(self, h, edges, groups=None):
         source, destination = edges
@@ -284,6 +301,7 @@ class Spatial(nn.Module):
             update.index_add_(
                 0, groups.relational.targets, segment_matmul(h, self.weights, groups.relational)
             )
+            update.index_add_(0, destination, self.relation(groups.relation))
             if groups.attributes is not None:
                 update.index_add_(
                     0,

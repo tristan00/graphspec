@@ -42,7 +42,6 @@ class Registry:
         for edge in self.edges:
             if not edge.symmetric:
                 self.flipped[edge.code], self.flipped[edge.reverse] = edge.reverse, edge.code
-        self.attributed = tuple(edge.name for edge in self.edges if edge.attributes)
         self.markers = tuple(markers)
         if len(set(self.markers)) != len(self.markers):
             raise ValueError("duplicate relation marker name")
@@ -88,6 +87,44 @@ class Registry:
                 raise ValueError(
                     "the relation %s belongs to no stated edge table and no kind of set edge" % name
                 )
+        self.grouping()
+
+    @timed("registry.registry.grouping")
+    def grouping(self):
+        members = {}
+        for name in self.extras["base"]:
+            members.setdefault(self.group(name), []).append(name)
+        self.groups = {group: tuple(names) for group, names in members.items()}
+        self.named = {group: self.by_name[names[0]] for group, names in self.groups.items()}
+        self.coded = {group: self.codes(names) for group, names in self.groups.items()}
+        derived = [edge for edge in self.edges if edge.name not in self.tables and edge.name not in self.stored]
+        for edge in derived:
+            if edge.origin[0] == "project" and edge.origin[1] not in self.groups:
+                raise ValueError(
+                    "the derived relation %s projects %s, which is no table of relations; build the bank again"
+                    % (edge.name, edge.origin[1])
+                )
+            self.named[edge.name], self.coded[edge.name] = edge, self.codes([edge.name])
+        keys = {}
+        self.grouped = np.zeros(self.relations, np.int64)
+        for edge in self.edges:
+            self.grouped[edge.code] = keys.setdefault((self.group(edge.name), False), len(keys))
+            if not edge.symmetric:
+                self.grouped[edge.reverse] = keys.setdefault((self.group(edge.name), True), len(keys))
+        self.group_codes = len(keys)
+        self.valued = tuple(group for group in self.groups if self.named[group].attributes)
+        self.value_group = np.full(self.relations, -1, np.int64)
+        for place, group in enumerate(self.valued):
+            chosen = [self.by_name[name] for name in self.groups[group]]
+            self.value_group[[edge.code for edge in chosen]] = place
+            self.value_group[[edge.reverse for edge in chosen if not edge.symmetric]] = place
+
+    def group(self, name):
+        return self.tables.get(name, name)
+
+    @timed("registry.registry.codes")
+    def codes(self, names):
+        return np.asarray([self.by_name[name].code for name in names], np.int64)
 
     @classmethod
     @timed("registry.registry.from_declaration")
@@ -134,7 +171,7 @@ class Registry:
         return self.by_name[name].code
 
     def attributes(self, name):
-        return self.by_name[name].attributes
+        return self.named[name].attributes
 
     def ordered(self, name):
         return tuple(column for column in self.attributes(name) if self.schema.kind(column).ordered)

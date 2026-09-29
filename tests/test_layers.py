@@ -13,7 +13,7 @@ def edge_loop(h, source, destination, relation, weights):
 def test_segment_matmul_without_edges():
     h, weights = torch.randn(5, 4), torch.randn(3, 4, 4)
     empty = torch.zeros(0, dtype=torch.long)
-    groups = Groups((empty, empty), empty, 5)
+    groups = Groups((empty, empty), empty, torch.arange(3), 5)
     update = h.new_zeros((6, 4)).index_add_(
         0, groups.relational.targets, segment_matmul(h, weights, groups.relational)
     )
@@ -27,37 +27,40 @@ def test_segment_matmul_matches_edge_loop():
         torch.randint(0, 60, (200,)),
         torch.randint(0, 60, (200,)),
     )
-    relation = torch.randint(0, 3, (200,))
-    groups = Groups((source, destination), relation, 60)
+    relation = torch.randint(0, 5, (200,))
+    grouped = torch.tensor([0, 1, 1, 2, 2])
+    groups = Groups((source, destination), relation, grouped, 60)
     update = h.new_zeros((61, 4)).index_add_(
         0, groups.relational.targets, segment_matmul(h, weights, groups.relational)
     )[:60]
-    torch.testing.assert_close(update, edge_loop(h, source, destination, relation, weights))
+    torch.testing.assert_close(update, edge_loop(h, source, destination, grouped[relation], weights))
     counts = torch.zeros(60).index_add_(0, destination, torch.ones(200))
     assert (counts == 0).any() and torch.equal(groups.degree, counts.clamp_min(1))
 
 
-def test_relational_layer_matches_per_name_linears():
+def test_relational_layer_matches_per_name_linears_with_the_embedding_of_each_relation():
     torch.manual_seed(1)
-    layer = Spatial(4, "relational", 3, dict(first=2, second=5))
+    layer = Spatial(4, "relational", 3, dict(first=2, second=5), slots=5)
     h = torch.randn(40, 4)
     source, destination = (
         torch.randint(0, 40, (90,)),
         torch.randint(0, 40, (90,)),
     )
-    relation = torch.randint(0, 3, (90,))
+    relation, grouped = torch.randint(0, 5, (90,)), torch.tensor([0, 1, 1, 1, 2])
     first, second = torch.randn(30, 2), torch.randn(20, 5)
     edges = torch.cat((torch.arange(30), torch.arange(30, 50)))
     groups = Groups(
         (source, destination),
         relation,
+        grouped,
         40,
         torch.cat((first.reshape(-1), second.reshape(-1))),
         edges,
         [30, 20],
         [2, 5],
     )
-    update = edge_loop(h, source, destination, relation, layer.weights)
+    update = edge_loop(h, source, destination, grouped[relation], layer.weights)
+    update.index_add_(0, destination, layer.relation(relation))
     for values, rows, slot, width in ((first, edges[:30], 0, 2), (second, edges[30:], 1, 5)):
         update.index_add_(
             0,

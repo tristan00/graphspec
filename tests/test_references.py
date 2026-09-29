@@ -6,10 +6,13 @@ import pytest
 import torch
 
 from conftest import shared
+from graphspec import spec as specs
 from graphspec import synthetic
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.timing import timed
 from graphspec.schema import VERSION, Schema
+from graphspec.transform import materialize
+from graphspec.truth import Graph
 from tuning.batching import batches, pack_batch
 from tuning.build import build
 from tuning.data import Deriver
@@ -20,7 +23,9 @@ from tuning.models import build as network
 LOG = logging.getLogger(__name__)
 SPLITS = dict(trained=["train"], scored=["test"], sees=dict(train=[], test=[]))
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
-TIMES, THIRD, KIND = 4, 1, 3
+TIMES, THIRD, KIND, VALUE = 4, 1, 3, 2
+FEW, MANY = 5, 50
+EDGES = ("snapshot", "event_graph", "memory", "projection", "sequence", "tree", "walks")
 SHARED = dict(
     snapshot="plain",
     signal="plain",
@@ -63,6 +68,7 @@ def stated(order):
         edges=dict(
             serves=synthetic.edge("maker", "site", ["weight"]),
             beside=synthetic.edge("site", "site", [], directed=False),
+            links=synthetic.edge("maker", "site", ["weight"], relation=dict(column="verb")),
         ),
         tasks=dict(
             key="ticket",
@@ -82,8 +88,10 @@ def stated(order):
 
 
 @timed("references.graph")
-def graph(name, changed=False, era=1.0):
+def graph(name, changed=False, era=1.0, values=FEW):
     pairs = [(MAKERS[at], SITES[at]) for at in range(4)] + [(MAKERS[at], SITES[(at + 1) % 4]) for at in range(4)]
+    links = [(MAKERS[at % 4], SITES[at // 4 % 4], "v%02d" % (at % values), 0) for at in range(max(values, 16))]
+    links.append((MAKERS[VALUE], SITES[(VALUE + 1) % 4], "v%02d" % (2 if changed else 1), VALUE))
     return dict(
         name=name,
         unit="tick",
@@ -130,6 +138,21 @@ def graph(name, changed=False, era=1.0):
                 ends=("site", "site"),
                 rows=dict(source=["s0", "s2"], target=["s1", "s3"], present=[True] * 2, since=[0, 0], until=[None] * 2),
             ),
+            dict(
+                form="state",
+                parameters={},
+                table="links",
+                ends=("maker", "site"),
+                rows=dict(
+                    source=[link[0] for link in links],
+                    target=[link[1] for link in links],
+                    present=[True] * len(links),
+                    since=[link[3] for link in links],
+                    until=[None] * len(links),
+                    relation=[link[2] for link in links],
+                    weight=[0.5 + at for at in range(len(links))],
+                ),
+            ),
         ],
         tasks=dict(
             key=list(range(TIMES)),
@@ -161,6 +184,7 @@ CASES = dict(
     stated=lambda: dict(schema=stated(NAMES), graphs=[graph("main"), graph("era")]),
     changed=lambda: dict(schema=stated(NAMES), graphs=[graph("main", changed=True), graph("era", era=2.0)]),
     reordered=lambda: dict(schema=stated(("r4", "r5", "r2", "r0", "r3", "r1")), graphs=[graph("main")]),
+    wide=lambda: dict(schema=stated(NAMES), graphs=[graph("main", values=MANY)]),
 )
 
 
@@ -227,6 +251,41 @@ def test_every_family_reads_the_references_of_a_task_as_a_set_keyed_by_name(bank
 def test_the_kind_of_a_task_reaches_every_family(banks, family):
     stated, changed = compared(banks, family, "main")
     assert stated[KIND] != changed[KIND]
+
+
+@pytest.mark.parametrize("family", [family for family in FAMILIES if family.values[0] in EDGES])
+def test_the_value_of_a_relation_taken_from_a_column_reaches_every_family_that_reads_edges(banks, family):
+    stated, changed = compared(banks, family, "main")
+    assert stated[:THIRD] == changed[:THIRD] and stated[VALUE] != changed[VALUE]
+
+
+@timed("references.sizes")
+def sizes(banks, name):
+    held = opened(banks, name)
+    cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, copy.deepcopy(SPLITS))
+    registry = held.fitted(cfg)
+    space = specs.space(registry, specs.GROUPS)
+    spec = specs.configured(space, {"time/history": 2})
+    arrays = materialize(Graph.load(held.view(0, cfg)).dense(), registry, spec, specs.GROUPS, held.limits())
+    weights = {}
+    for family in views(registry):
+        torch.manual_seed(5)
+        chosen = configuration(held.registry, dict(view=family), {"time/history": 2}, 5, copy.deepcopy(SPLITS))
+        weights[family] = sum(
+            parameter.numel()
+            for module in network(chosen, registry).modules()
+            if not (isinstance(module, torch.nn.Embedding) and module.num_embeddings == registry.relation_slots)
+            for parameter in module.parameters(recurse=False)
+        )
+    return dict(values=len(registry.groups["links"]), parameters=len(space), arrays=sorted(arrays), weights=weights)
+
+
+@pytest.mark.xdist_group("references-plain")
+def test_a_relation_taken_from_a_column_has_the_parameters_arrays_and_weights_of_its_table(banks):
+    few, many = sizes(banks, "stated"), sizes(banks, "wide")
+    assert few.pop("values") == FEW and many.pop("values") == MANY and few == many
+    assert "relations/links/keep" in [parameter.name for parameter in specs.space(opened(banks, "wide").registry, ())]
+    assert "attributes_links" in few["arrays"] and set(few["weights"]) == set(VIEWS)
 
 
 @pytest.mark.parametrize("family", FAMILIES)

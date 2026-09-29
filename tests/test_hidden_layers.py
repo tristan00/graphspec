@@ -49,6 +49,7 @@ def test_walks_accept_every_hidden_width_with_finite_gradients():
     torch.manual_seed(31)
     registry = SimpleNamespace(
         features=3,
+        relation_slots=2,
         extras={"target": "number", "series": ["out"]},
         references=("unit",),
         tasks=("ask",),
@@ -65,6 +66,7 @@ def test_walks_accept_every_hidden_width_with_finite_gradients():
             "walk_x": values,
             "walk_identity": torch.ones(2, 2, 3, 6),
             "walk_gap": torch.arange(3).float().expand(2, 2, 3),
+            "walk_relation": torch.tensor([[[1, -1, 0], [-1, -1, -1]]] * 2),
             "walk_mask": torch.tensor([[[True, True, True], [False, False, False]]] * 2),
             "member_x": torch.randn(2, 3),
             "member_row": torch.tensor([0, 0]),

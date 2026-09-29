@@ -967,7 +967,7 @@ def parse(registry, splits, observers, tables, rows, name):
     seen = gathered(parts, len(layout))
     seen["entity"] = np.concatenate([part["entity"] for part in parts] + [np.zeros(0, np.int32)])
     seen = arranged(seen, np.lexsort((seen["seq"], seen["until"], seen["entity"], seen["since"])))
-    width = max([len(registry.attributes(relation)) for relation in registry.extras["base"]] + [0])
+    width = max([len(registry.attributes(group)) for group in registry.groups] + [0])
     parts = []
     for held, entry in schema.edges.items():
         table = tables["edges"][held]
@@ -1010,13 +1010,10 @@ def parse(registry, splits, observers, tables, rows, name):
             )
         ),
     )
-    for relation in registry.attributed:
-        edge = registry.by_name[relation]
-        chosen = facts["present"] & (facts["code"] == edge.code)
-        if not np.isfinite(facts["values"][chosen, : len(edge.attributes)]).all():
-            raise ValueError(
-                "graph %s has a missing or infinite %s value on a present fact" % (name, relation)
-            )
+    for group in registry.valued:
+        chosen = facts["present"] & np.isin(facts["code"], registry.coded[group])
+        if not np.isfinite(facts["values"][chosen, : len(registry.attributes(group))]).all():
+            raise ValueError("graph %s has a missing or infinite %s value on a present fact" % (name, group))
     if len(facts["code"]) and (facts["code"].min() < 0 or facts["code"].max() > np.iinfo(np.int16).max):
         raise ValueError("fact codes must fit 0..%d" % np.iinfo(np.int16).max)
     tasks, place = asked(registry, splits, observers, tables, name)

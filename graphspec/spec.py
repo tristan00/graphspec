@@ -138,7 +138,7 @@ def space(registry, groups):
     if unknown:
         raise ValueError("unknown representation groups: " + ", ".join(unknown))
     nodes, extras = registry.nodes, registry.extras
-    base = [registry.by_name[name] for name in extras["base"]]
+    base = {group: registry.named[group] for group in registry.groups}
 
     def kept(spec, kind):
         return spec["nodes/%s/keep" % kind]
@@ -151,7 +151,7 @@ def space(registry, groups):
 
     def projectable(spec, edge):
         relation, position, first, second = (
-            registry.by_name[edge.origin[1]],
+            base[edge.origin[1]],
             ("sources", "targets").index(edge.origin[2]),
             edge.origin[3],
             edge.origin[4],
@@ -163,12 +163,12 @@ def space(registry, groups):
         return lambda spec: spec.get("nodes/%s/filter" % kind) in modes
 
     def linked(spec):
-        return any(spec.get("relations/%s/keep" % edge.name) for edge in base)
+        return any(spec.get("relations/%s/keep" % group) for group in base)
 
     joined = {}
-    for edge in base:
+    for group, edge in base.items():
         for pair in edge.pairs:
-            joined.setdefault(frozenset(pair), []).append("relations/%s/keep" % edge.name)
+            joined.setdefault(frozenset(pair), []).append("relations/%s/keep" % group)
 
     def joins(spec, first, second):
         return any(spec.get(name) for name in joined.get(frozenset((first, second)), ()))
@@ -248,13 +248,13 @@ def space(registry, groups):
         ]
     parameters += [
         flag(
-            "relations/%s/keep" % edge.name,
+            "relations/%s/keep" % group,
             True,
             lambda spec, edge=edge: any(
                 kept(spec, source) and kept(spec, target) for source, target in edge.pairs
             ),
         )
-        for edge in base
+        for group, edge in base.items()
     ]
     parameters += [
         flag("derive/" + edge.name, False, lambda spec, edge=edge: projectable(spec, edge))
@@ -295,11 +295,11 @@ def space(registry, groups):
         real("derive/sdrf_threshold", 0.1, 20.0, 1.0, equals("derive/rewiring", "sdrf"), log=True),
     ]
     parameters.append(choice("relations/direction", ("inverse", "symmetric", "directed"), "inverse", linked))
-    for edge in base:
+    for group in base:
         parameters += filters(
-            edge.name,
-            lambda spec, edge=edge: bool(spec.get("relations/%s/keep" % edge.name)),
-            registry.ordered(edge.name),
+            group,
+            lambda spec, group=group: bool(spec.get("relations/%s/keep" % group)),
+            registry.ordered(group),
         )
     for edge in registry.edges:
         if edge.origin[0] in emits:

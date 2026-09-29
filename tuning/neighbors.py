@@ -11,6 +11,7 @@ from .layers import (
     CausalAttention,
     Head,
     References,
+    Relations,
     SelectiveSSM,
     TimeEncoding,
     keys_of,
@@ -109,6 +110,7 @@ class SequenceNet(nn.Module):
         self.input = nn.Linear(registry.features, hidden)
         self.keys = keys_of(spec, hidden)
         self.time = TimeEncoding(hidden, spec["time/encoding"])
+        self.relation = Relations(registry, hidden)
         self.norm = normalization(hidden)
         if self.structure_mode != "none":
             self.structure = nn.Sequential(
@@ -184,7 +186,7 @@ class SequenceNet(nn.Module):
     def forward(self, b):
         roots = self.input(b["member_x"])
         mask = b["history_mask"]
-        raw = self.input(b["history_x"])
+        raw = self.input(b["history_x"]) + self.relation(b["history_relation"])
         if self.keys is not None:
             roots = roots + self.keys(b["member_token"])
             raw = raw + self.keys(b["history_token"])
@@ -228,6 +230,7 @@ class WalkNet(nn.Module):
         )
         self.keys = keys_of(spec, hidden)
         self.time = TimeEncoding(hidden, spec["time/encoding"])
+        self.relation = Relations(registry, hidden)
         direction_width = (hidden + 1) // 2
         self.walk = nn.LSTM(hidden, direction_width, batch_first=True, bidirectional=True)
         self.walk_output = (
@@ -255,6 +258,7 @@ class WalkNet(nn.Module):
 
     def forward(self, b):
         raw = self.input(b["walk_x"]) + self.anonymous(b["walk_identity"].log1p()) + self.time(b["walk_gap"])
+        raw = raw + self.relation(b["walk_relation"])
         if self.keys is not None:
             raw = raw + self.keys(b["walk_token"])
         if self.has_periods:

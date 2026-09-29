@@ -415,21 +415,6 @@ def grouped(ids, groups):
 
 
 @njit(cache=True)
-def grouped_column(table, column, groups):
-    offsets = np.zeros(groups + 1, np.int64)
-    for row in range(len(table)):
-        offsets[table[row, column] + 1] += 1
-    for group in range(groups):
-        offsets[group + 1] += offsets[group]
-    cursor = offsets[:-1].copy()
-    order = np.empty(len(table), np.int32)
-    for row in range(len(table)):
-        order[cursor[table[row, column]]] = row
-        cursor[table[row, column]] += 1
-    return order, offsets
-
-
-@njit(cache=True)
 def misplaced_attributes(table, rows, limits):
     for row in range(len(table)):
         limit = limits[table[row, 2]]

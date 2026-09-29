@@ -224,21 +224,15 @@ def base(graph, registry, spec, link=None):
         1,
     ).astype(np.int32)
     attribute_row = np.full(len(codes), -1, np.int32)
-    by_code = np.argsort(spatial[:, 2], kind="stable")
-    arrays = dict(
-        spatial_order=by_code.astype(np.int32),
-        spatial_code_offsets=np.searchsorted(spatial[by_code, 2], np.arange(registry.relations + 1)).astype(
-            np.int64
-        ),
-    )
-    for name in registry.attributed:
-        edge = registry.by_name[name]
-        use = codes == edge.code
-        attribute_row[use] = np.arange(int(use.sum())) + (0 if link is None else link.attributes.get(name, 0))
-        chosen = values[use]
-        rows = np.full((len(chosen), len(edge.attributes)), np.nan, np.float32)
-        rows[chosen >= 0] = graph.value_table[chosen[chosen >= 0], : len(edge.attributes)]
-        arrays["attributes_" + name] = rows
+    arrays = {}
+    valued = registry.value_group[codes]
+    for place, group in enumerate(registry.valued):
+        use = valued == place
+        attribute_row[use] = np.arange(int(use.sum())) + (0 if link is None else link.attributes.get(group, 0))
+        chosen, width = values[use], len(registry.attributes(group))
+        rows = np.full((len(chosen), width), np.nan, np.float32)
+        rows[chosen >= 0] = graph.value_table[chosen[chosen >= 0], :width]
+        arrays["attributes_" + group] = rows
     seen = seen_tasks(graph, registry, observed)
     rows = np.flatnonzero(registry.aimed[np.asarray(graph.task_kind, np.int64)])
     row_step = np.asarray(graph.task_step)[rows]
@@ -817,10 +811,8 @@ def validate(arrays, graph, registry, spec, groups):
         raise ValueError("observation feature references out of range in graph %s" % graph.name)
     if not finite(x):
         raise ValueError("nonfinite observation features in graph %s" % graph.name)
-    limits = np.full(registry.relations, -1, np.int64)
-    for edge in registry.edges:
-        if edge.attributes:
-            limits[[edge.code, edge.reverse]] = len(arrays["attributes_" + edge.name])
+    sizes = np.asarray([len(arrays["attributes_" + group]) for group in registry.valued] + [-1], np.int64)
+    limits = sizes[registry.value_group]
     fault = kernels.misplaced_attributes(
         np.asarray(arrays["spatial"]), np.asarray(arrays["spatial_attribute_row"]), limits
     )

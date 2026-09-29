@@ -276,6 +276,7 @@ def history(
     mask = np.zeros((members, count), np.bool_)
     gap = np.zeros((members, count), np.float32)
     ids = np.full((members, count), -1, np.int32)
+    relation = np.full((members, count), -1, np.int64)
     structural = np.zeros((members, count, 12), np.float32)
     scratch = np.empty(count, np.int32)
     floor = start * 2
@@ -307,6 +308,8 @@ def history(
             ids[i, slot] = events[event, 1] if forward else events[event, 0]
             observed[i, slot] = events[event, 5] if forward else events[event, 4]
             interaction[i, slot] = events[event, 3] == 2
+            if events[event, 3] == 1:
+                relation[i, slot] = events[event, 6]
             task_row[i, slot] = events[event, 7]
             mask[i, slot] = True
             gap[i, slot] = cutoff - events[event, 2]
@@ -386,7 +389,7 @@ def history(
                                 ),
                             )
                         column += 3
-    return observed, interaction, task_row, mask, gap, ids, structural
+    return observed, interaction, task_row, mask, gap, ids, relation, structural
 
 
 @njit(cache=True)

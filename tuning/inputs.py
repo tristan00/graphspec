@@ -82,7 +82,7 @@ def history_inputs(window, b, count, include_structure, selected):
         held.column("events", 2),
     )
     sampled = (start, count, mode, decay, SEED, NEIGHBOURS)
-    observed, interaction, task_row, mask, gap, ids, structural = gather.history(
+    observed, interaction, task_row, mask, gap, ids, relation, structural = gather.history(
         *shared,
         entity,
         np.append(entity, -1)[partner],
@@ -122,6 +122,7 @@ def history_inputs(window, b, count, include_structure, selected):
                 history_mask=mask,
                 history_gap=gap,
                 history_ids=ids,
+                history_relation=relation,
                 occurrence=occurrence,
                 structure=structural,
                 common_stats=common_stats,
@@ -373,21 +374,14 @@ def spatial_inputs(b, window):
     edges = spatial[:, :2].T - lo
     b.update(edges=array(edges, torch.long), relation=array(spatial[:, 2], torch.long))
     b["attributes"], b["attribute_edges"] = {}, {}
-    by_code, code_offsets = held.numpy("spatial_order"), held.numpy("spatial_code_offsets")
-    edge_window = np.asarray((first_edge, last_edge), by_code.dtype)
-    for name in registry.attributed:
-        declared = registry.by_name[name]
-        pieces = []
-        for code in dict.fromkeys((declared.code, declared.reverse)):
-            lo_code, hi_code = code_offsets[code], code_offsets[code + 1]
-            low, high = by_code[lo_code:hi_code].searchsorted(edge_window)
-            pieces.append(by_code[lo_code + low : lo_code + high])
-        chosen = pieces[0] if len(pieces) == 1 else np.concatenate(pieces)
-        values = held.numpy("attributes_" + name)[attribute_rows[chosen]]
-        b["attributes"][name] = array(
-            registry.encoding.vectors(registry.attributes(name), values), torch.float32
+    valued = registry.value_group[spatial[:, 2]]
+    for place, group in enumerate(registry.valued):
+        chosen = np.flatnonzero(valued == place)
+        values = held.numpy("attributes_" + group)[attribute_rows[first_edge + chosen]]
+        b["attributes"][group] = array(
+            registry.encoding.vectors(registry.attributes(group), values), torch.float32
         )
-        b["attribute_edges"][name] = array(chosen - first_edge, torch.long)
+        b["attribute_edges"][group] = array(chosen, torch.long)
     directed = registry.canonical[spatial[:, 2]]
     canonical_bounds = np.r_[0, np.cumsum(directed)][edge_bounds]
     b["frame_edges"] = Frames(
@@ -558,6 +552,7 @@ def walks_inputs(b, window, context):
         walk_x=features(graph, known.shape, ("x", np.where(known, observations, -1), 1.0)),
         walk_mask=array(known),
         walk_gap=array(gap, torch.float32),
+        walk_relation=array(np.where(known & (events[..., 3] == 1), events[..., 6], -1), torch.long),
         walk_identity=array(gather.walk_identities(nodes, known, b["partner"])),
     )
     if tokens is not None:

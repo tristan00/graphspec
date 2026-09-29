@@ -25,10 +25,6 @@ def enabled(spec, name):
     return name in spec and spec[name]
 
 
-def codes(registry, names):
-    return [registry.code(name) for name in names]
-
-
 def fact_bytes(graph):
     return sum(graph.arrays[name].dtype.itemsize for name in FACTS)
 
@@ -472,8 +468,8 @@ def recalled(memo, name, inputs, budget, compute):
 
 @timed("operators.project")
 def project(graph, registry, edge, source, target, code, recency, cap, budget, memo):
-    relation, side, first, second = edge.origin[1:]
-    use = np.flatnonzero(code == registry.code(relation))
+    group, side, first, second = edge.origin[1:]
+    use = np.flatnonzero(np.isin(code, registry.coded[group]))
     members, owners = (source[use], target[use]) if side == "sources" else (target[use], source[use])
     ages = recency[use]
 
@@ -796,12 +792,17 @@ def derivation(registry, spec):
     return (projected, selected, within) if wanted else None
 
 
+@timed("operators.grouped")
+def grouped(registry, groups):
+    return np.concatenate([registry.coded[group] for group in groups] + [np.zeros(0, np.int64)])
+
+
 def derivable(graph, registry, spec):
-    names = registry.extras["base"]
-    stated = graph.fact_present & np.isin(graph.fact_code, codes(registry, names))
+    groups = registry.groups
+    stated = graph.fact_present & np.isin(graph.fact_code, grouped(registry, groups))
     kept = graph.fact_present & np.isin(
         graph.fact_code,
-        codes(registry, [name for name in names if enabled(spec, "relations/%s/keep" % name)]),
+        grouped(registry, [group for group in groups if enabled(spec, "relations/%s/keep" % group)]),
     )
     return stated, kept
 
@@ -997,7 +998,7 @@ def derive(graph, registry, spec, seed, limits, carry=None):
 
 @timed("operators.untype")
 def untype(graph, registry, carry=None):
-    base = np.isin(graph.fact_code, codes(registry, registry.extras["base"]))
+    base = np.isin(graph.fact_code, grouped(registry, registry.groups))
     source, target, code, present = graph.fact_source, graph.fact_target, graph.fact_code, graph.fact_present
     added = 0
     if carry is not None:
@@ -1042,10 +1043,10 @@ def untype(graph, registry, carry=None):
 
 @timed("operators.relations")
 def relations(graph, registry, spec, seed, carry=None):
-    dropped = [name for name in registry.extras["base"] if not enabled(spec, "relations/%s/keep" % name)]
+    dropped = [group for group in registry.groups if not enabled(spec, "relations/%s/keep" % group)]
     if not dropped:
         return graph
-    return select(graph, FACTS, ~np.isin(graph.fact_code, codes(registry, dropped)))
+    return select(graph, FACTS, ~np.isin(graph.fact_code, grouped(registry, dropped)))
 
 
 @timed("operators.merging")
@@ -1075,16 +1076,21 @@ def filtering(spec, name):
     )
 
 
+@timed("operators.filtered_names")
+def filtered_names(registry, spec):
+    return [name for name in registry.coded if filtering(spec, name)]
+
+
 @timed("operators.edges")
 def edges(graph, registry, spec, seed, carry=None):
-    named = [edge for edge in registry.edges if filtering(spec, edge.name)]
+    named = filtered_names(registry, spec)
     if not named:
         return graph
     kept = np.ones(len(graph.fact_step), bool)
     pieces = {"edges/persistence": [], "edges/cap": []}
-    for edge in named:
-        rows = np.flatnonzero(graph.fact_code == edge.code)
-        kept[rows] = filtered(graph, registry, spec, seed, edge.name, rows, carry, pieces)
+    for name in named:
+        rows = np.flatnonzero(np.isin(graph.fact_code, registry.coded[name]))
+        kept[rows] = filtered(graph, registry, spec, seed, name, rows, carry, pieces)
     for name, found in pieces.items():
         open_runs(carry, name, found)
     return prune(graph, kept, carry, "edges")
@@ -1092,25 +1098,24 @@ def edges(graph, registry, spec, seed, carry=None):
 
 def edges_survive(graph, registry, spec, seed, carry):
     survives = np.ones(len(graph.fact_step), bool)
-    for edge in registry.edges:
-        if filtering(spec, edge.name):
-            rows = np.flatnonzero(graph.fact_code == edge.code)
-            survives[rows] = undropped(graph, registry, spec, seed, edge.name, rows, carry)
+    for name in filtered_names(registry, spec):
+        rows = np.flatnonzero(np.isin(graph.fact_code, registry.coded[name]))
+        survives[rows] = undropped(graph, registry, spec, seed, name, rows, carry)
     return survives
 
 
 def edges_mask(graph, registry, spec, seed, carry, names, survives):
-    named = [edge for edge in registry.edges if filtering(spec, edge.name) and edge.name in names]
+    named = [name for name in filtered_names(registry, spec) if name in names]
     kept = np.ones(len(graph.fact_step), bool)
     if not named:
         return kept
     pieces = {"edges/persistence": [], "edges/cap": []}
-    for edge in named:
-        rows = np.flatnonzero(graph.fact_code == edge.code)
-        kept[rows] = filtered(graph, registry, spec, seed, edge.name, rows, carry, pieces, survives[rows])
+    for name in named:
+        rows = np.flatnonzero(np.isin(graph.fact_code, registry.coded[name]))
+        kept[rows] = filtered(graph, registry, spec, seed, name, rows, carry, pieces, survives[rows])
     for name, found in pieces.items():
         open_runs(carry, name, found)
-    rows = np.flatnonzero(np.isin(graph.fact_code, [edge.code for edge in named]))
+    rows = np.flatnonzero(np.isin(graph.fact_code, grouped(registry, named)))
     kept[rows] = prune_mask(
         graph.fact_source[rows],
         graph.fact_target[rows],
@@ -1195,7 +1200,7 @@ def filtered(graph, registry, spec, seed, name, rows, carry=None, pieces=None, s
     owner = np.r_[pair_high, pair_low[extra]]
     part = np.r_[np.zeros(count, np.int64), np.ones(len(extra), np.int64)]
     group, groups = kernels.keyed(
-        (pair_step[owners] * registry.relations + pair_code[owners]) * 2 + flag,
+        (pair_step[owners] * registry.relations + registry.grouped[pair_code[owners]]) * 2 + flag,
         owner,
         np.zeros(len(owners), np.int64),
     )

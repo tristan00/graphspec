@@ -84,20 +84,22 @@ def registry(task, encoding, single, several, untasked):
         for name in encoding.relations[table]
     ]
     clash = sorted(
-        relation["name"]
-        for relation in relations
-        if type(relation["name"]) is not str
-        or not relation["name"]
-        or ":" in relation["name"]
-        or relation["name"] in RESERVED
+        {
+            str(name)
+            for name in [relation["name"] for relation in relations] + list(schema.edges)
+            if type(name) is not str or not name or ":" in name or name in RESERVED
+        }
     )
     if clash:
         raise ValueError("names collide with derived relation names: " + ", ".join(map(str, clash)))
     made = stored(schema)
-    clash = sorted({relation["name"] for relation in made} & {relation["name"] for relation in relations})
+    clash = sorted(
+        {relation["name"] for relation in made}
+        & ({relation["name"] for relation in relations} | set(schema.edges))
+    )
     if clash:
         raise ValueError(
-            "relations stated or taken collide with the relations of set edges: " + ", ".join(clash)
+            "relations or tables stated or taken collide with the relations of set edges: " + ", ".join(clash)
         )
     relations += made
     edges = [
@@ -110,7 +112,10 @@ def registry(task, encoding, single, several, untasked):
         )
         for relation in relations
     ]
+    tables = {}
     for relation in relations:
+        tables.setdefault(relation["origin"][1] if relation["origin"][0] == "base" else relation["name"], relation)
+    for group, relation in tables.items():
         for side, position in (("sources", 0), ("targets", 1)):
             counterparts = {}
             for pair in relation["pairs"]:
@@ -121,8 +126,8 @@ def registry(task, encoding, single, several, untasked):
                     if counterparts[first] & counterparts[second]:
                         edges.append(
                             EdgeType(
-                                projection(relation["name"], side, first, second),
-                                ("project", relation["name"], side, first, second),
+                                projection(group, side, first, second),
+                                ("project", group, side, first, second),
                                 ((first, second),),
                                 symmetric=True,
                             )

@@ -723,8 +723,9 @@ def sampled(facts, registry, held, several):
             (schema.graph, np.asarray(facts.graph_values)[None, :]),
             (schema.inner_columns(), np.asarray(facts.inner_values)[inner]),
         ]
+        valued = registry.value_group[codes]
         parts += [
-            (registry.by_code[code].attributes, values[codes == code]) for code in np.unique(codes).tolist()
+            (registry.attributes(group), values[valued == place]) for place, group in enumerate(registry.valued)
         ]
         for columns, found in parts:
             for position, name in enumerate(columns):

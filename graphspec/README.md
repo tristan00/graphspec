@@ -41,10 +41,12 @@ The stages work on `truth.Dense`, the per-step expansion: rows reference their f
 
 **Relation vocabulary.** `vocabulary.registry` numbers node types and base relations in the order the schema states them, the relations an edge table takes from a column in sorted order at the place of their table, then declares every relation a spec can derive. A relation stated without direction is symmetric. A directed relation has a canonical and a reverse code; a symmetric relation has one.
 
+A table whose relations are taken from a column is one table with a value. Each value keeps its own code, which facts, references and events carry and which models read through a learned embedding; everything else is the table's: its parameters under `relations/<table>/` and `edges/<table>/`, its projections, its array `attributes_<table>`, and the weights models hold per relation. `Registry.groups` names, for every relation stated, every table of relations taken from a column and every relation of a set edge, the relations it holds; `Registry.coded` their codes, with every derived relation alone; `Registry.grouped` the index of the weights of every code, one per table and direction; `Registry.valued` the tables whose relations carry values, and `Registry.value_group` the place of each code among them. What grows with the number of values of a column is the declaration of the registry, its tables indexed by code, and the embedding tables of relations in models.
+
 | Relation | Symmetric | Meaning |
 |---|---|---|
 | `<relation>` | as stated | A base relation, from an edge table. |
-| `project:<relation>:<side>:<A>:<B>` | yes | Entities of types A and B on one side of a relation that share a counterpart at a step. One per relation, side and pair of types whose FROM/TO pairs share a counterpart type. |
+| `project:<table>:<side>:<A>:<B>` | yes | Entities of types A and B on one side of a relation that share a counterpart at a step. One per relation stated, table of relations taken from a column or relation of a set edge, side and pair of types whose FROM/TO pairs share a counterpart type. |
 | `complete:<A>:<B>` | yes | Pairs of completed entities of types A and B at a step. |
 | `hop:2`, `hop:3` | yes | Pairs at exactly that shortest distance in the step's graph. |
 | `diffusion` | no | Top-k graph-diffusion neighbours. |
@@ -114,11 +116,11 @@ With `nodes/referenced` set to keep, an observation that a reference of a task n
 
 4. Derived relations
 
-Computed at each step from the present facts that survive stage 3. Completion anchors, hops, diffusion and rewiring read the base relations that `relations/<relation>/keep` keeps, as undirected pairs. A projection reads its own relation even when that relation is removed.
+Computed at each step from the present facts that survive stage 3. Completion anchors, hops, diffusion and rewiring read the base relations that `relations/<table>/keep` keeps, as undirected pairs. A projection reads its own relations even when they are removed.
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `derive/project:<relation>:<side>:<A>:<B>` | on, off | Adds that projection. Offered while A, B and a counterpart type their FROM/TO pairs share are kept. |
+| `derive/project:<table>:<side>:<A>:<B>` | on, off | Adds that projection. Offered while A, B and a counterpart type their FROM/TO pairs share are kept. |
 | `derive/project_cap` | 0–64 | Only each counterpart's `cap` most recently started relations of the step take part, counting parallel facts once; 0 takes all. Offered when a projection is on. |
 | `derive/complete/<type>` | on, off | Completes that type: every pair of observed entities of the completed types at a step is linked. Offered while the type is kept. |
 | `derive/complete_within/<type>` | on, off | Links completed entities only when they share a neighbour of that type; with several types on, a shared neighbour of any of them is enough. Offered while this type is kept and a kept base relation joins it to a completed type. |
@@ -140,19 +142,19 @@ Derivation stops with an error once a variant's derived facts exceed the budget 
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `relations/<relation>/keep` | on, off | Removes a base relation. Offered while both types of one of its FROM/TO pairs are kept. |
+| `relations/<table>/keep` | on, off | Removes a relation stated, every relation of a table taken from a column, or a relation of a set edge. Offered while both types of one of its FROM/TO pairs are kept. |
 | `relations/direction` | inverse, symmetric, directed | How directed relations are read: both directions with the reverse code, both directions with one code, or the stated direction only. Symmetric relations are always read both ways. Offered while a base relation is kept. |
 
 6. Edge filters
 
-Every base relation and every derived relation has its own filter under `edges/<relation>/`. A base relation's filter is offered while the relation is kept; a derived relation's while a derivation can produce it: its projection; both of its completed types, with no anchor type on or an anchor type that kept relations join to both; hops of at least its distance; diffusion; or rewiring.
+Every relation stated, table of relations taken from a column, relation of a set edge and derived relation has its own filter under `edges/<table>/`. A base filter is offered while its relations are kept; a derived relation's while a derivation can produce it: its projection; both of its completed types, with no anchor type on or an anchor type that kept relations join to both; hops of at least its distance; diffusion; or rewiring. Drop and persistence treat an edge of each value as an edge of its own; a cap counts the edges of every value of a table together.
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `edges/<relation>/drop` | 0–0.9 | A seeded hash removes that fraction of entity pairs, with all their rows. |
-| `edges/<relation>/persistence` | 1–8 | A present fact is kept from the p-th consecutive step it is stated; facts stated twice at one step share a position. |
-| `edges/<relation>/cap` | 0–64 | At most c neighbours per entity and step, with parallel facts counted once; 0 keeps all. A directed reading caps destinations, inverse caps destinations and sources separately, and symmetric caps each entity with a pair counted once. A pair stays only if it ranks within c at every capped end. |
-| `edges/<relation>/cap_order` | recent, random, largest:&lt;attribute&gt; | Which facts a cap keeps: latest run start, a seeded hash, or the largest value of one of the relation's attributes. Offered when the cap is on. |
+| `edges/<table>/drop` | 0–0.9 | A seeded hash removes that fraction of entity pairs, with all their rows. |
+| `edges/<table>/persistence` | 1–8 | A present fact is kept from the p-th consecutive step it is stated; facts stated twice at one step share a position. |
+| `edges/<table>/cap` | 0–64 | At most c neighbours per entity and step, with parallel facts counted once; 0 keeps all. A directed reading caps destinations, inverse caps destinations and sources separately, and symmetric caps each entity with a pair counted once. A pair stays only if it ranks within c at every capped end. |
+| `edges/<table>/cap_order` | recent, random, largest:&lt;attribute&gt; | Which facts a cap keeps: latest run start, a seeded hash, or the largest value of one of the table's attributes. Offered when the cap is on. |
 
 Relations read symmetrically count their two directions as one pair in every edge filter.
 
@@ -169,7 +171,7 @@ Whenever a stage removes present facts, it also removes absent rows left without
 
 Base arrays:
 
-- snapshots: `x_ref` per observation into the feature table `x_table`, which for separate graphs is a copy of the `obs_x` file of its view when no stage changed it; `entity`, `step`, `obs_period` and `snapshot_offsets` per observation; `observation_ids` and `observation_offsets` per entity; `entity_kind`, all zero when nodes are untyped; relation edges `spatial` as source observation, target observation and code, with `spatial_step`, `spatial_attribute_row` and `attributes_<relation>`
+- snapshots: `x_ref` per observation into the feature table `x_table`, which for separate graphs is a copy of the `obs_x` file of its view when no stage changed it; `entity`, `step`, `obs_period` and `snapshot_offsets` per observation; `observation_ids` and `observation_offsets` per entity; `entity_kind`, all zero when nodes are untyped; relation edges `spatial` as source observation, target observation and code, with `spatial_step`, `spatial_attribute_row` and `attributes_<table>`, one array of values for every table whose relations carry values
 - rows, one per task of a kind that states a target: `row_task`, `row_step`, `row_kind`, `row_index`, `key`, `signals`
 - references of the rows: `member_row`, `member_name`, `member_entity`, `member_observed`, `member_place`, one entry per node a reference names, an edge giving its two ends, ordered by row, then by the position of the name among the references of the schema, then by place; `member_place` is twice the place of the member plus the end of its edge for a sort that keeps order, and 0 for any other; `whole_row` and `whole_name` for references to the graph itself. Nothing is kept by position: no family reads a reference by its place in the kind.
 - tasks: `task`, the features of every task and the attributes of its graph, and for the tasks seen as events `event_first`, `event_task` and `event_step`
