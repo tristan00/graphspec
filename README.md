@@ -12,7 +12,7 @@ The examples use `D:/graphspec-runtime` and its external virtual environment at 
 
 **One input path for different domains**
 
-Source data → adapter → public Stage Parquet tables → bank → transformed variants → model/search.
+Source data → loader script → public Stage Parquet tables → bank → transformed variants → model/search.
 
 There is no required database round trip. LadybugDB remains an optional way to query and inspect the same graph; it is not required to create Parquet files. `Stage` writes files and manifests, and `GraphTables` manages contract tables and identifiers. [The loader walkthrough](docs/loader.md) shows a complete custom graph in Python.
 

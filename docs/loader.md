@@ -50,7 +50,7 @@ build_bank(task, runtime / "banks" / "example", workers=1, trained=("train",))
 
 The schema states every kind of node, every edge table and every column with its type and encoder; [the contract](contract.md) describes it. Each kind has its own columns, and `None` states a missing value. Integer identifiers in raw tables are managed by `GraphTables`; readable keys are strings. Nodes must be declared before referencing them. Each `observe`, `edges`, or `labels` call accepts a nonnegative `step`, with zero representing a static snapshot. Temporal observations and facts follow the [contract's time and causality rules](contract.md). The values of edges are keyword lists named as the columns of their edge table; an edge table that takes its relations from a column is given them as `relation`.
 
-Use the public configuration builder for one model fit on either adapter's bank:
+Use the public configuration builder for one model fit on a bank:
 
 ```python
 from tuning import configuration, fit
@@ -64,6 +64,7 @@ statement = dict(
     preparation_seconds=300,
     workers=1,
     variant_cache_bytes=1 << 30,
+    batch_sequences=64,
 )
 config = configuration(
     bank,
@@ -81,7 +82,7 @@ For multiple graphs, use consecutive graph indices from zero. Each graph writes 
 
 Sources declare `staging` or `database` in a task file. A staging-only task needs `name`, `staging`, `target` and `schema`; it does not need a fictional database filename. For older task files naming both, staging is explicitly preferred and must exist. Missing staging never falls back to another source.
 
-LadybugDB is an optional query and inspection format. Install `graphspec[ladybug]`, then export any staging with `graphspec database --staging STAGING --output DATABASE.lbug`. The exporter derives the tables of the database from the staged tables; a task that reads the database states the same schema. There is no CSV → LadybugDB → Parquet round trip: adapters write Parquet once, bank building reads it, and database export is optional. Existing database-only task files still work.
+LadybugDB is an optional query and inspection format. Install `graphspec[ladybug]`, then export any staging with `graphspec database --staging STAGING --output DATABASE.lbug`. The exporter derives the tables of the database from the staged tables; a task that reads the database states the same schema. There is no CSV → LadybugDB → Parquet round trip: a loader writes Parquet once, bank building reads it, and database export is optional. Existing database-only task files still work.
 
 **Runtime storage**
 
@@ -91,7 +92,7 @@ The examples use `D:/graphspec-runtime`; any valid external runtime home can be 
 
 Inputs are read-only: partition indexes and derived bank data are stored under the runtime home. A bank can be moved without changing its files; caches can be rebuilt. Parquet partition cache identity includes the manifest, file sizes, and modification times; replace edited inputs normally rather than preserving their old timestamps.
 
-On Windows, named mutexes scoped to the user's SID serialize public bank builds, dataset adapters, model checks, fits, and searches across runtime homes. These guards create no lock files in the profile, runtime home, or checkout; Windows releases ownership when its owner exits. Internal worker processes belong to the admitted job.
+On Windows, named mutexes scoped to the user's SID serialize public bank builds, model checks, fits, and searches across runtime homes. These guards create no lock files in the profile, runtime home, or checkout; Windows releases ownership when its owner exits. Internal worker processes belong to the admitted job.
 
 For source development use `python -B` or `PYTHONDONTWRITEBYTECODE=1` to keep bytecode out of the checkout. Pytest's repository cache is disabled. Compilation caches, lint caches, and test temporary directories must stay under the configured runtime home; use an external `--basetemp` beneath its `tmp/` directory. Previous `~/.graphspec/settings.json` files are retired and are not read.
 

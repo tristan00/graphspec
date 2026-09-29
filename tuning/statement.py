@@ -42,7 +42,10 @@ def processors(value):
 
 
 def held(check, meaning):
-    return field(metadata=dict(check=check, meaning=meaning))
+    started = time.perf_counter()
+    result = field(metadata=dict(check=check, meaning=meaning))
+    LOG.debug("held exit check=%s seconds=%.4f", check.__name__, time.perf_counter() - started)
+    return result
 
 
 @dataclass(frozen=True, init=False)

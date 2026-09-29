@@ -115,7 +115,7 @@ In the form the operations work on, `step_graph` names for every step the graph 
 |---|---|
 | `reward_mean`, `reward_sd` | one entry of the `series` list |
 | row keys `turn`, `decision` | the grouping and the key of the queries, under the names the schema states |
-| `step_campaign` | `step_graph` |
+| the array that names, for every step of joined graphs, the graph the step came from | `step_graph` |
 | `query_actor`, `query_subject`, `query_context` | the columns of `query_references`, named by the schema |
 | `width` and `features` of one vector for every kind | `widths` per kind, `values`, `features` |
 

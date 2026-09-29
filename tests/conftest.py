@@ -13,7 +13,6 @@ from graphspec.infra.processes import LockBusy
 WORKER = "PYTEST_XDIST_WORKER" in os.environ
 LOG = logging.getLogger(__name__)
 SUITE = {"heavy": "heavy-tests"}
-HELD = []
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 
 
@@ -103,18 +102,26 @@ def ground():
     return place
 
 
+def stated(directory, view):
+    from tuning.data import Bank
+    from tuning.model_spec import configuration
+
+    started = time.perf_counter()
+    cfg = configuration(Bank(directory).registry, dict(view=view), {"time/history": 4}, 5)
+    LOG.debug("stated exit view=%s seconds=%.4f", view, time.perf_counter() - started)
+    return cfg
+
+
 def running(directory, view):
     from graphspec.infra.arrays import RESIDENT
-    from tuning.data import Bank, Deriver
-    from tuning.model_spec import configuration
+    from tuning.data import Deriver
     from tuning.packing import Packer
     from tuning.variants import prepare
 
     started = time.perf_counter()
-    cfg = configuration(Bank(directory).registry, dict(view=view), {"time/history": 4}, 5)
+    cfg = stated(directory, view)
     prepare(directory, cfg, 1, "cpu")
     packer = Packer(Deriver(directory, "cpu", RESIDENT), cfg, "cpu", 1)
-    HELD.append((directory, cfg, packer))
     LOG.debug("running exit view=%s seconds=%.4f", view, time.perf_counter() - started)
     return cfg, packer
 
@@ -135,7 +142,6 @@ def closed(held):
     started = time.perf_counter()
     for cfg, packer in held:
         packer.close()
-        HELD[:] = [entry for entry in HELD if entry[2] is not packer]
     LOG.debug("closed exit packers=%d seconds=%.4f", len(held), time.perf_counter() - started)
 
 
@@ -151,14 +157,6 @@ def warmup(request):
 @pytest.fixture(scope="session")
 def packers(bank):
     held = {view: running(bank, view) for view in ("snapshot", "event_graph")}
-    warmed(held.values())
-    yield held
-    closed(held.values())
-
-
-@pytest.fixture(scope="session")
-def varied_packers(varied):
-    held = dict(snapshot=running(varied, "snapshot"))
     warmed(held.values())
     yield held
     closed(held.values())
@@ -180,39 +178,44 @@ def statement():
     )
 
 
-class Shared:
+class Inline:
     def __init__(self, bank, cfg, device, workers, timing_directory=None):
-        held = [
-            packer
-            for directory, known, packer in HELD
-            if directory == bank.directory and known["model"] == cfg["model"]
-        ]
-        if not held or device != "cpu" or held[0].cfg["graph"] != cfg["graph"]:
-            raise ValueError("the suite holds no packer for this configuration")
-        self.stream = held[0].stream
+        if device != "cpu" or workers != 1:
+            raise ValueError("the suite packs in its own process, on cpu, as one worker")
+        self.bank, self.cfg = bank, cfg
+
+    def stream(self, groups):
+        from tuning.batching import recipe_batch
+        from tuning.tensors import materialise
+
+        started = time.perf_counter()
+        for group in groups:
+            yield materialise(self.bank, self.cfg, recipe_batch(self.bank, group, self.cfg), "cpu")
+        LOG.debug("inline stream exit batches=%d seconds=%.4f", len(groups), time.perf_counter() - started)
 
     def close(self):
         pass
 
 
-def shared(held, monkeypatch):
+def inline(directory, views, monkeypatch):
     import torch
 
     started = time.perf_counter()
     torch.optim.AdamW([torch.nn.Parameter(torch.zeros(1))])
-    monkeypatch.setattr("tuning.packing.Packer", Shared)
-    LOG.debug("packed exit seconds=%.4f", time.perf_counter() - started)
-    return {view: dict(cfg, epochs=1) for view, (cfg, _) in held.items()}
+    monkeypatch.setattr("tuning.packing.Packer", Inline)
+    result = {view: dict(stated(directory, view), epochs=1) for view in views}
+    LOG.debug("inline exit views=%d seconds=%.4f", len(views), time.perf_counter() - started)
+    return result
 
 
 @pytest.fixture
-def packed(packers, monkeypatch):
-    return shared(packers, monkeypatch)
+def packed(bank, monkeypatch):
+    return inline(bank, ("snapshot", "event_graph"), monkeypatch)
 
 
 @pytest.fixture
-def varied_packed(varied_packers, monkeypatch):
-    return shared(varied_packers, monkeypatch)
+def varied_packed(varied, monkeypatch):
+    return inline(varied, ("snapshot",), monkeypatch)
 
 
 @pytest.fixture(scope="session")

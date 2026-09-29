@@ -62,6 +62,7 @@ def test_failed_trials_train_feasibility_without_fake_objective_values():
     )
 
 
+@pytest.mark.xdist_group("candidates")
 def test_history_and_candidates_preserve_parameters_and_condition_on_random_values(
     bank, candidate_pool, monkeypatch
 ):

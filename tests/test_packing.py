@@ -140,6 +140,7 @@ def test_slot_transfer_and_growth(device):
     slot.release()
 
 
+@pytest.mark.xdist_group("packers")
 @pytest.mark.parametrize("view", ("snapshot", "event_graph"))
 def test_packer_matches_single_process(packers, view):
     cfg, packer = packers[view]

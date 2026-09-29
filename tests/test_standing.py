@@ -8,14 +8,15 @@ LOG = logging.getLogger(__name__)
 ROOT = Path(__file__).parent.parent
 CODE = ("graphspec", "tuning")
 NAMED = ("graphspec", "tuning")
-TIMERS = ("perf_counter", "timed", "measure(")
+TIMERS = ("perf_counter", "timed", "measure")
+MARKS = ("timed",)
+NUMERAL = ("3", "iii", "three")
+BETWEEN = r"[\W_]*"
 PIECES = (
     ("chu", "rn"),
     ("total", "war"),
-    ("vi", "c3"),
-    ("vi", "c", "iii"),
-    ("vict", "oria", "3"),
-    ("vict", "oria", "iii"),
+    ("vi", "c", NUMERAL),
+    ("vict", "oria", NUMERAL),
 )
 COMPILERS = ("njit", "jit")
 LOADERS = ("import_module", "__import__", "run_module")
@@ -43,18 +44,54 @@ def sources(root, folders):
     return found
 
 
+def called(node):
+    return node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", None)
+
+
+def timing(tree):
+    started = time.perf_counter()
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and called(node.func) in TIMERS:
+            found = True
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            found = found or any(called(entry) in MARKS for entry in node.decorator_list)
+    LOG.debug("timing exit found=%s seconds=%.4f", found, time.perf_counter() - started)
+    return found
+
+
 def untimed(root, folders):
     started = time.perf_counter()
-    found = [
-        place
-        for place, source in sources(root, folders)
-        if not any(timer in source for timer in TIMERS)
-        and any(
+    found = []
+    for place, source in sources(root, folders):
+        tree = ast.parse(source)
+        defines = any(
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not compiled(node)
-            for node in ast.walk(ast.parse(source))
+            for node in ast.walk(tree)
         )
-    ]
+        if defines and not timing(tree):
+            found.append(place)
     LOG.debug("untimed exit modules=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def spelling(pieces):
+    return BETWEEN.join(
+        re.escape(piece) if isinstance(piece, str) else "(?:" + "|".join(map(re.escape, piece)) + ")"
+        for piece in pieces
+    )
+
+
+def spelled(pieces, joint, change):
+    started = time.perf_counter()
+    found = [""]
+    for piece in pieces:
+        found = [
+            held + (joint if held else "") + change(choice)
+            for held in found
+            for choice in ([piece] if isinstance(piece, str) else piece)
+        ]
+    LOG.debug("spelled exit names=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return found
 
 
@@ -99,7 +136,7 @@ def crossing(root, folders):
 
 def named(root, places, excluded):
     started = time.perf_counter()
-    patterns = [re.compile(r"[\W_]*".join(map(re.escape, pieces)), re.IGNORECASE) for pieces in PIECES]
+    patterns = [re.compile(spelling(pieces), re.IGNORECASE) for pieces in PIECES]
     found = []
     for place in places:
         for path in [root / place] if (root / place).is_file() else sorted((root / place).rglob("*")):
@@ -132,20 +169,59 @@ def test_every_module_that_defines_a_function_times_something(tmp_path):
         "from numba import njit\n\n\n@njit(cache=True)\ndef work():\n    return 1\n",
     )
     write(tmp_path, "tuning/clocked.py", "import time\n\n\ndef work():\n    return time.perf_counter()\n")
-    assert untimed(tmp_path, CODE) == ["graphspec/plain.py"]
+    write(
+        tmp_path,
+        "tuning/marked.py",
+        "from graphspec.infra.timing import timed\n\n\n@timed('work')\ndef work():\n    return 1\n",
+    )
+    write(
+        tmp_path,
+        "tuning/measured.py",
+        "from graphspec.infra.timing import measure\n\n\ndef work():\n"
+        "    with measure('work'):\n        return 1\n",
+    )
+    write(tmp_path, "graphspec/remarked.py", "def work():\n    return 1  # perf_counter timed measure(\n")
+    write(tmp_path, "graphspec/quoted.py", "def work():\n    return 'time.perf_counter() measure( timed'\n")
+    write(
+        tmp_path,
+        "graphspec/dated.py",
+        "from datetime import timedelta\n\n\ndef work():\n    return timedelta(seconds=1)\n",
+    )
+    write(
+        tmp_path,
+        "graphspec/imported.py",
+        "from time import perf_counter\n\nfrom graphspec.infra.timing import measure, timed\n\n\n"
+        "def work():\n    return perf_counter, measure, timed\n",
+    )
+    write(tmp_path, "tuning/measurement.py", "def work(measurement, untimed):\n    return measurement(untimed)\n")
+    assert untimed(tmp_path, CODE) == [
+        "graphspec/dated.py",
+        "graphspec/imported.py",
+        "graphspec/plain.py",
+        "graphspec/quoted.py",
+        "graphspec/remarked.py",
+        "tuning/measurement.py",
+    ]
 
 
 def test_no_name_of_a_dataset_that_was_an_adapter_appears(tmp_path):
     assert named(ROOT, NAMED, Path(__file__)) == []
-    spelled = [" ".join(pieces) for pieces in PIECES] + ["_".join(pieces).upper() for pieces in PIECES]
-    for index, name in enumerate(spelled):
+    written = [
+        name
+        for pieces in PIECES
+        for joint in ("", " ", "_", "-", "  ", "_-_")
+        for change in (str.lower, str.upper, str.title)
+        for name in spelled(pieces, joint, change)
+    ]
+    assert len(written) == len(set(written)) == (2 + 2 * len(NUMERAL)) * 6 * 3
+    for index, name in enumerate(written):
         write(tmp_path, "graphspec/text_%d.md" % index, "built for " + name + " alone\n")
     write(tmp_path, "tuning/" + "".join(PIECES[0]) + ".py", "VALUE = 1\n")
-    write(tmp_path, "tuning/clean.py", "VALUE = 'victory over total variation'\n")
+    write(tmp_path, "tuning/clean.py", "VALUE = 'victory over total variation in 3 civic steps'\n")
     found = named(tmp_path, NAMED, Path(__file__))
-    assert len(found) >= len(spelled) + 1
+    assert len(found) >= len(written) + 1
     assert {place for place, _ in found} == {
-        "graphspec/text_%d.md" % index for index in range(len(spelled))
+        "graphspec/text_%d.md" % index for index in range(len(written))
     } | {"tuning/" + "".join(PIECES[0]) + ".py"}
 
 

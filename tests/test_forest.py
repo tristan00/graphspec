@@ -62,6 +62,7 @@ def test_failed_trials_train_the_completion_forest():
         Forest(x, losses, [False] * 40, 3)
 
 
+@pytest.mark.xdist_group("candidates")
 def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, candidate_pool, monkeypatch):
     registry = Bank(bank).registry
     observations, failures = [], []
