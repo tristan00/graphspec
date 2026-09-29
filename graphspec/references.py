@@ -44,24 +44,26 @@ class Sort:
             held.update(ORDER)
         return held
 
+    @timed("references.sort.required")
+    def required(self):
+        if self.most is None:
+            return "%d or more members" % self.least
+        if self.most == self.least:
+            return "exactly %d member%s" % (self.least, "" if self.least == 1 else "s")
+        return "%d to %d members" % (self.least, self.most)
+
+    @timed("references.sort.miscounted")
+    def miscounted(self, counts):
+        counts = np.asarray(counts, np.int64)
+        return (counts < self.least) | ((counts > self.most) if self.most is not None else False)
+
     def check(self, where, counts, task, source, target, code, place):
         started = time.perf_counter()
-        counts = np.asarray(counts, np.int64)
-        if np.any(counts < self.least) or (self.most is not None and np.any(counts > self.most)):
-            found = counts[
-                (counts < self.least) | (counts > (counts.max() if self.most is None else self.most))
-            ]
+        wrong = np.flatnonzero(self.miscounted(counts))
+        if len(wrong):
             raise ValueError(
-                "%s names for every task members to the number of %s, and a task names %d"
-                % (
-                    where,
-                    "%d or more" % self.least
-                    if self.most is None
-                    else "%d" % self.least
-                    if self.most == self.least
-                    else "%d to %d" % (self.least, self.most),
-                    int(found[0]),
-                )
+                "%s holds %s for every task that states it, and a task names %d"
+                % (where, self.required(), int(np.asarray(counts)[wrong[0]]))
             )
         edge = np.asarray(code) >= 0
         if (edge.any() and not self.edges) or ((~edge).any() and not self.nodes):

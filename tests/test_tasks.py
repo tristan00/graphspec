@@ -370,14 +370,14 @@ def test_a_sort_checks_the_members_a_task_names():
     none = np.full(2, -1)
     SORTS.named("node").check("the reference unit", [1, 1], np.arange(2), np.arange(2), none, none, none * 0)
     with pytest.raises(
-        ValueError, match="unit names for every task members to the number of 1, and a task names 2"
+        ValueError, match="unit holds exactly 1 member for every task that states it, and a task names 2"
     ):
         SORTS.named("node").check("the reference unit", [2], np.zeros(2), np.arange(2), none, none, none * 0)
-    with pytest.raises(ValueError, match="group names for every task members to the number of 1 or more"):
+    with pytest.raises(ValueError, match="group holds 1 or more members for every task that states it"):
         SORTS.named("nodes").check(
             "the reference group", [0], none[:0], none[:0], none[:0], none[:0], none[:0]
         )
-    with pytest.raises(ValueError, match="couple names for every task members to the number of 2"):
+    with pytest.raises(ValueError, match="couple holds exactly 2 members for every task that states it"):
         SORTS.named("pair").check(
             "the reference couple", [1], np.zeros(1), np.zeros(1), none[:1], none[:1], none[:1]
         )

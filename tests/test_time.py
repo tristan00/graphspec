@@ -599,6 +599,33 @@ def test_a_fact_visible_to_one_observer_is_invisible_to_a_task_of_another_at_the
     )
 
 
+def test_an_edge_whose_end_an_observer_cannot_see_stops_naming_the_edge_the_end_and_the_observer(banks):
+    held, cfg = opened(banks, "seen")
+    truth = truths(held)["watched"]
+    source, target = np.asarray(truth.fact_source), np.asarray(truth.fact_target)
+    edge = int(np.flatnonzero((source == truth.keys.index("m2")) & (target == truth.keys.index("s2")))[0])
+    rows, watchers = np.asarray(truth.fact_seen_row), np.asarray(truth.fact_seen_observer)
+    ends = np.flatnonzero(np.asarray(truth.obs_entity) == truth.keys.index("s2"))
+    seen = np.r_[np.asarray(truth.obs_seen_row), ends]
+    watching = np.r_[np.asarray(truth.obs_seen_observer), np.full(len(ends), 1, np.int32)]
+    order = np.lexsort((watching, seen))
+    changed = truth.replace(
+        fact_seen_row=rows[rows != edge],
+        fact_seen_observer=watchers[rows != edge],
+        obs_seen_row=seen[order],
+        obs_seen_observer=watching[order].astype(np.int32),
+    )
+    assert truth.observers == ["east", "north", "south"]
+    found = sequences(changed, held.registry, "tasks", held.looking(cfg)[0])
+    south = [sequence for sequence in found if sequence["observer"] == 2]
+    with pytest.raises(
+        ValueError,
+        match="the edge of serves from m2 to s2 of graph watched seen by the observer south holds over the steps "
+        "0 to 5, and at one of them its end s2, a node of the kind site, has no observation",
+    ):
+        view(changed, held.registry, south[0], "last")
+
+
 def test_three_facts_about_one_entity_at_one_time_are_kept_and_the_view_shows_the_one_chosen(banks):
     held, cfg = opened(banks, "seen")
     truth = truths(held)["several"]

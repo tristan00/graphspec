@@ -47,6 +47,7 @@ DENSE = (
     + LABELS
 )
 CHANGES = ("time", "observations", "facts")
+HALF = int(np.finfo(np.float16).max)
 GROUPS = ("obs", "fact")
 SPARSE = ("known_row", "known_time", "replaced_row", "replaced_time", "seen_row", "seen_observer")
 STORED = (
@@ -179,7 +180,7 @@ class Facts:
     NAMES = STORED
 
     @timed("truth.facts")
-    def __init__(self, name, keys, unit, inner, **arrays):
+    def __init__(self, name, keys, unit, inner, observers, **arrays):
         missing = sorted(set(self.NAMES) - set(arrays))
         if missing:
             raise ValueError("graph %s lacks arrays: %s" % (name, ", ".join(missing)))
@@ -191,12 +192,15 @@ class Facts:
             keys=list(keys),
             unit=unit,
             inner=list(inner),
+            observers=list(observers),
             arrays={key: arrays[key] for key in self.NAMES},
         )
 
     @timed("truth.facts.replace")
     def replace(self, **changes):
-        return Facts(self.name, self.keys, self.unit, self.inner, **dict(self.arrays, **changes))
+        return Facts(
+            self.name, self.keys, self.unit, self.inner, self.observers, **dict(self.arrays, **changes)
+        )
 
     def __getattr__(self, key):
         try:
@@ -209,7 +213,8 @@ class Facts:
         directory = Path(directory)
         save_arrays(directory, self.arrays)
         write_json(
-            directory / "graph.json", dict(name=self.name, keys=self.keys, unit=self.unit, inner=self.inner)
+            directory / "graph.json",
+            dict(name=self.name, keys=self.keys, unit=self.unit, inner=self.inner, observers=self.observers),
         )
         LOG.debug("facts save exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
@@ -219,7 +224,12 @@ class Facts:
         directory = Path(directory)
         meta = read_json(directory / "graph.json")
         result = cls(
-            meta["name"], meta["keys"], meta["unit"], meta["inner"], **load_arrays(directory, cls.NAMES)
+            meta["name"],
+            meta["keys"],
+            meta["unit"],
+            meta["inner"],
+            meta["observers"],
+            **load_arrays(directory, cls.NAMES),
         )
         LOG.debug("facts load exit graph=%s seconds=%.4f", result.name, time.perf_counter() - started)
         return result
@@ -556,8 +566,25 @@ def prefixed(columns):
     return {VALUE + name: values for name, values in columns.items()}
 
 
-def encoded(registry, values, held):
-    return registry.encoding.inputs(values, held).astype(np.float16)
+def encoded(registry, values, held, named):
+    started = time.perf_counter()
+    wide = registry.encoding.inputs(values, held)
+    with np.errstate(over="ignore"):
+        result = wide.astype(np.float16)
+    lost = ~np.isfinite(result)
+    if lost.any():
+        row, place = (int(found[0]) for found in np.nonzero(lost))
+        raise ValueError(
+            "%s holds %s which gives %s; model inputs are stored at 16 bits, which hold magnitudes up to %d"
+            % (
+                named(row),
+                registry.encoding.origin(place, np.asarray(values)[row]),
+                float(wide[row, place]),
+                HALF,
+            )
+        )
+    LOG.debug("encoded exit rows=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 @timed("truth.unheld")
@@ -701,10 +728,11 @@ def asked(registry, splits, observers, tables, name):
     for kind, entry in stated["kinds"].items():
         members = kinds == listed[kind]
         weighted = ~np.isnan(weight[members])
-        if entry["weight"] and not (weighted.all() and np.all(weight[members][weighted] > 0)):
+        wrong = np.flatnonzero(members & ~(np.isfinite(weight) & (weight > 0)))
+        if entry["weight"] and len(wrong):
             raise ValueError(
-                "a task of graph %s of the kind %s states no weight above zero, which its kind states"
-                % (name, kind)
+                "the task %d of the kind %s of graph %s states the weight %s; its kind states a weight above "
+                "zero and finite at float32 precision" % (keys[wrong[0]], kind, name, weight[wrong[0]])
             )
         if not entry["weight"] and weighted.any():
             raise ValueError(
@@ -730,7 +758,15 @@ def asked(registry, splits, observers, tables, name):
         task_split=split[order],
         task_weight=weight[order],
         task_values=values[order],
-        task_x=encoded(registry, values[order], unheld(registry, count)),
+        task_x=encoded(
+            registry,
+            values[order],
+            unheld(registry, count),
+            lambda row: (
+                "the task %d of the kind %s of graph %s"
+                % (keys[order][row], list(stated["kinds"])[kinds[order][row]], name)
+            ),
+        ),
         task_signals=np.stack(
             (matrix(tasks, "signal", np.float32), matrix(tasks, "signal_observed", np.float32)), 2
         )[order]
@@ -810,9 +846,25 @@ def referred(registry, tables, tasks, place, local, kinds, name):
                 np.where(np.r_[True, owner[1:] != owner[:-1]][: len(owner)], np.arange(len(owner)), 0)
             )
             position = np.arange(len(owner)) - start
+        counts = np.bincount(owner, minlength=len(holders))
+        wrong = np.flatnonzero(holders & sort.miscounted(counts))
+        if len(wrong):
+            raise ValueError(
+                "the kind %s requires of each of its tasks %s under the reference %s, which is of the sort %s, "
+                "and the task %d of graph %s names %d"
+                % (
+                    listed[tasks["task_kind"][wrong[0]]],
+                    sort.required(),
+                    reference,
+                    entry["sort"],
+                    tasks["task_key"][wrong[0]],
+                    name,
+                    counts[wrong[0]],
+                )
+            )
         sort.check(
             where,
-            np.bincount(owner, minlength=len(holders))[holders],
+            counts[holders],
             owner,
             source,
             target,
@@ -1002,6 +1054,7 @@ def parse(registry, splits, observers, tables, rows, name):
         keys,
         unit,
         inner,
+        observers,
         kinds=kinds,
         entity_token=tokens(registry, kinds, keys),
         entity_held=entity_held,
@@ -1012,7 +1065,15 @@ def parse(registry, splits, observers, tables, rows, name):
         obs_until=seen["until"],
         obs_seq=seen["seq"].astype(np.int32),
         obs_values=seen["values"],
-        obs_x=encoded(registry, seen["values"], entity_held[seen["entity"]]),
+        obs_x=encoded(
+            registry,
+            seen["values"],
+            entity_held[seen["entity"]],
+            lambda row: (
+                "the node %s of the kind %s of graph %s"
+                % (keys[seen["entity"][row]], registry.nodes[kinds[seen["entity"][row]]], name)
+            ),
+        ),
         **sparse("obs", seen, seen["watched"], seen["watchers"]),
         fact_source=facts["source"].astype(np.int32),
         fact_target=facts["target"].astype(np.int32),
@@ -1257,7 +1318,8 @@ def check(graph, registry, splits, observers):
         (graph.obs_x, graph.obs_values, held[np.asarray(graph.obs_entity, np.int64)]),
         (graph.task_x, graph.task_values, unheld(registry, len(graph.task_key))),
     ):
-        if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values), inner)):
+        again = encoded(registry, np.asarray(values), inner, lambda row: "a row of graph %s" % name)
+        if not np.array_equal(np.asarray(given), again):
             raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
     if graph.graph_values.shape != (len(schema.graph),):
         raise ValueError("graph %s does not hold the attributes its schema states" % name)
@@ -1563,7 +1625,8 @@ def verify(graph, registry):
         ),
         (graph.task_x, graph.task_values, unheld(registry, len(graph.task_key))),
     ):
-        if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values), held)):
+        again = encoded(registry, np.asarray(values), held, lambda row: "a row of graph %s" % name)
+        if not np.array_equal(np.asarray(given), again):
             raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
     if graph.graph_values.shape != (len(registry.schema.graph),):
         raise ValueError("graph %s does not hold the attributes its schema states" % name)
@@ -1633,9 +1696,22 @@ def verify(graph, registry):
         np.asarray(graph.obs_entity), np.asarray(graph.obs_start), np.asarray(graph.obs_stop), entities
     )
     for who in (graph.fact_source, graph.fact_target):
-        if spans.all_covered(offsets, lows, highs, np.asarray(who), graph.fact_start, graph.fact_stop) >= 0:
+        row = spans.all_covered(offsets, lows, highs, np.asarray(who), graph.fact_start, graph.fact_stop)
+        if row >= 0:
+            end = int(who[row])
             raise ValueError(
-                "a present fact of graph %s names an entity with no observation at its step" % name
+                "the edge of %s from %s to %s of graph %s holds over the steps %d to %d, and at one of them "
+                "its end %s, a node of the kind %s, has no observation"
+                % (
+                    registry.by_code[int(graph.fact_code[row])].name,
+                    graph.keys[int(graph.fact_source[row])],
+                    graph.keys[int(graph.fact_target[row])],
+                    name,
+                    int(graph.fact_start[row]),
+                    int(graph.fact_stop[row]) - 1,
+                    graph.keys[end],
+                    registry.nodes[int(graph.kinds[end])],
+                )
             )
     first = np.full(entities, steps, np.int64)
     np.minimum.at(first, graph.obs_entity, graph.obs_start)

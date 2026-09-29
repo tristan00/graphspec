@@ -505,7 +505,9 @@ def view(facts, registry, held, several):
     )
     order = np.lexsort((since,) + tuple(keys[::-1]) + (~present, step))
     tasks = held["tasks"]
-    name = facts.name if observer < 0 else "%s seen by observer %d" % (facts.name, observer)
+    name = facts.name
+    if observer >= 0:
+        name = "%s seen by the observer %s" % (facts.name, facts.observers[observer])
     inner = np.asarray(facts.entity_held)
     graph = Graph(
         name if held["split"] < 0 else "%s for split %d" % (name, held["split"]),
@@ -517,7 +519,19 @@ def view(facts, registry, held, several):
         period=grouped(facts, held, steps)
         if schema.tasks["grouping"] is not None
         else np.arange(steps, dtype=np.int32),
-        obs_x=encoded(registry, observed["obs_values"], inner[observed["obs_entity"]]),
+        obs_x=encoded(
+            registry,
+            observed["obs_values"],
+            inner[observed["obs_entity"]],
+            lambda row: (
+                "the node %s of the kind %s in the view of graph %s"
+                % (
+                    facts.keys[observed["obs_entity"][row]],
+                    registry.nodes[facts.kinds[observed["obs_entity"][row]]],
+                    name,
+                )
+            ),
+        ),
         **observed,
         **spans.fact_spans(
             step[order].astype(np.int32),

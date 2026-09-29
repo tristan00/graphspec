@@ -451,6 +451,15 @@ class Schema:
                 about=about,
             )
         self.tasks = self.asked(held["tasks"])
+        used = set(self.graph) | set(self.layout()) | set(self.member_columns())
+        used |= set(self.inner_columns()) | set(self.within_columns())
+        used |= {name for entry in self.edges.values() for name in entry["columns"]}
+        unused = [name for name in self.columns if name not in used]
+        if unused:
+            raise ValueError(
+                "the columns %s are declared and used by no kind of node or of set edge, no edge table, no "
+                "graph held by a node, no kind of task and not by the graph" % ", ".join(unused)
+            )
         LOG.debug(
             "schema exit kinds=%d sets=%d edges=%d columns=%d seconds=%.4f",
             len(self.nodes),
@@ -1161,6 +1170,30 @@ class Encoding:
         result = np.concatenate((self.nodes(codes), held), 1)
         LOG.debug("encoding inputs exit rows=%d seconds=%.4f", len(codes), time.perf_counter() - started)
         return result
+
+    def origin(self, place, codes):
+        started = time.perf_counter()
+        edge, codes = 0, np.asarray(codes, np.float32)
+        for part in (0, 1):
+            for position, name in enumerate(self.layout):
+                edge += self.sizes[name][part]
+                if place < edge:
+                    kind = self.schema.kind(name)
+                    dictionary = self.dictionaries[name] if kind.symbols else None
+                    value = kind.stated(codes[[position]], dictionary)[0]
+                    LOG.debug(
+                        "encoding origin exit place=%d seconds=%.4f", place, time.perf_counter() - started
+                    )
+                    return "the value %r of the column %s, encoded by %s," % (
+                        value,
+                        name,
+                        self.schema.columns[name]["encoder"],
+                    )
+        for kind, (start, width) in self.held.items():
+            if place < edge + start + width:
+                LOG.debug("encoding origin exit place=%d seconds=%.4f", place, time.perf_counter() - started)
+                return "the graph it holds, encoded by %s," % self.schema.holds[kind]["encoder"]
+        raise ValueError("the encoded values hold no column at the place %d" % place)
 
     @timed("schema.encoding.vectors")
     def vectors(self, columns, codes):

@@ -119,7 +119,8 @@ def topological(sources, targets, nodes, priority):
 def runs(group, step):
     order = np.lexsort((step, group))
     group, step = group[order], step[order]
-    starts = np.r_[True, (group[1:] != group[:-1]) | (step[1:] != step[:-1] + 1)]
+    starts = np.ones(len(order), bool)
+    starts[1:] = (group[1:] != group[:-1]) | (step[1:] != step[:-1] + 1)
     run = np.cumsum(starts) - 1
     result = np.empty(len(order), np.int64)
     result[order] = run
@@ -216,7 +217,8 @@ def fact_spans(step, source, target, code, present, values):
     ident, _ = identity(words(code[kept], source[kept], target[kept], values[kept]))
     at = step[kept].astype(np.int64)
     order = np.lexsort((kept, at, ident))
-    grouped = np.r_[True, (ident[order][1:] != ident[order][:-1]) | (at[order][1:] != at[order][:-1])]
+    grouped = np.ones(len(order), bool)
+    grouped[1:] = (ident[order][1:] != ident[order][:-1]) | (at[order][1:] != at[order][:-1])
     first = np.maximum.accumulate(np.where(grouped, np.arange(len(order)), 0))
     occurrence = np.empty(len(order), np.int64)
     occurrence[order] = np.arange(len(order)) - first

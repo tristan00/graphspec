@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import math
 import time
 from contextlib import closing
 from multiprocessing.util import Finalize
@@ -19,6 +20,7 @@ from graphspec.view import validate
 
 LOG = logging.getLogger(__name__)
 WORKER = {}
+FLOAT32 = float(np.finfo(np.float32).max)
 
 
 def open_source(task_path, task):
@@ -188,7 +190,14 @@ def supervision(source, trained, names):
         if grouping is not None:
             entry[stated.tasks["grouping"]] = int(grouping[task])
         if weights[task] is not None:
-            entry["weight"] = float(weights[task])
+            weight = float(weights[task])
+            if not (math.isfinite(weight) and 0 < weight <= FLOAT32):
+                raise ValueError(
+                    "the task %d of the kind %s of graph %s states the weight %r; a weight is above zero and "
+                    "finite at float32 precision"
+                    % (keys[task], kinds[task], names[int(graphs[place])], weight)
+                )
+            entry["weight"] = weight
         if known[place] is not None:
             entry["known"] = int(known[place])
         series.append(kind["target"]["series"][0])
