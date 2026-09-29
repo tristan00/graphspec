@@ -645,6 +645,9 @@ As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, un
 | 2.1 | done | `6072ce9`; 336 passed in 12.2 s |
 | 2.2 | done | `42b90b1`; 431 passed in 13.0 s |
 | 2.3 | done | `9249781`, and `2a23b17` for the time of the suite; 470 passed in 11.4 s |
+| 2.4 | being built on 29 September at 04:10 | A commit whose message starts with Step 2.4 |
+| Review of 2.1 to 2.3 | running on 29 September at 04:10 | Its findings are repaired before 2.5 |
+| Hand-over | written | `D:/graphspec-runtime/ground/HANDOFF.md` holds how the work is run and what is open |
 
 **Deviations**
 
