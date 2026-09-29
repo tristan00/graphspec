@@ -19,7 +19,7 @@ Rules while working this plan:
 **Blocked**
 
 - B1. Every section edits `graphspec/` and `tuning/`, runs tests or uses the machine. None starts while a search is running. No search is running on 28 September at 21:00; the owner had the last one killed. A search executes the checkout (`scripts/detached.ps1` starts it with the checkout as working directory), so an edit to a `.py` file under `graphspec/` or `tuning/` reaches its next trial, and an edit to a `.py` file under `graphspec/` changes the key of every cached variant. Only the owner decides when a search stops. Editing documents, `PLAN.md`, `pyproject.toml`, `tests/` and `scripts/` does not affect a search.
-- B2. The download of public data is not complete (see Public data). The listing of one set (`ocel2`) was refused by its host because of the way the downloader asked; three further sets on the same host (`traffic`, `graphland`, `starcraft`) have not been asked for yet; the downloader is corrected. Cleared when the downloader has been run again, every file of the three manifests is listed in its results file with a checksum, and the sizes marked unknown in the table are filled in. 7.4 and section 11 wait on it, and by the rule of order so does everything after 7.4.
+- B2. Cleared on 28 September at 22:53. Every dataset named in the column Use of the table of public data is on disk, recorded with a checksum and no error, at its recorded size; the audit is `D:/graphspec-runtime/sources/audit-20260928.md`. Of the replays of a strategy game 60 of 71 packs are complete and the rest are arriving; the one pack the plan uses is complete. Sizes that were unknown: `uplift` 311 MB, `hypergraphs` 240 MB. The column On disk of that table is as of 18:47 and is replaced by the audit.
 
 **Words used in this plan**
 
@@ -632,4 +632,21 @@ As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, un
 
 | Subsection | State | Evidence |
 |---|---|---|
+| B1 | clear | No search running, checked 28 September at 22:40 |
+| B2 | clear | Audit of 28 September at 22:53 |
 | 1.1 | done | Copy at `D:/graphspec-runtime/ground/worktree-20260928`; fingerprint of source and copy `391a6b3d3531b6d6930e357df5bc8dd1816367d56156f64ab888f1ab5a76b319` over 1,921 files, `__pycache__` and `*.pyc` left out; recorded in `D:/graphspec-runtime/ground/README.txt` |
+
+**Deviations**
+
+One line per place where the plan was wrong or silent: the subsection, what the plan said, what was done, why.
+
+| Subsection | The plan said | Done | Why |
+|---|---|---|---|
+| History, Order | The work of 28 September is not committed | Committed whole as `9794d2c` on `snapshot-20260928`; `main` unchanged; work proceeds on `generalise` | Owner's instruction of 28 September, to be able to revert |
+| 12 | A fragment of a removed section on a hand-over followed 12.2 | Removed | The hand-over was cancelled; the fragment was left by a faulty deletion |
+| 1.1 | The copy's fingerprint equals that of the working tree | Fingerprints leave out `__pycache__` and `*.pyc` | Bytecode is not source and changes when code runs |
+| 1.2 | Ten configurations listed in this plan | Listed in `D:/graphspec-runtime/ground/fixture/fixture.json`; the joined route is stored for two of them as well | 2.7 compares the engine against the joined route |
+| 1.3 | `git status` shows only two files and their tests | Checked as the difference from `main`, which lists those four files | The tree was committed, so `git status` is empty |
+| 1.3 | Two corrections applied as they were | The single-thread helper was given a timing log | Every function logs its time |
+| 1.4 | Not stated | The test suite takes a lock of its own, `heavy-tests`, in place of the machine-wide lock | A detached build held the lock and the suite could not run beside it |
+| 8.3, 5.12, 2.9 | Refer to the copy of 2.1, the cases of 4.1, the forks of 3.7 | Read as 1.1, 3.1 and 2.7 | Left from a renumbering |
