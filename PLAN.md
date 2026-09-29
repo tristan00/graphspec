@@ -643,6 +643,7 @@ As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, un
 | 1.7 | done | `b805c21`; 297 passed in 10.6 s |
 | Review of section 1 | done | Repairs in `26acf81`, `451f229`, `31a29a5`; 392 passed in 11.3 s |
 | 2.1 | done | `6072ce9`; 336 passed in 12.2 s |
+| 2.2 | done | `42b90b1`; 431 passed in 13.0 s |
 
 **Deviations**
 
@@ -672,3 +673,9 @@ One line per place where the plan was wrong or silent: the subsection, what the 
 | 8.1 | Bounds of a search | Until 8.1, bounds that hold the seconds of a trial are refused, so a search does not vary the seconds of a trial | The statement holds the seconds; 8.1 puts bounds in the statement and restores the range |
 | 2.6 | Key of the variant cache | The key holds the device as stated since the repairs | Dense algebra differs between CPU and GPU from 1,024 rows |
 | Rules | The suite runs every test | Tests marked `gpu` are left out of the default run and run in section 11 | The suite stays off the GPU |
+| 2.2 | Graphs of one bank may have different units | The unit is a name per graph; nothing converts between units | Nothing compares times across graphs |
+| 2.2 | Not stated | Times are whole numbers in the unit of the graph | A finer unit is stated in place of a fraction |
+| 2.2 | Several facts about one entity at one time are allowed | All are stored and read back; the view shows one, chosen by a stated rule | The engine reads one per entity per step until 2.7 |
+| 2.2 | A fact known later is invisible to a task before | A step of a view shows the facts as the task of that step saw them; a later task does not see in earlier steps what became known after them | A history per task needs the forks of 2.7 |
+| 2.2 | A bank of two graphs with different units | The case is a bank of five graphs that alternate between two units | One bank is shared by the cases of the check |
+| 2.2 | Not stated | A task without an observer sees every fact | No observer stated means no restriction stated |
