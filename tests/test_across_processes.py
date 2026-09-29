@@ -21,9 +21,10 @@ from graphspec import (
     synthetic,
 )
 from graphspec.forms import Form
+from graphspec.infra import processes
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
-from graphspec.infra.processes import parallel
+from graphspec.infra.processes import guarded, parallel, spawned
 from graphspec.infra.timing import timed
 from graphspec.schema import VERSION
 from tuning.build import build
@@ -178,7 +179,7 @@ def entries():
 
 
 @pytest.fixture(scope="module")
-def bank(entries, tmp_path_factory):
+def spread(entries, tmp_path_factory):
     started = time.perf_counter()
     root = tmp_path_factory.mktemp("workers")
     case = dict(schema=stated(), graphs=[graph(place) for place in range(2)])
@@ -187,7 +188,10 @@ def bank(entries, tmp_path_factory):
     return root / "bank"
 
 
-def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_and_a_fit(bank, tmp_path, statement):
+def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_and_a_fit(
+    spread, tmp_path, statement
+):
+    bank = spread
     held = Deriver(bank, "cpu", RESIDENT)
     assert held.manifest["spec"]["encoding"]["states"]["size"] == dict(most=9.0)
     splits = copy.deepcopy(SPLITS)
@@ -203,7 +207,7 @@ def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_an
     assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
-def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(entries, tmp_path):
+def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(entries, monkeypatch):
     class Local:
         pass
 
@@ -220,8 +224,15 @@ def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(
     registered.Vanished = type("Vanished", (), {"__module__": registered.__name__})
     SEES.register("vanished", registered.Vanished())
     try:
-        with pytest.raises(AttributeError, match="Vanished"):
-            parallel(abs, [1, 2], 2, registered.ready, ())
+        started = spawned(registered.ready, ())
     finally:
         del SEES.held["vanished"]
         del registered.Vanished
+    assert {entry[:2] for entry in started["initargs"][0]} == {
+        (names.label, name) for names, name, _ in ENTRIES
+    } | {(SEES.label, "vanished")}
+    monkeypatch.setattr(processes, "FAILED", [])
+    monkeypatch.setattr(SEES, "held", dict(SEES.held))
+    started["initializer"](*started["initargs"])
+    with pytest.raises(AttributeError, match="Vanished"):
+        guarded(abs, -1)
