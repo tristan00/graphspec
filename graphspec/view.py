@@ -101,6 +101,15 @@ class Tasks:
     def serves(self, registry):
         return True
 
+    @timed("view.tasks.refusal")
+    def refusal(self, registry):
+        untasked = registry.extras["untasked"]
+        if not untasked:
+            return None
+        return "shows a graph at the times of its tasks, and these graphs of the bank hold no task: " + ", ".join(
+            untasked
+        )
+
     def __call__(self, facts, registry):
         started = time.perf_counter()
         looking = np.asarray(facts.task_observer)
@@ -130,6 +139,10 @@ class Changes:
     @timed("view.changes.serves")
     def serves(self, registry):
         return True
+
+    @timed("view.changes.refusal")
+    def refusal(self, registry):
+        return None
 
     def __call__(self, facts, registry):
         started = time.perf_counter()

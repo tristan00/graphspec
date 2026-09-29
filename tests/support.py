@@ -370,6 +370,7 @@ def registry(name, nodes, edges):
         events=False,
         single=False,
         several=False,
+        untasked=[],
     )
     result = Registry(name, encoding, edges, [], extras)
     LOG.debug("registry exit seconds=%.4f", time.perf_counter() - started)

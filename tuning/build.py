@@ -165,6 +165,14 @@ def single(stated, found):
     return result
 
 
+def untasked(tasks, names):
+    started = time.perf_counter()
+    asked = set(tasks.column("graph").to_numpy().astype(np.int64).tolist())
+    result = [name for index, name in names.items() if index not in asked]
+    LOG.debug("untasked exit graphs=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def supervision(source, trained, names):
     started = time.perf_counter()
     stated = source.stated
@@ -292,7 +300,7 @@ def supervision(source, trained, names):
         len(rows),
         ",".join(found_splits),
     )
-    return result, groups, found_splits, single(stated, tasks)
+    return result, groups, found_splits, single(stated, tasks), untasked(tasks, names)
 
 
 def attach(task_path, output, level):
@@ -400,7 +408,7 @@ def build(task_path, output, workers, trained):
         names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
         if len(set(names.values())) != len(names):
             raise ValueError("graph names must be unique")
-        rows, groups, splits, alone = supervision(source, trained, names)
+        rows, groups, splits, alone, bare = supervision(source, trained, names)
         location = source.location
     attached = (str(task_path), str(output), LOG.getEffectiveLevel())
     try:
@@ -411,7 +419,7 @@ def build(task_path, output, workers, trained):
                 stated, merged(stated, [entry[0] for entry in found]), None, related(stated, found)
             )
             observers = sorted({name for entry in found for name in entry[2]})
-            registry = vocabulary.registry(task, encoding, alone, any(entry[3] for entry in found))
+            registry = vocabulary.registry(task, encoding, alone, any(entry[3] for entry in found), bare)
             (output / "truth").mkdir(parents=True)
             write_json(output / "supervision.json", rows)
             metrics = mapped(

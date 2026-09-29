@@ -9,6 +9,8 @@ from graphspec import spec as specs
 from graphspec.infra import search
 from graphspec.infra.files import JsonCache, read_json, sha256_file, write_json
 from graphspec.infra.log import emit
+from graphspec.infra.timing import timed
+from graphspec.view import STEPS
 
 from . import objective
 from .model_spec import TRAINING, contextual, describe, groups
@@ -33,8 +35,27 @@ def distribution(parameter):
     return search.real(parameter.low, parameter.high, log=parameter.log)
 
 
+@timed("selector.stepped")
+def stepped(registry, parameters):
+    (held,) = [parameter for parameter in parameters if parameter.name == "time/steps"]
+    refusals = {name: STEPS.named(name).refusal(registry) for name in held.options}
+    accepted = [name for name, found in refusals.items() if found is None]
+    if not accepted:
+        raise ValueError(
+            "the bank %s holds a graph that no choice of steps among %s shows: %s"
+            % (
+                registry.name,
+                ", ".join(held.options),
+                "; ".join("%s %s" % (name, found) for name, found in refusals.items()),
+            )
+        )
+    return specs.narrow(parameters, {held.name: accepted})
+
+
 def graph_space(registry, model, bounds):
-    return contextual(registry, model["view"], narrow_group(specs.space(registry, groups(model)), bounds))
+    return contextual(
+        registry, model["view"], stepped(registry, narrow_group(specs.space(registry, groups(model)), bounds))
+    )
 
 
 def spaces(registry, bounds):
@@ -72,7 +93,7 @@ def check_bounds(registry, bounds):
     if unknown:
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
     specs.narrow(model_space(registry) + TRAINING + specs.space(registry, specs.GROUPS), bounds)
-    graph = narrow_group(specs.space(registry, ()), bounds)
+    graph = stepped(registry, narrow_group(specs.space(registry, ()), bounds))
     for parameter in narrow_group(model_space(registry), bounds):
         if parameter.name == "view":
             for family in parameter.options:

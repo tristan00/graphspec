@@ -15,7 +15,7 @@ from graphspec.infra.processes import guarded, spawned
 
 from .model_spec import TRAINING, groups
 from .model_spec import space as model_space
-from .selector import check_bounds, graph_space, metadata, narrow_group, runtime_parameter, spaces
+from .selector import check_bounds, graph_space, metadata, narrow_group, runtime_parameter, spaces, stepped
 
 CANDIDATES = 10000
 RANKED = 25
@@ -67,7 +67,7 @@ class Space:
         self.proposal_parameters = {
             **{"model/" + p.name: p for p in self.models},
             **{p.name: p for p in self.training},
-            **{"graph/" + p.name: p for p in narrow_group(graph, bounds)},
+            **{"graph/" + p.name: p for p in stepped(registry, narrow_group(graph, bounds))},
             self.runtime.name: self.runtime,
         }
         self.width = sum(len(p.options) if p.options else 2 for p in self.parameters.values())

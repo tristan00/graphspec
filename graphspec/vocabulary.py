@@ -65,7 +65,7 @@ def hop(distance):
     return "hop:%d" % distance
 
 
-def registry(task, encoding, single, several):
+def registry(task, encoding, single, several, untasked):
     started = time.perf_counter()
     unknown = sorted(set(task) - TASK_KEYS)
     if unknown:
@@ -153,6 +153,7 @@ def registry(task, encoding, single, several):
         events=bool(schema.events()),
         single=single,
         several=several,
+        untasked=list(untasked),
     )
     result = Registry(task["name"], encoding, edges, MARKERS, extras)
     LOG.info(

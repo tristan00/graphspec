@@ -261,3 +261,22 @@ def test_a_graph_without_tasks_builds_and_a_choice_of_steps_that_cannot_show_it_
     _, tasks = opened(banks["seen"], **{"time/steps": "tasks"})
     with pytest.raises(ValueError, match="graph g1 holds no task, and the choice of steps tasks shows"):
         held.viewed(tasks)
+
+
+def test_a_search_offers_a_choice_of_steps_only_where_it_shows_every_graph_of_the_bank(banks):
+    from tuning.model_spec import configured
+    from tuning.selector import check_bounds, graph_space, random_suggest
+    from tuning.space import Space
+
+    registry = Deriver(banks["seen"], "cpu", RESIDENT).registry
+    found = {p.name: p for p in graph_space(registry, configured(registry, dict(view="snapshot")), {})}
+    assert found["time/steps"].options == ("changes",)
+    assert Space(registry, {}, 600, []).proposal_parameters["graph/time/steps"].options == ("changes",)
+    assert random_suggest(registry, 3, 3, {}, 600)[0]["graph"]["time/steps"] == "changes"
+    assert registry.extras["untasked"] == ["g1"]
+    with pytest.raises(
+        ValueError,
+        match="the bank seen holds a graph that no choice of steps among tasks shows: tasks shows a graph at "
+        "the times of its tasks, and these graphs of the bank hold no task: g1",
+    ):
+        check_bounds(registry, {"time/steps": "tasks"})
