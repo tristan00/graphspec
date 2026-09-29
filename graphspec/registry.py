@@ -120,7 +120,14 @@ class Registry:
             self.value_group[[edge.reverse for edge in chosen if not edge.symmetric]] = place
 
     def group(self, name):
-        return self.tables.get(name, name)
+        if name in self.tables:
+            return self.tables[name]
+        if name not in self.by_name:
+            raise ValueError(
+                "%s is no relation of the registry %s; its tables are %s"
+                % (name, self.name, ", ".join(sorted(set(self.tables.values()))))
+            )
+        return name
 
     @timed("registry.registry.codes")
     def codes(self, names):

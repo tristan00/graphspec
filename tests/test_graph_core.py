@@ -126,6 +126,17 @@ def test_a_period_length_read_where_it_is_absent_stops_naming_it():
         unit.active(dict(window, **{"time/periods": "every"}))
 
 
+def test_a_name_that_is_no_relation_of_the_registry_has_no_group():
+    edges = [
+        EdgeType("rel", ("base", "rel"), [("person", "person")]),
+        EdgeType("rewire", ("rewire",), [("person", "person")]),
+    ]
+    registry = registered("test", ["person"], edges)
+    assert registry.group("rel") == "rel" and registry.group("rewire") == "rewire"
+    with pytest.raises(ValueError, match="nowhere is no relation of the registry test; its tables are rel$"):
+        registry.group("nowhere")
+
+
 def test_graph_registry_rejects_duplicate_relations():
     edge = EdgeType("rel", ("base", "rel"), [("person", "person")])
     with pytest.raises(ValueError, match="duplicate edge type name"):
