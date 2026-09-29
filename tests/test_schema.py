@@ -176,7 +176,7 @@ def test_column_types_and_encoders_are_registered_by_name_from_outside(monkeypat
     assert encoding.states["stock"] == dict(most=4.0)
     assert encoding.features == 4 and encoding.values == 3
     assert encoding.width(schema.nodes["shelf"]) == 4 and encoding.width(schema.nodes["crate"]) == 2
-    encoded = encoding.nodes(np.asarray([[10, np.nan], [4, 3]], np.float32))
+    encoded = encoding.nodes(np.asarray([[10, np.nan], [4, 3]], np.float32), None)
     assert encoded.tolist() == [[5.0, 2.5, 0.0, 0.0], [2.0, 1.0, 3.0, 1.0]]
 
 
@@ -204,15 +204,15 @@ def test_a_bank_keeps_every_value_stated_in_its_dictionaries_and_encoders_fit_on
     assert encoding.dictionaries == dict(shade=["dark", "light", "pale"])
     assert encoding.states["shade"] == dict(values=["dark", "light"])
     assert encoding.states["height"] == dict(mean=2.0, sd=pytest.approx(2.0**0.5))
-    encoded = encoding.nodes(np.asarray([[0, 1], [2, 3], [np.nan, np.nan]], np.float32))
+    encoded = encoding.nodes(np.asarray([[0, 1], [2, 3], [np.nan, np.nan]], np.float32), None)
     assert encoded[:, :3].tolist() == [[1, 0, 0], [0, 0, 1], [0, 0, 0]]
     assert encoded[:, 3] == pytest.approx([-(0.5**0.5), 0.5**0.5, 0.0])
     assert encoded[:, 4:].tolist() == [[1, 1], [1, 1], [0, 0]]
     again = Encoding(schema, **copy.deepcopy(encoding.declaration()))
-    assert np.array_equal(again.nodes(np.asarray([[1, 5]], np.float32)), encoding.nodes([[1, 5]]))
+    assert np.array_equal(again.nodes(np.asarray([[1, 5]], np.float32), None), encoding.nodes([[1, 5]], None))
     blind = fitted(stated, dict(shown, shade=[]))
     assert blind.states["shade"] == dict(values=[])
-    assert blind.nodes(np.asarray([[2, 3]], np.float32))[0, :1].tolist() == [1.0]
+    assert blind.nodes(np.asarray([[2, 3]], np.float32), None)[0, :1].tolist() == [1.0]
     with pytest.raises(
         ValueError,
         match="the column height has fewer than two differing values in what the views of the splits trained on "
@@ -263,7 +263,8 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
     assert declared["extras"]["base"] == ["visits", "owns", "member", "near", "located"] + taken
     opened = Deriver(varied, "cpu", RESIDENT)
     registry = support.fitted(opened)
-    assert registry.widths == dict(person=11, place=2, item=7, team=2) and registry.features == 11
+    assert registry.widths == dict(person=11, place=2, item=7, team=2) and registry.encoding.width(["season"]) == 4
+    assert registry.encoding.table == ("size", "speed", "colour", "open", "season") and registry.features == 15
     assert registry.attribute_width("visits") == 2 + len(registry.encoding.states["mode"]["values"]) + 2
     for graph in manifest["graphs"]:
         truth = Facts.load(opened.truth(graph["index"]))

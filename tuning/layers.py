@@ -6,6 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from graphspec.infra.timing import timed
+from graphspec.references import SORTS
 
 CHUNK = 128
 
@@ -32,6 +33,12 @@ def segment_softmax(scores, index, size):
     weights = (scores - maxima[index]).exp()
     total = weights.new_zeros(shape).index_add_(0, index, weights)
     return weights / total[index].clamp_min(1e-8)
+
+
+def padded(values, index):
+    return torch.cat((values, values.new_zeros((1,) + values.shape[1:])))[
+        torch.where(index >= 0, index, len(values))
+    ]
 
 
 def masked_mean(x, mask, dim):
@@ -157,17 +164,32 @@ class References(nn.Module):
     @timed("layers.references")
     def __init__(self, registry, width, output):
         super().__init__()
-        self.names = tuple(registry.references)
-        self.output = output
-        self.project = nn.ModuleList(nn.Linear(width, output, bias=False) for _ in self.names)
+        self.names = len(registry.references)
+        stated = registry.schema.tasks["references"].values()
+        ordered = [SORTS.named(entry["sort"]).ordered for entry in stated]
+        self.register_buffer("ordered", torch.as_tensor(ordered, dtype=torch.float32), persistent=False)
+        self.place = nn.Linear(1, width, bias=False)
+        bound = 1 / math.sqrt(width)
+        self.project = nn.Parameter(torch.empty(self.names, width, output).uniform_(-bound, bound))
 
-    def forward(self, rows, values):
-        result = None
-        for project, name in zip(self.project, self.names):
-            owner, value = values[name]
-            held = project(mean(value, owner, rows))
-            result = held if result is None else result + held
-        return result
+    def forward(self, b, members, whole):
+        name = b["member_name"]
+        place = self.place(torch.log1p(b["member_place"].float())[:, None])
+        members = members + place * self.ordered[name][:, None]
+        keys = torch.cat((b["member_row"] * self.names + name, b["whole_row"] * self.names + b["whole_name"]))
+        pooled = mean(torch.cat((members, whole)), keys, b["predictions"] * self.names)
+        pooled = pooled.reshape(b["predictions"], self.names, pooled.shape[-1])
+        return torch.einsum("rnw,nwo->ro", pooled, self.project)
+
+
+class Asked(nn.Module):
+    @timed("layers.asked")
+    def __init__(self, registry, hidden):
+        super().__init__()
+        self.kind = nn.Embedding(len(registry.tasks), hidden)
+
+    def forward(self, values, b):
+        return values + self.kind(b["row_kind"])
 
 
 class Head(nn.Module):
@@ -177,17 +199,19 @@ class Head(nn.Module):
         hidden = spec["hidden"]
         self.path = registry.extras["target"] == "path"
         self.task = nn.Sequential(nn.Linear(width, hidden), nn.SiLU())
+        self.series = nn.Embedding(len(registry.extras["series"]), hidden)
         if self.path:
             self.time = TimeEncoding(hidden, spec["time/encoding"])
-            self.series = nn.Embedding(len(registry.extras["series"]), hidden)
             self.output = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.SiLU(), nn.Linear(hidden, 1))
         else:
-            self.output = nn.Linear(hidden, 1)
+            self.output = nn.Linear(hidden * 2, 1)
 
     def forward(self, features, b):
         h = self.task(features)
         if self.path:
             h = torch.cat((h[b["point_row"]], self.time(b["tau"]), self.series(b["series"])), -1)
+        else:
+            h = torch.cat((h, self.series(b["series"])), -1)
         return self.output(h).squeeze(-1)
 
 

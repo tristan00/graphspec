@@ -7,6 +7,7 @@ import torch
 
 from graphspec import Registry
 from graphspec.infra.arrays import Resident, between
+from graphspec.references import SORTS
 from graphspec.transform import SEED
 
 from . import gather
@@ -65,48 +66,46 @@ def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, st
     return result
 
 
-def history_inputs(graph, held, first, last, start, count, spec, stream, include_structure, selected):
+def history_inputs(window, b, count, include_structure, selected):
     started = time.perf_counter()
-    mode, decay = sampling(spec)
-    chosen = np.ones(last - first, bool) if selected is None else np.asarray(selected, bool)
-    (
-        observed,
-        interaction,
-        task_row,
-        mask,
-        gap,
-        ids,
-        structural,
-        common_ids,
-        common_frequency,
-        common_stats,
-        pair_gaps,
-        pair_mask,
-    ) = gather.history(
+    graph, held, start = window.graph, window.held, window.start
+    mode, decay = sampling(window.cfg["graph"])
+    rows, partner = b["member_row"], b["partner"]
+    chosen = np.ones(len(b["row_kind"]), bool) if selected is None else np.asarray(selected, bool)
+    entity = b["member_entity"].astype(np.int64)
+    moments = (b["row_steps"] + start).astype(np.int64)
+    ends = np.append(entity, -1)[b["pair"]]
+    shared = (
         held.numpy("events"),
         held.numpy("neighbor_ids"),
         held.numpy("neighbor_offsets"),
         held.column("events", 2),
-        held.numpy("first")[first:last].astype(np.int64),
-        held.numpy("second")[first:last].astype(np.int64),
-        held.numpy("row_step")[first:last].astype(np.int64),
-        start,
-        count,
-        mode,
-        decay,
-        stream,
-        NEIGHBOURS,
-        include_structure,
-        chosen,
     )
-    occurrence = np.zeros((last - first, 2, count, 2), np.float32)
-    for side in range(2):
-        for other in range(2):
-            occurrence[:, side, :, other] = (
-                (ids[:, side, :, None] == ids[:, other, None, :])
-                & mask[:, side, :, None]
-                & mask[:, other, None, :]
-            ).sum(-1)
+    sampled = (start, count, mode, decay, SEED, NEIGHBOURS)
+    observed, interaction, task_row, mask, gap, ids, structural = gather.history(
+        *shared,
+        entity,
+        np.append(entity, -1)[partner],
+        moments[rows],
+        *sampled,
+        include_structure,
+        chosen[rows],
+    )
+    common_ids, common_frequency, common_stats, pair_gaps, pair_mask = gather.paired(
+        *shared, ends[:, 0], ends[:, 1], moments, *sampled, chosen
+    )
+    others = np.maximum(partner, 0)
+    occurrence = np.stack(
+        (
+            ((ids[:, :, None] == ids[:, None, :]) & mask[:, :, None] & mask[:, None, :]).sum(-1),
+            (
+                (ids[:, :, None] == ids[others][:, None, :])
+                & mask[:, :, None]
+                & (mask[others] & (partner >= 0)[:, None])[:, None, :]
+            ).sum(-1),
+        ),
+        -1,
+    ).astype(np.float32)
     weight = np.where(interaction, np.float32(0.5), np.float32(1.0))
     result = dict(
         history_x=features(
@@ -134,8 +133,8 @@ def history_inputs(graph, held, first, last, start, count, spec, stream, include
         }
     )
     LOG.debug(
-        "history exit rows=%d count=%d structure=%s seconds=%.4f",
-        last - first,
+        "history exit members=%d count=%d structure=%s seconds=%.4f",
+        len(rows),
         count,
         include_structure,
         time.perf_counter() - started,
@@ -269,24 +268,94 @@ def frame_inputs_of(window):
     return result
 
 
-def referred_inputs(window, first, last):
+def pooled(held, steps):
+    started = time.perf_counter()
+    offsets, table, references = held.numpy("snapshot_offsets"), held.numpy("x_table"), held.numpy("x_ref")
+    result = np.zeros((len(steps), table.shape[1]), np.float32)
+    for step in np.unique(steps).tolist():
+        lo, hi = int(offsets[step]), int(offsets[step + 1])
+        if hi > lo:
+            result[steps == step] = np.asarray(table[references[lo:hi]], np.float32).mean(0)
+    LOG.debug("pooled exit rows=%d seconds=%.4f", len(steps), time.perf_counter() - started)
+    return result
+
+
+def member_inputs(window, first, last):
     started = time.perf_counter()
     held, lo = window.held, window.lo
-    result = {}
-    for prefix, names in (("member", ("name", "entity", "observed")), ("whole", ("name",))):
-        rows = held.numpy(prefix + "_row")
-        left, right = between(rows, first, last)
-        result[prefix + "_row"] = array(rows[left:right] - first, torch.long)
-        for name in names:
-            result[prefix + "_" + name] = array(held.numpy(prefix + "_" + name)[left:right], torch.long)
-    observed = result.pop("member_observed")
-    result["member_index"] = np.where(observed >= 0, observed - lo, -1)
+    rows = held.numpy("member_row")
+    left, right = between(rows, first, last)
+    observed = held.numpy("member_observed")[left:right]
+    stored = left + np.flatnonzero(observed >= 0)
+    observed = observed[observed >= 0]
+    wholes = held.numpy("whole_row")
+    low, high = between(wholes, first, last)
+    whole_row = wholes[low:high] - first
+    result = dict(
+        member_row=array(rows[stored] - first, torch.long),
+        member_name=array(held.numpy("member_name")[stored], torch.long),
+        member_entity=array(held.numpy("member_entity")[stored], torch.long),
+        member_index=array(observed - lo, torch.long),
+        member_place=array(held.numpy("member_place")[stored], torch.long),
+        member_stored=stored,
+        member_x=features(window.graph, (len(stored),), ("x", observed, 1.0)),
+        whole_row=array(whole_row, torch.long),
+        whole_name=array(held.numpy("whole_name")[low:high], torch.long),
+        whole_x=pooled(held, held.numpy("row_step")[first + whole_row]),
+    )
     LOG.debug(
-        "referred inputs exit graph=%d members=%d seconds=%.4f",
+        "member inputs exit graph=%d members=%d wholes=%d seconds=%.4f",
         window.graph,
-        len(observed),
+        len(stored),
+        len(whole_row),
         time.perf_counter() - started,
     )
+    return result
+
+
+def couples(registry):
+    started = time.perf_counter()
+    names, result = list(registry.references), {}
+    for code, entry in enumerate(registry.schema.tasks["kinds"].values()):
+        if entry["event"] is not None:
+            result[code] = tuple(names.index(name) for name in entry["event"])
+        elif entry["target"] is not None and entry["target"]["about"] is not None:
+            about = entry["target"]["about"]
+            sort = SORTS.named(registry.schema.tasks["references"][about]["sort"])
+            if sort.edges and not sort.nodes and sort.most == 1:
+                result[code] = (names.index(about),) * 2
+    LOG.debug("couples exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def paired(registry, kinds, rows, names):
+    started = time.perf_counter()
+    count = len(registry.references)
+    keys = np.asarray(rows, np.int64) * count + np.asarray(names, np.int64)
+    order = np.lexsort((np.arange(len(keys)), keys))
+    ranked = keys[order]
+    result = np.full((len(kinds), 2), -1, np.int64)
+    for code, (left, right) in couples(registry).items():
+        chosen = np.flatnonzero(np.asarray(kinds) == code)
+        if not len(chosen) or not len(ranked):
+            continue
+        wanted = np.stack((chosen * count + left, chosen * count + right), 1)
+        at = np.searchsorted(ranked, wanted)
+        at[:, 1] += left == right
+        inside = at < len(ranked)
+        at = np.minimum(at, len(ranked) - 1)
+        found = (inside & (ranked[at] == wanted)).all(1)
+        result[chosen[found]] = order[at[found]]
+    LOG.debug("paired exit rows=%d seconds=%.4f", len(kinds), time.perf_counter() - started)
+    return result
+
+
+def partnered(pair, members):
+    started = time.perf_counter()
+    result = np.full(members, -1, np.int64)
+    held = pair[:, 0] >= 0
+    result[pair[held, 0]], result[pair[held, 1]] = pair[held, 1], pair[held, 0]
+    LOG.debug("partnered exit members=%d seconds=%.4f", members, time.perf_counter() - started)
     return result
 
 
@@ -358,11 +427,9 @@ def lifted_inputs(b, window):
 
 def mixed_inputs(b, window):
     graph, start, stop = window.graph, window.start, window.stop
-    first, last = window.first, window.last
     held, tokens = window.held, window.tokens
-    m = last - first
-    firsts, seconds = b["first"], b["second"]
-    moment = b["row_steps"] + start
+    m = len(b["member_row"])
+    moment = b["row_steps"][b["member_row"]] + start
     mixed_ticks = held.numpy("mixed_tick")
     left, right = between(mixed_ticks, start * 2, stop * 2)
     mixed_edges = held.numpy("mixed_edges")[held.rows_by("mixed_edges", 1, left, right)]
@@ -370,12 +437,11 @@ def mixed_inputs(b, window):
     ticks = mixed_ticks[left:right]
     mk = np.r_[held.numpy("mixed_kind")[left:right], np.full(m, 5)].astype(np.int64)
     qi = np.arange(right - left, right - left + m)
-    roots = np.stack((firsts, seconds, np.full(m, -1)), 1).astype(np.int64)
     sources, offsets = gather.reachable(
         held.numpy("mixed_entity")[left:right].astype(np.int64),
         np.arange(right - left),
         ticks,
-        roots,
+        b["member_entity"][:, None].astype(np.int64),
         moment * 2,
     )
     extra = np.column_stack((sources, np.repeat(qi, np.diff(offsets)), np.full(len(sources), 2048))).astype(
@@ -385,7 +451,7 @@ def mixed_inputs(b, window):
     all_ticks = np.r_[ticks, moment * 2]
     gaps = np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2).astype(np.float32)
     b["mixed"] = dict(
-        x=joined([features(graph, (right - left,), ("mixed_x", (left, right), None)), b["task"]]),
+        x=joined([features(graph, (right - left,), ("mixed_x", (left, right), None)), b["member_x"]]),
         kind=mk,
         edge_index=array(edge[:, :2].T, torch.long),
         edge_code=array(edge[:, 2] | (1 << 13), torch.long),
@@ -394,9 +460,7 @@ def mixed_inputs(b, window):
     )
     if tokens is not None:
         owner = held.numpy("mixed_entity")[left:right]
-        b["mixed"]["token"] = np.r_[
-            np.where(owner >= 0, tokens[np.maximum(owner, 0)], -1), np.full(m, -1, np.int64)
-        ]
+        b["mixed"]["token"] = np.r_[np.where(owner >= 0, tokens[np.maximum(owner, 0)], -1), b["member_token"]]
 
 
 def events_inputs(b, window, blocks):
@@ -431,9 +495,7 @@ def events_inputs(b, window, blocks):
 
 def dag_inputs(b, window, left, right, position):
     held, events = window.held, b["events"]
-    firsts, seconds = b["first"], b["second"]
-    moment = b["row_steps"] + window.start
-    m = window.last - window.first
+    moment = b["row_steps"][b["member_row"]] + window.start
     low, high = between(held.column("event_dag", 1), left, right)
     linked = held.numpy("event_dag")[low:high]
     linked = position[linked[linked[:, 0] >= left] - left]
@@ -452,53 +514,51 @@ def dag_inputs(b, window, left, right, position):
         np.r_[events[:, 0], events[:, 1]].astype(np.int64),
         positions,
         events[:, 2].astype(np.int64),
-        np.stack((firsts, seconds), 1).astype(np.int64),
+        b["member_entity"][:, None].astype(np.int64),
         moment * 2,
     )
-    b["dag_row_edges"] = array(np.stack((reached, np.repeat(np.arange(m), np.diff(offsets)))), torch.long)
+    b["dag_member_edges"] = array(
+        np.stack((reached, np.repeat(np.arange(len(moment)), np.diff(offsets)))), torch.long
+    )
 
 
 def walks_inputs(b, window, context):
     from .periods import enabled, lookback
 
     graph, start = window.graph, window.start
-    first, last = window.first, window.last
     held, cfg, tokens = window.held, window.cfg, window.tokens
-    m = last - first
-    firsts, seconds = b["first"], b["second"]
-    moment = b["row_steps"] + start
+    chosen = b["member_stored"]
+    moment = b["row_steps"][b["member_row"]] + start
     walk_count, hops = cfg["model"]["walks/count"], cfg["model"]["walks/hops"]
     stored = held.numpy("walks")
-    if walk_count > stored.shape[2] or hops > stored.shape[3]:
+    if walk_count > stored.shape[1] or hops > stored.shape[2]:
         raise ValueError("requested walks exceed the walks stored for this graph variant")
-    walks = stored[first:last, :, :walk_count, :hops]
+    walks = stored[chosen, :walk_count, :hops]
     if enabled(cfg):
-        extra = held.numpy("period_walks")[first:last, :, : lookback(cfg), :walk_count, :hops]
-        extra = extra.reshape(m, 2, lookback(cfg) * walk_count, hops)
-        walks = np.concatenate((walks, extra), 2)
+        extra = held.numpy("period_walks")[chosen, : lookback(cfg), :walk_count, :hops]
+        walks = np.concatenate((walks, extra.reshape(len(chosen), lookback(cfg) * walk_count, hops)), 1)
         kinds = np.zeros(walks.shape, np.int64)
-        kinds[:, :, walk_count:] = 1
+        kinds[:, walk_count:] = 1
         gaps = np.zeros(walks.shape + (3,), np.float32)
-        past = context["end_token_gaps"][:, :2]
-        gaps[:, :, walk_count:] = np.repeat(past, walk_count, axis=2)[:, :, :, None, :]
+        gaps[:, walk_count:] = np.repeat(context["member_end_gaps"], walk_count, axis=1)[:, :, None, :]
         b.update(walk_period_kind=kinds, walk_end_time=gaps)
     known = walks >= 0
     known &= held.column("events", 2)[np.maximum(walks, 0)] >= start * 2
     events = held.numpy("events")[np.maximum(walks, 0)]
     nodes = np.empty(walks.shape, np.int32)
     observations = np.empty_like(nodes)
-    current = np.broadcast_to(np.stack((firsts, seconds), 1)[:, :, None], walks.shape[:3]).copy()
+    current = np.broadcast_to(b["member_entity"][:, None], walks.shape[:2]).copy()
     for hop in range(hops):
-        forward = events[:, :, :, hop, 0] == current
-        nodes[:, :, :, hop] = np.where(forward, events[:, :, :, hop, 1], events[:, :, :, hop, 0])
-        observations[:, :, :, hop] = np.where(forward, events[:, :, :, hop, 5], events[:, :, :, hop, 4])
-        current = nodes[:, :, :, hop]
-    gap = moment[:, None, None, None] * 2 + 1 - events[..., 2]
+        forward = events[:, :, hop, 0] == current
+        nodes[:, :, hop] = np.where(forward, events[:, :, hop, 1], events[:, :, hop, 0])
+        observations[:, :, hop] = np.where(forward, events[:, :, hop, 5], events[:, :, hop, 4])
+        current = nodes[:, :, hop]
+    gap = moment[:, None, None] * 2 + 1 - events[..., 2]
     b.update(
         walk_x=features(graph, known.shape, ("x", np.where(known, observations, -1), 1.0)),
         walk_mask=array(known),
         walk_gap=array(gap, torch.float32),
-        walk_identity=array(gather.walk_identities(nodes, known)),
+        walk_identity=array(gather.walk_identities(nodes, known, b["partner"])),
     )
     if tokens is not None:
         b["walk_token"] = np.where(known, tokens[nodes], -1)
@@ -523,8 +583,7 @@ def base_inputs(bank, block, window):
         rows = held.numpy("row_index")[first:last][selected]
     local = moment - start
     bounds = np.searchsorted(local, np.arange(n + 1))
-    starts = held.numpy("starts")[first:last]
-    firsts, seconds = held.numpy("first")[first:last], held.numpy("second")[first:last]
+    kinds = held.numpy("row_kind")[first:last]
     b = dict(
         graph=graph,
         start=start,
@@ -544,17 +603,14 @@ def base_inputs(bank, block, window):
         weight=array(bank.weights[rows]),
         series=array(bank.series[rows], torch.long),
         task=features(graph, (m,), ("task", held.numpy("row_task")[first:last], 1.0)),
-        start_x=features(graph, starts.shape, ("x", starts, 1.0)),
-        first=array(firsts, torch.long),
-        second=array(seconds, torch.long),
-        start_index=array(np.where(starts >= 0, starts - lo, -1), torch.long),
+        row_kind=array(kinds, torch.long),
         signal=array(held.numpy("signals")[first:last]),
-        affinity=array(held.numpy("affinity")[first:last]),
-        global_affinity=array(held.numpy("global_affinity")[first:last]),
-        **referred_inputs(window, first, last),
+        **member_inputs(window, first, last),
     )
+    b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
+    b["partner"] = partnered(b["pair"], len(b["member_row"]))
     if tokens is not None:
-        b["root_token"] = array(tokens[np.stack((firsts, seconds), 1)])
+        b["member_token"] = array(tokens[b["member_entity"]])
     if bank.path:
         b.update(
             tau=array(bank.taus[rows]),
@@ -570,15 +626,12 @@ def tree_inputs(b, window):
     graph, start = window.graph, window.start
     held, registry, cfg, tokens = window.held, window.registry, window.cfg, window.tokens
     spec, stream = cfg["graph"], SEED
-    firsts, seconds = b["first"], b["second"]
-    moment = b["row_steps"] + start
-    roots = np.stack((firsts, seconds), 1).reshape(-1).astype(np.int64)
-    cutoffs = np.repeat(moment * 2 + 1, 2)
+    moment = b["row_steps"][b["member_row"]] + start
     b["tree"] = tree(
         graph,
         held,
-        roots,
-        cutoffs,
+        b["member_entity"].astype(np.int64),
+        (moment * 2 + 1).astype(np.int64),
         start * 2,
         neighbors(cfg["model"]),
         cfg["model"]["tree/depth"],
@@ -592,36 +645,45 @@ def tree_inputs(b, window):
 def neighbor_history_inputs(b, window, blocks):
     from .model_spec import neighbors
 
-    graph, start = window.graph, window.start
-    held, cfg, tokens = window.held, window.cfg, window.tokens
-    spec, stream = cfg["graph"], SEED
-    first, last = window.first, window.last
-    selected = b["selected"]
+    tokens = window.tokens
     b.update(
         history_inputs(
-            graph,
-            held,
-            first,
-            last,
-            start,
-            neighbors(cfg["model"]),
-            spec,
-            stream,
+            window,
+            b,
+            neighbors(window.cfg["model"]),
             "structure" in blocks,
-            selected if "history_targets" in blocks else None,
+            b["selected"] if "history_targets" in blocks else None,
         )
     )
     if tokens is not None:
         b["history_token"] = np.where(b["history_ids"] >= 0, tokens[np.maximum(b["history_ids"], 0)], -1)
 
 
-def prepare_context(window):
+def affinity_inputs(b, window):
+    from .period_inputs import profiles
+
+    started = time.perf_counter()
+    held, start = window.held, window.start
+    moment = b["row_steps"] + start
+    b.update(
+        member_affinity=profiles(held, b["member_entity"], 2 * moment[b["member_row"]]),
+        global_affinity=np.asarray(held.numpy("affinity_steps")[moment], np.float32),
+    )
+    LOG.debug(
+        "affinity inputs exit graph=%d members=%d seconds=%.4f",
+        window.graph,
+        len(b["member_row"]),
+        time.perf_counter() - started,
+    )
+
+
+def prepare_context(window, b):
     from .period_inputs import add
     from .periods import enabled
 
     result = {}
     if enabled(window.cfg):
-        add(result, window.graph, window.held, window.first, window.last, window.start, window.cfg)
+        add(result, window, b)
     return result
 
 
@@ -636,24 +698,12 @@ def context_inputs(b, window, blocks, context):
     if "mixed" in blocks:
         mixed_edges(b, window.graph)
     if "period_history" in blocks:
-        history_tokens(
-            b,
-            window.graph,
-            window.held,
-            window.first,
-            window.last,
-            window.start,
-            window.cfg,
-            window.registry,
-            window.tokens,
-        )
+        history_tokens(b, window)
 
 
 def entity_space(b, window, blocks):
     graph, held, start = window.graph, window.held, window.start
-    fields = [
-        key for key in ("first", "second", "entity", "history_ids", "common_ids", "member_entity") if key in b
-    ]
+    fields = [key for key in ("entity", "history_ids", "common_ids", "member_entity") if key in b]
     space = None
     if window.compact:
         ids = [np.asarray(b[key]).reshape(-1) for key in fields]
@@ -703,7 +753,7 @@ def recipe(bank, block, cfg):
     window = Window.open(bank, block, cfg)
     blocks = model_blocks(cfg["model"])
     b = base_inputs(bank, block, window)
-    context = prepare_context(window)
+    context = prepare_context(window, b)
     if "snapshot" in blocks:
         snapshot_inputs(b, window)
     if "lifted" in blocks:
@@ -712,6 +762,8 @@ def recipe(bank, block, cfg):
         mixed_inputs(b, window)
     if "events" in blocks:
         events_inputs(b, window, blocks)
+    if "affinity" in blocks:
+        affinity_inputs(b, window)
     if "tree" in blocks:
         tree_inputs(b, window)
     if "history" in blocks:

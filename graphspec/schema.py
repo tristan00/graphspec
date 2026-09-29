@@ -453,6 +453,12 @@ class Schema:
                 about=about,
             )
         self.tasks = self.asked(held["tasks"])
+        both = [name for name in self.graph if name in self.asked_columns()]
+        if both:
+            raise ValueError(
+                "the columns %s are columns of the graph and of a kind of task, and a task reads the columns of "
+                "its graph in the same places as its own" % ", ".join(both)
+            )
         used = set(self.graph) | set(self.layout()) | set(self.member_columns())
         used |= set(self.inner_columns()) | set(self.within_columns())
         used |= {name for entry in self.edges.values() for name in entry["columns"]}
@@ -1136,6 +1142,7 @@ class Encoding:
         if lacking:
             raise ValueError("the edge tables %s have no relations" % ", ".join(lacking))
         self.layout = schema.layout()
+        self.table = tuple(dict.fromkeys(self.layout + schema.graph))
         if states is not None:
             lacking = [name for name in schema.columns if name not in states]
             if lacking:
@@ -1144,13 +1151,13 @@ class Encoding:
                 name: (0, 0) if states[name] is None else schema.encoder(name).widths(states[name])
                 for name in schema.columns
             }
-            self.values = sum(self.sizes[name][0] for name in self.layout)
+            self.values = sum(self.sizes[name][0] for name in self.table)
             self.held, self.inner = {}, 0
             for kind, held in schema.holds.items():
                 width = HELD.named(held["encoder"]).width(self, held)
                 self.held[kind] = (self.inner, width)
                 self.inner += width
-            self.features = self.values + sum(self.sizes[name][1] for name in self.layout) + self.inner
+            self.features = self.values + sum(self.sizes[name][1] for name in self.table) + self.inner
         LOG.debug(
             "encoding exit columns=%d fitted=%s seconds=%.4f",
             len(self.layout),
@@ -1192,15 +1199,25 @@ class Encoding:
         ]
         return [values for values, _ in parts], [flags for _, flags in parts]
 
-    def nodes(self, codes):
+    def placed(self, codes, graph):
         started = time.perf_counter()
         codes = np.asarray(codes, np.float32).reshape(-1, len(self.layout))
-        values, flags = self.encoded(self.layout, codes)
+        result = np.full((len(codes), len(self.table)), np.nan, np.float32)
+        result[:, : len(self.layout)] = codes
+        if graph is not None:
+            result[:, [self.table.index(name) for name in self.schema.graph]] = np.asarray(graph, np.float32)
+        LOG.debug("encoding placed exit rows=%d seconds=%.4f", len(codes), time.perf_counter() - started)
+        return result
+
+    def nodes(self, codes, graph):
+        started = time.perf_counter()
+        codes = self.placed(codes, graph)
+        values, flags = self.encoded(self.table, codes)
         result = np.concatenate(values + flags + [np.zeros((len(codes), 0), np.float32)], 1)
         LOG.debug("encoding nodes exit rows=%d seconds=%.4f", len(codes), time.perf_counter() - started)
         return result
 
-    def inputs(self, codes, held):
+    def inputs(self, codes, held, graph):
         started = time.perf_counter()
         held = np.asarray(held, np.float32)
         codes = np.asarray(codes, np.float32).reshape(-1, len(self.layout))
@@ -1209,15 +1226,15 @@ class Encoding:
                 "the encoded held graphs of %d rows are of the shape %s, and the schema states a width of %d"
                 % (len(codes), held.shape, self.inner)
             )
-        result = np.concatenate((self.nodes(codes), held), 1)
+        result = np.concatenate((self.nodes(codes, graph), held), 1)
         LOG.debug("encoding inputs exit rows=%d seconds=%.4f", len(codes), time.perf_counter() - started)
         return result
 
-    def origin(self, place, codes):
+    def origin(self, place, codes, graph):
         started = time.perf_counter()
-        edge, codes = 0, np.asarray(codes, np.float32)
+        edge, codes = 0, self.placed(codes, graph)[0]
         for part in (0, 1):
-            for position, name in enumerate(self.layout):
+            for position, name in enumerate(self.table):
                 edge += self.sizes[name][part]
                 if place < edge:
                     kind = self.schema.kind(name)

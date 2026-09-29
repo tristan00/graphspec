@@ -47,21 +47,36 @@ def test_projected_attention_preserves_causality_and_input_gradient(hidden):
 
 def test_walks_accept_every_hidden_width_with_finite_gradients():
     torch.manual_seed(31)
-    registry = SimpleNamespace(features=3, extras={"target": "number"})
+    registry = SimpleNamespace(
+        features=3,
+        extras={"target": "number", "series": ["out"]},
+        references=("unit",),
+        tasks=("ask",),
+        schema=SimpleNamespace(tasks=dict(references=dict(unit=dict(sort="node")))),
+    )
     for hidden in range(1, 129):
         cfg = {
             "graph": {"time/context": 0},
             "model": {"hidden": hidden, "walks/hops": 3, "time/encoding": "log_cosine"},
         }
         net = WalkNet(cfg, registry)
-        values = torch.randn(1, 2, 2, 3, 3, requires_grad=True)
+        values = torch.randn(2, 2, 3, 3, requires_grad=True)
         batch = {
             "walk_x": values,
-            "walk_identity": torch.ones(1, 2, 2, 3, 6),
-            "walk_gap": torch.arange(3).float().expand(1, 2, 2, 3),
-            "walk_mask": torch.tensor([[[[True, True, True], [False, False, False]]] * 2]),
-            "start_x": torch.randn(1, 3, 3),
+            "walk_identity": torch.ones(2, 2, 3, 6),
+            "walk_gap": torch.arange(3).float().expand(2, 2, 3),
+            "walk_mask": torch.tensor([[[True, True, True], [False, False, False]]] * 2),
+            "member_x": torch.randn(2, 3),
+            "member_row": torch.tensor([0, 0]),
+            "member_name": torch.tensor([0, 0]),
+            "member_place": torch.tensor([0, 0]),
+            "whole_row": torch.zeros(0, dtype=torch.long),
+            "whole_name": torch.zeros(0, dtype=torch.long),
+            "whole_x": torch.zeros(0, 3),
+            "predictions": 1,
             "task": torch.randn(1, 3),
+            "row_kind": torch.tensor([0]),
+            "series": torch.tensor([0]),
             "selected": torch.tensor([0]),
         }
         prediction = net(batch)

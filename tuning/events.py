@@ -7,7 +7,9 @@ from torch.nn import functional as F
 from graphspec.infra.timing import timed
 
 from .layers import (
+    Asked,
     Head,
+    References,
     Spatial,
     TemporalEdges,
     TimeEncoding,
@@ -17,6 +19,7 @@ from .layers import (
     masked_weights,
     mean,
     normalization,
+    padded,
 )
 from .periods import EndContext, enabled, lookback
 
@@ -32,6 +35,7 @@ class EventGraphNet(nn.Module):
         if self.has_periods:
             self.period_time = nn.Linear(3, hidden)
         self.input = nn.Linear(registry.features, hidden)
+        self.asked = Asked(registry, hidden)
         self.kind = nn.Embedding(5 if self.has_periods else 4, hidden)
         self.keys = keys_of(spec, hidden)
         self.layers = nn.ModuleList(
@@ -44,6 +48,8 @@ class EventGraphNet(nn.Module):
             )
             for _ in range(spec["event_graph/layers"])
         )
+        self.whole = nn.Linear(registry.features, hidden * 2)
+        self.references = References(registry, hidden * 2, hidden * 3)
         self.head = Head(hidden * 4, spec, registry)
 
     def forward(self, b):
@@ -60,34 +66,42 @@ class EventGraphNet(nn.Module):
         edges = torch.cat((b["dag_edges"], torch.stack((roots, destinations))), 1)
         relation = torch.cat((b["dag_relation"], torch.full_like(destinations, 3)))
         gap = torch.cat((b["dag_gap"], (b["events"][:, 2] - b["start"] * 2 + 1).float().repeat(2)))
+        source, member = b["dag_member_edges"]
+        members = len(b["member_row"])
         if self.has_periods:
-            mask = b["end_raw_mask"].reshape(-1)
-            anchors = self.input(b["end_raw"].reshape(-1, self.features)[mask]) + self.kind.weight[3]
-            anchors = anchors + self.period_time(b["end_token_gaps"].reshape(-1, 3)[mask].log1p())
+            held = b["member_end_mask"]
+            mask = held.reshape(-1)
+            anchors = self.input(b["member_end_raw"].reshape(-1, self.features)[mask]) + self.kind.weight[3]
+            anchors = anchors + self.period_time(b["member_end_gaps"].reshape(-1, 3)[mask].log1p())
             anchor_ids = torch.arange(len(anchors), device=x.device) + len(x)
-            tasks = torch.arange(b["predictions"], device=x.device) + len(x) + len(anchors)
-            source, target = b["dag_row_edges"]
-            anchor_target = tasks[:, None, None].expand(-1, 3, b["end_steps"].shape[1]).reshape(-1)[mask]
+            nodes = torch.arange(members, device=x.device) + len(x) + len(anchors)
+            anchor_target = nodes[:, None].expand(-1, held.shape[1]).reshape(-1)[mask]
             edges = torch.cat(
-                (edges, torch.stack((source, tasks[target])), torch.stack((anchor_ids, anchor_target))), 1
+                (edges, torch.stack((source, nodes[member])), torch.stack((anchor_ids, anchor_target))), 1
             )
             relation = torch.cat(
                 (relation, b["events"][source, 3], torch.full_like(anchor_ids, self.period_context))
             )
+            moment = b["row_steps"][b["member_row"][member]] + b["start"]
             gap = torch.cat(
                 (
                     gap,
-                    ((b["row_steps"][target] + b["start"]) * 2 - b["events"][source, 2]).float(),
-                    b["end_token_gaps"].reshape(-1, 3)[mask, 0],
+                    (moment * 2 - b["events"][source, 2]).float(),
+                    b["member_end_gaps"].reshape(-1, 3)[mask, 0],
                 )
             )
-            x = torch.cat((x, anchors, self.input(b["task"]) + self.kind.weight[4]))
+            x = torch.cat((x, anchors, self.input(b["member_x"]) + self.kind.weight[4]))
         for layer in self.layers:
             x = layer(x, edges, relation, gap)
-        source, destination = b["dag_row_edges"]
-        q = self.input(b["task"])
-        pooled = x[tasks] if self.has_periods else mean(x[source], destination, b["predictions"])
-        features = torch.cat((pooled, self.input(b["start_x"][:, 0]), self.input(b["start_x"][:, 1]), q), -1)
+        pooled = x[nodes] if self.has_periods else mean(x[source], member, members)
+        values = torch.cat((pooled, self.input(b["member_x"])), -1)
+        features = torch.cat(
+            (
+                self.references(b, values, self.whole(b["whole_x"])),
+                self.asked(self.input(b["task"]), b),
+            ),
+            -1,
+        )
         return self.head(features[b["selected"]], b)
 
 
@@ -149,11 +163,10 @@ class MutualRNN(Rule):
 
     def read(self, memory, roots, last, frame_tick=None):
         left, right, observed, _ = memory
-        first, second = roots[:, 0], roots[:, 1]
-        head = left[first]
+        head = left[roots]
         if frame_tick is not None:
-            head = head * (1 + self.projection(torch.log1p((frame_tick - last[first]).clamp_min(0))[:, None]))
-        return torch.stack((head + observed[first], right[second] + observed[second]), 1)
+            head = head * (1 + self.projection(torch.log1p((frame_tick - last[roots]).clamp_min(0))[:, None]))
+        return head + right[roots] + observed[roots]
 
     def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
         left, right, observed, initialized = memory
@@ -249,8 +262,9 @@ class MemoryNet(nn.Module):
         self.attention = not mutual and spec["memory/embedding"] == "attention"
         self.pair_terms = not mutual and spec["memory/pair_terms"]
         if enabled(cfg):
-            self.periods = EndContext(hidden * 2)
+            self.periods = EndContext(hidden)
         self.input = nn.Linear(registry.features, hidden)
+        self.asked = Asked(registry, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.keys = keys_of(spec, hidden)
         if update != "antisymmetric" or self.attention:
@@ -267,36 +281,41 @@ class MemoryNet(nn.Module):
             )
         if self.attention:
             self.query_key, self.query_value = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
-        self.head = Head(hidden * (5 if self.pair_terms else 3), spec, registry)
+        self.whole = nn.Linear(registry.features, hidden)
+        self.references = References(registry, hidden, hidden * 2)
+        self.head = Head(hidden * (7 if self.pair_terms else 3), spec, registry)
 
-    def readout(self, endpoints, neighbors, common, end_values, order, b):
+    def readout(self, values, neighbors, end_values, b):
         if self.attention:
-            values = endpoints + self.input(b["start_x"][order, :2])
-            neighbors = neighbors + self.time(b["history_gap"][order])
-            scores = (self.query_key(values)[:, :, None] * neighbors).sum(-1) / math.sqrt(values.shape[-1])
-            weights = masked_weights(scores, b["history_mask"][order])
-            endpoints = values + (self.query_value(neighbors) * weights[..., None]).sum(2)
+            values = values + self.input(b["member_x"])
+            neighbors = neighbors + self.time(b["history_gap"])
+            scores = (self.query_key(values)[:, None] * neighbors).sum(-1) / math.sqrt(values.shape[-1])
+            weights = masked_weights(scores, b["history_mask"])
+            values = values + (self.query_value(neighbors) * weights[..., None]).sum(1)
         if end_values is not None:
-            endpoints = self.periods(
-                endpoints.flatten(1),
-                end_values.reshape(b["predictions"], lookback(self.cfg), -1)[order],
-                b["end_gaps"][order],
-                b["end_mask"][order],
-            ).reshape(endpoints.shape)
-        if self.pair_terms:
-            ids = b["common_ids"][order]
-            weight = b["common_frequency"][order] * (ids >= 0)
-            counts = b["common_stats"][order]
-            return torch.cat(
-                (
-                    endpoints[:, 0] * endpoints[:, 1],
-                    (common * weight[:, :, None]).sum(1),
-                    endpoints[:, 0] * counts[:, 1, None].log1p(),
-                    endpoints[:, 1] * counts[:, 2, None].log1p(),
-                ),
-                -1,
+            owner = b["member_row"]
+            values = self.periods(
+                values,
+                end_values.reshape(len(owner), lookback(self.cfg), -1),
+                b["end_gaps"][owner],
+                b["end_mask"][owner],
             )
-        return endpoints.flatten(1)
+        return values
+
+    def paired(self, values, common, b):
+        ends = padded(values, b["pair"])
+        ids = b["common_ids"]
+        weight = b["common_frequency"] * (ids >= 0)
+        counts = b["common_stats"]
+        return torch.cat(
+            (
+                ends[:, 0] * ends[:, 1],
+                (common * weight[:, :, None]).sum(1),
+                ends[:, 0] * counts[:, 1, None].log1p(),
+                ends[:, 1] * counts[:, 2, None].log1p(),
+            ),
+            -1,
+        )
 
     def forward(self, b):
         state = self.input(b["initial"]) + self.kind(b["entity_kind"])
@@ -320,24 +339,26 @@ class MemoryNet(nn.Module):
             .index_put_((member, receivers), state.new_ones(len(receivers)), accumulate=True)
             .clamp_min_(1)
         )
-        endpoints, neighbors, common, order = [], [], [], []
+        values, neighbors, common, order, rows = [], [], [], [], []
         context = enabled(self.cfg)
         if context:
-            end_values = state.new_zeros(b["predictions"] * lookback(self.cfg), hidden * 2)
+            end_values = state.new_zeros(len(b["member_row"]) * lookback(self.cfg), hidden)
         previous = b["start"] * 2 - 1
         for time_step in range(b["time_steps"]):
-            step = b["frame_rows"][time_step]
+            step, chosen = b["frame_rows"][time_step], b["frame_members"][time_step]
             tick = (b["start"] + time_step) * 2
             for phase in (0, 1):
                 now = tick + phase
                 if phase:
-                    roots = torch.stack((b["first"][step], b["second"][step]), -1)
-                    endpoints.append(self.rule.read(memory, roots, last, tick))
-                    order.append(step)
+                    values.append(self.rule.read(memory, b["member_entity"][chosen], last, tick))
+                    order.append(chosen)
                     if self.attention:
-                        neighbors.append(self.rule.state(memory)[b["history_ids"][step].long().clamp_min(0)])
+                        neighbors.append(
+                            self.rule.state(memory)[b["history_ids"][chosen].long().clamp_min(0)]
+                        )
                     if self.pair_terms:
                         common.append(self.rule.state(memory)[b["common_ids"][step].long().clamp_min(0)])
+                        rows.append(step)
                 group = groups.get(now)
                 if group is None:
                     continue
@@ -365,20 +386,22 @@ class MemoryNet(nn.Module):
             if context:
                 ids, roots = b["end_capture"][time_step]
                 if len(ids):
-                    prior = self.rule.read(memory, roots, last).reshape(len(ids), -1)
-                    known = b["end_raw_mask"][:, :2].transpose(1, 2).reshape(-1, 2)[ids]
-                    end_values = end_values.index_copy(0, ids, prior * known.repeat_interleave(hidden, -1))
-        order = torch.cat(order)
-        features = self.readout(
-            torch.cat(endpoints),
-            torch.cat(neighbors) if self.attention else None,
-            torch.cat(common) if self.pair_terms else None,
+                    known = b["member_end_mask"].reshape(-1)[ids]
+                    end_values = end_values.index_copy(
+                        0, ids, self.rule.read(memory, roots, last) * known[:, None]
+                    )
+        inverse = torch.argsort(torch.cat(order))
+        values = self.readout(
+            torch.cat(values)[inverse],
+            torch.cat(neighbors)[inverse] if self.attention else None,
             end_values if context else None,
-            order,
             b,
         )
-        features = torch.cat((features, self.input(b["task"][order])), -1)
-        return self.head(features[torch.argsort(order)][b["selected"]], b)
+        parts = [self.references(b, values, self.whole(b["whole_x"]))]
+        if self.pair_terms:
+            parts.append(self.paired(values, torch.cat(common)[torch.argsort(torch.cat(rows))], b))
+        features = torch.cat(parts + [self.asked(self.input(b["task"]), b)], -1)
+        return self.head(features[b["selected"]], b)
 
 
 class ProjectionNet(nn.Module):
@@ -391,12 +414,14 @@ class ProjectionNet(nn.Module):
         if enabled(cfg):
             self.periods = EndContext(hidden)
         self.input = nn.Linear(registry.features, hidden)
+        self.asked = Asked(registry, hidden)
         self.keys = keys_of(spec, hidden)
         self.time = TimeEncoding(hidden, spec["time/encoding"])
-        self.projection = nn.Sequential(
-            nn.Linear((2 * (hops + 1)) ** 2, hidden), nn.SiLU(), normalization(hidden)
-        )
-        self.head = Head(hidden * 4, spec, registry)
+        self.projection = nn.Sequential(nn.Linear((hops + 1) ** 2, hidden), nn.SiLU(), normalization(hidden))
+        self.crossing = nn.Sequential(nn.Linear((hops + 1) ** 2, hidden), nn.SiLU(), normalization(hidden))
+        self.whole = nn.Linear(registry.features, hidden * 2)
+        self.references = References(registry, hidden * 2, hidden * 3)
+        self.head = Head(hidden * 5, spec, registry)
 
     def structural(self, b):
         spec = self.cfg["model"]
@@ -412,22 +437,27 @@ class ProjectionNet(nn.Module):
         state[:, 0] = basis
         groups = {tick: (start, end) for tick, start, end in b["event_groups"]}
         orders = torch.arange(hops + 1, device=basis.device)[None, :, None]
-        previous, output, order = b["start"] * 2, [], []
+        previous, output, order, crossed, rows = b["start"] * 2, [], [], [], []
+        pair = b["pair"]
+        ends = padded(b["member_entity"], pair)
         context = enabled(self.cfg)
         if context:
-            end_values = basis.new_zeros(b["predictions"] * lookback(self.cfg), (2 * (hops + 1)) ** 2)
+            end_values = basis.new_zeros(len(b["member_row"]) * lookback(self.cfg), (hops + 1) ** 2)
         for time_step in range(b["time_steps"]):
-            step = b["frame_rows"][time_step]
+            step, chosen = b["frame_rows"][time_step], b["frame_members"][time_step]
             for phase in (0, 1):
                 tick = (b["start"] + time_step) * 2 + phase
                 state = state * torch.exp(-decay * orders * (tick - previous))
                 previous = tick
                 if phase:
-                    ids = torch.stack((b["first"][step], b["second"][step]), -1)
-                    values = state[ids].reshape(len(step), 2 * (hops + 1), width)
+                    values = state[b["member_entity"][chosen]]
                     gram = values @ values.transpose(1, 2)
                     output.append((gram.sign() * gram.abs().log1p()).flatten(1))
-                    order.append(step)
+                    order.append(chosen)
+                    held = state[ends[step]]
+                    gram = (held[:, 0] @ held[:, 1].transpose(1, 2)) * (pair[step, :1] >= 0)[..., None]
+                    crossed.append((gram.sign() * gram.abs().log1p()).flatten(1))
+                    rows.append(step)
                 group = groups.get(tick)
                 if group:
                     start, end = group
@@ -441,25 +471,36 @@ class ProjectionNet(nn.Module):
             if context:
                 ids, roots = b["end_capture"][time_step]
                 if len(ids):
-                    values = state[roots].reshape(len(ids), 2 * (hops + 1), width)
+                    values = state[roots]
                     gram = values @ values.transpose(1, 2)
                     end_values = end_values.index_copy(
                         0, ids, (gram.sign() * gram.abs().log1p()).reshape(len(ids), -1)
                     )
         current = torch.cat(output)[torch.argsort(torch.cat(order))]
-        return (current, end_values.reshape(b["predictions"], lookback(self.cfg), -1)) if context else current
+        cross = torch.cat(crossed)[torch.argsort(torch.cat(rows))]
+        if not context:
+            return current, None, cross
+        return current, end_values.reshape(len(b["member_row"]), lookback(self.cfg), -1), cross
 
     def forward(self, b):
-        values = self.structural(b)
-        if enabled(self.cfg):
+        current, ended, cross = self.structural(b)
+        structural = self.projection(current)
+        if ended is not None:
+            owner = b["member_row"]
             structural = self.periods(
-                self.projection(values[0]), self.projection(values[1]), b["end_gaps"], b["end_mask"]
+                structural, self.projection(ended), b["end_gaps"][owner], b["end_mask"][owner]
             )
-        else:
-            structural = self.projection(values)
         history = self.input(b["history_x"]) + self.time(b["history_gap"])
-        roots = self.input(b["start_x"][:, :2]) + masked_mean(history, b["history_mask"], 2)
+        roots = self.input(b["member_x"]) + masked_mean(history, b["history_mask"], 1)
         if self.keys is not None:
-            roots = roots + self.keys(b["entity_token"][torch.stack((b["first"], b["second"]), 1)])
-        features = torch.cat((roots.reshape(b["predictions"], -1), structural, self.input(b["task"])), -1)
+            roots = roots + self.keys(b["entity_token"][b["member_entity"]])
+        members = torch.cat((roots, structural), -1)
+        features = torch.cat(
+            (
+                self.references(b, members, self.whole(b["whole_x"])),
+                self.crossing(cross) * (b["pair"][:, :1] >= 0),
+                self.asked(self.input(b["task"]), b),
+            ),
+            -1,
+        )
         return self.head(features[b["selected"]], b)

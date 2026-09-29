@@ -13,7 +13,7 @@ from graphspec.infra.timing import timed
 from graphspec.view import STEPS
 
 from . import objective
-from .model_spec import TRAINING, contextual, describe, groups
+from .model_spec import TRAINING, describe, groups
 from .model_spec import space as model_space
 from .records import Run, Status
 
@@ -53,9 +53,7 @@ def stepped(registry, parameters):
 
 
 def graph_space(registry, model, bounds):
-    return contextual(
-        registry, model["view"], stepped(registry, narrow_group(specs.space(registry, groups(model)), bounds))
-    )
+    return stepped(registry, narrow_group(specs.space(registry, groups(model)), bounds))
 
 
 def spaces(registry, bounds):
@@ -93,11 +91,7 @@ def check_bounds(registry, bounds):
     if unknown:
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
     specs.narrow(model_space(registry) + TRAINING + specs.space(registry, specs.GROUPS), bounds)
-    graph = stepped(registry, narrow_group(specs.space(registry, ()), bounds))
-    for parameter in narrow_group(model_space(registry), bounds):
-        if parameter.name == "view":
-            for family in parameter.options:
-                contextual(registry, family, graph)
+    stepped(registry, narrow_group(specs.space(registry, ()), bounds))
 
 
 def training(config):

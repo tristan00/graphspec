@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 from graphspec.infra.timing import timed
 
-from .layers import Head, normalization
+from .layers import Asked, Head, References, normalization
 from .periods import EndContext, enabled
 
 
@@ -31,7 +31,10 @@ class SignalNet(nn.Module):
         self.mix = nn.ModuleList(nn.Linear(hidden * (1 + 2 * self.mix_hops), hidden) for _ in self.convs)
         self.norms = nn.ModuleList(normalization(hidden) for _ in self.convs)
         self.task = nn.Linear(registry.features, hidden)
-        self.head = Head(hidden * 2, spec, registry)
+        self.asked = Asked(registry, hidden)
+        self.member = nn.Linear(registry.features, hidden)
+        self.references = References(registry, hidden, hidden)
+        self.head = Head(hidden * 3, spec, registry)
 
     def adjacency(self):
         left, right = self.left_map(self.left).tanh(), self.right_map(self.right).tanh()
@@ -57,7 +60,16 @@ class SignalNet(nn.Module):
                     current = 0.05 * temporal + 0.95 * torch.einsum("ij,btjh->btih", support, current)
                     states.append(current)
             h = norm(h + mix(torch.cat(states, -1)))
-        values = h.mean(2).reshape(b["frames"], -1)
+        frames = h.mean(2).reshape(b["frames"], -1)
+        values = frames[b["row_frames"]]
         if self.has_periods:
-            values = self.periods(values, values[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"])
-        return self.head(torch.cat((values, self.task(b["task"])), -1)[b["selected"]], b)
+            values = self.periods(values, frames[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"])
+        features = torch.cat(
+            (
+                values,
+                self.references(b, self.member(b["member_x"]), values[b["whole_row"]]),
+                self.asked(self.task(b["task"]), b),
+            ),
+            -1,
+        )
+        return self.head(features[b["selected"]], b)

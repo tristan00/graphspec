@@ -56,6 +56,5 @@ class EndContext(nn.Module):
         return current + update * mask.any(1)[:, None]
 
 
-def gather_end(sequence, entities, b):
-    times = b["end_steps"].clamp_min(0) % b["time_steps"]
-    return sequence[times, entities[:, None]]
+def gather_end(sequence, entities, steps, time_steps):
+    return sequence[steps.clamp_min(0) % time_steps, entities[:, None]]

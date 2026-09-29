@@ -4,7 +4,7 @@ from torch.nn import functional as F
 
 from graphspec.infra.timing import timed
 
-from .layers import Head, keys_of, normalization, segment_softmax
+from .layers import Asked, Head, References, keys_of, normalization, segment_softmax
 
 CODE_BITS = 14
 
@@ -57,7 +57,11 @@ class MixedNet(nn.Module):
             MessageLayer(hidden, spec["mixed/aggregation"], spec["mixed/update"], spec["dropout"])
             for _ in range(spec["mixed/layers"])
         )
-        self.head = Head(hidden, spec, registry)
+        self.task = nn.Linear(registry.features, hidden)
+        self.asked = Asked(registry, hidden)
+        self.whole = nn.Linear(registry.features, hidden)
+        self.references = References(registry, hidden, hidden)
+        self.head = Head(hidden * 2, spec, registry)
         self.register_buffer("shifts", torch.arange(CODE_BITS), persistent=False)
 
     def forward(self, b):
@@ -68,4 +72,11 @@ class MixedNet(nn.Module):
         edge = torch.cat((((mixed["edge_code"][:, None] >> self.shifts) & 1).float(), mixed["edge_gap"]), 1)
         for layer in self.layers:
             h = layer(h, mixed["edge_index"], edge)
-        return self.head(h[mixed["row"]][b["selected"]], b)
+        features = torch.cat(
+            (
+                self.references(b, h[mixed["row"]], self.whole(b["whole_x"])),
+                self.asked(self.task(b["task"]), b),
+            ),
+            -1,
+        )
+        return self.head(features[b["selected"]], b)

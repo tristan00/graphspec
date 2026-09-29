@@ -121,9 +121,7 @@ def test_joined_windows_use_their_own_entities(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     for block in opened.blocks(0, 4, cfg)[:12]:
         b = recipe(opened, block, cfg)
-        ids = np.concatenate(
-            [np.asarray(b[key]).reshape(-1) for key in ("first", "second")] + [b["events"][:, :2].reshape(-1)]
-        )
+        ids = np.concatenate([np.asarray(b["member_entity"]), b["events"][:, :2].reshape(-1)])
         assert (
             b["entities"] == len(np.unique(ids[ids >= 0])) < len(opened.arrays(block[0], cfg)["entity_kind"])
         )

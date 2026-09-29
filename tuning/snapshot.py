@@ -4,6 +4,7 @@ from torch import nn
 from graphspec.infra.timing import timed
 
 from .layers import (
+    Asked,
     CausalAttention,
     EvolvingLayer,
     GatedTCN,
@@ -28,13 +29,17 @@ class SnapshotNet(nn.Module):
         self.cfg, self.temporal_mode = cfg, spec["snapshot/temporal"]
         hidden = spec["hidden"]
         coupling = self.temporal_mode == "coupling_edges"
+        self.context = enabled(cfg) and not coupling
         if coupling:
             self.period_edge_time = nn.Linear(1, hidden, bias=False)
-        elif enabled(cfg):
-            self.periods = EndContext(hidden * 3)
+        elif self.context:
+            self.periods = EndContext(hidden)
+            if self.temporal_mode == "graph_sequence":
+                self.frames = EndContext(hidden)
         self.input = nn.Sequential(nn.Linear(registry.features, hidden), normalization(hidden), nn.SiLU())
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.task = nn.Linear(registry.features, hidden)
+        self.asked = Asked(registry, hidden)
         self.keys = keys_of(spec, hidden)
         attributes = {name: registry.attribute_width(name) for name in registry.attributed}
         self.widths = list(attributes.values())
@@ -91,31 +96,43 @@ class SnapshotNet(nn.Module):
                 for _ in range(spec["snapshot/temporal_layers"])
             )
             self.final_spatial = Spatial(hidden, "mean", registry.relations, {}, spec["dropout"])
-        self.references = None if enabled(cfg) else References(registry, hidden, hidden * 3)
+        self.references = References(registry, hidden, hidden * 3)
         self.head = Head(hidden * 4, spec, registry)
 
-    def referred(self, h, sequence, b):
-        values = {}
-        rows = b["row_frames"]
-        for name, held in b["references"].items():
-            owner = held["row"]
-            if "index" not in held and sequence is None:
-                values[name] = (owner, mean(h, b["step"], b["frames"])[rows[owner]])
-            elif "index" not in held:
-                shown = b["present"].to(sequence.dtype)
-                size = (sequence.shape[0], b["batch_size"])
-                total = sequence.new_zeros(size + sequence.shape[-1:]).index_add_(
-                    1, b["entity_batch"], sequence * shown[..., None]
-                )
-                count = sequence.new_zeros(size).index_add_(1, b["entity_batch"], shown)
-                pooled = total / count.clamp_min(1)[..., None]
-                values[name] = (owner, pooled[b["row_steps"][owner], rows[owner] // b["time_steps"]])
-            elif sequence is None:
-                known = held["index"] >= 0
-                values[name] = (owner[known], h[held["index"][known]])
-            else:
-                values[name] = (owner, sequence[b["row_steps"][owner], held["entity"]])
-        return self.references(b["predictions"], values)
+    def values(self, h, sequence, b):
+        rows, whole = b["row_frames"], b["whole_row"]
+        if sequence is None:
+            return h[b["member_index"]], mean(h, b["step"], b["frames"])[rows[whole]]
+        shown = b["present"].to(sequence.dtype)
+        size = (sequence.shape[0], b["batch_size"])
+        total = sequence.new_zeros(size + sequence.shape[-1:]).index_add_(
+            1, b["entity_batch"], sequence * shown[..., None]
+        )
+        count = sequence.new_zeros(size).index_add_(1, b["entity_batch"], shown)
+        pooled = total / count.clamp_min(1)[..., None]
+        return (
+            sequence[b["row_steps"][b["member_row"]], b["member_entity"]],
+            pooled[b["row_steps"][whole], rows[whole] // b["time_steps"]],
+        )
+
+    def previous(self, h, sequence, b):
+        known = b["member_end_local"]
+        if sequence is None:
+            past = torch.cat((h, h.new_zeros(1, h.shape[-1])))[torch.where(known >= 0, known, len(h))]
+        else:
+            owner = b["member_row"]
+            past = gather_end(sequence, b["member_entity"], b["end_steps"][owner], b["time_steps"])
+        past = torch.where((known >= 0)[..., None], past, self.input(b["member_end_raw"]))
+        return past * b["member_end_mask"][..., None]
+
+    def referred(self, h, sequence, b, later):
+        members, whole = self.values(h, sequence, b)
+        if self.context:
+            owner = b["member_row"]
+            members = self.periods(
+                members, self.previous(later, sequence, b), b["end_gaps"][owner], b["end_mask"][owner]
+            )
+        return self.references(b, members, whole)
 
     def graph_sequence(self, h, b):
         seen = b["frame_starts"]
@@ -209,60 +226,21 @@ class SnapshotNet(nn.Module):
 
     def forward(self, b):
         h = self.observed(b["unique"])[b["expand"]] if "unique" in b else self.observed(b)
-        q = self.task(b["task"])
+        q = self.asked(self.task(b["task"]), b)
         width = h.shape[-1]
         if self.temporal_mode == "graph_sequence":
             before = h
             h, sequence = self.graph_sequence(h, b)
-            if self.references is not None:
-                held = self.referred(before, None, b)
-                features = torch.cat((held[:, :width] + sequence[b["row_frames"]], held[:, width:], q), -1)
-            else:
-                first, second = before[b["start_index"][:, 0]], before[b["start_index"][:, 1]]
-                features = torch.cat((sequence[b["row_frames"]], first, second, q), -1)
+            frame = sequence[b["row_frames"]]
+            if self.context:
+                frame = self.frames(
+                    frame, sequence[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"]
+                )
+            held = self.referred(before, None, b, h)
+            features = torch.cat((held[:, :width] + frame, held[:, width:], q), -1)
         elif self.temporal_mode == "coupling_edges":
             h = self.coupling(h, b)
-            if self.references is not None:
-                features = torch.cat((self.referred(h, None, b), q), -1)
-            else:
-                features = torch.cat(
-                    (h[b["start_index"][:, 0]], h[b["start_index"][:, 1]], h[b["start_index"][:, 2]], q), -1
-                )
-            return self.head(features[b["selected"]], b)
+            features = torch.cat((self.referred(h, None, b, h), q), -1)
         else:
-            sequence = self.entity_sequence(h, b)
-            if self.references is not None:
-                features = torch.cat((self.referred(h, sequence, b), q), -1)
-            else:
-                index = b["row_steps"]
-                context = b["entity"][b["start_index"][:, 2]]
-                features = torch.cat(
-                    (
-                        sequence[index, b["first"]],
-                        sequence[index, b["second"]],
-                        sequence[index, context],
-                        q,
-                    ),
-                    -1,
-                )
-        if enabled(self.cfg):
-            if self.temporal_mode == "graph_sequence":
-                historical = sequence[b["end_steps"].clamp_min(0)]
-                known = b["end_observation_local"][:, :, :2]
-                padded = torch.cat((h, h.new_zeros(1, width)))
-                past = padded[torch.where(known >= 0, known, len(h))]
-                raw = self.input(b["end_raw"][:, :2]).permute(0, 2, 1, 3)
-                past = torch.where((known >= 0)[..., None], past, raw)
-                past = past * b["end_raw_mask"][:, :2].transpose(1, 2)[..., None]
-                previous = torch.cat((historical, past.reshape(b["predictions"], -1, width * 2)), -1)
-            else:
-                previous = torch.cat(
-                    [gather_end(sequence, ids, b) for ids in (b["first"], b["second"], context)], -1
-                )
-                raw = self.input(b["end_raw"]).permute(0, 2, 1, 3).reshape_as(previous)
-                known = (b["end_observation_local"] >= 0).repeat_interleave(width, -1)
-                previous = torch.where(known, previous, raw)
-                previous = previous * b["end_raw_mask"].transpose(1, 2).repeat_interleave(width, -1)
-            first = self.periods(features[:, : 3 * width], previous, b["end_gaps"], b["end_mask"])
-            features = torch.cat((first, q), -1)
+            features = torch.cat((self.referred(h, self.entity_sequence(h, b), b, h), q), -1)
         return self.head(features[b["selected"]], b)

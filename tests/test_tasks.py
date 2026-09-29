@@ -20,7 +20,7 @@ from graphspec.truth import Facts, Graph
 from graphspec.view import Looking
 from tuning.build import build
 from tuning.data import Deriver
-from tuning.model_spec import VIEWS, configuration, readable, reading, refusal, views
+from tuning.model_spec import VIEWS, configuration, views
 from tuning.statement import state
 from tuning.training import fit
 
@@ -362,13 +362,21 @@ def test_kinds_state_one_and_five_references_of_every_sort(bank):
     assert (truth.member_code[members] >= 0).tolist() == [False, True, False, False, True, True, False, True]
     found = {name: 0 for name in names}
     for batch in batched(held, cfg):
-        assert set(batch["references"]) == set(names)
-        assert set(batch["references"]["whole"]) == {"row"}
-        assert set(batch["references"]["route"]) == {"row", "entity", "index"}
-        assert len(batch["references"]["route"]["row"]) == 2 * len(batch["references"]["link"]["row"])
-        assert 2 * len(batch["references"]["part"]["row"]) == 3 * len(batch["references"]["link"]["row"])
-        for name, members in batch["references"].items():
-            found[name] += len(members["row"])
+        counted = {
+            name: int((batch["member_name"] == code).sum()) + int((batch["whole_name"] == code).sum())
+            for code, name in enumerate(names)
+        }
+        assert set(batch["whole_name"].tolist()) <= {names.index("whole")}
+        assert counted["route"] == 2 * counted["link"] and 2 * counted["part"] == 3 * counted["link"]
+        route = batch["member_name"] == names.index("route")
+        rows = batch["member_row"][route]
+        assert batch["member_place"][route].tolist() == [0, 1, 2, 3] * len(np.unique(rows))
+        assert not batch["member_place"][~route].any()
+        wide, pair = batch["row_kind"] == held.registry.tasks.index("wide"), batch["pair"]
+        assert (pair[~wide] == -1).all() and (batch["member_name"][pair[wide]] == names.index("link")).all()
+        assert (batch["partner"][pair[wide][:, 0]] == pair[wide][:, 1]).all()
+        for name, count in counted.items():
+            found[name] += count
     assert all(found[name] > 0 for name in names if name != "couple") and found["couple"] == 0
 
 
@@ -509,14 +517,15 @@ def test_a_reference_to_a_node_not_observed_resolves_as_its_kind_states(bank):
     arrays = held.arrays(
         next(entry["index"] for entry in held.viewed(cfg).graphs if entry["split"] == -1), cfg
     )
+    owner, entity = np.asarray(arrays["member_row"]), np.asarray(arrays["member_entity"])
     rows = np.flatnonzero(np.asarray(arrays["row_step"]) == 2)
-    wide = rows[np.asarray(arrays["first"])[rows] == view.keys.index("m2")]
-    assert len(wide) == 1 and np.asarray(arrays["starts"])[wide[0], 0] == -1
-    members = np.flatnonzero(np.asarray(arrays["member_row"]) == wide[0])
+    unit = np.isin(owner, rows) & (np.asarray(arrays["member_name"]) == names.index("unit"))
+    wide = np.unique(owner[unit & (entity == view.keys.index("m2"))])
+    assert len(wide) == 1
+    members = np.flatnonzero(owner == wide[0])
     absent = np.asarray(arrays["member_observed"])[members] < 0
-    assert absent.sum() == 1 and np.asarray(arrays["member_entity"])[members][absent].tolist() == [
-        view.keys.index("m2")
-    ]
+    assert absent.sum() == 1 and entity[members][absent].tolist() == [view.keys.index("m2")]
+    assert all((batch["member_index"] >= 0).all() for batch in batched(held, cfg))
     with pytest.raises(
         ValueError,
         match="the reference unit of the task 11 of the kind wide of graph one names a node not observed "
@@ -561,49 +570,22 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
     assert names["nodes/referenced"].options == ("keep",)
 
 
-def test_a_family_asked_to_read_a_reference_it_cannot_stops_naming_it_and_is_not_offered(bank):
-    held, cfg = opened(bank)
-    assert views(held.registry) == ("snapshot",)
-    for family in VIEWS[:8]:
-        assert (refusal(held.registry, family, reading(family, 0)) is None) == (family == "snapshot")
-    readable(held.registry, cfg)
-    assert refusal(held.registry, "tree", reading("tree", 0)) == (
-        "the family tree reads references of the sorts node and cannot read the reference whole "
-        "of the kind of task total, which is of the sort graph"
-    )
-    with pytest.raises(ValueError, match=r"view must be one of \['snapshot'\], found 'tree'"):
-        configuration(held.registry, dict(view="tree"), {}, 5, copy.deepcopy(SPLITS))
-    context = configuration(
-        held.registry, dict(view="snapshot"), {"time/context": 1}, 5, copy.deepcopy(SPLITS)
-    )
-    with pytest.raises(ValueError, match="the family snapshot reads references of the sorts node"):
-        readable(held.registry, context)
-
-
-def test_a_search_offers_a_family_only_under_the_contexts_it_reads_every_kind_of_task_under(bank):
+def test_a_search_offers_every_family_under_every_context_for_references_of_every_sort(bank):
     from tuning.model_spec import configured
     from tuning.selector import check_bounds, graph_space, random_suggest
     from tuning.space import Space
 
     held, _ = opened(bank)
-    registry, strict = held.registry, support.registry("strict", ["maker"], [])
-    ranges = {}
-    for name, given in (("bank", registry), ("strict", strict)):
-        found = {p.name: p for p in graph_space(given, configured(given, dict(view="snapshot")), {})}
-        ranges[name] = (found["time/context"].low, found["time/context"].high)
-    assert ranges == dict(bank=(0, 0), strict=(0, 3))
-    for seed in range(6):
-        config, _ = random_suggest(registry, seed, seed, {}, 600)
-        assert config["model"]["view"] == "snapshot" and config["graph"]["time/context"] == 0
-        readable(registry, config)
+    registry = held.registry
+    assert views(registry) == VIEWS[:8]
+    for family in VIEWS[:8]:
+        found = {p.name: p for p in graph_space(registry, configured(registry, dict(view=family)), {})}
+        assert (found["time/context"].low, found["time/context"].high) == (0, 3)
+    drawn = [random_suggest(registry, seed, seed, {}, 600)[0] for seed in range(12)]
+    assert len({config["model"]["view"] for config in drawn}) > 1
     space, rng = Space(registry, {}, 600, []), np.random.default_rng(5)
-    assert {space.draw(rng, 0, {})["graph"]["time/context"] for _ in range(12)} == {0}
-    with pytest.raises(
-        ValueError,
-        match="the family snapshot reads the tasks of the bank %s under no time/context from 1 to 3: the family "
-        "snapshot reads references of the sorts node and cannot read the reference whole" % registry.name,
-    ):
-        check_bounds(registry, {"time/context": {"low": 1, "high": 3}})
+    assert len({space.draw(rng, 0, {})["graph"]["time/context"] for _ in range(12)}) > 1
+    check_bounds(registry, {"time/context": {"low": 1, "high": 3}})
 
 
 @pytest.fixture

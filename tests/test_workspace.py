@@ -7,7 +7,7 @@ from graphspec.infra.arrays import MappedRows, join_tensors
 from graphspec.infra.files import ArrayStore, save_arrays
 from graphspec.representations import periods
 from graphspec.resources import GraphBudget, GraphLimits
-from tuning.period_inputs import prior_rows
+from tuning.period_inputs import prior_rows, profiles
 
 
 def test_sparse_period_lookup_matches_dense_history():
@@ -20,23 +20,27 @@ def test_sparse_period_lookup_matches_dense_history():
         observation_ids=np.argsort(entity, kind="stable").astype(np.int32),
         entity=entity,
         step=step,
-        events=np.array([[2, 0, 0, 2, 0, 0, 1], [0, 0, 6, 2, 0, 0, 2]]),
+        events=np.array([[2, 0, 1, 2, 0, 0, 1], [0, 0, 7, 2, 0, 0, 2], [2, 1, 9, 2, 0, 0, 1], [2, 1, 4, 1, 0, 0, 0]]),
     )
-    arrays.update(periods(arrays, GraphBudget(GraphLimits("cpu"))))
+    arrays.update(periods(arrays, 3, GraphBudget(GraphLimits("cpu"))))
     held = SimpleNamespace(numpy=arrays.__getitem__)
-    for first in (False, True):
-        expected = np.full((3, 5), -1, np.int32)
-        for period in range(3):
-            if first:
-                for row in arrays["events"]:
-                    if row[2] // 2 <= arrays["period_ends"][period]:
-                        expected[period, row[0]] = row[2] // 2
-            else:
-                for row, (owner, moment) in enumerate(zip(entity, step)):
-                    if moment <= arrays["period_ends"][period]:
-                        expected[period, owner] = row
-        actual = prior_rows(held, np.arange(3)[:, None], np.arange(5)[None, :], first)
-        np.testing.assert_array_equal(actual, expected)
+    expected = np.full((3, 5), -1, np.int32)
+    for period in range(3):
+        for row, (owner, moment) in enumerate(zip(entity, step)):
+            if moment <= arrays["period_ends"][period]:
+                expected[period, owner] = row
+    np.testing.assert_array_equal(prior_rows(held, np.arange(3)[:, None], np.arange(5)[None, :]), expected)
+    tasks = arrays["events"][arrays["events"][:, 3] == 2]
+    for owner in range(5):
+        for moment in range(14):
+            wanted = np.zeros(3, np.float32)
+            for row in tasks[(tasks[:, 0] == owner) & (tasks[:, 2] < moment)]:
+                wanted[row[6]] += 1
+            np.testing.assert_array_equal(profiles(held, owner, moment), wanted)
+    totals = np.zeros((7, 3), np.float32)
+    for row in tasks:
+        totals[row[2] // 2 + 1 :, row[6]] += 1
+    np.testing.assert_array_equal(arrays["affinity_steps"], totals)
 
 
 def test_disk_workspace_preserves_row_operations_and_cleans_files(tmp_path, monkeypatch):

@@ -49,7 +49,6 @@ from .representations import (
     observation_boundaries,
     observed_features,
     periods,
-    rooted,
     walk_arrays,
 )
 from .resources import GraphBudget
@@ -430,12 +429,13 @@ def event_segment(own, spec, registry, context, budget):
     return result
 
 
-def walk_segment(own, spec, seed, context, budget, name):
-    moments = own["row_step"].astype(np.int64)
-    roots = rooted(own["first"], own["second"], name)
+def walk_segment(own, spec, seed, context, budget):
+    local = own["member_row"].astype(np.int64) - context.rows0
+    moments = own["row_step"].astype(np.int64)[local]
+    roots = own["member_entity"].astype(np.int64)
     first = np.concatenate(context.period_starts + [own["period_starts"]])
     last = np.concatenate(context.period_ends + [own["period_ends"]])
-    prior = own["row_group"][:, None].astype(np.int64) - np.arange(1, PERIOD_LOOKBACK + 1)
+    prior = own["row_group"][local][:, None].astype(np.int64) - np.arange(1, PERIOD_LOOKBACK + 1)
     floor = np.inf
     if len(moments):
         floor = min(floor, int(np.maximum(0, (moments - spec["walks/window"] + 1) * 2).min()))
@@ -636,14 +636,10 @@ def own_arrays(arrays, carry, context, graph, spec):
         event_first=mapped(glob, arrays["event_first"].astype(np.int64)),
         event_task=(arrays["event_task"] + context.tasks0).astype(np.int32),
         event_step=(arrays["event_step"] + step0).astype(np.int32),
-        first=mapped(glob, arrays["first"]),
-        second=mapped(glob, arrays["second"]),
-        starts=shifted(arrays["starts"], obs0).reshape(-1, arrays["starts"].shape[1]),
         row_step=(arrays["row_step"] + step0).astype(np.int32),
         row_task=(arrays["row_task"] + context.tasks0).astype(np.int32),
+        row_kind=arrays["row_kind"],
         events=events.astype(np.int32),
-        affinity=arrays["affinity"],
-        global_affinity=arrays["global_affinity"],
         signals=arrays["signals"],
         row_index=arrays["row_index"],
         key=arrays["key"],
@@ -652,6 +648,7 @@ def own_arrays(arrays, carry, context, graph, spec):
         member_name=arrays["member_name"],
         member_entity=mapped(glob, arrays["member_entity"]),
         member_observed=shifted(arrays["member_observed"], obs0),
+        member_place=arrays["member_place"],
         whole_row=(arrays["whole_row"] + context.rows0).astype(np.int32),
         whole_name=arrays["whole_name"],
         **{name: value for name, value in arrays.items() if name.startswith("attributes_")},
@@ -692,7 +689,7 @@ def represent_segment(carry, graph, registry, spec, groups, seed, limits, state,
         work["member"] = event_members(own["events"], spec)
         piece.update(event_segment(work, spec, registry, context, budget))
     if "walks" in groups:
-        piece.update(walk_segment(work, spec, seed, context, budget, graph.name))
+        piece.update(walk_segment(work, spec, seed, context, budget))
     if "mixed" in groups:
         piece.update(mixed_segment(graph, arrays, link, spec, context, state, budget, registry.values))
     rows, count = len(own["entity"]), len(own["events"])
@@ -825,7 +822,7 @@ def stitched_arrays(plan, arrays, tables, registry, spec, groups, limits, contex
         spatial_code_offsets=spatial_code_offsets,
     )
     budget = GraphBudget(limits)
-    arrays.update(periods(arrays, budget))
+    arrays.update(periods(arrays, len(registry.events), budget))
     if "neighbors" in groups or "walks" in groups:
         arrays.update(neighbors(arrays, spec))
     if destination is not None:

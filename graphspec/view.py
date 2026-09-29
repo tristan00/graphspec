@@ -660,6 +660,7 @@ def finished(shown, registry, inner):
             registry,
             shown.obs_values,
             inner[entity],
+            None,
             lambda row: (
                 "the node %s of the kind %s in the view of graph %s"
                 % (shown.keys[entity[row]], registry.nodes[kinds[entity[row]]], shown.name)
@@ -669,6 +670,9 @@ def finished(shown, registry, inner):
             registry,
             shown.task_values,
             unheld(registry, len(shown.task_key)),
+            np.broadcast_to(
+                np.asarray(shown.graph_values), (len(shown.task_key), len(registry.schema.graph))
+            ),
             lambda row: (
                 "the task %d of the kind %s in the view of graph %s"
                 % (shown.task_key[row], tasks[shown.task_kind[row]], shown.name)

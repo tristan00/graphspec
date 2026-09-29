@@ -124,8 +124,8 @@ class TrainingSession:
 
         from graphspec.infra.arrays import RESIDENT
 
-        from .data import Bank, Deriver
-        from .model_spec import describe, readable
+        from .data import Deriver
+        from .model_spec import describe
         from .models import build
         from .variants import prepare
 
@@ -135,7 +135,6 @@ class TrainingSession:
         self.device = stated.device
         self.cuda = compute.require(self.device).type == "cuda"
         self.budget: FitBudget = budget
-        readable(Bank(bank_directory).registry, config)
         with self.budget.measure("graph_prepare"):
             prepare(bank_directory, config, stated.workers, self.device, self.directory / "timing_workers")
         self.budget.check()

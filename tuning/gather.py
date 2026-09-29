@@ -257,9 +257,9 @@ def history(
     neighbor_ids,
     neighbor_offsets,
     ticks,
-    firsts,
-    seconds,
-    row_step,
+    roots,
+    others,
+    moments,
     start,
     count,
     mode,
@@ -269,61 +269,54 @@ def history(
     structure,
     selected,
 ):
-    rows = len(firsts)
-    observed = np.full((rows, 2, count), -1, np.int64)
-    interaction = np.zeros((rows, 2, count), np.bool_)
-    task_row = np.zeros((rows, 2, count), np.int64)
-    mask = np.zeros((rows, 2, count), np.bool_)
-    gap = np.zeros((rows, 2, count), np.float32)
-    ids = np.full((rows, 2, count), -1, np.int32)
-    structural = np.zeros((rows, 2, count, 12), np.float32)
-    common_ids = np.full((rows, count), -1, np.int32)
-    common_frequency = np.zeros((rows, count), np.float32)
-    common_stats = np.zeros((rows, 4), np.float32)
-    pair_gaps = np.zeros((rows, count), np.float32)
-    pair_mask = np.zeros((rows, count), np.bool_)
+    members = len(roots)
+    observed = np.full((members, count), -1, np.int64)
+    interaction = np.zeros((members, count), np.bool_)
+    task_row = np.zeros((members, count), np.int64)
+    mask = np.zeros((members, count), np.bool_)
+    gap = np.zeros((members, count), np.float32)
+    ids = np.full((members, count), -1, np.int32)
+    structural = np.zeros((members, count, 12), np.float32)
     scratch = np.empty(count, np.int32)
     floor = start * 2
-    for i in range(rows):
+    for i in range(members):
         if not selected[i]:
             continue
         memo = Dict.empty(key_type=types.int64, value_type=types.int64[:])
-        roots = (np.int64(firsts[i]), np.int64(seconds[i]))
-        cutoff = np.int64(row_step[i]) * 2 + 1
-        first_events = np.empty(0, np.int32)
-        for side in range(2):
-            root = roots[side]
-            size = neighbors(
-                neighbor_ids,
-                neighbor_offsets,
-                ticks,
-                root,
-                cutoff,
-                floor,
-                count,
-                mode,
-                decay,
-                seed,
-                stream,
-                scratch,
-            )
-            chosen = scratch[:size].copy()
-            if side == 0:
-                first_events = chosen
-            for slot in range(size):
-                event = chosen[slot]
-                forward = events[event, 0] == root
-                ids[i, side, slot] = events[event, 1] if forward else events[event, 0]
-                observed[i, side, slot] = events[event, 5] if forward else events[event, 4]
-                interaction[i, side, slot] = events[event, 3] == 2
-                task_row[i, side, slot] = events[event, 7]
-                mask[i, side, slot] = True
-                gap[i, side, slot] = cutoff - events[event, 2]
-                if structure:
-                    column = 0
-                    for end in range(2):
-                        endpoint = np.int64(events[event, end])
-                        for which in range(2):
+        root = np.int64(roots[i])
+        anchors = (root, np.int64(others[i]))
+        cutoff = np.int64(moments[i]) * 2 + 1
+        size = neighbors(
+            neighbor_ids,
+            neighbor_offsets,
+            ticks,
+            root,
+            cutoff,
+            floor,
+            count,
+            mode,
+            decay,
+            seed,
+            stream,
+            scratch,
+        )
+        chosen = scratch[:size].copy()
+        for slot in range(size):
+            event = chosen[slot]
+            forward = events[event, 0] == root
+            ids[i, slot] = events[event, 1] if forward else events[event, 0]
+            observed[i, slot] = events[event, 5] if forward else events[event, 4]
+            interaction[i, slot] = events[event, 3] == 2
+            task_row[i, slot] = events[event, 7]
+            mask[i, slot] = True
+            gap[i, slot] = cutoff - events[event, 2]
+            if structure:
+                column = 0
+                for end in range(2):
+                    endpoint = np.int64(events[event, end])
+                    for which in range(2):
+                        anchor = anchors[which]
+                        if anchor >= 0:
                             first = partners(
                                 memo,
                                 endpoint,
@@ -342,7 +335,7 @@ def history(
                             )
                             second = partners(
                                 memo,
-                                roots[which],
+                                anchor,
                                 events,
                                 neighbor_ids,
                                 neighbor_offsets,
@@ -356,11 +349,9 @@ def history(
                                 stream,
                                 scratch,
                             )
-                            structural[i, side, slot, column] = occurrences(second, endpoint) / max(
-                                len(second), 1
-                            )
-                            structural[i, side, slot, column + 1] = overlap(first, second)
-                            structural[i, side, slot, column + 2] = overlap(
+                            structural[i, slot, column] = occurrences(second, endpoint) / max(len(second), 1)
+                            structural[i, slot, column + 1] = overlap(first, second)
+                            structural[i, slot, column + 2] = overlap(
                                 two_hop(
                                     memo,
                                     endpoint,
@@ -379,7 +370,7 @@ def history(
                                 ),
                                 two_hop(
                                     memo,
-                                    roots[which],
+                                    anchor,
                                     events,
                                     neighbor_ids,
                                     neighbor_offsets,
@@ -394,10 +385,59 @@ def history(
                                     scratch,
                                 ),
                             )
-                            column += 3
+                        column += 3
+    return observed, interaction, task_row, mask, gap, ids, structural
+
+
+@njit(cache=True)
+def paired(
+    events,
+    neighbor_ids,
+    neighbor_offsets,
+    ticks,
+    lefts,
+    rights,
+    moments,
+    start,
+    count,
+    mode,
+    decay,
+    seed,
+    stream,
+    selected,
+):
+    rows = len(lefts)
+    common_ids = np.full((rows, count), -1, np.int32)
+    common_frequency = np.zeros((rows, count), np.float32)
+    common_stats = np.zeros((rows, 4), np.float32)
+    pair_gaps = np.zeros((rows, count), np.float32)
+    pair_mask = np.zeros((rows, count), np.bool_)
+    scratch = np.empty(count, np.int32)
+    floor = start * 2
+    for i in range(rows):
+        if not selected[i] or lefts[i] < 0:
+            continue
+        memo = Dict.empty(key_type=types.int64, value_type=types.int64[:])
+        left, right = np.int64(lefts[i]), np.int64(rights[i])
+        cutoff = np.int64(moments[i]) * 2 + 1
+        size = neighbors(
+            neighbor_ids,
+            neighbor_offsets,
+            ticks,
+            left,
+            cutoff,
+            floor,
+            count,
+            mode,
+            decay,
+            seed,
+            stream,
+            scratch,
+        )
+        left_events = scratch[:size].copy()
         first = partners(
             memo,
-            roots[0],
+            left,
             events,
             neighbor_ids,
             neighbor_offsets,
@@ -413,7 +453,7 @@ def history(
         )
         second = partners(
             memo,
-            roots[1],
+            right,
             events,
             neighbor_ids,
             neighbor_offsets,
@@ -434,15 +474,15 @@ def history(
                 common_frequency[i, shared] = occurrences(first, value) * occurrences(second, value)
                 shared += 1
         common_stats[i, 0] = shared
-        common_stats[i, 1] = occurrences(first, roots[1])
-        common_stats[i, 2] = occurrences(second, roots[0])
+        common_stats[i, 1] = occurrences(first, right)
+        common_stats[i, 2] = occurrences(second, left)
         common_stats[i, 3] = len(np.unique(np.concatenate((first, second))))
         filled = 0
         previous = np.int64(0)
-        for slot in range(len(first_events)):
-            event = first_events[slot]
-            other = events[event, 1] if events[event, 0] == roots[0] else events[event, 0]
-            if other == roots[1]:
+        for slot in range(len(left_events)):
+            event = left_events[slot]
+            other = events[event, 1] if events[event, 0] == left else events[event, 0]
+            if other == right:
                 if filled > 0:
                     pair_gaps[i, filled - 1] = events[event, 2] - previous
                 previous = np.int64(events[event, 2])
@@ -451,20 +491,7 @@ def history(
             pair_gaps[i, filled - 1] = cutoff - previous
             for slot in range(filled):
                 pair_mask[i, slot] = True
-    return (
-        observed,
-        interaction,
-        task_row,
-        mask,
-        gap,
-        ids,
-        structural,
-        common_ids,
-        common_frequency,
-        common_stats,
-        pair_gaps,
-        pair_mask,
-    )
+    return common_ids, common_frequency, common_stats, pair_gaps, pair_mask
 
 
 @njit(cache=True)
@@ -495,18 +522,20 @@ def reachable(owners, positions, times, roots, cutoffs):
 
 
 @njit(cache=True, parallel=True)
-def walk_identities(nodes, known):
-    rows, sides, walks, hops = nodes.shape
-    out = np.zeros((rows, sides, walks, hops, 2 * hops), np.float32)
-    for q in prange(rows):
-        for s in range(sides):
-            for w in range(walks):
-                for h in range(hops):
-                    node = nodes[q, s, w, h]
-                    for side in range(sides):
-                        for hop in range(hops):
-                            hits = 0
-                            for other in range(walks):
-                                hits += (nodes[q, side, other, hop] == node) & known[q, side, other, hop]
-                            out[q, s, w, h, side * hops + hop] = hits
+def walk_identities(nodes, known, others):
+    members, walks, hops = nodes.shape
+    out = np.zeros((members, walks, hops, 2 * hops), np.float32)
+    for q in prange(members):
+        for w in range(walks):
+            for h in range(hops):
+                node = nodes[q, w, h]
+                for side in range(2):
+                    source = np.int64(q) if side == 0 else np.int64(others[q])
+                    if source < 0:
+                        continue
+                    for hop in range(hops):
+                        hits = 0
+                        for other in range(walks):
+                            hits += (nodes[source, other, hop] == node) & known[source, other, hop]
+                        out[q, w, h, side * hops + hop] = hits
     return out

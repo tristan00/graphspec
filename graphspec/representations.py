@@ -9,7 +9,7 @@ from graphspec.infra.workspace import allocate, block_rows, changed, finite
 
 from . import kernels
 from .operators import enabled
-from .references import SORTS, ends, starts
+from .references import SORTS, ends
 from .resources import GraphBudget
 from .vocabulary import BOUNDARIES
 
@@ -17,7 +17,6 @@ LOG = logging.getLogger(__name__)
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALK_STREAM, PERIOD_STREAM = 16, 32
-STARTS = 3
 EMPTY = np.zeros(0, np.int64)
 
 
@@ -80,23 +79,6 @@ def referenced_change(table, left, right):
     return result
 
 
-def affinities(first, row_step, seen, steps, width, counts, totals, key):
-    affinity, global_affinity = [], []
-    bounds = np.searchsorted(row_step, np.arange(steps + 1))
-    for s in range(steps):
-        for r in range(bounds[s], bounds[s + 1]):
-            affinity.append(counts.setdefault(key(first[r]), np.zeros(width, np.float32)).copy())
-            global_affinity.append(totals.copy())
-        for event in range(seen["offsets"][s], seen["offsets"][s + 1]):
-            held = counts.setdefault(key(seen["first"][event]), np.zeros(width, np.float32))
-            held[seen["kind"][event]] += 1
-            totals[seen["kind"][event]] += 1
-    return (
-        np.asarray(affinity, np.float32).reshape(len(row_step), width),
-        np.asarray(global_affinity, np.float32).reshape(len(row_step), width),
-    )
-
-
 def named(graph, registry, tasks, name):
     started = time.perf_counter()
     chosen = np.flatnonzero(np.asarray(graph.member_name) == registry.references.index(name))
@@ -148,9 +130,10 @@ def referred(graph, registry, rows, found):
     first, second = np.full(len(owner), -1, np.int64), np.full(len(owner), -1, np.int64)
     listed = list(registry.schema.tasks["kinds"].values())
     kinds = np.asarray(graph.task_kind)[rows].tolist()
-    pairs = []
+    pairs, ordered = [], np.zeros(len(registry.references), bool)
     for code, (name, entry) in enumerate(registry.schema.tasks["references"].items()):
         sort = SORTS.named(entry["sort"])
+        ordered[code] = sort.ordered
         if sort.whole:
             pairs += [(row, code) for row, kind in enumerate(kinds) if name in listed[kind]["references"]]
             continue
@@ -160,11 +143,16 @@ def referred(graph, registry, rows, found):
     kept = owner[member] >= 0
     member, entity = member[kept], entity[kept]
     side = np.r_[False, member[1:] == member[:-1]][: len(member)]
+    place = np.asarray(graph.member_place, np.int64)[member]
+    order = np.lexsort((side, place, names[member], owner[member]))
+    member, entity, side = member[order], entity[order], side[order]
+    place = 2 * place[order] + side
     result = dict(
         member_row=owner[member].astype(np.int32),
         member_name=names[member].astype(np.int32),
         member_entity=entity.astype(np.int32),
         member_observed=np.where(side, second[member], first[member]).astype(np.int32),
+        member_place=np.where(ordered[names[member]], place, 0).astype(np.int32),
         whole_row=np.asarray([row for row, _ in pairs], np.int32),
         whole_name=np.asarray([name for _, name in pairs], np.int32),
     )
@@ -251,27 +239,13 @@ def base(graph, registry, spec, link=None):
         rows = np.full((len(chosen), len(edge.attributes)), np.nan, np.float32)
         rows[chosen >= 0] = graph.value_table[chosen[chosen >= 0], : len(edge.attributes)]
         arrays["attributes_" + name] = rows
-    seen, width = seen_tasks(graph, registry, observed), len(registry.events)
+    seen = seen_tasks(graph, registry, observed)
     rows = np.flatnonzero(registry.aimed[np.asarray(graph.task_kind, np.int64)])
     row_step = np.asarray(graph.task_step)[rows]
-    roots = starts(graph.member_task, graph.member_source, graph.member_target, len(graph.task_key), STARTS)[
-        rows
-    ]
     place = np.full(len(graph.task_key), -1, np.int64)
     place[rows] = np.arange(len(rows))
     row_index = np.full(len(rows), -1, np.int64)
     row_index[place[graph.label_task]] = graph.label_row
-    if link is None:
-        counts, totals, key = {}, np.zeros(width, np.float32), int
-    else:
-        counts = link.state.setdefault("affinity/counts", {})
-        totals = link.state.setdefault("affinity/totals", np.zeros(width, np.float32))
-        glob = link.glob
-
-        def key(value):
-            return int(glob[value]) if value >= 0 else -1
-
-    affinity, global_affinity = affinities(roots[:, 0], row_step, seen, steps, width, counts, totals, key)
     absent = ~graph.fact_present
     order = np.argsort(entity, kind="stable")
     altered = np.ones(len(entity), bool)
@@ -324,16 +298,10 @@ def base(graph, registry, spec, link=None):
         event_first=seen["first"].astype(np.int32),
         event_task=seen["task"].astype(np.int32),
         event_step=seen["step"].astype(np.int32),
-        first=roots[:, 0].astype(np.int32),
-        second=roots[:, 1].astype(np.int32),
-        starts=np.stack([found(roots[:, slot], row_step) for slot in range(STARTS)], 1)
-        .astype(np.int32)
-        .reshape(-1, STARTS),
         row_step=np.asarray(row_step, np.int32),
         row_task=rows.astype(np.int32),
+        row_kind=np.asarray(graph.task_kind, np.int32)[rows],
         events=events,
-        affinity=affinity,
-        global_affinity=global_affinity,
         signals=np.asarray(graph.task_signals, np.float32)[rows],
         row_index=row_index,
         key=np.asarray(graph.task_key, np.int64)[rows],
@@ -346,7 +314,7 @@ def base(graph, registry, spec, link=None):
 
 
 @timed("periods")
-def periods(arrays, budget):
+def periods(arrays, kinds, budget):
     held = np.asarray(arrays["period"])
     first = np.r_[0, np.flatnonzero(np.diff(held)) + 1].astype(np.int32)
     last = np.r_[first[1:] - 1, len(held) - 1].astype(np.int32)
@@ -359,23 +327,48 @@ def periods(arrays, budget):
         observed_keys[start : start + width] = (
             arrays["entity"][ids].astype(np.int64) * len(last) + membership[arrays["step"][ids]]
         )
-    seen = np.asarray(arrays["events"])
-    seen = seen[seen[:, 3] == 2]
-    moments = seen[:, 2] // 2
-    kinds = np.zeros(len(held), np.int32)
-    kinds[moments] = seen[:, 6]
-    keys = seen[:, 0].astype(np.int64) * len(last) + membership[moments]
-    arranged = np.argsort(keys, kind="stable")
     return dict(
         period_starts=first,
         period_ends=last,
         period_membership=membership,
-        period_first_keys=keys[arranged],
-        period_first_rows=moments[arranged].astype(np.int32),
-        period_kind=kinds,
         period_numbers=held[first],
         period_observation_keys=observed_keys,
+        **affinity_index(np.asarray(arrays["events"]), len(held), kinds),
     )
+
+
+@timed("representations.tick_span")
+def tick_span(steps):
+    return 2 * np.int64(steps) + 2
+
+
+def affinity_index(events, steps, kinds):
+    started = time.perf_counter()
+    seen = events[events[:, 3] == 2]
+    entity, tick, kind = (seen[:, column].astype(np.int64) for column in (0, 2, 6))
+    order = np.lexsort((tick, entity))
+    counts = np.zeros((len(order), kinds), np.float32)
+    counts[np.arange(len(order)), kind[order]] = 1
+    counts = np.cumsum(counts, 0)
+    owner = entity[order]
+    head = np.maximum.accumulate(
+        np.where(np.r_[True, owner[1:] != owner[:-1]][: len(owner)], np.arange(len(owner)), 0)
+    )
+    counts -= np.where((head > 0)[:, None], counts[np.maximum(head - 1, 0)], 0)
+    totals = np.zeros((steps + 1, kinds), np.float32)
+    np.add.at(totals, (tick // 2 + 1, kind), 1)
+    result = dict(
+        affinity_keys=owner * tick_span(steps) + tick[order],
+        affinity_counts=counts,
+        affinity_steps=np.cumsum(totals, 0),
+    )
+    LOG.debug(
+        "affinity index exit events=%d kinds=%d seconds=%.4f",
+        len(order),
+        kinds,
+        time.perf_counter() - started,
+    )
+    return result
 
 
 def marked_edges(pieces, period, codes):
@@ -592,26 +585,25 @@ def neighbors(arrays, spec):
 
 def walk_arrays(ids, offsets, events, roots, identities, moments, prior, first, last, spec, seed, budget):
     bias, window, fanout = spec["walks/bias"], spec["walks/window"], spec["walks/fanout"]
-    rows = len(moments)
+    count = len(moments)
     budget.workspace(
-        rows * 2 * WALK_SAMPLES * (1 + PERIOD_LOOKBACK) * (64 + WALK_HOPS * 4), "sampled walk representations"
+        count * WALK_SAMPLES * (1 + PERIOD_LOOKBACK) * (64 + WALK_HOPS * 4), "sampled walk representations"
     )
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
-    row, side, draw = (
-        axis.reshape(-1)
-        for axis in np.meshgrid(np.arange(rows), np.arange(2), np.arange(WALK_SAMPLES), indexing="ij")
+    member, draw = (
+        axis.reshape(-1) for axis in np.meshgrid(np.arange(count), np.arange(WALK_SAMPLES), indexing="ij")
     )
-    identity = np.stack((identities[row, side], moments[row], side, draw), 1)
+    identity = np.stack((identities[member], moments[member], draw), 1)
     result = kernels.walked(
         ids,
         offsets,
         source,
         target,
         ticks,
-        roots[row, side],
-        np.maximum(0, (moments[row] - window + 1) * 2),
-        moments[row] * 2 + 1,
-        np.ones(len(row), np.bool_),
+        roots[member],
+        np.maximum(0, (moments[member] - window + 1) * 2),
+        moments[member] * 2 + 1,
+        np.ones(len(member), np.bool_),
         identity,
         fanout,
         bias,
@@ -619,23 +611,23 @@ def walk_arrays(ids, offsets, events, roots, identities, moments, prior, first, 
         WALK_STREAM,
         WALK_HOPS,
     )
-    row, side, back, draw = (
+    member, back, draw = (
         axis.reshape(-1)
         for axis in np.meshgrid(
-            np.arange(rows), np.arange(2), np.arange(PERIOD_LOOKBACK), np.arange(WALK_SAMPLES), indexing="ij"
+            np.arange(count), np.arange(PERIOD_LOOKBACK), np.arange(WALK_SAMPLES), indexing="ij"
         )
     )
-    identity = np.stack((identities[row, side], moments[row], side, back, draw), 1)
+    identity = np.stack((identities[member], moments[member], back, draw), 1)
     period_walks = kernels.walked(
         ids,
         offsets,
         source,
         target,
         ticks,
-        roots[row, side],
-        2 * first[row, back],
-        2 * last[row, back] + 2,
-        np.ascontiguousarray(prior[row, back] >= 0),
+        roots[member],
+        2 * first[member, back],
+        2 * last[member, back] + 2,
+        np.ascontiguousarray(prior[member, back] >= 0),
         identity,
         fanout,
         bias,
@@ -644,8 +636,8 @@ def walk_arrays(ids, offsets, events, roots, identities, moments, prior, first, 
         WALK_HOPS,
     )
     return dict(
-        walks=result.reshape((rows, 2, WALK_SAMPLES, WALK_HOPS)),
-        period_walks=period_walks.reshape((rows, 2, PERIOD_LOOKBACK, WALK_SAMPLES, WALK_HOPS)),
+        walks=result.reshape((count, WALK_SAMPLES, WALK_HOPS)),
+        period_walks=period_walks.reshape((count, PERIOD_LOOKBACK, WALK_SAMPLES, WALK_HOPS)),
     )
 
 
@@ -653,21 +645,10 @@ def prior_periods(membership, moments):
     return membership[moments][:, None] - np.arange(1, PERIOD_LOOKBACK + 1)
 
 
-def rooted(first, second, name):
-    started = time.perf_counter()
-    roots = np.stack((first, second), 1).astype(np.int64)
-    if np.any(roots < 0):
-        raise ValueError(
-            "a task of graph %s names no node to walk from, and walks start from the nodes of a task" % name
-        )
-    LOG.debug("rooted exit graph=%s rows=%d seconds=%.4f", name, len(roots), time.perf_counter() - started)
-    return roots
-
-
 @timed("walks")
-def walks(arrays, spec, seed, budget, name):
-    roots = rooted(arrays["first"], arrays["second"], name)
-    moments = np.asarray(arrays["row_step"], np.int64)
+def walks(arrays, spec, seed, budget):
+    roots = np.asarray(arrays["member_entity"], np.int64)
+    moments = np.asarray(arrays["row_step"], np.int64)[np.asarray(arrays["member_row"], np.int64)]
     prior = prior_periods(arrays["period_membership"], moments)
     return walk_arrays(
         np.asarray(arrays["neighbor_ids"]),
@@ -799,11 +780,11 @@ def build(graph, registry, spec, groups, seed, limits):
     budget = GraphBudget(limits)
     arrays = base(graph, registry, spec)
     parts = (
-        ("periods", True, lambda: periods(arrays, budget)),
+        ("periods", True, lambda: periods(arrays, len(registry.events), budget)),
         ("coupling", "coupling" in groups, lambda: coupling(arrays, registry, spec, budget)),
         ("events", "events" in groups, lambda: event_graph(arrays, registry, spec, budget)),
         ("neighbors", "neighbors" in groups or "walks" in groups, lambda: neighbors(arrays, spec)),
-        ("walks", "walks" in groups, lambda: walks(arrays, spec, seed, budget, graph.name)),
+        ("walks", "walks" in groups, lambda: walks(arrays, spec, seed, budget)),
         ("mixed", "mixed" in groups, lambda: mixed(arrays, spec, budget, registry.values)),
     )
     for name, wanted, make in parts:
@@ -883,10 +864,10 @@ def validate(arrays, graph, registry, spec, groups):
         ):
             raise ValueError("event boundary edges of graph %s are invalid" % graph.name)
     if "walks" in groups:
-        moments = np.asarray(arrays["row_step"], np.int64)
+        moments = np.asarray(arrays["row_step"], np.int64)[np.asarray(arrays["member_row"], np.int64)]
         for name, limit in (
-            ("walks", moments[:, None, None] * 2),
-            ("period_walks", moments[:, None, None, None] * 2),
+            ("walks", moments[:, None] * 2),
+            ("period_walks", moments[:, None, None] * 2),
         ):
             walks = arrays[name]
             times = np.where(walks >= 0, events[np.maximum(walks, 0), 2], -1)

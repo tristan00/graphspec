@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from graphspec.infra.timing import timed
+from graphspec.representations import tick_span
 from graphspec.transform import SEED
 
 from .inputs import tree
@@ -9,11 +10,10 @@ from .periods import lookback
 from .tensors import Features, array, features, gathered, joined, length
 
 
-def prior_rows(held, periods, entities, first=False):
+def prior_rows(held, periods, entities):
     periods, entities = np.broadcast_arrays(periods, entities)
     count = len(held.numpy("period_ends"))
-    keys = held.numpy("period_first_keys" if first else "period_observation_keys")
-    rows = held.numpy("period_first_rows" if first else "observation_ids")
+    keys, rows = held.numpy("period_observation_keys"), held.numpy("observation_ids")
     if not len(keys):
         return np.full(periods.shape, -1, np.int32)
     positions = np.searchsorted(keys, entities.astype(np.int64) * count + periods, side="right") - 1
@@ -22,8 +22,30 @@ def prior_rows(held, periods, entities, first=False):
     return np.where(valid, rows[safe], -1).astype(np.int32)
 
 
+@timed("period_inputs.profiles")
+def profiles(held, entities, moments):
+    keys, counts = held.numpy("affinity_keys"), held.numpy("affinity_counts")
+    entities, moments = np.broadcast_arrays(np.asarray(entities, np.int64), np.asarray(moments, np.int64))
+    if not len(keys):
+        return np.zeros(entities.shape + counts.shape[1:], np.float32)
+    span = tick_span(len(held.numpy("period")))
+    at = np.searchsorted(keys, entities * span + moments, side="left") - 1
+    safe = at.clip(0)
+    valid = (at >= 0) & (keys[safe] // span == entities)
+    return np.where(valid[..., None], counts[safe], 0).astype(np.float32)
+
+
 @timed("period_inputs.add")
-def add(b, graph, held, first, last, start, cfg):
+def add(b, window, members):
+    graph, held, first, last, start, cfg = (
+        window.graph,
+        window.held,
+        window.first,
+        window.last,
+        window.start,
+        window.cfg,
+    )
+    owner, entities = members["member_row"], members["member_entity"]
     tasks = held.numpy("row_step")[first:last].astype(np.int64)
     membership = held.numpy("period_membership")[tasks]
     previous = membership[:, None] - np.arange(1, lookback(cfg) + 1)
@@ -31,56 +53,38 @@ def add(b, graph, held, first, last, start, cfg):
     prior = previous.clip(0)
     ends = held.numpy("period_ends")[prior]
     valid &= ends >= start
-    entity, step = held.numpy("entity"), held.numpy("step")
-    roots = np.stack(
-        (
-            held.numpy("first")[first:last],
-            held.numpy("second")[first:last],
-            entity[held.numpy("starts")[first:last, 2]],
-        ),
-        1,
-    )
-    observed = prior_rows(held, prior[:, :, None], roots[:, None, :])
-    mask = (observed >= 0) & valid[:, :, None]
-    age = np.maximum(ends[:, :, None] - step[observed.clip(0)], 0)
+    step = held.numpy("step")
+    observed = prior_rows(held, prior[owner], entities[:, None])
+    mask = (observed >= 0) & valid[owner]
+    age = np.maximum(ends[owner] - step[observed.clip(0)], 0)
     age[~mask] = 0
-    delta = tasks[:, None] - ends
+    oldest = np.zeros(valid.shape, np.int64)
+    np.maximum.at(oldest, owner, age)
     numbers = held.numpy("period_numbers")
     period_gap = numbers[membership, None] - numbers[prior]
-    gaps = np.stack((delta, period_gap, age.max(-1)), -1).clip(0).astype(np.float32)
-    token_gaps = (
-        np.stack(
-            (
-                tasks[:, None, None] - step[observed.clip(0)],
-                np.broadcast_to(period_gap[:, :, None], age.shape),
-                age,
-            ),
-            -1,
-        )
+    gaps = np.stack((tasks[:, None] - ends, period_gap, oldest), -1).clip(0).astype(np.float32)
+    member_gaps = (
+        np.stack((tasks[owner][:, None] - step[observed.clip(0)], period_gap[owner], age), -1)
         .clip(0)
         .astype(np.float32)
     )
     local = observed - int(held.numpy("snapshot_offsets")[start])
-    index = np.where(mask, observed, -1).transpose(0, 2, 1)
     b.update(
         end_steps=array(np.where(valid, ends - start, -1), torch.long),
         end_mask=array(valid),
         end_gaps=gaps,
-        end_raw=features(graph, index.shape, ("x", index, 1.0)),
-        end_raw_mask=array(mask.transpose(0, 2, 1)),
-        end_token_gaps=array(token_gaps.transpose(0, 2, 1, 3)),
-        end_observation_local=array(np.where(mask & (local >= 0), local, -1), torch.long),
+        member_end_raw=features(graph, observed.shape, ("x", np.where(mask, observed, -1), 1.0)),
+        member_end_mask=array(mask),
+        member_end_gaps=member_gaps,
+        member_end_local=array(np.where(mask & (local >= 0), local, -1), torch.long),
     )
     if cfg["model"]["view"] == "affinity":
-        seen = prior_rows(held, prior, roots[:, 0, None], first=True)
-        kind = held.numpy("period_kind")
-        affinity = np.array(held.numpy("affinity")[seen.clip(0)], np.float32)
-        affinity += np.eye(affinity.shape[-1], dtype=np.float32)[kind[seen.clip(0)]]
-        affinity[(seen < 0) | ~valid] = 0
-        global_affinity = np.array(held.numpy("global_affinity")[ends], np.float32)
-        global_affinity += np.eye(affinity.shape[-1], dtype=np.float32)[kind[ends]]
-        global_affinity[~valid] = 0
-        b.update(end_affinity=affinity, end_global_affinity=global_affinity)
+        b.update(
+            member_end_affinity=profiles(held, entities[:, None], 2 * ends[owner] + 2)
+            * valid[owner][..., None],
+            end_global_affinity=np.asarray(held.numpy("affinity_steps")[ends + 1], np.float32)
+            * valid[..., None],
+        )
 
 
 @timed("period_inputs.temporal_edges")
@@ -131,11 +135,12 @@ def temporal_edges(b, graph, held, lo, hi, registry, tokens):
 @timed("period_inputs.mixed_edges")
 def mixed_edges(b, graph):
     mixed = b["mixed"]
-    mask = b["end_raw_mask"].reshape(-1)
-    chosen = b["end_raw"].segments[0][2][0][1].reshape(-1)[mask]
+    held = b["member_end_mask"]
+    mask = held.reshape(-1)
+    chosen = b["member_end_raw"].segments[0][2][0][1].reshape(-1)[mask]
     source = np.arange(len(chosen)) + length(mixed["x"])
-    destination = np.broadcast_to(mixed["row"][:, None, None], b["end_raw_mask"].shape).reshape(-1)[mask]
-    gaps = b["end_token_gaps"].reshape(-1, 3)[mask]
+    destination = np.broadcast_to(mixed["row"][:, None], held.shape).reshape(-1)[mask]
+    gaps = b["member_end_gaps"].reshape(-1, 3)[mask]
     mixed["x"] = joined([mixed["x"], features(graph, (len(chosen),), ("x", chosen, 1.0))])
     mixed["kind"] = np.concatenate((mixed["kind"], np.zeros(len(chosen), np.int64)))
     mixed["edge_index"] = np.concatenate((mixed["edge_index"], np.stack((source, destination))), 1)
@@ -144,25 +149,18 @@ def mixed_edges(b, graph):
     )
     mixed["edge_gap"] = np.concatenate((mixed["edge_gap"], np.log1p(gaps[:, :2]).astype(np.float32)))
     if "token" in mixed:
-        roots = np.broadcast_to(b["root_token"][:, :, None], b["end_raw_mask"][:, :2].shape)
         mixed["token"] = np.concatenate(
-            (
-                mixed["token"],
-                np.concatenate((roots, np.full((len(roots), 1, roots.shape[2]), -1, np.int64)), 1).reshape(
-                    -1
-                )[mask],
-            )
+            (mixed["token"], np.broadcast_to(b["member_token"][:, None], held.shape).reshape(-1)[mask])
         )
 
 
 @timed("period_inputs.history_tokens")
-def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
-    n, depth = last - first, lookback(cfg)
+def history_tokens(b, window):
+    graph, held, start, cfg = window.graph, window.held, window.start, window.cfg
+    count, depth = len(b["member_row"]), lookback(cfg)
     if cfg["model"]["view"] == "tree":
-        roots = np.stack((held.numpy("first")[first:last], held.numpy("second")[first:last]), 1)
-        roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1).copy()
-        ends = b["end_steps"] + start
-        cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1).copy()
+        roots = np.repeat(b["member_entity"].astype(np.int64), depth)
+        cutoffs = ((b["end_steps"][b["member_row"]] + start) * 2 + 1).reshape(-1).astype(np.int64)
         b["end_tree"] = tree(
             graph,
             held,
@@ -171,38 +169,37 @@ def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
             start * 2,
             cfg["model"]["tree/neighbors"],
             cfg["model"]["tree/depth"],
-            registry,
+            window.registry,
             cfg["graph"],
             SEED,
-            tokens,
+            window.tokens,
         )
         return
     original = b["history_mask"].shape[-1]
-    valid = b["end_raw_mask"][:, :2]
-    gaps = b["end_token_gaps"][:, :2]
-    raw_index = b["end_raw"].segments[0][2][0][1][:, :2]
+    valid, gaps = b["member_end_mask"], b["member_end_gaps"]
+    raw_index = b["member_end_raw"].segments[0][2][0][1]
     (x_key, x_index, x_weight), (q_key, q_index, q_weight) = b["history_x"].segments[0][2]
     pieces = [
         (
             x_key,
-            np.concatenate((x_index, raw_index), 2),
-            np.concatenate((x_weight, np.ones(raw_index.shape, np.float32)), 2),
+            np.concatenate((x_index, raw_index), 1),
+            np.concatenate((x_weight, np.ones(raw_index.shape, np.float32)), 1),
         ),
-        (q_key, np.concatenate((q_index, np.full(raw_index.shape, -1, np.int64)), 2), q_weight),
+        (q_key, np.concatenate((q_index, np.full(raw_index.shape, -1, np.int64)), 1), q_weight),
     ]
-    b["history_mask"] = np.concatenate((b["history_mask"], valid), 2)
-    b["history_gap"] = np.concatenate((b["history_gap"], gaps[..., 0] * 2 + 1), 2)
-    end_time = np.zeros((n, 2, original + depth, 3), np.float32)
-    end_time[:, :, original:] = gaps
+    b["history_mask"] = np.concatenate((b["history_mask"], valid), 1)
+    b["history_gap"] = np.concatenate((b["history_gap"], gaps[..., 0] * 2 + 1), 1)
+    end_time = np.zeros((count, original + depth, 3), np.float32)
+    end_time[:, original:] = gaps
     b["history_end_time"] = end_time
     b["history_period_kind"] = np.concatenate(
-        (np.zeros((n, 2, original), np.int64), np.ones((n, 2, depth), np.int64)), 2
+        (np.zeros((count, original), np.int64), np.ones((count, depth), np.int64)), 1
     )
     for key, width in (("occurrence", 2), ("structure", 12)):
-        b[key] = np.concatenate((b[key], np.zeros((n, 2, depth, width), np.float32)), 2)
+        b[key] = np.concatenate((b[key], np.zeros((count, depth, width), np.float32)), 1)
     if "history_token" in b:
         b["history_token"] = np.concatenate(
-            (b["history_token"], np.repeat(b["root_token"][:, :, None], depth, 2)), 2
+            (b["history_token"], np.repeat(b["member_token"][:, None], depth, 1)), 1
         )
     order = np.argsort(-np.where(b["history_mask"], b["history_gap"], np.inf), axis=-1, kind="stable")
     for key in (
@@ -214,28 +211,23 @@ def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
         "structure",
     ) + (("history_token",) if "history_token" in b else ()):
         value = b[key]
-        b[key] = np.take_along_axis(value, order if value.ndim == 3 else order[..., None], 2)
+        b[key] = np.take_along_axis(value, order if value.ndim == 2 else order[..., None], 1)
     pieces = [
         (
             key,
-            np.take_along_axis(index, order, 2),
-            np.take_along_axis(weight, order, 2) if isinstance(weight, np.ndarray) else weight,
+            np.take_along_axis(index, order, 1),
+            np.take_along_axis(weight, order, 1) if isinstance(weight, np.ndarray) else weight,
         )
         for key, index, weight in pieces
     ]
-    b["history_x"] = Features([(graph, (n, 2, original + depth), pieces)])
+    b["history_x"] = Features([(graph, (count, original + depth), pieces)])
 
 
 @timed("period_inputs.capture_schedule")
 def capture_schedule(b):
-    ends = b["end_steps"]
+    ends = b["end_steps"][b["member_row"]]
     result = []
     for time_step in range(b["time_steps"]):
-        task, slot = np.nonzero((ends >= 0) & (ends % b["time_steps"] == time_step))
-        result.append(
-            (
-                (task * ends.shape[1] + slot).astype(np.int64),
-                np.stack((b["first"][task], b["second"][task]), -1),
-            )
-        )
+        member, slot = np.nonzero((ends >= 0) & (ends % b["time_steps"] == time_step))
+        result.append(((member * ends.shape[1] + slot).astype(np.int64), b["member_entity"][member]))
     b["end_capture"] = result

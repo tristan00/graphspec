@@ -7,14 +7,17 @@ from torch.nn import functional as F
 from graphspec.infra.timing import timed
 
 from .layers import (
+    Asked,
     CausalAttention,
     Head,
+    References,
     SelectiveSSM,
     TimeEncoding,
     keys_of,
     masked_mean,
     masked_weights,
     normalization,
+    padded,
 )
 from .periods import EndContext, enabled, lookback
 
@@ -25,11 +28,13 @@ class TreeNet(nn.Module):
         super().__init__()
         spec = cfg["model"]
         hidden = spec["hidden"]
+        self.cfg = cfg
         self.has_periods = enabled(cfg)
         if self.has_periods:
-            self.periods = EndContext(hidden * 2)
+            self.periods = EndContext(hidden)
         self.depth = spec["tree/depth"]
         self.input = nn.Linear(registry.features, hidden)
+        self.asked = Asked(registry, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.keys = keys_of(spec, hidden)
         self.time = TimeEncoding(hidden, spec["time/encoding"])
@@ -41,6 +46,8 @@ class TreeNet(nn.Module):
             nn.Sequential(nn.Linear(2 * hidden, hidden), nn.SiLU(), normalization(hidden))
             for _ in range(self.depth)
         )
+        self.whole = nn.Linear(registry.features, hidden)
+        self.references = References(registry, hidden, hidden * 2)
         self.head = Head(hidden * 3, spec, registry)
 
     def encode(self, tree, depth):
@@ -49,7 +56,9 @@ class TreeNet(nn.Module):
             root = root + self.keys(tree["token"])
         if not depth:
             return root
-        children = self.encode(tree["child"], depth - 1).reshape(len(root), tree["mask"].shape[1], -1)
+        children = self.encode(tree["child"], depth - 1).reshape(
+            len(root), tree["mask"].shape[1], root.shape[-1]
+        )
         tokens = children + self.time(tree["gap"]) + self.relation(tree["relation"])
         score = (self.q[depth - 1](root)[:, None] * self.k[depth - 1](tokens)).sum(-1) / math.sqrt(
             root.shape[-1]
@@ -59,15 +68,16 @@ class TreeNet(nn.Module):
         return self.merge[depth - 1](torch.cat((root, neighbor), -1))
 
     def forward(self, b):
-        roots = self.encode(b["tree"], self.depth).reshape(b["predictions"], -1)
+        members = self.encode(b["tree"], self.depth)
         if self.has_periods:
-            previous = self.encode(b["end_tree"], self.depth).reshape(
-                b["predictions"], 2, -1, roots.shape[-1] // 2
-            )
-            previous = previous * b["end_raw_mask"][:, :2, :, None]
-            previous = previous.transpose(1, 2).reshape(b["predictions"], -1, roots.shape[-1])
-            roots = self.periods(roots, previous, b["end_gaps"], b["end_mask"])
-        return self.head(torch.cat((roots, self.input(b["task"])), -1)[b["selected"]], b)
+            owner = b["member_row"]
+            previous = self.encode(b["end_tree"], self.depth).reshape(len(owner), lookback(self.cfg), -1)
+            previous = previous * b["member_end_mask"][..., None]
+            members = self.periods(members, previous, b["end_gaps"][owner], b["end_mask"][owner])
+        features = torch.cat(
+            (self.references(b, members, self.whole(b["whole_x"])), self.asked(self.input(b["task"]), b)), -1
+        )
+        return self.head(features[b["selected"]], b)
 
 
 class MixerLayer(nn.Module):
@@ -125,17 +135,20 @@ class SequenceNet(nn.Module):
             )
             self.opposite = nn.Linear(hidden, hidden)
             self.temporal_select = nn.Linear(hidden, hidden)
+        self.asked = Asked(registry, hidden)
+        self.whole = nn.Linear(registry.features, hidden)
+        self.references = References(registry, hidden, hidden * 2)
         self.head = Head(hidden * 3, spec, registry)
 
     def mixer(self, x, raw, mask, roots, b):
         for layer in self.layers:
             x = layer(x, mask)
-        temporal = masked_mean(x, mask, 2)
-        spatial = masked_mean(raw, mask, 2)
-        return self.node(torch.cat((temporal, spatial + roots), -1)).flatten(1)
+        temporal = masked_mean(x, mask, 1)
+        spatial = masked_mean(raw, mask, 1)
+        return self.node(torch.cat((temporal, spatial + roots), -1))
 
     def transformer(self, x, mask, roots):
-        n, sides, tokens, hidden = x.shape
+        n, tokens, hidden = x.shape
         patch = self.patch_size
         padding = (-tokens) % patch
         if padding:
@@ -143,56 +156,37 @@ class SequenceNet(nn.Module):
             mask = F.pad(mask, (0, padding))
             tokens += padding
         if patch > 1:
-            x = self.patch(x.reshape(n, sides, tokens // patch, hidden * patch))
-            mask = mask.reshape(n, sides, tokens // patch, patch).any(-1)
-        x, mask = x.flatten(1, 2), mask.flatten(1)
-        x = torch.cat((x, roots), 1)
-        mask = torch.cat((mask, torch.ones(n, 2, device=x.device, dtype=torch.bool)), 1)
+            x = self.patch(x.reshape(n, tokens // patch, hidden * patch))
+            mask = mask.reshape(n, tokens // patch, patch).any(-1)
+        x = torch.cat((x, roots[:, None]), 1)
+        mask = torch.cat((mask, torch.ones(n, 1, device=x.device, dtype=torch.bool)), 1)
         for layer in self.layers:
             x = layer(x, mask, causal=False)
-        return x[:, -2:].flatten(1)
+        return x[:, -1]
 
     def ssm(self, x, mask, roots, b):
-        n, sides, tokens, hidden = x.shape
-        x = torch.cat((x, roots[:, :, None]), 2).reshape(n * 2, tokens + 1, hidden)
-        mask = torch.cat((mask, torch.ones(n, 2, 1, device=x.device, dtype=torch.bool)), 2).reshape(
-            n * 2, tokens + 1
-        )
+        n = len(x)
+        x = torch.cat((x, roots[:, None]), 1)
+        mask = torch.cat((mask, torch.ones(n, 1, device=x.device, dtype=torch.bool)), 1)
         for layer in self.node_layers:
             x = layer(x, mask)
         times = self.time(b["pair_gap"])
         for layer in self.time_layers:
             times = layer(times, b["pair_mask"])
         pattern = self.temporal_select(masked_mean(times, b["pair_mask"], 1))
-        sequence = x.reshape(n, 2, tokens + 1, hidden)
-        mask = mask.reshape(n, 2, tokens + 1)
-        other = self.opposite(masked_mean(sequence, mask, 2).flip(1))
-        key = other * pattern[:, None]
-        weights = masked_weights((sequence * key[:, :, None]).sum(-1), mask)
-        return (sequence * weights[..., None]).sum(2).flatten(1)
+        own = masked_mean(x, mask, 1)
+        partner = b["partner"]
+        other = torch.where((partner >= 0)[:, None], padded(own, partner), own)
+        key = self.opposite(other) * pattern[b["member_row"]]
+        weights = masked_weights((x * key[:, None]).sum(-1), mask)
+        return (x * weights[..., None]).sum(1)
 
     def forward(self, b):
-        keys = (
-            "start_x",
-            "task",
-            "history_x",
-            "history_mask",
-            "history_gap",
-            "occurrence",
-            "structure",
-            "pair_gap",
-            "pair_mask",
-        )
-        if enabled(self.cfg):
-            keys += ("history_end_time", "history_period_kind")
-        if self.keys is not None:
-            keys += ("history_token", "root_token")
-        full, b = b, {key: b[key][b["selected"]] for key in keys}
-        roots = self.input(b["start_x"][:, :2])
+        roots = self.input(b["member_x"])
         mask = b["history_mask"]
         raw = self.input(b["history_x"])
         if self.keys is not None:
-            roots = roots + self.keys(b["root_token"])
+            roots = roots + self.keys(b["member_token"])
             raw = raw + self.keys(b["history_token"])
         x = self.norm(raw + self.time(b["history_gap"])) * mask[..., None]
         if enabled(self.cfg):
@@ -210,7 +204,10 @@ class SequenceNet(nn.Module):
             summary = self.transformer(x, mask, roots)
         else:
             summary = self.ssm(x, mask, roots, b)
-        return self.head(torch.cat((summary, self.input(b["task"])), -1), full)
+        features = torch.cat(
+            (self.references(b, summary, self.whole(b["whole_x"])), self.asked(self.input(b["task"]), b)), -1
+        )
+        return self.head(features[b["selected"]], b)
 
 
 class WalkNet(nn.Module):
@@ -237,7 +234,24 @@ class WalkNet(nn.Module):
             nn.Identity() if direction_width * 2 == hidden else nn.Linear(direction_width * 2, hidden)
         )
         self.score = nn.Linear(hidden, 1)
+        self.asked = Asked(registry, hidden)
+        self.whole = nn.Linear(registry.features, hidden)
+        self.references = References(registry, hidden, hidden * 2)
         self.head = Head(hidden * 3, spec, registry)
+
+    def walked(self, raw, mask):
+        members, walks, hops, hidden = raw.shape
+        if not members:
+            return raw.new_zeros(0, hidden)
+        x = (raw * mask[..., None]).reshape(-1, hops, hidden)
+        lengths = mask.sum(-1).reshape(-1)
+        packed = nn.utils.rnn.pack_padded_sequence(
+            x, lengths.clamp_min(1).cpu(), batch_first=True, enforce_sorted=False
+        )
+        _, (state, _) = self.walk(packed)
+        encoded = self.walk_output(state.transpose(0, 1).reshape(members, walks, -1))
+        weight = masked_weights(self.score(encoded).squeeze(-1), lengths.reshape(members, walks) > 0)
+        return (encoded * weight[..., None]).sum(1)
 
     def forward(self, b):
         raw = self.input(b["walk_x"]) + self.anonymous(b["walk_identity"].log1p()) + self.time(b["walk_gap"])
@@ -245,19 +259,10 @@ class WalkNet(nn.Module):
             raw = raw + self.keys(b["walk_token"])
         if self.has_periods:
             raw = raw + self.period_time(b["walk_end_time"].log1p()) + self.period_kind(b["walk_period_kind"])
-        mask = b["walk_mask"]
-        n, sides, walks, hops, hidden = raw.shape
-        x = (raw * mask[..., None]).reshape(-1, hops, hidden)
-        lengths = mask.sum(-1).reshape(-1)
-        packed = nn.utils.rnn.pack_padded_sequence(
-            x, lengths.clamp_min(1).cpu(), batch_first=True, enforce_sorted=False
-        )
-        _, (state, _) = self.walk(packed)
-        encoded = self.walk_output(state.transpose(0, 1).reshape(n, sides, walks, -1))
-        valid = lengths.reshape(n, sides, walks) > 0
-        weight = masked_weights(self.score(encoded).squeeze(-1), valid)
-        summary = (encoded * weight[..., None]).sum(2) + self.input(b["start_x"][:, :2])
+        summary = self.walked(raw, b["walk_mask"]) + self.input(b["member_x"])
         if self.keys is not None:
-            summary = summary + self.keys(b["root_token"])
-        features = torch.cat((summary.reshape(n, -1), self.input(b["task"])), -1)
+            summary = summary + self.keys(b["member_token"])
+        features = torch.cat(
+            (self.references(b, summary, self.whole(b["whole_x"])), self.asked(self.input(b["task"]), b)), -1
+        )
         return self.head(features[b["selected"]], b)

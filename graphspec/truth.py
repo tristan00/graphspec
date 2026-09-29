@@ -549,9 +549,9 @@ def prefixed(columns):
     return {VALUE + name: values for name, values in columns.items()}
 
 
-def encoded(registry, values, held, named):
+def encoded(registry, values, held, graph, named):
     started = time.perf_counter()
-    wide = registry.encoding.inputs(values, held)
+    wide = registry.encoding.inputs(values, held, graph)
     with np.errstate(over="ignore"):
         result = wide.astype(np.float16)
     lost = ~np.isfinite(result)
@@ -561,7 +561,9 @@ def encoded(registry, values, held, named):
             "%s holds %s which gives %s; model inputs are stored at 16 bits, which hold magnitudes up to %d"
             % (
                 named(row),
-                registry.encoding.origin(place, np.asarray(values)[row]),
+                registry.encoding.origin(
+                    place, np.asarray(values)[row], None if graph is None else np.asarray(graph)[row]
+                ),
                 float(wide[row, place]),
                 HALF,
             )

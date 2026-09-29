@@ -2,8 +2,6 @@ import logging
 import time
 
 from graphspec import spec as specs
-from graphspec.infra.timing import timed
-from graphspec.references import SORTS
 from graphspec.spec import GROUPS, among, choice, draw, equals, flag, number, real
 
 LOG = logging.getLogger(__name__)
@@ -46,10 +44,6 @@ TRAINING = (
 )
 
 
-STARTS = dict(sorts=("node",), least=1, most=3, absent=False)
-SINGLE = ("signal", "affinity")
-
-
 def views(registry):
     started = time.perf_counter()
     extras = registry.extras
@@ -58,120 +52,9 @@ def views(registry):
         excluded.add("signal")
     if not extras["single"] or not extras["events"]:
         excluded.add("affinity")
-    candidates = [view for view in VIEWS if view not in excluded]
-    result = tuple(view for view in candidates if contexts(registry, view, specs.CONTEXT))
-    if not result:
-        raise ValueError(
-            "no family reads the tasks of the bank %s: %s"
-            % (
-                registry.name,
-                "; ".join(refusal(registry, view, reading(view, specs.CONTEXT.low)) for view in candidates),
-            )
-        )
+    result = tuple(view for view in VIEWS if view not in excluded)
     LOG.debug("views exit offered=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
-
-
-def contexts(registry, family, held):
-    started = time.perf_counter()
-    result = tuple(
-        context
-        for context in range(held.low, held.high + 1)
-        if refusal(registry, family, reading(family, context)) is None
-    )
-    LOG.debug(
-        "contexts exit family=%s contexts=%d seconds=%.4f", family, len(result), time.perf_counter() - started
-    )
-    return result
-
-
-def contextual(registry, family, parameters):
-    started = time.perf_counter()
-    (held,) = [parameter for parameter in parameters if parameter.name == specs.CONTEXT.name]
-    accepted = contexts(registry, family, held)
-    if not accepted:
-        raise ValueError(
-            "the family %s reads the tasks of the bank %s under no %s from %d to %d: %s"
-            % (
-                family,
-                registry.name,
-                held.name,
-                held.low,
-                held.high,
-                refusal(registry, family, reading(family, held.low)),
-            )
-        )
-    if accepted != tuple(range(accepted[0], accepted[-1] + 1)):
-        raise ValueError(
-            "the family %s reads the tasks of the bank %s under the values %s of %s, which are not one range"
-            % (family, registry.name, ", ".join(map(str, accepted)), held.name)
-        )
-    result = specs.narrow(parameters, {held.name: dict(low=accepted[0], high=accepted[-1])})
-    LOG.debug(
-        "contextual exit family=%s low=%d high=%d seconds=%.4f",
-        family,
-        accepted[0],
-        accepted[-1],
-        time.perf_counter() - started,
-    )
-    return result
-
-
-@timed("model_spec.reading")
-def reading(view, context):
-    if view == "snapshot" and context == 0:
-        return dict(sorts=SORTS.names(), least=0, most=None, absent=True)
-    return dict(STARTS)
-
-
-def reads(cfg):
-    return reading(cfg["model"]["view"], cfg["graph"]["time/context"])
-
-
-def refusals(registry, family, held):
-    stated = registry.schema.tasks
-    for kind, entry in stated["kinds"].items():
-        if entry["target"] is None:
-            continue
-        names = entry["references"]
-        for name in names:
-            sort = stated["references"][name]["sort"]
-            if sort not in held["sorts"]:
-                yield (
-                    "the family %s reads references of the sorts %s and cannot read the reference %s "
-                    "of the kind of task %s, which is of the sort %s"
-                    % (family, ", ".join(held["sorts"]), name, kind, sort)
-                )
-        if len(names) < held["least"] or (held["most"] is not None and len(names) > held["most"]):
-            yield "the family %s reads from %d to %d references and the kind of task %s states %d: %s" % (
-                family,
-                held["least"],
-                held["most"],
-                kind,
-                len(names),
-                ", ".join(names) or "none",
-            )
-        if entry["absent"] != "stop" and not held["absent"]:
-            yield (
-                "the family %s reads the nodes of the references %s of the kind of task %s as they are "
-                "observed at the time of the task, and the kind states that an absent node is kept"
-                % (family, ", ".join(names), kind)
-            )
-
-
-def refusal(registry, family, held):
-    started = time.perf_counter()
-    result = next(refusals(registry, family, held), None)
-    LOG.debug("refusal exit family=%s seconds=%.4f", family, time.perf_counter() - started)
-    return result
-
-
-def readable(registry, cfg):
-    started = time.perf_counter()
-    found = refusal(registry, cfg["model"]["view"], reads(cfg))
-    if found is not None:
-        raise ValueError(found)
-    LOG.debug("readable exit family=%s seconds=%.4f", cfg["model"]["view"], time.perf_counter() - started)
 
 
 def view(*names):
@@ -329,7 +212,7 @@ def blocks(spec):
         return frozenset(("tree", "period_history"))
     if kind == "walks":
         return frozenset(("walks",))
-    return {"affinity": frozenset(("events",)), "signal": frozenset()}[kind]
+    return {"affinity": frozenset(("events", "affinity")), "signal": frozenset()}[kind]
 
 
 def shared_frames(spec):

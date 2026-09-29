@@ -128,17 +128,3 @@ def ends(source, target):
         "ends exit members=%d ends=%d seconds=%.4f", len(source), len(order), time.perf_counter() - started
     )
     return member[order], entity[order]
-
-
-def starts(task, source, target, tasks, width):
-    started = time.perf_counter()
-    member, entity = ends(source, target)
-    owner = np.asarray(task, np.int64)[member]
-    counts = np.bincount(owner, minlength=tasks)
-    offsets = np.r_[0, np.cumsum(counts)]
-    place = np.minimum(np.arange(width)[None, :], np.maximum(counts - 1, 0)[:, None])
-    result = np.full((tasks, width), -1, np.int64)
-    held = counts > 0
-    result[held] = entity[(offsets[:-1][:, None] + place)[held]]
-    LOG.debug("starts exit tasks=%d seconds=%.4f", tasks, time.perf_counter() - started)
-    return result

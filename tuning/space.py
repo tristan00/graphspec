@@ -121,7 +121,7 @@ class Space:
             return parameter.uniform(rng)
 
         model = specs.draw(self.models, lambda p: choose("model/", p))
-        key = (groups(model), model["view"])
+        key = groups(model)
         if key not in self.graphs:
             self.graphs[key] = graph_space(self.registry, model, self.bounds)
         return dict(
