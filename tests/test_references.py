@@ -20,9 +20,21 @@ from tuning.models import build as network
 LOG = logging.getLogger(__name__)
 SPLITS = dict(trained=["train"], scored=["test"], sees=dict(train=[], test=[]))
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
-TIMES, THIRD, KIND = 5, 1, 3
-FAMILIES = [pytest.param(family, marks=pytest.mark.xdist_group("references-" + family)) for family in VIEWS]
-NETS, HELD = {}, {}
+TIMES, THIRD, KIND = 4, 1, 3
+SHARED = dict(
+    snapshot="plain",
+    signal="plain",
+    affinity="plain",
+    memory="neighbors",
+    projection="neighbors",
+    sequence="neighbors",
+    tree="neighbors",
+)
+FAMILIES = [
+    pytest.param(family, marks=pytest.mark.xdist_group("references-" + SHARED.get(family, family)))
+    for family in VIEWS
+]
+NETS, HELD, OPENED = {}, {}, {}
 
 
 @timed("references.stated")
@@ -123,7 +135,7 @@ def graph(name, changed=False, era=1.0):
             key=list(range(TIMES)),
             kind=["down" if changed and at == KIND else "up" for at in range(TIMES)],
             time=list(range(TIMES)),
-            split=["train" if at < 4 else "test" for at in range(TIMES)],
+            split=["train" if at < 3 else "test" for at in range(TIMES)],
             weight=[None] * TIMES,
             ask=[0.25 * at for at in range(TIMES)],
             references=dict(
@@ -165,10 +177,17 @@ def banks():
     return {name: root / name for name in CASES}
 
 
+@timed("references.opened")
+def opened(banks, name):
+    if name not in OPENED:
+        OPENED[name] = Deriver(banks[name], "cpu", RESIDENT)
+    return OPENED[name]
+
+
 @timed("references.predicted")
 def predicted(banks, family, name):
     if (family, name) not in HELD:
-        held = Deriver(banks[name], "cpu", RESIDENT)
+        held = opened(banks, name)
         cfg = configuration(held.registry, dict(view=family), {"time/history": 2}, 5, copy.deepcopy(SPLITS))
         if family not in NETS:
             torch.manual_seed(5)
@@ -196,7 +215,7 @@ def compared(banks, family, graph):
 
 @pytest.mark.parametrize("family", FAMILIES)
 def test_every_family_reads_the_references_of_a_task_as_a_set_keyed_by_name(banks, family):
-    registry = Deriver(banks["stated"], "cpu", RESIDENT).registry
+    registry = opened(banks, "stated").registry
     assert family in views(registry) and couples(registry) == {0: (0, 1), 1: (0, 1)}
     stated, changed = compared(banks, family, "main")
     assert stated[:THIRD] == changed[:THIRD] and stated[THIRD] != changed[THIRD]
