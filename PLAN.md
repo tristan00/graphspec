@@ -641,6 +641,8 @@ As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, un
 | 1.5 | done | `8c46118`; 276 passed |
 | 1.6 | done | `4ba4f68`; 294 passed |
 | 1.7 | done | `b805c21`; 297 passed in 10.6 s |
+| Review of section 1 | done | Repairs in `26acf81`, `451f229`, `31a29a5`; 392 passed in 11.3 s |
+| 2.1 | done | `6072ce9`; 336 passed in 12.2 s |
 
 **Deviations**
 
@@ -663,3 +665,10 @@ One line per place where the plan was wrong or silent: the subsection, what the 
 | 1.6 | Every field is required | A bank is opened without a device and stops when asked to derive without one | Most uses of a bank derive nothing |
 | 1.6 | The statement is one record | `plan.json` keeps version 9; each trial writes its statement beside its result | 8.1 changes `plan.json` |
 | 1.7 | A module that defines a function | Functions compiled to machine code are not counted; their callers are timed | Compiled functions cannot log |
+| 2.1 | Each kind of node has its own width | All columns are encoded into one table with a block per column; the first layer of a family holds a block of weights per column | Every family sums vectors across kinds before projecting; none had to be rewritten. Revisit in 6.2 if the width limits scale |
+| 2.1 | Equality with the fixture after sorting by key | Equality of what rows resolve to, with minus zero equal to zero | The old form wrote minus zero for an absent negative value |
+| 2.1 | Splits trained on | `build` takes them as required and accepts only `train` | 2.3 makes a split any name |
+| 8.1, 10.2 | A flag given on resume replaces the stored value | Until 8.1 and 10.2 are built, a resume whose seed, seconds, workers, cache size or batch size differ from the stored ones stops naming the field | One source for each value; 10.2 restores replacement with its event |
+| 8.1 | Bounds of a search | Until 8.1, bounds that hold the seconds of a trial are refused, so a search does not vary the seconds of a trial | The statement holds the seconds; 8.1 puts bounds in the statement and restores the range |
+| 2.6 | Key of the variant cache | The key holds the device as stated since the repairs | Dense algebra differs between CPU and GPU from 1,024 rows |
+| Rules | The suite runs every test | Tests marked `gpu` are left out of the default run and run in section 11 | The suite stays off the GPU |
