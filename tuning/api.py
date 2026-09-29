@@ -6,11 +6,11 @@ from graphspec.infra.runtime import exclusive, output_path
 LOG = logging.getLogger(__name__)
 
 
-def build_bank(task, output, workers=1):
+def build_bank(task, output, workers, trained):
     from .build import build
 
     started = time.perf_counter()
-    result = build(task, output, workers)
+    result = build(task, output, workers, trained)
     LOG.info("build_bank exit seconds=%.3f output=%s", time.perf_counter() - started, output)
     return result
 

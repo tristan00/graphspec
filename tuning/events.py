@@ -243,7 +243,7 @@ class MemoryNet(nn.Module):
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]
-        self.cfg, self.width = cfg, registry.width
+        self.cfg, self.values = cfg, registry.values
         hidden, update = spec["hidden"], spec["memory/update"]
         mutual = update == "mutual_rnn"
         self.attention = not mutual and spec["memory/embedding"] == "attention"
@@ -303,7 +303,7 @@ class MemoryNet(nn.Module):
         if self.keys is not None:
             state = state + self.keys(b["entity_token"])
         hidden = state.shape[-1]
-        memory = self.rule.initial(state, self.input(b["initial"]), b["initial"][:, self.width :].any(-1))
+        memory = self.rule.initial(state, self.input(b["initial"]), b["initial"][:, self.values :].any(-1))
         last = state.new_full((b["entities"],), float(b["start"] * 2 - 1))
         groups = {tick: (index, begin, end) for index, (tick, begin, end) in enumerate(b["event_groups"])}
         encoded = self.input(b["event_x"])

@@ -17,8 +17,9 @@ Source data → adapter → public Stage Parquet tables → bank → transformed
 There is no required database round trip. LadybugDB remains an optional way to query and inspect the same graph; it is not required to create Parquet files. `Stage` writes files and manifests, and `GraphTables` manages contract tables and identifiers. [The loader walkthrough](docs/loader.md) shows a complete custom graph in Python.
 
 ```powershell
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --graphs 4 --entities 40 --steps 12 --features 8
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime build --task D:/graphspec-runtime/datasets/demo/demo.task.json --output D:/graphspec-runtime/banks/demo --workers 1
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime inspect D:/graphspec-runtime/datasets/demo/demo.task.json
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime build --task D:/graphspec-runtime/datasets/demo/demo.task.json --output D:/graphspec-runtime/banks/demo --trained train --workers 1
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json --device cpu
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --device cuda --seed 1 --seconds 600 --preparation-seconds 300 --workers 4 --variant-gb 64 --continuous --selector botorch --startup-trials 100 --random-params model/view
 ```

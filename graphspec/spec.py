@@ -279,7 +279,7 @@ def space(registry, groups):
         parameters += filters(
             edge.name,
             lambda spec, edge=edge: bool(spec.get("relations/%s/keep" % edge.name)),
-            edge.attributes,
+            registry.ordered(edge.name),
         )
     for edge in registry.edges:
         if edge.origin[0] in emits:

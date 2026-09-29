@@ -3,11 +3,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from support import registry as registered
+from support import stated
 
 from graphspec import kernels, operators, spans, spec
 from graphspec.declarations import EdgeType
 from graphspec.infra import compute
-from graphspec.registry import Registry
 from graphspec.resources import GraphBudget, GraphCapacityError, GraphLimits
 from graphspec.staging import GraphTables
 from graphspec.truth import verify
@@ -102,17 +103,16 @@ def test_configuration_rejects_unused_overrides():
         spec.narrow(parameters, {"enabled": []})
 
 
-def test_graph_registry_rejects_duplicate_types():
-    edge = EdgeType("rel", ("base",), [("person", "person")])
-    with pytest.raises(ValueError, match="unique"):
-        Registry("test", ["person", "person"], [edge], 1, [], {"protected": [], "base": ["rel"]})
+def test_graph_registry_rejects_duplicate_relations():
+    edge = EdgeType("rel", ("base", "rel"), [("person", "person")])
+    extras = {"protected": [], "base": ["rel"], "level": "node"}
+    with pytest.raises(ValueError, match="duplicate edge type name"):
+        registered("test", ["person"], [edge, EdgeType("rel", ("rewire",), [("person", "person")])], extras)
 
 
 def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
-    relation = EdgeType("rel", ("base",), [("person", "person")])
-    registry = Registry(
-        "test", ["person"], [relation], 1, [], {"protected": [], "base": ["rel"], "level": "node"}
-    )
+    relation = EdgeType("rel", ("base", "rel"), [("person", "person")])
+    registry = registered("test", ["person"], [relation], {"protected": [], "base": ["rel"], "level": "node"})
     steps = np.array([0, 1, 2, 3, 4, 5, 6, 7, 7, 8, 10, 11], np.int32)
     graph = SimpleNamespace(
         fact_step=steps,
@@ -129,32 +129,30 @@ def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
 
 def test_persistence_bounds_widen_only_the_three_named_relations():
     edges = [
-        EdgeType("adjacent", ("base",), [("region", "region")]),
-        EdgeType("can_act", ("base",), [("character", "region")]),
+        EdgeType("beside", ("base", "beside"), [("place", "place")]),
+        EdgeType("visits", ("base", "visits"), [("person", "place")]),
         EdgeType(
-            "project:adjacent:sources:region:region",
-            ("project", "adjacent", "sources", "region", "region"),
-            [("region", "region")],
+            "project:beside:sources:place:place",
+            ("project", "beside", "sources", "place", "place"),
+            [("place", "place")],
         ),
         EdgeType(
-            "project:can_act:sources:character:character",
-            ("project", "can_act", "sources", "character", "character"),
-            [("character", "character")],
+            "project:visits:sources:person:person",
+            ("project", "visits", "sources", "person", "person"),
+            [("person", "person")],
         ),
-        EdgeType("diffusion", ("diffusion",), [("character", "region")]),
-        EdgeType("rewire", ("rewire",), [("character", "region")]),
+        EdgeType("diffusion", ("diffusion",), [("person", "place")]),
+        EdgeType("rewire", ("rewire",), [("person", "place")]),
     ]
-    registry = Registry(
+    registry = registered(
         "test",
-        ["character", "region"],
+        ["person", "place"],
         edges,
-        1,
-        [],
-        {"protected": [], "base": ["adjacent", "can_act"], "queries": [], "level": "node", "signals": 0},
+        {"protected": [], "base": ["beside", "visits"], "queries": [], "level": "node", "signals": 0},
     )
     selected = {
-        "edges/project:adjacent:sources:region:region/persistence",
-        "edges/project:can_act:sources:character:character/persistence",
+        "edges/project:beside:sources:place:place/persistence",
+        "edges/project:visits:sources:person:person/persistence",
         "edges/diffusion/persistence",
     }
     bounds = {
@@ -173,14 +171,16 @@ def test_persistence_bounds_widen_only_the_three_named_relations():
             parameter.check(maximum + 1)
 
 
-def test_graph_tables_reject_invalid_features_and_labels():
-    tables = GraphTables(0, "test", 2).nodes("client", ["a", "b"])
-    with pytest.raises(ValueError, match="finite matrix"):
-        tables.observe("client", ["a", "b"], [[1, 1, 1, 1]])
+def test_graph_tables_reject_unstated_columns_and_invalid_labels():
+    tables = GraphTables(0, "test", stated(dict(client=["value"]), {})).nodes("client", ["a", "b"])
+    with pytest.raises(ValueError, match="states the columns value, found other"):
+        tables.observe("client", ["a", "b"], other=[1, 1])
+    with pytest.raises(ValueError, match="needs 2 values"):
+        tables.observe("client", ["a", "b"], value=[1])
     with pytest.raises(ValueError, match="one finite value"):
         tables.labels("client", ["a", "b"], [0, np.nan], ["train", "validation"])
     with pytest.raises(ValueError, match="nonnegative int32"):
-        tables.observe("client", ["a"], [[1, 1]], step=0.5)
+        tables.observe("client", ["a"], value=[1], step=0.5)
 
 
 def test_truth_shape_is_checked_before_compiled_audit(monkeypatch):

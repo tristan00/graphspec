@@ -10,7 +10,7 @@ from graphspec.infra.files import sha256_json
 from graphspec.infra.runtime import cache_path
 from graphspec.infra.staging import manifest
 
-from .schema import EDGE, FACTS, ROLES, TableSchema
+from .schema import EDGE, FACTS, OBSERVED, QUERY, VALUE, Tables
 
 LOG = logging.getLogger(__name__)
 IDS = 32
@@ -97,10 +97,10 @@ class Unit:
         return self.rows_between(int(self.bounds[graph]), int(self.bounds[graph + 1]), columns)
 
 
-class Staged(TableSchema):
-    def __init__(self, directory):
+class Staged(Tables):
+    def __init__(self, directory, stated):
         started = time.perf_counter()
-        self.directory = Path(directory)
+        self.directory, self.stated = Path(directory), stated
         entries = manifest(self.directory)
         metadata = [
             (name, (self.directory / name).stat().st_size, (self.directory / name).stat().st_mtime_ns)
@@ -115,9 +115,13 @@ class Staged(TableSchema):
         self.by_table = {}
         for unit in self.units:
             self.by_table.setdefault(unit.table, []).append(unit)
-        super().__init__(
-            {table: "NODE" if units[0].source is None else "REL" for table, units in self.by_table.items()}
-        )
+        self.kinds = {
+            table: "NODE" if units[0].source is None else "REL" for table, units in self.by_table.items()
+        }
+        self.nodes = tuple(stated.nodes)
+        self.queries = stated.queries is not None
+        self.signals = stated.queries["signals"] if self.queries else 0
+        stated.conform(self)
         self.entity_of, self.graph_of, self.ids, self.dense, self.based, self.steps = (
             {},
             {},
@@ -138,7 +142,7 @@ class Staged(TableSchema):
             time.perf_counter() - started,
             len(self.units),
             len(self.nodes),
-            len(self.relations),
+            len(stated.edges),
             len(self.names),
         )
 
@@ -302,22 +306,14 @@ class Staged(TableSchema):
     def reader(self, target):
         return Reader(self, target)
 
-    @property
-    def schema(self):
-        return self
-
     def close(self):
         for unit in self.units:
             for file in unit.files:
                 file.close()
 
     def graphs(self):
-        return pa.table(
-            dict(
-                id=pa.array(sorted(self.names), pa.int32()),
-                name=pa.array([self.names[index] for index in sorted(self.names)]),
-            )
-        )
+        (unit,) = self.by_table["graph"]
+        return unit.read(columns=["id", "name"])
 
     def categories(self):
         (unit,) = self.by_table["query"]
@@ -325,7 +321,10 @@ class Staged(TableSchema):
 
     def query_index(self):
         (unit,) = self.by_table["query"]
-        return unit.read(columns=["graph", "step", "period", "key"])
+        asked = self.stated.queries
+        return unit.read(columns=["graph", "step", asked["grouping"], asked["key"]]).rename_columns(
+            ["graph", "step", "period", "key"]
+        )
 
     def targets(self, level, target):
         (unit,) = self.by_table[target]
@@ -381,13 +380,17 @@ class Staged(TableSchema):
         return pa.table(columns)
 
 
+def valued(rows, names):
+    return {VALUE + name: rows.column(name) for name in names}
+
+
 class Reader:
     def __init__(self, source, target):
         self.source, self.level, self.target_name = source, source.target(target), target
 
     def graph(self, index):
         started = time.perf_counter()
-        source = self.source
+        source, stated = self.source, self.source.stated
         parts = []
         for kind in source.nodes:
             (unit,) = source.by_table[kind]
@@ -395,30 +398,35 @@ class Reader:
             parts.append(rows.append_column("kind", pa.array([kind] * rows.num_rows, pa.string())))
         (observation,) = source.by_table["observation"]
         start, stop = int(observation.bounds[index]), int(observation.bounds[index + 1])
-        held = observation.graph_rows(index, ["seq", "step", "x"])
-        entities, positions = [], []
-        for unit in source.by_table["observed"]:
+        held = observation.graph_rows(index, ["seq", "step"])
+        observations, seen = {}, np.zeros(stop - start, np.int64)
+        for kind in source.nodes:
+            (unit,) = source.by_table[OBSERVED + kind]
             rows = unit.graph_rows(index)
-            entities.append(
-                source.entity_of[unit.source][source.positions(unit.source, numbers(rows, "from"))]
+            positions = source.positions("observation", numbers(rows, "to")) - start
+            if np.any(positions < 0) or np.any(positions >= stop - start):
+                raise ValueError("graph %d observes rows outside its observation range" % index)
+            np.add.at(seen, positions, 1)
+            take = pa.array(positions)
+            observations[kind] = pa.table(
+                dict(
+                    entity=pa.array(
+                        source.entity_of[kind][source.positions(kind, numbers(rows, "from"))], pa.int32()
+                    ),
+                    seq=held.column("seq").take(take),
+                    step=held.column("step").take(take),
+                    **valued(rows, stated.nodes[kind]),
+                )
             )
-            positions.append(source.positions("observation", numbers(rows, "to")) - start)
-        entities, positions = np.concatenate(entities), np.concatenate(positions)
-        if len(positions) != stop - start or not np.array_equal(np.sort(positions), np.arange(stop - start)):
-            raise ValueError("graph %d observes rows outside its observation range" % index)
-        take = pa.array(positions)
-        observations = pa.table(
-            dict(
-                entity=pa.array(entities, pa.int32()),
-                seq=held.column("seq").take(take),
-                step=held.column("step").take(take),
-                x=held.column("x").take(take),
-            )
-        )
+        if np.any(seen != 1):
+            raise ValueError("graph %d has observations that belong to no node or to several" % index)
+        (unit,) = source.by_table["graph"]
+        described = unit.graph_rows(index)
         tables = dict(
+            graph=pa.table(dict(name=described.column("name"), **valued(described, stated.graph))),
             nodes=pa.concat_tables(parts),
             observations=observations,
-            edges={relation["name"]: self.edges(index, relation) for relation in source.relations},
+            edges={table: self.edges(index, table) for table in stated.edges},
         )
         if source.queries:
             tables["queries"] = self.queries(index)
@@ -427,13 +435,14 @@ class Reader:
             "read graph exit graph=%d seconds=%.3f observations=%d",
             index,
             time.perf_counter() - started,
-            observations.num_rows,
+            stop - start,
         )
         return tables
 
-    def edges(self, index, relation):
+    def edges(self, index, table):
+        entry = self.source.stated.edges[table]
         parts = []
-        for unit in self.source.by_table[EDGE + relation["name"]]:
+        for unit in self.source.by_table[EDGE + table]:
             rows = unit.graph_rows(index)
             columns = dict(
                 source=pa.array(
@@ -449,46 +458,46 @@ class Reader:
                     pa.int32(),
                 ),
             )
-            for name in FACTS + tuple(relation["attributes"]):
+            for name in FACTS:
                 columns[name] = rows.column(name)
+            if entry["column"] is not None:
+                columns["relation"] = rows.column(entry["column"])
+            columns.update(valued(rows, entry["columns"]))
             parts.append(pa.table(columns))
         return pa.concat_tables(parts)
 
     def queries(self, index):
-        source = self.source
+        source, stated = self.source, self.source.stated.queries
         (query,) = source.by_table["query"]
         rows = query.graph_rows(index)
         start = int(query.bounds[index])
-        roles = {}
-        for role in ROLES:
+        references = []
+        for name in stated["references"]:
             found = np.full(rows.num_rows, -1, np.int64)
-            for unit in source.by_table["query_" + role]:
+            for unit in source.by_table[QUERY + name]:
                 links = unit.graph_rows(index)
                 positions = source.positions("query", numbers(links, "from")) - start
-                unique_positions(positions, found, "query_" + role)
+                unique_positions(positions, found, QUERY + name)
                 found[positions] = source.entity_of[unit.target][
                     source.positions(unit.target, numbers(links, "to"))
                 ]
             if (found < 0).any():
-                raise ValueError("graph %d has queries without a %s" % (index, role))
-            roles[role] = found
+                raise ValueError("graph %d has queries without the reference %s" % (index, name))
+            references.append(found)
         order = np.argsort(rows.column("step").to_numpy(), kind="stable")
-        take = pa.array(order)
+        rows = rows.take(pa.array(order))
         columns = dict(
-            step=rows.column("step").take(take),
-            period=rows.column("period").take(take),
-            key=rows.column("key").take(take),
-            category=rows.column("category").take(take),
-            actor=pa.array(roles["actor"][order], pa.int32()),
-            subject=pa.array(roles["subject"][order], pa.int32()),
-            context=pa.array(roles["context"][order], pa.int32()),
-            query=rows.column("x").take(take),
+            step=rows.column("step"),
+            period=rows.column(stated["grouping"]),
+            key=rows.column(stated["key"]),
+            category=rows.column("category"),
         )
+        columns["references"] = pa.FixedSizeListArray.from_arrays(
+            pa.array(np.stack(references, 1)[order].reshape(-1), pa.int32()), len(references)
+        )
+        columns.update(valued(rows, stated["columns"]))
         if source.signals:
-            columns.update(
-                signal=rows.column("signal").take(take),
-                signal_observed=rows.column("signal_observed").take(take),
-            )
+            columns.update(signal=rows.column("signal"), signal_observed=rows.column("signal_observed"))
         return pa.table(columns)
 
     def targets(self, index):

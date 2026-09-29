@@ -59,9 +59,7 @@ ENTITIES = (
     "obs_entity",
     "fact_source",
     "fact_target",
-    "query_actor",
-    "query_subject",
-    "query_context",
+    "query_references",
     "label_entity",
 )
 MOMENTS = ("obs_step", "fact_step", "label_step")
@@ -127,7 +125,7 @@ def segment(plan, index, graph, state):
         entity_token=plan.tokens[glob],
         entity_connected=plan.connected[glob],
         period=(np.asarray(graph.period) + plan.truth_periods[index]).astype(graph.period.dtype),
-        step_campaign=np.zeros(graph.steps, np.int32),
+        step_graph=np.zeros(graph.steps, np.int32),
     )
     carry = Segment(
         glob,
@@ -182,7 +180,7 @@ def globalized(carry, index, name, values):
     if name == "fact_ref":
         table = np.r_[carry.value_global, -1]
         return np.where(values >= 0, table[np.maximum(values, 0)], -1).astype(values.dtype)
-    if name == "step_campaign":
+    if name == "step_graph":
         return np.full(len(values), index, values.dtype)
     return values
 
@@ -471,7 +469,7 @@ def walk_segment(own, spec, seed, context, budget):
     return result
 
 
-def mixed_segment(graph, arrays, link, spec, context, state, budget):
+def mixed_segment(graph, arrays, link, spec, context, state, budget, values):
     entity, offsets = arrays["entity"].astype(np.int64), arrays["snapshot_offsets"]
     x, glob = observed_features(arrays), link.glob
     changes, trace, bundles = spec["mixed/changes"], spec["mixed/trace"], spec["mixed/bundles"]
@@ -564,6 +562,7 @@ def mixed_segment(graph, arrays, link, spec, context, state, budget):
         member_id,
         lookup,
         x.shape[1],
+        values,
         arrays["query"],
         offsets,
         spec,
@@ -673,7 +672,7 @@ def represent_segment(carry, graph, registry, spec, groups, categories, seed, li
     if "walks" in groups:
         piece.update(walk_segment(work, spec, seed, context, budget))
     if "mixed" in groups:
-        piece.update(mixed_segment(graph, arrays, link, spec, context, state, budget))
+        piece.update(mixed_segment(graph, arrays, link, spec, context, state, budget, registry.values))
     rows, count = len(own["entity"]), len(own["events"])
     context.remember(
         dict(

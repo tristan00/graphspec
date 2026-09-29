@@ -274,7 +274,7 @@ def spatial_inputs(b, window):
             pieces.append(by_code[lo_code + low : lo_code + high])
         chosen = pieces[0] if len(pieces) == 1 else np.concatenate(pieces)
         values = held.numpy("attributes_" + name)[attribute_rows[chosen]]
-        b["attributes"][name] = array(values.reshape(-1, len(declared.attributes)), torch.float32)
+        b["attributes"][name] = array(registry.encoding.edges(registry.tables[name], values), torch.float32)
         b["attribute_edges"][name] = array(chosen - first_edge, torch.long)
     directed = registry.canonical[spatial[:, 2]]
     canonical_bounds = np.r_[0, np.cumsum(directed)][edge_bounds]

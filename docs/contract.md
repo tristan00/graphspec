@@ -1,154 +1,124 @@
-**The graph table contract**
+**The contract: schema, tables and bank version 8**
 
-A staging or database holds one or more graphs. A graph is one connected history: a whole book of business, a campaign, a
-portfolio. One graph is enough, because labels on its nodes carry their own step and split. Time inside a graph is
-a sequence of steps 0, 1, 2, … Each step holds the observations and relationship facts known at that step, and
-exactly one query when the database has queries.
+A source holds one or more graphs. What the graphs hold is stated once, by a schema; the tables of the source and the bank built from them are checked against it. Nothing is read from the names or the types of the tables beyond what the schema states.
+
+**Schema**
+
+The schema is one object, `graphspec.Schema`, built from a plain mapping and written back to one by `mapping()`. It has no defaults: a field that is absent stops the work with an error naming it. `graphspec.inspect(path)` and the verb `graphspec inspect PATH` print it for a task file or for a bank; for a bank they add the width of every kind and the relations found.
+
+| Field | Holds |
+|---|---|
+| `version` | The version of the schema, 1. |
+| `time` | `unit`: the name of the unit in which steps count. |
+| `columns` | Every column by name, each with its `type` and its `encoder`. A column is one thing wherever it is used: a name listed by two kinds is the same column, fitted once. |
+| `graph` | `columns`: the attributes of the graph itself. |
+| `nodes` | Per kind of node, `columns`: the columns of that kind. Kinds keep the order stated. |
+| `edges` | Per edge table: `endpoints`, the pairs of kinds it joins; `directed`, true or false; `columns`, the values its edges carry; `relation`, either `"declared"`, which makes the table one relation of its own name, or `{"column": NAME}`, which takes the relation of every row from that column. |
+| `queries` | `null`, or: `key` and `grouping`, the names of the columns that identify a query and group the steps; `columns`; `references`, three names each with the kinds it may point to; `signals`, the width of the signal vectors, 0 for none. |
+
+Types of column are registered by name in `graphspec.TYPES`, encoders in `graphspec.ENCODERS`; both accept registration from outside the library, and a name registered twice stops with an error.
+
+| Type | Stored in a source as | Kept in the bank as |
+|---|---|---|
+| `number` | `FLOAT` | the value |
+| `flag` | `BOOL` | 0 or 1 |
+| `category` | `STRING` | the position of the value in the dictionary of the column, which holds every value stated |
+
+A missing value is a null in the source and is kept as missing.
+
+| Encoder | Reads | Gives | Fitted state |
+|---|---|---|---|
+| `value` | number, flag | the value, 0 where missing; a flag of presence | none |
+| `logarithm` | number | sign times log of one plus the size; a flag of presence | none |
+| `standard` | number | the value less the mean over the deviation, 0 where missing; a flag of presence | mean and deviation |
+| `onehot` | category | one place per value seen, one more for every other value; a flag of presence | the values seen |
+
+Encoders are fitted on the rows of the splits trained on, which the caller of the build states. A row is one of them when a task of those splits can see it: it lies in a graph that has such a task, at or before the last step of one. The fitted state and the dictionaries are stored in the bank. A column with no value in those rows stops the build.
+
+The width of a kind is the sum of the widths its columns encode to. Node and query values are encoded into one table whose columns are the value parts of every column in the order stated, followed by their flags; a row holds zeros in the columns its kind does not have. The first linear layer of a model therefore holds one block of weights per column, and reads each kind through the blocks of its own columns. Values on edges are kept as stated and encoded when a batch is packed.
+
+**Tables of a source**
+
+A source is a staging directory of Parquet tables or a database holding the same tables.
 
 | Table | Kind | Columns | Meaning |
 |---|---|---|---|
-| `graph` | node | `id INT32` key, `name STRING` | One row per graph. Names are unique. |
-| one per node type, such as `customer` | node | `id INT64` key, `graph INT32`, `entity INT32`, `key STRING` | The entities of each graph. `entity` is unique within its graph; only uniqueness matters. `key` is a readable label. |
-| `observation` | node | `id INT64` key, `seq INT32`, `step INT32`, `x FLOAT[F]` | An entity's feature vector at a step. |
-| `observed` | relationship | FROM every node type TO `observation` | Links each observation to its entity. |
-| `query` | node, optional | `id INT64` key, `graph INT32`, `step INT32`, `period INT32`, `key INT64`, `category STRING`, `x FLOAT[F]`, optionally `signal FLOAT[S]` and `signal_observed FLOAT[S]` | Decision moments, when the history has them. |
-| `query_actor`, `query_subject`, `query_context` | relationship, with `query` | FROM `query` TO node types | The three entities each query is about. |
-| `edge_<relation>` | relationship | FROM/TO pairs between node types; `seq INT32`, `step INT32`, `present BOOLEAN`; any `FLOAT` attributes | Relationship facts. |
-| `<target>` | node | `id INT64` key, `y DOUBLE`, `split STRING`, `step INT32` for node targets, `tau FLOAT` and `series STRING` for path targets | Labels; the name is yours. |
-| `<target>_of` | relationship | FROM `<target>` TO node types, TO `query`, or TO `graph` | What each label belongs to. |
+| `graph` | node | `id INT32` key, `name STRING`, the columns of the graph | One row per graph. Names are unique. |
+| one per kind of node, named as the kind | node | `id INT64` key, `graph INT32`, `entity INT32`, `key STRING` | The entities of each graph. `entity` is unique within its graph. |
+| `observation` | node | `id INT64` key, `seq INT32`, `step INT32` | One observation of one entity at one step. |
+| `observed_<kind>` | relationship | FROM the kind TO `observation`; the columns of the kind | The values of an entity at an observation. |
+| `query` | node, when the schema states queries | `id INT64` key, `graph INT32`, `step INT32`, the grouping column `INT32`, the key column `INT64`, `category STRING`, the columns of the queries, and with signals `signal FLOAT[S]` and `signal_observed FLOAT[S]` | One query per step. |
+| `query_<reference>` | relationship | FROM `query` TO the kinds the reference states | What each query refers to under that name. |
+| `edge_<table>` | relationship | FROM and TO the endpoint kinds stated; `seq INT32`, `step INT32`, `present BOOLEAN`; the relation column `STRING` when the schema states one; the columns of the table | Facts. |
+| `<target>` | node | `id INT64` key, `y DOUBLE`, `split STRING`, `step INT32` for node targets, `tau FLOAT` and `series STRING` for path targets | Labels; the name is stated by the task. |
+| `<target>_of` | relationship | FROM `<target>` TO kinds of node, TO `query`, or TO `graph` | What each label belongs to. |
 
-Structure:
+A table the schema states and the source lacks, a column of a table that the schema does not state, a column stored as another type than stated, and a relationship joining other kinds than stated each stop with an error naming it.
 
-- Node types are the source tables of `observed`, in creation order. Relations are the `edge_` tables, also in
-  creation order. Order sets the relation codes and the fingerprint, so recreating tables in another order
-  builds a different bank.
-- The `edge_` prefix exists because node and relationship tables share one case-insensitive namespace.
-  Every relationship column other than `seq`, `step` and `present` is an attribute and must be `FLOAT`.
-- Relation names may not contain `:` or be `diffusion`, `rewire`, `temporal` or `untyped`; those belong to
-  derived relations. Node types may not be
-  named `graph`, `observation`, `observed`, `query`, `query_actor`, `query_subject`, `query_context` or `step`, and may
-  not start with `edge_` or contain `:`.
-- `observation.x` and `query.x` share one even width `F`. The first half holds values and the second half
-  holds presence flags; `graphspec.infra.features.encoder(F // 2, numbers, categories)` builds such vectors by
-  feature hashing. The bank stores them at float16 precision.
-- `id` keys are unique across a whole table, not per graph, and increase down the table's rows. A staging reader resolves ids by position when they are dense from zero, or when each graph's ids are its index shifted left by 32 bits plus its row within the graph, which is how shards written in parallel stay unique.
+- Names of kinds, columns, edge tables and references hold no `:`. A kind is not named `graph`, `observation`, `query` or `step` and does not start with `observed_`, `query_` or `edge_`. A relation is not named `diffusion`, `rewire`, `temporal` or `untyped`; those belong to derived relations.
+- The relations of an edge table that takes them from a column are the distinct values of that column over the whole source, in sorted order. Each is a relation in full, with its own code, the endpoints, direction and columns of its table. A row without a value in that column stops the build. A bank holds at most 32,767 relations stated or taken.
+- An edge of a table without direction joins its two ends in no order. Between two entities of one kind it is kept with the lower entity first.
+- `id` keys are unique across a whole table and increase down its rows. A staging reader resolves ids by position when they are dense from zero, or when each graph's ids are its index shifted left by 32 bits plus its row within the graph.
 
-Time and causality:
+**Time and causality**
 
-- With queries, query steps in each graph number 0 to n−1 with no gaps, and every graph has at least one query.
-  Without queries, a graph's steps run from 0 to its last observation, fact or label, and a step may be empty.
-- An observation or fact at step `s` is visible to a query or node label at step `s` and every later one, never
-  to an earlier one.
-- `seq` orders facts within a step. Observations within a step are ordered by entity. `(step, seq)` must be unique among observations, among present facts across
-  all relations, and among absent facts.
-- An entity has at most one observation per step. A present fact needs observations of both of its entities at
-  its step, a query needs observations of its actor, subject and context at its step, and a node label needs
-  an observation of its node at its step. An unchanged vector adds nothing to the event history, which records
-  an observation only when `x` changes.
-- A present fact holds at its own step only: the snapshot at step `s` contains exactly the facts stated at
-  step `s`, so a relation that persists is restated at every step. The event history records a relation when
-  it becomes present, and a removal when a `present = false` row arrives. A removal needs both entities
-  observed at or before its step.
-- Each query has exactly one `query_actor`, one `query_subject` and one `query_context` edge.
-- `period` groups query steps into turns — a game turn, a billing cycle, a day — and never decreases. Without
-  queries every step is its own period. A spec keeps these periods or replaces them with fixed-length ones.
-- `key` is the query's own identifier, kept as `decision` in the bank. `category` names the kind of query;
-  the sorted distinct categories form the vocabulary for affinity features.
-- `signal` and `signal_observed` are optional per-query channels with an observed mask. The signal model is
-  offered only when they exist and the target is on queries or graphs.
+- With queries, query steps in each graph number 0 to n−1 with no gaps, and every graph has at least one query. Without queries, a graph's steps run from 0 to its last observation, fact or label, and a step may be empty.
+- An observation or fact at step `s` is visible to a query or node label at step `s` and every later one, never to an earlier one.
+- `seq` orders facts within a step. `(step, seq)` is unique among observations, among present facts across all relations, and among absent facts.
+- An entity has at most one observation per step. A present fact needs observations of both of its entities at its step, a query needs observations of its three references at its step, and a node label needs an observation of its node at its step.
+- A present fact holds at its own step only, so a relation that persists is restated at every step. A row with `present = false` removes it, and needs both entities observed at or before its step. A present fact carries a value in each of its columns.
+- The grouping column of the queries groups steps and never decreases. Without queries every step is its own group.
+- `category` names the kind of query; the sorted distinct categories form the vocabulary for affinity features.
 
-**Example schema**
+**Targets**
 
-A renewal model for insurance customers. Each graph is one customer's history; each step is a month.
-
-```cypher
-CREATE NODE TABLE graph(id INT32 PRIMARY KEY, name STRING);
-CREATE NODE TABLE customer(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE policy(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE agent(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE region(id INT64 PRIMARY KEY, graph INT32, entity INT32, key STRING);
-CREATE NODE TABLE observation(id INT64 PRIMARY KEY, seq INT32, step INT32, x FLOAT[128]);
-CREATE NODE TABLE query(id INT64 PRIMARY KEY, graph INT32, step INT32, period INT32, key INT64, category STRING, x FLOAT[128]);
-CREATE NODE TABLE renewal(id INT64 PRIMARY KEY, y DOUBLE, split STRING);
-CREATE REL TABLE observed(FROM customer TO observation, FROM policy TO observation, FROM agent TO observation, FROM region TO observation);
-CREATE REL TABLE query_actor(FROM query TO policy);
-CREATE REL TABLE query_subject(FROM query TO customer);
-CREATE REL TABLE query_context(FROM query TO agent);
-CREATE REL TABLE edge_holds(FROM customer TO policy, seq INT32, step INT32, present BOOLEAN);
-CREATE REL TABLE edge_sold_by(FROM policy TO agent, seq INT32, step INT32, present BOOLEAN, commission FLOAT);
-CREATE REL TABLE edge_located_in(FROM customer TO region, FROM agent TO region, seq INT32, step INT32, present BOOLEAN);
-CREATE REL TABLE renewal_of(FROM renewal TO query);
-```
-
-Load node tables first, then relationships, with `COPY` from Parquet. A relationship file starts with the source
-and target `id` columns, followed by the properties in declared order. Load one file per FROM/TO pair and name
-the pair, as `graphspec.infra.database.copy` does:
-
-```cypher
-COPY customer FROM 'customer.parquet';
-COPY observation FROM 'observation.parquet';
-COPY observed FROM 'observed_customer.parquet' (from='customer', to='observation');
-COPY edge_located_in FROM 'located_in_agent.parquet' (from='agent', to='region');
-```
-
-**Targets on nodes, queries or graphs**
-
-A target is any real value: a reward, an outcome, an amount. Keep the labels in a node table of your choosing,
-attach each one with `<target>_of`, and name the table in the task file. The destination of `<target>_of`
-decides the level.
-
-- **On nodes** (`FROM renewal TO customer`, to one or more node types): the target table also has `step INT32`.
-  Each label is predicted for its node at that step from everything visible then, so the node needs an
-  observation at that step. A node can carry labels at several steps, one per step. Queries are optional.
-- **On a query** (`FROM renewal TO query`): one label per query, predicted at that query's step from
-  everything visible then. Queries without a label still feed the history.
-- **On a query, as paths** (`FROM renewal TO query` with `tau FLOAT` and `series STRING` columns): any number
-  of points per query, each a value `y` of the named series at elapsed time `tau` after the query's step,
-  predicted from everything visible at that step. One query may carry several series, such as GDP and
-  population. `tau` is finite and strictly positive, no two points of one query and series share a `tau`, and
-  every point of one query carries the same split. Each series is standardised with its own training mean and
-  deviation, the loss averages within a query and series, then over queries, then over series, and the score
-  is that same loss on the validation points. A query without points still feeds the history.
-- **On a graph** (`FROM renewal TO graph`): one label per graph, predicted at the graph's last query.
-
-Query and graph targets need the query tables. A single graph with node targets needs no query tables, only
-the target table and its relationship next to the tables above:
-
-```cypher
-CREATE NODE TABLE renewal(id INT64 PRIMARY KEY, y DOUBLE, split STRING, step INT32);
-CREATE REL TABLE renewal_of(FROM renewal TO customer);
-```
-
-For every level:
-
-- `split` is `train` or `validation`, set per label.
-- A node carries at most one label per step, a query or graph at most one label, every graph at least one, and
-  every `y` is finite at float32 precision.
-- Building needs at least two training labels and two validation labels that differ at float32 precision.
-- Training targets are standardised with the training mean and sample standard deviation. Fits are scored by
-  raw MSE and R² on the whole validation split. Path targets are scored by their validation loss, the
-  training loss on the validation points, overall and per series; they have no R².
-
-No spec removes or filters the node types a node target labels, or an observation a query needs at its step.
+A target is a real value. Labels live in a node table named by the task, each attached by `<target>_of`, whose destination decides the level: kinds of node (the table then has `step`), `query`, `query` with `tau` and `series` for paths, or `graph`. `split` is `train` or `validation`. A node carries at most one label per step, a query or graph at most one, every graph at least one, and every `y` is finite at float32 precision. Building needs at least two training labels and two validation labels that differ.
 
 **Task file**
 
-```json
-{
-  "name": "retention",
-  "database": "retention.lbug",
-  "staging": "retention.staging",
-  "target": "renewal"
-}
-```
-
 | Key | Meaning |
 |---|---|
-| `name` | The registry name, part of the fingerprint. |
-| `database` | Database path, relative to the task file. |
-| `staging` | Optional: the staging directory, relative to the task file. When named, the bank is built from its Parquet tables; missing staging raises an error. |
+| `name` | The name of the bank's registry, part of its fingerprint. |
+| `staging` | The staging directory, relative to the task file. |
+| `database` | The database, relative to the task file, read when no staging is named. |
 | `target` | The target table; `<target>_of` must exist. |
+| `schema` | The schema, as a mapping. |
 
-`name`, `target`, and one source (`staging` or `database`) are required and no other keys are accepted. Everything else a variant needs comes from the spec
-a trial proposes.
+`name`, `target`, `schema` and one source are required, and no other keys are accepted.
 
+**Bank version 8**
+
+`tuning.build_bank(task, output, workers, trained)` reads the source twice: once to find the dictionaries, the relations taken from columns and the values of the rows trained on, and once to write the graphs. A bank of another version is refused with an error naming the version found.
+
+`manifest.json` holds `version` 8, `task`, `target`, `trained` (the splits the encoders were fitted on), `categories`, `signals`, `graphs` and `spec`. `spec` is the declaration of the registry: `schema`, the mapping above; `encoding`, with `dictionaries` per category column, `states` per column and `relations` per edge table; `features`, `values` and `widths`, the width of the encoded table, of its value part, and of each kind; and the relations with their codes.
+
+`supervision.json` holds `rows` and `split`. A row holds `graph`, `step`, `y`, and for targets on queries and graphs the key and the grouping of its query under the names the schema states; path rows add `tau` and `series`, node rows add `node`. `split` holds `train_indices`, `validation_indices` and `series`, a list with one entry per series of `name`, `mean` and `sd` over the training rows. A single target is one series, named as the target table.
+
+`truth/graph_NNNN/` holds one graph as arrays, with `graph.json` giving its name, the keys of its entities and its number of steps.
+
+| Arrays | Hold |
+|---|---|
+| `kinds`, `entity_token` | Per entity, its kind and the hash of kind and key. |
+| `period` | Per step, its group. |
+| `obs_entity`, `obs_start`, `obs_stop`, `obs_values`, `obs_x` | Spans of consecutive steps over which an entity's stated values are the same. `obs_values` holds the values as stated, one column per column of the layout, missing where the kind has no such column; `obs_x` holds them encoded. |
+| `fact_source`, `fact_target`, `fact_code`, `fact_start`, `fact_stop`, `fact_rank`, `fact_values`, `order_step`, `order_position`, `order_span` | Spans of present facts, their values as stated, and their order within each step. |
+| `removal_source`, `removal_target`, `removal_code`, `removal_step`, `removal_values` | Absent facts. |
+| `query_key`, `query_category`, `query_references`, `query_values`, `query_x`, `query_signals` | Per query. `query_references` has one column per reference, in the order the schema names them. |
+| `label_entity`, `label_step`, `label_row`, `label_id` | Per label, its row in the supervision. |
+| `graph_values` | The attributes of the graph as stated. |
+
+`Graph.stated(registry, categories)` gives a graph back as it was stated: keys for entities, names for relations and categories, values in their stated form.
+
+In the form the operations work on, `step_graph` names for every step the graph it came from when graphs are joined, and `x_table` and `value_table` hold the rows that `obs_ref` and `fact_ref` point to.
+
+| Name in version 7 | In version 8 |
+|---|---|
+| `reward_mean`, `reward_sd` | one entry of the `series` list |
+| row keys `turn`, `decision` | the grouping and the key of the queries, under the names the schema states |
+| `step_campaign` | `step_graph` |
+| `query_actor`, `query_subject`, `query_context` | the columns of `query_references`, named by the schema |
+| `width` and `features` of one vector for every kind | `widths` per kind, `values`, `features` |
+
+**After an operation**
+
+Each of the seven stages states what it changes among `time`, `observations` and `facts`, and the schema is checked after it for those alone: a group for every step; the width of node values and the kinds of node; relations the schema states, between kinds the relation joins.

@@ -35,7 +35,7 @@ class SnapshotNet(nn.Module):
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.query = nn.Linear(registry.features, hidden)
         self.keys = keys_of(spec, hidden)
-        attributes = {name: len(registry.attributes(name)) for name in registry.attributed}
+        attributes = {name: registry.attribute_width(name) for name in registry.attributed}
         self.widths = list(attributes.values())
         self.spatial = nn.ModuleList()
         if spec["snapshot/spatial"] != "none":

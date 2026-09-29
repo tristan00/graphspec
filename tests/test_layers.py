@@ -62,7 +62,7 @@ def test_relational_layer_matches_per_name_linears():
         update.index_add_(
             0,
             destination[rows],
-            (values.sign() * values.abs().log1p()) @ layer.attribute_weights[slot, :width],
+            values @ layer.attribute_weights[slot, :width],
         )
     count = torch.zeros(40).index_add_(0, destination, torch.ones(90)).clamp_min(1)
     expected = layer.norm(h + torch.nn.functional.silu(layer.root(h) + update / count[:, None]))

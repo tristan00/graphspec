@@ -4,19 +4,16 @@ from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 
 from .declarations import EdgeType
-from .schema import LEVELS
+from .schema import LEVELS, Encoding, Schema
 
 
 class Registry:
     @timed("registry.registry")
-    def __init__(self, name, nodes, edges, width, markers, extras):
-        if type(width) is not int or width < 1:
-            raise ValueError("registry feature width must be a positive integer")
-        self.name, self.width = name, width
-        self.nodes, self.edges = tuple(nodes), tuple(edges)
-        if not self.nodes or len(set(self.nodes)) != len(self.nodes):
-            raise ValueError("registry node types must be nonempty and unique")
-        self.features = 2 * width
+    def __init__(self, name, encoding, edges, markers, extras):
+        self.name, self.encoding, self.schema = name, encoding, encoding.schema
+        self.nodes, self.edges = tuple(self.schema.nodes), tuple(edges)
+        self.features, self.values = encoding.features, encoding.values
+        self.widths = {kind: encoding.width(columns) for kind, columns in self.schema.nodes.items()}
         self.node_index = {node: i for i, node in enumerate(self.nodes)}
         self.relations = self._allocate()
         self.by_name = {edge.name: edge for edge in self.edges}
@@ -54,19 +51,25 @@ class Registry:
             raise ValueError("protected node types must be declared")
         if not set(self.extras["base"]) <= set(self.by_name):
             raise ValueError("base relation types must be declared")
+        self.tables = {}
+        for name in self.extras["base"]:
+            table = self.by_name[name].origin[1]
+            if table not in self.schema.edges or name not in encoding.relations[table]:
+                raise ValueError("the relation %s belongs to no stated edge table" % name)
+            self.tables[name] = table
 
     @classmethod
     @timed("registry.registry.from_declaration")
     def from_declaration(cls, declared):
+        schema = Schema(declared["schema"])
         edges = [
             EdgeType(e["name"], e["origin"], e["pairs"], e["attributes"], symmetric=e["symmetric"])
             for e in declared["edges"]
         ]
         return cls(
             declared["name"],
-            declared["nodes"],
+            Encoding(schema, **declared["encoding"]),
             edges,
-            declared["width"],
             declared["markers"],
             declared["extras"],
         )
@@ -88,6 +91,12 @@ class Registry:
     def attributes(self, name):
         return self.by_name[name].attributes
 
+    def ordered(self, name):
+        return tuple(column for column in self.attributes(name) if self.schema.kind(column).ordered)
+
+    def attribute_width(self, name):
+        return self.encoding.width(self.attributes(name))
+
     def kind(self, name):
         return self.node_index[name]
 
@@ -98,8 +107,11 @@ class Registry:
     def declaration(self):
         return dict(
             name=self.name,
-            width=self.width,
+            schema=self.schema.mapping(),
+            encoding=self.encoding.declaration(),
             features=self.features,
+            values=self.values,
+            widths=self.widths,
             nodes=list(self.nodes),
             relations=self.relations,
             markers=list(self.markers),

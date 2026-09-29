@@ -6,7 +6,7 @@ from graphspec.infra.sources import digest
 
 from . import operators, representations
 from .infra.timing import measure, timed
-from .truth import verify_dense
+from .truth import conforms, verify_dense
 
 LOG = logging.getLogger(__name__)
 SOURCE = digest((Path(__file__).parent,))
@@ -20,6 +20,15 @@ STAGES = (
     ("edge filters", operators.edges),
     ("relation merging", operators.merging),
 )
+CHANGES = {
+    operators.periods: ("time",),
+    operators.window: ("observations", "facts"),
+    operators.nodes: ("observations", "facts"),
+    operators.derive: ("facts",),
+    operators.relations: ("facts",),
+    operators.edges: ("facts",),
+    operators.merging: ("facts",),
+}
 
 
 @timed("graph_transform")
@@ -29,7 +38,9 @@ def derive(graph, registry, spec, limits, carry=None, known=None, stages=STAGES,
         clock = time.perf_counter()
         options = dict(limits=limits) if stage in (operators.window, operators.derive) else {}
         with measure(name):
-            graph = stage(graph, registry, spec, SEED, carry=carry, **options)
+            before, graph = graph, stage(graph, registry, spec, SEED, carry=carry, **options)
+            if check and graph is not before:
+                conforms(graph, registry, CHANGES[stage])
         LOG.info(
             "stage exit stage=%s graph=%s seconds=%.3f facts=%d observations=%d",
             name,

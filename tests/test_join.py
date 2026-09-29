@@ -48,7 +48,7 @@ def joined_spec(opened, **graph):
     return opened.variant(configuration(opened.registry, dict(view="snapshot"), values, 5))[1]
 
 
-def test_unconnected_entities_end_with_their_campaign(bank):
+def test_unconnected_entities_end_with_their_graph(bank):
     opened = Bank(bank, device="cpu")
     unlinked = {"graphs/connect/%s" % kind: False for kind in opened.registry.nodes}
     spec = joined_spec(opened, **{"time/scheme": "state"}, **unlinked)
@@ -56,14 +56,14 @@ def test_unconnected_entities_end_with_their_campaign(bank):
     combined = join.joined(graphs, opened.registry, spec)
     derived = transform.derive(combined, opened.registry, spec, GraphLimits("cpu"))
     home = np.full(len(derived.kinds), -1)
-    home[combined.obs_entity] = combined.step_campaign[combined.obs_step]
+    home[combined.obs_entity] = combined.step_graph[combined.obs_step]
     assert not derived.entity_connected.any()
-    assert np.array_equal(home[derived.obs_entity], derived.step_campaign[derived.obs_step])
-    assert np.array_equal(home[derived.fact_source], derived.step_campaign[derived.fact_step])
+    assert np.array_equal(home[derived.obs_entity], derived.step_graph[derived.obs_step])
+    assert np.array_equal(home[derived.fact_source], derived.step_graph[derived.fact_step])
     assert len(derived.obs_step) > len(combined.obs_step)
 
 
-def test_every_periods_restart_at_each_campaign(bank):
+def test_every_periods_restart_at_each_graph(bank):
     opened = Bank(bank, device="cpu")
     spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
     graphs = [Graph.load(opened.truth(index)).dense() for index in range(4)]
@@ -75,7 +75,7 @@ def test_every_periods_restart_at_each_campaign(bank):
     assert np.all(np.diff(combined.period) >= 0)
 
 
-def test_one_campaign_join_equals_the_campaign(bank):
+def test_a_join_of_one_graph_equals_the_graph(bank):
     opened = Bank(bank, device="cpu")
     values = {"graphs/join": "single", "graphs/join_size": 4, "time/scheme": "state"}
     _, spec, chosen = opened.variant(configuration(opened.registry, dict(view="mixed"), values, 5))

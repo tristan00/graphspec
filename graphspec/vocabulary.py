@@ -5,7 +5,7 @@ from .declarations import EdgeType
 from .registry import Registry
 
 LOG = logging.getLogger(__name__)
-TASK_KEYS = frozenset(("name", "database", "staging", "target"))
+TASK_KEYS = frozenset(("name", "database", "staging", "target", "schema"))
 MARKERS = ("non_relation", "turn_context")
 HOPS = (2, 3)
 COUPLING = "temporal"
@@ -26,41 +26,57 @@ def hop(distance):
     return "hop:%d" % distance
 
 
-def target_level(schema, task):
+def target_level(source, task):
     unknown = sorted(set(task) - TASK_KEYS)
     if unknown:
         raise ValueError("unknown task keys: " + ", ".join(unknown))
-    found = schema.target(task["target"])
-    if found != "node" and not schema.queries:
+    found = source.target(task["target"])
+    if found != "node" and not source.queries:
         raise ValueError(
-            "%s-level targets are predicted at queries, so the database needs a query table" % found
+            "%s-level targets are predicted at queries, so the source needs a query table" % found
         )
     return found
 
 
-def registry(schema, task, series):
+def registry(source, task, series, encoding):
     started = time.perf_counter()
-    level = target_level(schema, task)
+    level = target_level(source, task)
     if (level == "path") != bool(series) or list(series) != sorted(set(series)):
         raise ValueError("path targets need their sorted distinct series names, and other targets none")
-    if schema.features < 2 or schema.features % 2:
-        raise ValueError("feature vectors need an even width: values, then presence")
+    schema = encoding.schema
+    nodes = tuple(schema.nodes)
+    relations = [
+        dict(
+            name=name,
+            table=table,
+            pairs=entry["endpoints"],
+            attributes=entry["columns"],
+            symmetric=not entry["directed"],
+        )
+        for table, entry in schema.edges.items()
+        for name in encoding.relations[table]
+    ]
     clash = sorted(
-        [
-            relation["name"]
-            for relation in schema.relations
-            if not relation["name"] or ":" in relation["name"] or relation["name"] in RESERVED
-        ]
-        + [kind for kind in schema.nodes if not kind or ":" in kind or kind == "step"]
+        relation["name"]
+        for relation in relations
+        if type(relation["name"]) is not str
+        or not relation["name"]
+        or ":" in relation["name"]
+        or relation["name"] in RESERVED
     )
     if clash:
-        raise ValueError("names collide with derived relation names: " + ", ".join(clash))
-    nodes = schema.nodes
+        raise ValueError("names collide with derived relation names: " + ", ".join(map(str, clash)))
     edges = [
-        EdgeType(relation["name"], ("base",), relation["pairs"], relation["attributes"])
-        for relation in schema.relations
+        EdgeType(
+            relation["name"],
+            ("base", relation["table"]),
+            relation["pairs"],
+            relation["attributes"],
+            symmetric=relation["symmetric"],
+        )
+        for relation in relations
     ]
-    for relation in schema.relations:
+    for relation in relations:
         for side, position in (("sources", 0), ("targets", 1)):
             counterparts = {}
             for pair in relation["pairs"]:
@@ -95,17 +111,17 @@ def registry(schema, task, series):
     edges.extend(
         EdgeType(name, ("boundary", name.split(":")[1]), everything, symmetric=True) for name in BOUNDARIES
     )
-    labelled = set(schema.destinations(task["target"] + "_of")) if level == "node" else set()
+    labelled = set(source.destinations(task["target"] + "_of")) if level == "node" else set()
     extras = dict(
         level=level,
-        queries=schema.queries,
-        signals=0 if level == "node" else schema.signals,
-        base=[relation["name"] for relation in schema.relations],
+        queries=source.queries,
+        signals=0 if level == "node" else source.signals,
+        base=[relation["name"] for relation in relations],
         protected=[kind for kind in nodes if kind in labelled],
     )
     if level == "path":
         extras["series"] = list(series)
-    result = Registry(task["name"], nodes, edges, schema.features // 2, MARKERS, extras)
+    result = Registry(task["name"], encoding, edges, MARKERS, extras)
     LOG.info(
         "vocabulary exit seconds=%.3f nodes=%d relations=%d level=%s",
         time.perf_counter() - started,

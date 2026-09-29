@@ -4,30 +4,29 @@ import pytest
 
 from graphspec.infra.files import read_json, write_json
 from graphspec.infra.staging import Stage
-from graphspec.synthetic import TARGET, Counter, generate, graph_rows
+from graphspec.synthetic import TARGET, Counter, generate, graph_rows, uniform
 from tuning.build import build
 from tuning.data import Bank
 
-SETTINGS = dict(
-    entities=40, steps=12, features=8, signals=2, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3
-)
+SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
+SHAPE = uniform(4, 2)
 
 
 @pytest.fixture(scope="session")
 def path_bank(tmp_path_factory):
     root = tmp_path_factory.mktemp("path")
-    task = generate(root, "tiny", 4, "path", 1, **SETTINGS)
-    build(task, root / "bank", 1)
+    task = generate(root, "tiny", 4, "path", 1, SHAPE, **SETTINGS)
+    build(task, root / "bank", 1, ("train",))
     return root / "bank"
 
 
 def staged_points(root, name, edit):
-    tables = graph_rows(np.random.default_rng(3), 0, "graph_000", SETTINGS, Counter(), "path")
+    tables = graph_rows(np.random.default_rng(3), 0, "graph_000", SHAPE, SETTINGS, Counter(), "path")
     tables[(TARGET, None, None)] = edit(tables[(TARGET, None, None)])
     with Stage(root / name) as stage:
         stage.write(tables)
     task = root / (name + ".task.json")
-    write_json(task, dict(name=name, staging=name, target=TARGET))
+    write_json(task, dict(name=name, staging=name, target=TARGET, schema=SHAPE["schema"]))
     return task
 
 
@@ -65,7 +64,7 @@ def test_path_supervision_rejects_duplicate_tau(tmp_path):
         return table.set_column(table.schema.get_field_index("tau"), "tau", pa.array(tau, pa.float32()))
 
     with pytest.raises(ValueError, match="graph_000 has two points with one query, one series and one tau"):
-        build(staged_points(tmp_path, "twice", duplicated), tmp_path / "bank", 1)
+        build(staged_points(tmp_path, "twice", duplicated), tmp_path / "bank", 1, ("train",))
 
 
 def test_path_supervision_rejects_nonpositive_tau(tmp_path):
@@ -75,7 +74,7 @@ def test_path_supervision_rejects_nonpositive_tau(tmp_path):
         return table.set_column(table.schema.get_field_index("tau"), "tau", pa.array(tau, pa.float32()))
 
     with pytest.raises(ValueError, match="strictly positive"):
-        build(staged_points(tmp_path, "zero", flattened), tmp_path / "bank", 1)
+        build(staged_points(tmp_path, "zero", flattened), tmp_path / "bank", 1, ("train",))
 
 
 def test_path_targets_require_a_series(tmp_path):
@@ -84,6 +83,7 @@ def test_path_targets_require_a_series(tmp_path):
             staged_points(tmp_path, "unnamed", lambda table: table.drop_columns(["series"])),
             tmp_path / "bank",
             1,
+            ("train",),
         )
 
 

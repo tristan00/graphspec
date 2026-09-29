@@ -8,6 +8,7 @@ LOG = logging.getLogger(__name__)
 def main():
     started = time.perf_counter()
     commands = {
+        "inspect": ("graphspec.inspect", "main"),
         "synthetic": ("graphspec.synthetic", "main"),
         "build": ("tuning.build", "main"),
         "search": ("tuning.run", "main"),

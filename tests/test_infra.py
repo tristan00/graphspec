@@ -124,7 +124,7 @@ def test_source_snapshot_rejects_package_path_collisions(tmp_path):
 
 def test_bank_build_closes_source_when_validation_fails(tmp_path, monkeypatch):
     closed = []
-    source = SimpleNamespace(schema=None, close=lambda: closed.append(True))
+    source = SimpleNamespace(close=lambda: closed.append(True))
     task = tmp_path / "task.json"
     files.write_json(task, {})
     monkeypatch.setattr(build, "open_source", lambda *args: source)
@@ -134,7 +134,7 @@ def test_bank_build_closes_source_when_validation_fails(tmp_path, monkeypatch):
 
     monkeypatch.setattr(build.vocabulary, "target_level", invalid)
     with pytest.raises(ValueError, match="invalid schema"):
-        build.build.__wrapped__(task, tmp_path / "bank")
+        build.build.__wrapped__(task, tmp_path / "bank", 1, ("train",))
     assert closed == [True]
 
 

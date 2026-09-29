@@ -91,7 +91,7 @@ def attribute_inputs(values, counts, widths, device):
         values[(base[:, None] + column).clamp_max(max(len(values) - 1, 0))],
         0.0,
     )
-    return padded.sign() * padded.abs().log1p()
+    return padded
 
 
 class Groups:

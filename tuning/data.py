@@ -19,7 +19,7 @@ from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.resources import GraphLimits
 from graphspec.transform import SEED, SOURCE, materialize
-from graphspec.truth import VERSION, Graph
+from graphspec.truth import Graph, admitted
 
 LOG = logging.getLogger(__name__)
 ROWS = 1024
@@ -113,13 +113,8 @@ class Bank:
         started = time.perf_counter()
         self.directory = Path(directory)
         self.device = device
-        self.manifest = read_json(self.directory / "manifest.json")
+        self.manifest = admitted(self.directory, read_json(self.directory / "manifest.json"))
         self.cache = cache_path("banks", sha256_file(self.directory / "manifest.json"))
-        if self.manifest["version"] != VERSION:
-            raise ValueError(
-                "bank %s has version %s; this code reads version %d"
-                % (self.directory, self.manifest["version"], VERSION)
-            )
         self.registry = Registry.from_declaration(self.manifest["spec"])
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")
@@ -137,14 +132,11 @@ class Bank:
                 raise ValueError("bank supervision and declaration name different series")
             code = {name: index for index, name in enumerate(self.series_names)}
             self.series = np.asarray([code[row["series"]] for row in self.rows], np.int64)
-            self.center = np.asarray([entry["mean"] for entry in self.split["series"]], np.float32)
-            self.scale = np.asarray([entry["sd"] for entry in self.split["series"]], np.float32)
             owners = {graph["name"]: graph["index"] for graph in self.manifest["graphs"]}
             keys = np.asarray([(owners[row["graph"]], row["step"]) for row in self.rows], np.int64)
             self.query_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
-        else:
-            self.center = np.asarray([self.split["reward_mean"]], np.float32)
-            self.scale = np.asarray([self.split["reward_sd"]], np.float32)
+        self.center = np.asarray([entry["mean"] for entry in self.split["series"]], np.float32)
+        self.scale = np.asarray([entry["sd"] for entry in self.split["series"]], np.float32)
         self.row_index, self.row_steps, self.entities = {}, {}, {}
         for graph in self.manifest["graphs"]:
             index = graph["index"]

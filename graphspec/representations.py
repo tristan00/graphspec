@@ -172,19 +172,10 @@ def base(graph, registry, spec, categories, link=None):
     decided, width = registry.extras["queries"], len(categories)
     moments = np.arange(steps)
     if decided:
-        decision_actor, decision_subject, category = (
-            graph.query_actor,
-            graph.query_subject,
-            graph.query_category,
-        )
-        decision_context = np.stack(
-            (
-                observed(decision_actor, moments),
-                observed(decision_subject, moments),
-                observed(graph.query_context, moments),
-            ),
-            1,
-        )
+        references = np.asarray(graph.query_references)
+        decision_actor, decision_subject = (np.ascontiguousarray(references[:, place]) for place in (0, 1))
+        category = graph.query_category
+        decision_context = np.stack([observed(who, moments) for who in references.T], 1)
     if registry.extras["level"] == "node":
         actor = subject = graph.label_entity
         row_step = graph.label_step
@@ -628,10 +619,9 @@ def mixed_sizes(rows, moments, trace, changes, bundles, decided, carried=0):
 
 
 def mixed_features(
-    kind, mode, fill, member_offset, member_id, rows, columns, query, offsets, spec, decided, base=0
+    kind, mode, fill, member_offset, member_id, rows, columns, width, query, offsets, spec, decided, base=0
 ):
     changes, trace, bundles = spec["mixed/changes"], spec["mixed/trace"], spec["mixed/bundles"]
-    width = columns // 2
     features = allocate((len(kind), columns), np.float16)
     chunk = block_rows(features)
     for start in range(0, len(features), chunk):
@@ -665,7 +655,7 @@ def mixed_features(
 
 
 @timed("mixed")
-def mixed(arrays, spec, budget):
+def mixed(arrays, spec, budget, values):
     x, entity, offsets = observed_features(arrays), arrays["entity"], arrays["snapshot_offsets"]
     changes, trace, bundles = spec["mixed/changes"], spec["mixed/trace"], spec["mixed/bundles"]
     decided = len(arrays["query"]) > 0
@@ -713,6 +703,7 @@ def mixed(arrays, spec, budget):
         member_id,
         lambda ids: x[ids],
         x.shape[1],
+        values,
         arrays["query"],
         offsets,
         spec,
@@ -740,7 +731,7 @@ def build(graph, registry, spec, groups, categories, seed, limits):
         ("events", "events" in groups, lambda: event_graph(arrays, registry, spec, budget)),
         ("neighbors", "neighbors" in groups or "walks" in groups, lambda: neighbors(arrays, spec)),
         ("walks", "walks" in groups, lambda: walks(arrays, spec, seed, budget)),
-        ("mixed", "mixed" in groups, lambda: mixed(arrays, spec, budget)),
+        ("mixed", "mixed" in groups, lambda: mixed(arrays, spec, budget, registry.values)),
     )
     for name, wanted, make in parts:
         if wanted:

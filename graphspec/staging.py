@@ -8,25 +8,20 @@ import pyarrow as pa
 
 from .infra.files import write_json
 from .infra.runtime import output_path
-from .schema import EDGE, RESERVED
+from .schema import EDGE, OBSERVED, PREFIXES, TABLES
 
 LOG = logging.getLogger(__name__)
 
 
-def fixed(values, width):
-    values = np.ascontiguousarray(values, np.float32)
-    if values.ndim != 2 or values.shape[1] != width or not np.isfinite(values).all():
-        raise ValueError("observation features must be a finite matrix with width %d" % width)
-    return pa.FixedSizeListArray.from_arrays(pa.array(values.reshape(-1)), width)
-
-
-def write_task(path, name, staging, target):
+def write_task(path, name, staging, target, schema):
+    started = time.perf_counter()
     path = output_path(path)
     staging = Path(staging).resolve()
     location = (
         staging.relative_to(path.parent).as_posix() if staging.is_relative_to(path.parent) else str(staging)
     )
-    write_json(path, dict(name=name, staging=location, target=target))
+    write_json(path, dict(name=name, staging=location, target=target, schema=schema.mapping()))
+    LOG.debug("write_task exit path=%s seconds=%.4f", path, time.perf_counter() - started)
     return path
 
 
@@ -37,15 +32,36 @@ def step_index(step):
 
 
 class GraphTables:
-    def __init__(self, index, name, features):
-        if not isinstance(features, Integral) or features < 2 or features % 2:
-            raise ValueError("features must be a positive even width: values, then presence")
+    def __init__(self, index, name, schema, **attributes):
+        if schema.queries is not None:
+            raise ValueError("graph tables state no queries; the schema must state none")
         if not isinstance(index, Integral) or index < 0 or index >= 1 << 31:
             raise ValueError("graph index must be a nonnegative int32")
-        self.index, self.features = index, features
-        self.tables = {("graph", None, None): pa.table(dict(id=pa.array([index], pa.int32()), name=[name]))}
+        self.index, self.schema = index, schema
+        described = dict(id=pa.array([index], pa.int32()), name=pa.array([name], pa.string()))
+        described.update(
+            self.stated("the graph", schema.graph, {key: [value] for key, value in attributes.items()}, 1)
+        )
+        self.tables = {("graph", None, None): pa.table(described)}
         self.lookup, self.next = {}, {}
         self.entities, self.sequence = 0, 0
+
+    def stated(self, where, names, columns, count):
+        started = time.perf_counter()
+        if sorted(columns) != sorted(names):
+            raise ValueError(
+                "%s states the columns %s, found %s" % (where, ", ".join(names), ", ".join(sorted(columns)))
+            )
+        result = {}
+        for name in names:
+            values = pa.array(list(columns[name]), self.schema.kind(name).written)
+            if len(values) != count:
+                raise ValueError("the column %s of %s needs %d values" % (name, where, count))
+            result[name] = values
+        LOG.debug(
+            "graph tables stated exit columns=%d seconds=%.4f", len(names), time.perf_counter() - started
+        )
+        return result
 
     def ids(self, table, count):
         start = self.next.get(table, self.index << 32)
@@ -58,8 +74,8 @@ class GraphTables:
         self.tables[key] = pa.concat_tables([self.tables[key], table]) if key in self.tables else table
 
     def nodes(self, kind, keys):
-        if not isinstance(kind, str) or not kind or kind in RESERVED or kind.startswith(EDGE):
-            raise ValueError("invalid or reserved node type: " + str(kind))
+        if kind not in self.schema.nodes:
+            raise ValueError("the schema states no kind of node named " + str(kind))
         keys = list(map(str, keys))
         if kind in self.lookup or len(set(keys)) != len(keys):
             raise ValueError("declare each node type once with unique keys: " + kind)
@@ -80,17 +96,17 @@ class GraphTables:
         return self
 
     def resolve(self, kind, keys):
+        if kind not in self.lookup:
+            raise ValueError("no nodes are declared of the kind " + str(kind))
         try:
             return np.asarray([self.lookup[kind][str(key)] for key in keys], np.int64)
         except KeyError as error:
             raise ValueError("undeclared node in " + kind + ": " + str(error)) from error
 
-    def observe(self, kind, keys, values, step=0):
+    def observe(self, kind, keys, step=0, **columns):
         step = step_index(step)
         owners = self.resolve(kind, keys)
-        x = fixed(values, self.features)
-        if len(x) != len(owners) or step < 0:
-            raise ValueError("observations need one feature vector per node and a nonnegative step")
+        values = self.stated("the kind of node " + kind, self.schema.nodes[kind], columns, len(owners))
         ids = self.ids("observation", len(owners))
         self.put(
             ("observation", None, None),
@@ -99,46 +115,52 @@ class GraphTables:
                     id=ids,
                     seq=pa.array(ids - (self.index << 32), pa.int32()),
                     step=pa.array(np.full(len(ids), step), pa.int32()),
-                    x=x,
                 )
             ),
         )
-        self.put(("observed", kind, "observation"), pa.table({"from": owners, "to": ids}))
+        self.put((OBSERVED + kind, kind, "observation"), pa.table({"from": owners, "to": ids, **values}))
         return self
 
-    def edges(self, name, source, target, sources, targets, step=0, present=True, **attributes):
+    def edges(self, table, source, target, sources, targets, step=0, present=True, relation=None, **columns):
         step = step_index(step)
-        if not name or ":" in name or type(present) is not bool:
-            raise ValueError(
-                "edges require a nonempty relation name without colons and a boolean presence value"
-            )
+        if table not in self.schema.edges or type(present) is not bool:
+            raise ValueError("edges name a stated edge table and a boolean presence value: " + str(table))
+        entry = self.schema.edges[table]
+        if (source, target) not in entry["endpoints"]:
+            raise ValueError("the edge table %s is not stated to join %s to %s" % (table, source, target))
         left, right = self.resolve(source, sources), self.resolve(target, targets)
-        if len(left) != len(right) or step < 0:
-            raise ValueError("edges need matching endpoints and a nonnegative step")
+        if len(left) != len(right):
+            raise ValueError("edges need matching endpoints")
         count = len(left)
-        columns = {
+        held = {
             "from": left,
             "to": right,
             "seq": pa.array(np.arange(self.sequence, self.sequence + count), pa.int32()),
             "step": pa.array(np.full(count, step), pa.int32()),
             "present": pa.array(np.full(count, present), pa.bool_()),
         }
-        for key, values in attributes.items():
-            if key in columns or not np.isfinite(np.asarray(values, np.float32)).all():
-                raise ValueError("edge attributes must be finite and have distinct names")
-            columns[key] = pa.array(values, pa.float32())
+        if (entry["column"] is None) != (relation is None):
+            raise ValueError(
+                "the edge table %s takes its relations from %s"
+                % (table, "its statement" if entry["column"] is None else "the column " + entry["column"])
+            )
+        if relation is not None:
+            held[entry["column"]] = pa.array(list(relation), pa.string())
+            if len(held[entry["column"]]) != count:
+                raise ValueError("edges of %s need one relation for every edge" % table)
+        held.update(self.stated("the edge table " + table, entry["columns"], columns, count))
         self.sequence += count
-        self.put(("edge_" + name, source, target), pa.table(columns))
+        self.put((EDGE + table, source, target), pa.table(held))
         return self
 
     def labels(self, kind, keys, values, splits, step=0, target="outcome"):
         step = step_index(step)
         owners = self.resolve(kind, keys)
         values, splits = list(values), list(splits)
-        if target in self.lookup or target in RESERVED or target.startswith(EDGE):
+        if target in self.lookup or target in TABLES or target.startswith(PREFIXES):
             raise ValueError("invalid or reserved target table: " + target)
-        if step < 0 or not set(splits) <= {"train", "validation"}:
-            raise ValueError("labels need a nonnegative step and train or validation splits")
+        if not set(splits) <= {"train", "validation"}:
+            raise ValueError("labels need train or validation splits")
         if len(values) != len(owners) or len(splits) != len(owners) or not np.isfinite(values).all():
             raise ValueError("labels need one finite value and one split per node")
         ids = self.ids(target, len(owners))

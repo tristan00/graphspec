@@ -150,10 +150,10 @@ def open_runs(carry, name, pieces):
     )
 
 
-def campaign_end(graph):
-    campaign = graph.step_campaign
-    first = np.r_[0, np.flatnonzero(np.diff(campaign)) + 1]
-    return np.r_[first[1:], graph.steps][np.cumsum(np.r_[0, np.diff(campaign) != 0])]
+def member_end(graph):
+    member = graph.step_graph
+    first = np.r_[0, np.flatnonzero(np.diff(member)) + 1]
+    return np.r_[first[1:], graph.steps][np.cumsum(np.r_[0, np.diff(member) != 0])]
 
 
 def reach(graph, spec, start, lasting):
@@ -164,7 +164,7 @@ def reach(graph, spec, start, lasting):
         reached = np.searchsorted(group, group[start] + spec["time/past_periods"], "right") - 1
     else:
         reached = start + spec["time/window"] - 1
-    return np.where(lasting, reached, np.minimum(reached, campaign_end(graph)[start] - 1))
+    return np.where(lasting, reached, np.minimum(reached, member_end(graph)[start] - 1))
 
 
 def groups_of(graph):
@@ -338,8 +338,8 @@ def periods(graph, registry, spec, seed, carry=None):
     if spec["time/periods"] == "truth":
         return graph
     length = spec["time/period_length"]
-    campaign = graph.step_campaign
-    first = np.r_[0, np.flatnonzero(np.diff(campaign)) + 1]
+    joined = graph.step_graph
+    first = np.r_[0, np.flatnonzero(np.diff(joined)) + 1]
     sizes = np.diff(np.r_[first, graph.steps])
     offsets = np.r_[0, np.cumsum(-(-sizes // length))][:-1]
     member = np.repeat(np.arange(len(first)), sizes)
@@ -426,11 +426,7 @@ def nodes(graph, registry, spec, seed, carry=None):
         )
     needed = np.zeros(len(obs_step), bool)
     if len(graph.query_key):
-        needed = (
-            (graph.query_actor[obs_step] == obs_entity)
-            | (graph.query_subject[obs_step] == obs_entity)
-            | (graph.query_context[obs_step] == obs_entity)
-        )
+        needed = (graph.query_references[obs_step] == obs_entity[:, None]).any(1)
     first, _ = kernels.first_observed(obs_entity, obs_step, structural, entities, steps)
     if carry is not None:
         first[counters(carry, "nodes/structural", graph) > 0] = -1
@@ -956,7 +952,7 @@ def derived_rows(graph, found, stop, budget):
     limit = np.where(
         graph.entity_connected[source] & graph.entity_connected[target],
         graph.steps,
-        campaign_end(graph)[step],
+        member_end(graph)[step],
     )
     ends = np.flatnonzero(~continues & (step + 1 < limit))
     total = len(step) + len(ends) + len(stop[0])

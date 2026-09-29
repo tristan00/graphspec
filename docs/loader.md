@@ -1,6 +1,6 @@
 **Building a graph without a database**
 
-`graphspec.Stage` is the public Parquet writer. It writes the table manifest and shards; users do not need to reproduce file naming or internal identifiers. `graphspec.GraphTables` constructs contract tables from named nodes, observations, edges, and node labels. Temporal query tables are written through the same `Stage` interface.
+`graphspec.Stage` is the public Parquet writer. It writes the table manifest and shards; users do not need to reproduce file naming or internal identifiers. `graphspec.GraphTables` constructs contract tables from a schema and named nodes, observations, edges, and node labels. Temporal query tables are written through the same `Stage` interface.
 
 Set an absolute `GRAPHSPEC_HOME` before launching the Python process. For example, an external Windows environment can run a saved loader with:
 
@@ -12,27 +12,43 @@ $env:GRAPHSPEC_HOME = 'D:/graphspec-runtime'
 ```python
 import os
 from pathlib import Path
-from graphspec import GraphTables, Stage, write_task
+from graphspec import GraphTables, Schema, Stage, write_task
 from tuning import build_bank
-import numpy as np
 
 runtime = Path(os.environ["GRAPHSPEC_HOME"])
 workspace = runtime / "datasets" / "example"
 staging = workspace / "example.staging"
-graph = GraphTables(index=0, name="customers", features=4)
+schema = Schema(
+    dict(
+        version=1,
+        time=dict(unit="step"),
+        columns=dict(
+            balance=dict(type="number", encoder="standard"),
+            tier=dict(type="category", encoder="onehot"),
+            open=dict(type="flag", encoder="value"),
+        ),
+        graph=dict(columns=[]),
+        nodes=dict(client=dict(columns=["balance", "tier"]), branch=dict(columns=["open"])),
+        edges=dict(
+            assigned=dict(endpoints=[["client", "branch"]], directed=True, columns=[], relation="declared")
+        ),
+        queries=None,
+    )
+)
+graph = GraphTables(index=0, name="customers", schema=schema)
 graph.nodes("client", ["a", "b", "c", "d"])
 graph.nodes("branch", ["north"])
-graph.observe("client", ["a", "b", "c", "d"], np.ones((4, 4)))
-graph.observe("branch", ["north"], np.ones((1, 4)))
+graph.observe("client", ["a", "b", "c", "d"], balance=[1.0, 2.5, None, 4.0], tier=["low", "high", "low", None])
+graph.observe("branch", ["north"], open=[True])
 graph.edges("assigned", "client", "branch", ["a", "b", "c", "d"], ["north"] * 4)
 graph.labels("client", ["a", "b", "c", "d"], [0, 1, 0, 1], ["train", "train", "validation", "validation"])
 with Stage(staging) as stage:
     graph.write(stage)
-task = write_task(workspace / "example.task.json", "example", staging, "outcome")
-build_bank(task, runtime / "banks" / "example", workers=1)
+task = write_task(workspace / "example.task.json", "example", staging, "outcome", schema)
+build_bank(task, runtime / "banks" / "example", workers=1, trained=("train",))
 ```
 
-The first half of each feature vector contains values; the second half contains presence indicators. The example supplies values of one with all values present. `graphspec.infra.features.encoder` provides optional feature hashing. Integer identifiers in raw tables are managed by `GraphTables`; readable keys are strings. Nodes must be declared before referencing them. Each `observe`, `edges`, or `labels` call accepts a nonnegative `step`, with zero representing a static snapshot. Temporal observations and facts follow the [contract's time and causality rules](contract.md). Edge attributes are keyword arrays of finite float32 values.
+The schema states every kind of node, every edge table and every column with its type and encoder; [the contract](contract.md) describes it. Each kind has its own columns, and `None` states a missing value. Integer identifiers in raw tables are managed by `GraphTables`; readable keys are strings. Nodes must be declared before referencing them. Each `observe`, `edges`, or `labels` call accepts a nonnegative `step`, with zero representing a static snapshot. Temporal observations and facts follow the [contract's time and causality rules](contract.md). The values of edges are keyword lists named as the columns of their edge table; an edge table that takes its relations from a column is given them as `relation`.
 
 Use the public configuration builder for one model fit on either adapter's bank:
 
@@ -63,9 +79,9 @@ Put multiprocessing workflows inside a `main` function called under `if __name__
 
 For multiple graphs, use consecutive graph indices from zero. Each graph writes its own tables into the same Stage, in graph order. A source that produces its tables by query can call `Stage.write` directly with Arrow tables keyed by `(table, source_type, target_type)`. `Stage.merge` combines manifests from shards below the staging directory without copying their Parquet data.
 
-Sources declare `staging` or `database` in a task file. A staging-only task needs `name`, `staging`, and `target`; it does not need a fictional database filename. For older task files naming both, staging is explicitly preferred and must exist. Missing staging never falls back to another source.
+Sources declare `staging` or `database` in a task file. A staging-only task needs `name`, `staging`, `target` and `schema`; it does not need a fictional database filename. For older task files naming both, staging is explicitly preferred and must exist. Missing staging never falls back to another source.
 
-LadybugDB is an optional query and inspection format. Install `graphspec[ladybug]`, then export any staging with `graphspec database --staging STAGING --output DATABASE.lbug`. The exporter derives the database schema from the staged tables. There is no CSV → LadybugDB → Parquet round trip: adapters write Parquet once, bank building reads it, and database export is optional. Existing database-only task files still work.
+LadybugDB is an optional query and inspection format. Install `graphspec[ladybug]`, then export any staging with `graphspec database --staging STAGING --output DATABASE.lbug`. The exporter derives the tables of the database from the staged tables; a task that reads the database states the same schema. There is no CSV → LadybugDB → Parquet round trip: adapters write Parquet once, bank building reads it, and database export is optional. Existing database-only task files still work.
 
 **Runtime storage**
 

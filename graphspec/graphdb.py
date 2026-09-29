@@ -1,34 +1,39 @@
 import logging
 import time
 
+import numpy as np
 import pyarrow as pa
 
 from graphspec.infra.database import columns, connect, connections, query, tables
 
-from .schema import EDGE, LEVELS, RESERVED, TableSchema
+from .schema import EDGE, OBSERVED, QUERY, VALUE, Tables
 
 LOG = logging.getLogger(__name__)
 
 
-def check(registry):
-    clash = sorted(kind for kind in registry.nodes if kind in RESERVED or kind.startswith(EDGE))
-    if clash:
-        raise ValueError("node types collide with reserved table names: " + ", ".join(clash))
-    if registry.extras["level"] not in LEVELS:
-        raise ValueError("registry level must be one of " + ", ".join(LEVELS))
+def valued(holder, names):
+    return "".join(", %s.`%s` AS `%s%s`" % (holder, name, VALUE, name) for name in names)
 
 
-class Schema(TableSchema):
-    def __init__(self, connection):
+class Database(Tables):
+    def __init__(self, path, stated, buffer_pool_size=4 << 30):
         started = time.perf_counter()
-        self.connection = connection
-        super().__init__({row["name"]: row["type"] for row in tables(connection)})
+        self.location, self.stated = str(path), stated
+        self.store, self.connection = connect(path, read_only=True, buffer_pool_size=buffer_pool_size)
+        try:
+            self.kinds = {row["name"]: row["type"] for row in tables(self.connection)}
+            self.nodes = tuple(stated.nodes)
+            self.queries = stated.queries is not None
+            self.signals = stated.queries["signals"] if self.queries else 0
+            stated.conform(self)
+        except Exception:
+            self.close()
+            raise
         LOG.info(
-            "schema exit seconds=%.3f nodes=%d relations=%d features=%d signals=%d queries=%s",
+            "database exit seconds=%.3f nodes=%d edges=%d signals=%d queries=%s",
             time.perf_counter() - started,
             len(self.nodes),
-            len(self.relations),
-            self.features,
+            len(stated.edges),
             self.signals,
             self.queries,
         )
@@ -39,17 +44,6 @@ class Schema(TableSchema):
     def columns(self, table):
         return columns(self.connection, table)
 
-
-class Database:
-    def __init__(self, path, buffer_pool_size=4 << 30):
-        self.location = str(path)
-        self.store, self.connection = connect(path, read_only=True, buffer_pool_size=buffer_pool_size)
-        try:
-            self.schema = Schema(self.connection)
-        except Exception:
-            self.close()
-            raise
-
     def close(self):
         try:
             self.connection.close()
@@ -57,7 +51,7 @@ class Database:
             self.store.close()
 
     def reader(self, target):
-        return Reader(self.store, self.connection, self.schema, target)
+        return Reader(self, target)
 
     def graphs(self):
         return query(self.connection, "MATCH (g:graph) RETURN g.id AS id, g.name AS name ORDER BY id")
@@ -72,7 +66,8 @@ class Database:
     def query_index(self):
         return query(
             self.connection,
-            "MATCH (q:query) RETURN q.graph AS graph, q.step AS step, q.period AS period, q.key AS key",
+            "MATCH (q:query) RETURN q.graph AS graph, q.step AS step, q.`%s` AS period, q.`%s` AS key"
+            % (self.stated.queries["grouping"], self.stated.queries["key"]),
         )
 
     def targets(self, level, target):
@@ -97,20 +92,32 @@ class Database:
 
 
 class Reader:
-    def __init__(self, database, connection, schema, target):
+    def __init__(self, source, target):
         started = time.perf_counter()
-        self.database, self.connection, self.schema = database, connection, schema
-        self.level = schema.target(target)
-        signal = ", q.signal AS signal, q.signal_observed AS signal_observed" if schema.signals else ""
+        self.source, self.connection, stated = source, source.connection, source.stated
+        self.level = source.target(target)
         self.statements = dict(
-            observations="MATCH (e)-[:observed]->(o:observation) WHERE e.graph = $graph "
-            "RETURN e.entity AS entity, o.seq AS seq, o.step AS step, o.x AS x"
+            graph="MATCH (g:graph) WHERE g.id = $graph RETURN g.name AS name" + valued("g", stated.graph)
         )
-        if schema.queries:
+        if source.queries:
+            asked = stated.queries
             self.statements["queries"] = (
-                "MATCH (a)<-[:query_actor]-(q:query)-[:query_subject]->(s), (q)-[:query_context]->(c) WHERE q.graph = $graph "
-                "RETURN q.step AS step, q.period AS period, q.key AS key, q.category AS category, a.entity AS actor, "
-                "s.entity AS subject, c.entity AS context, q.x AS query%s ORDER BY step" % signal
+                "MATCH %s WHERE q.graph = $graph "
+                "RETURN q.step AS step, q.`%s` AS period, q.`%s` AS key, q.category AS category%s%s%s "
+                "ORDER BY step"
+                % (
+                    ", ".join(
+                        "(%s)-[:`%s%s`]->(r%d)" % ("q:query" if place == 0 else "q", QUERY, name, place)
+                        for place, name in enumerate(asked["references"])
+                    ),
+                    asked["grouping"],
+                    asked["key"],
+                    "".join(
+                        ", r%d.entity AS r%d" % (place, place) for place in range(len(asked["references"]))
+                    ),
+                    valued("q", asked["columns"]),
+                    ", q.signal AS signal, q.signal_observed AS signal_observed" if source.signals else "",
+                )
             )
         if self.level in ("query", "path"):
             self.statements["targets"] = (
@@ -129,51 +136,69 @@ class Reader:
                 "RETURN t.id AS id, t.y AS y, t.split AS split, t.step AS step, n.entity AS entity"
                 % (target, target)
             )
-        for kind in schema.nodes:
+        for kind, held in stated.nodes.items():
             self.statements["node:" + kind] = (
                 "MATCH (n:`%s`) WHERE n.graph = $graph RETURN n.entity AS entity, n.key AS key" % kind
             )
-        for relation in schema.relations:
-            self.statements["edge:" + relation["name"]] = (
+            self.statements["observed:" + kind] = (
+                "MATCH (e:`%s`)-[r:`%s%s`]->(o:observation) WHERE e.graph = $graph "
+                "RETURN e.entity AS entity, o.seq AS seq, o.step AS step%s"
+                % (kind, OBSERVED, kind, valued("r", held))
+            )
+        for table, entry in stated.edges.items():
+            self.statements["edge:" + table] = (
                 "MATCH (a)-[r:`%s%s`]->(b) WHERE a.graph = $graph RETURN a.entity AS source, b.entity AS target, "
-                "r.seq AS seq, r.step AS step, r.present AS present%s"
+                "r.seq AS seq, r.step AS step, r.present AS present%s%s"
                 % (
                     EDGE,
-                    relation["name"],
-                    "".join(", r.`%s` AS `%s`" % (name, name) for name in relation["attributes"]),
+                    table,
+                    "" if entry["column"] is None else ", r.`%s` AS relation" % entry["column"],
+                    valued("r", entry["columns"]),
                 )
             )
         LOG.info(
-            "reader exit seconds=%.3f level=%s relations=%d",
+            "reader exit seconds=%.3f level=%s edges=%d",
             time.perf_counter() - started,
             self.level,
-            len(schema.relations),
+            len(stated.edges),
         )
 
     def run(self, name, graph):
         return query(self.connection, self.statements[name], dict(graph=graph))
 
+    def queries(self, index):
+        started = time.perf_counter()
+        found = self.run("queries", index)
+        count = len(self.source.stated.queries["references"])
+        references = np.stack(
+            [found.column("r%d" % place).to_numpy().astype(np.int32) for place in range(count)], 1
+        )
+        result = found.drop_columns(["r%d" % place for place in range(count)]).append_column(
+            "references", pa.FixedSizeListArray.from_arrays(pa.array(references.reshape(-1)), count)
+        )
+        LOG.debug("read queries exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
+        return result
+
     def graph(self, index):
         started = time.perf_counter()
+        stated = self.source.stated
         parts = []
-        for kind in self.schema.nodes:
+        for kind in stated.nodes:
             part = self.run("node:" + kind, index)
             parts.append(part.append_column("kind", pa.array([kind] * part.num_rows, pa.string())))
         tables = dict(
+            graph=self.run("graph", index),
             nodes=pa.concat_tables(parts),
-            observations=self.run("observations", index),
+            observations={kind: self.run("observed:" + kind, index) for kind in stated.nodes},
             targets=self.run("targets", index),
-            edges={
-                relation["name"]: self.run("edge:" + relation["name"], index)
-                for relation in self.schema.relations
-            },
+            edges={table: self.run("edge:" + table, index) for table in stated.edges},
         )
-        if self.schema.queries:
-            tables["queries"] = self.run("queries", index)
+        if self.source.queries:
+            tables["queries"] = self.queries(index)
         LOG.info(
             "read graph exit graph=%d seconds=%.3f observations=%d",
             index,
             time.perf_counter() - started,
-            tables["observations"].num_rows,
+            sum(table.num_rows for table in tables["observations"].values()),
         )
         return tables

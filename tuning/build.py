@@ -1,7 +1,6 @@
 import argparse
 import json
 import logging
-import shutil
 import time
 from contextlib import closing
 from multiprocessing.util import Finalize
@@ -14,7 +13,8 @@ from graphspec.infra.files import read_json, sha256_file, write_json
 from graphspec.infra.log import configure
 from graphspec.infra.processes import WORKERS, parallel
 from graphspec.infra.runtime import exclusive, output_path
-from graphspec.truth import ROWS, VERSION, Rows, encode, parse, verify
+from graphspec.schema import Schema, fitted
+from graphspec.truth import VERSION, gather, parse
 
 LOG = logging.getLogger(__name__)
 SPLITS = ("train", "validation")
@@ -22,12 +22,86 @@ WORKER = {}
 
 
 def open_source(task_path, task):
+    started = time.perf_counter()
     root = Path(task_path).parent
-    if task.get("staging"):
-        return staged.Staged(root / task["staging"])
-    if not task.get("database"):
+    if "schema" not in task:
+        raise ValueError("the task %s states no schema" % task_path)
+    stated = Schema(task["schema"])
+    if "staging" in task:
+        result = staged.Staged(root / task["staging"], stated)
+    elif "database" in task:
+        result = graphdb.Database((root / task["database"]).resolve(), stated)
+    else:
         raise ValueError("task must name a staging directory or a database")
-    return graphdb.Database((root / task["database"]).resolve())
+    LOG.debug("open_source exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
+def seen_until(rows, groups, trained, names):
+    started = time.perf_counter()
+    chosen = np.zeros(len(rows["rows"]), bool)
+    for split in trained:
+        chosen[rows["split"][split + "_indices"]] = True
+    result = {index: -1 for index in names}
+    for index, steps, _, members in groups:
+        result[index] = int(np.asarray(steps)[chosen[members]].max(initial=-1))
+    LOG.info(
+        "seen_until exit seconds=%.3f graphs=%d trained=%d",
+        time.perf_counter() - started,
+        len(result),
+        sum(value >= 0 for value in result.values()),
+    )
+    return result
+
+
+def scanned(job):
+    index, until = job
+    started = time.perf_counter()
+    stated = WORKER["reader"].source.stated
+    tables = WORKER["reader"].graph(index)
+    result = (
+        gather(stated, tables, until),
+        {
+            table: sorted(set(tables["edges"][table].column("relation").to_pylist()), key=str)
+            for table, entry in stated.edges.items()
+            if entry["column"] is not None
+        },
+    )
+    LOG.info("bank scan exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
+    return result
+
+
+def merged(stated, found):
+    started = time.perf_counter()
+    result = {
+        name: {
+            part: np.concatenate([entry[name][part] for entry in found]) for part in ("trained", "distinct")
+        }
+        for name in stated.columns
+    }
+    LOG.info("merged exit seconds=%.3f columns=%d", time.perf_counter() - started, len(result))
+    return result
+
+
+def related(stated, found):
+    started = time.perf_counter()
+    result = {}
+    for table, entry in stated.edges.items():
+        if entry["column"] is None:
+            result[table] = [table]
+            continue
+        names = {name for _, relations in found for name in relations[table]}
+        if None in names:
+            raise ValueError(
+                "rows of the edge table %s name no relation in the column %s" % (table, entry["column"])
+            )
+        result[table] = sorted(names)
+    LOG.info(
+        "related exit seconds=%.3f relations=%d",
+        time.perf_counter() - started,
+        sum(len(names) for names in result.values()),
+    )
+    return result
 
 
 def series_statistics(name, y, member, held):
@@ -84,13 +158,14 @@ def supervision(source, level, target, names):
             steps = np.asarray([counts[owner] - 1 for owner in owners.tolist()], np.int64)
         else:
             steps = found.column("step").to_numpy().astype(np.int64)
+        asked = source.stated.queries
         described = [
-            dict(
-                graph=names[owner],
-                decision=lookup[(owner, step)][1],
-                step=step,
-                turn=lookup[(owner, step)][0],
-            )
+            {
+                "graph": names[owner],
+                asked["key"]: lookup[(owner, step)][1],
+                "step": step,
+                asked["grouping"]: lookup[(owner, step)][0],
+            }
             for owner, step in zip(owners.tolist(), steps.tolist())
         ]
         if level == "path":
@@ -145,7 +220,9 @@ def supervision(source, level, target, names):
             ]
         )
     else:
-        standard = dict(reward_mean=float(y[train].mean()), reward_sd=float(y[train].std(ddof=1)))
+        standard = dict(
+            series=[dict(name=target, mean=float(y[train].mean()), sd=float(y[train].std(ddof=1)))]
+        )
     result = dict(
         rows=rows,
         split=dict(train_indices=train.tolist(), validation_indices=validation.tolist(), **standard),
@@ -176,7 +253,7 @@ def attach(task_path, declared, categories, target, output, level):
     try:
         WORKER.update(
             reader=source.reader(target),
-            registry=Registry.from_declaration(declared),
+            registry=None if declared is None else Registry.from_declaration(declared),
             categories=categories,
             output=Path(output),
             finalizer=Finalize(None, source.close, exitpriority=10),
@@ -255,87 +332,45 @@ def catalogue(output, graphs):
     return int(first.sum())
 
 
-def attach_upgrade(declared, source, output, level):
-    configure(level)
-    WORKER.update(registry=Registry.from_declaration(declared), source=Path(source), output=Path(output))
-
-
-def upgraded(job):
-    index, name = job
-    started = time.perf_counter()
-    folder = "graph_%04d" % index
-    registry = WORKER["registry"]
-    rows = Rows.load(WORKER["source"] / "truth" / folder)
-    truth = encode(rows, registry)
-    verify(truth, registry)
-    back = truth.rows()
-    for key in ROWS:
-        left, right = np.asarray(rows.arrays[key]), back.arrays[key]
-        if (
-            left.dtype != right.dtype
-            or left.shape != right.shape
-            or not np.array_equal(left.view(np.uint8), right.view(np.uint8))
-        ):
-            raise ValueError("graph %s does not reproduce %s from its spans" % (name, key))
-    truth.save(WORKER["output"] / "truth" / folder)
-    metrics = dict(index=index, name=name, **counts(truth), seconds=time.perf_counter() - started)
-    LOG.info("bank upgrade exit graph=%d seconds=%.3f", index, metrics["seconds"])
-    return metrics
-
-
 @exclusive
-def upgrade(source, output, workers=1):
-    started = time.perf_counter()
-    source, output = Path(source), output_path(output)
-    manifest = read_json(source / "manifest.json")
-    if manifest["version"] != VERSION - 1:
-        raise ValueError(
-            "bank %s has version %s; upgrade reads version %d" % (source, manifest["version"], VERSION - 1)
-        )
-    if output.exists():
-        raise FileExistsError("bank exists; choose a new output")
-    (output / "truth").mkdir(parents=True)
-    shutil.copyfile(source / "supervision.json", output / "supervision.json")
-    jobs = [(graph["index"], graph["name"]) for graph in manifest["graphs"]]
-    metrics = parallel(
-        upgraded,
-        jobs,
-        workers,
-        attach_upgrade,
-        (manifest["spec"], str(source), str(output), LOG.getEffectiveLevel()),
-    )
-    manifest = dict(
-        manifest,
-        version=VERSION,
-        graphs=metrics,
-        distinct_entities=catalogue(output, metrics),
-        seconds=time.perf_counter() - started,
-    )
-    write_json(output / "manifest.json", manifest)
-    LOG.info("bank upgrade exit seconds=%.3f graphs=%d", manifest["seconds"], len(metrics))
-    return manifest
-
-
-@exclusive
-def build(task_path, output, workers=1):
+def build(task_path, output, workers, trained):
     started = time.perf_counter()
     if type(workers) is not int or workers < 1:
         raise ValueError("build workers must be a positive integer")
+    trained = tuple(trained)
+    if not trained or not set(trained) <= set(SPLITS) or "validation" in trained:
+        raise ValueError(
+            "the splits trained on are stated among %s and leave validation out, found %s"
+            % (", ".join(SPLITS), ", ".join(map(str, trained)))
+        )
     task, output = read_json(task_path), output_path(output)
     if output.exists():
         raise FileExistsError("bank exists; choose a new output")
     with closing(open_source(task_path, task)) as source:
-        schema = source.schema
-        level = vocabulary.target_level(schema, task)
+        level = vocabulary.target_level(source, task)
         graphs = source.graphs()
         names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
         if len(set(names.values())) != len(names):
             raise ValueError("graph names must be unique")
-        categories = source.categories() if schema.queries else []
+        categories = source.categories() if source.queries else []
         rows, groups = supervision(source, level, task["target"], names)
         series = [entry["name"] for entry in rows["split"]["series"]] if level == "path" else []
-        registry = vocabulary.registry(schema, task, series)
-        graphdb.check(registry)
+        location = source.location
+    until = seen_until(rows, groups, trained, names)
+    try:
+        found = parallel(
+            scanned,
+            [(index, until[index]) for index, _, _, _ in groups],
+            workers,
+            attach,
+            (str(task_path), None, categories, task["target"], str(output), LOG.getEffectiveLevel()),
+        )
+    finally:
+        release()
+    stated = Schema(task["schema"])
+    encoding = fitted(stated, merged(stated, [entry[0] for entry in found]), related(stated, found))
+    with closing(open_source(task_path, task)) as source:
+        registry = vocabulary.registry(source, task, series, encoding)
     (output / "truth").mkdir(parents=True)
     write_json(output / "supervision.json", rows)
     jobs = [(index, names[index], steps, ids, members) for index, steps, ids, members in groups]
@@ -358,9 +393,10 @@ def build(task_path, output, workers=1):
         release()
     manifest = dict(
         version=VERSION,
-        database=source.location,
+        database=location,
         task=task,
         target=dict(table=task["target"], level=level),
+        trained=list(trained),
         spec=registry.declaration(),
         spec_sha256=registry.fingerprint(),
         categories=categories,
@@ -385,19 +421,16 @@ def build(task_path, output, workers=1):
 
 
 def main():
+    started = time.perf_counter()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task")
-    parser.add_argument("--upgrade", help="a version 6 bank to rewrite as spans")
+    parser.add_argument("--task", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--trained", required=True, nargs="+", help="the splits the encoders are fitted on")
     parser.add_argument("--workers", type=int, default=WORKERS)
     args = parser.parse_args()
-    if (args.task is None) == (args.upgrade is None):
-        parser.error("give exactly one of --task and --upgrade")
     configure()
-    if args.upgrade:
-        manifest = upgrade(args.upgrade, args.output, args.workers)
-    else:
-        manifest = build(args.task, args.output, args.workers)
+    manifest = build(args.task, args.output, args.workers, args.trained)
+    LOG.info("build command exit seconds=%.3f", time.perf_counter() - started)
     print(
         json.dumps({key: value for key, value in manifest.items() if key not in ("graphs", "spec")}, indent=2)
     )

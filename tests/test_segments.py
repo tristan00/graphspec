@@ -16,7 +16,7 @@ def shortened(graph, stop):
             if name.split("_", 1)[0] == group:
                 arrays[name] = np.asarray(arrays[name])[keep]
     for name in arrays:
-        if name.startswith("query_") or name in ("period", "step_campaign"):
+        if name.startswith("query_") or name in ("period", "step_graph"):
             arrays[name] = np.asarray(arrays[name])[:stop]
     return type(graph)(graph.name, graph.keys, stop, **arrays)
 

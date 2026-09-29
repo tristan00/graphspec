@@ -61,9 +61,7 @@ def joined(graphs, registry, spec):
         "obs_entity",
         "fact_source",
         "fact_target",
-        "query_actor",
-        "query_subject",
-        "query_context",
+        "query_references",
         "label_entity",
     }
     moments = {"obs_step", "fact_step", "label_step"}
@@ -74,7 +72,7 @@ def joined(graphs, registry, spec):
     }
     arrays = {}
     for name in DENSE:
-        if name in ("kinds", "entity_token", "entity_connected", "step_campaign"):
+        if name in ("kinds", "entity_token", "entity_connected", "step_graph"):
             continue
         example = graphs[0].arrays[name]
         column = allocate(
@@ -102,7 +100,7 @@ def joined(graphs, registry, spec):
     arrays["kinds"] = kinds.astype(np.int32)
     arrays["entity_token"] = tokens
     arrays["entity_connected"] = connected
-    arrays["step_campaign"] = np.repeat(
+    arrays["step_graph"] = np.repeat(
         np.arange(len(graphs), dtype=np.int32), [graph.steps for graph in graphs]
     )
     result = Dense("joined", [], int(step_offsets[-1]), **arrays)

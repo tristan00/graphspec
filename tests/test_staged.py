@@ -2,14 +2,14 @@ import numpy as np
 
 from graphspec.infra.files import write_json
 from graphspec.infra.staging import Stage
+from graphspec.schema import Schema
 from graphspec.staged import IDS, Staged
-from graphspec.synthetic import TARGET, Counter, graph_rows
+from graphspec.synthetic import TARGET, Counter, graph_rows, uniform
 from graphspec.truth import ARRAYS, Graph
 from tuning.build import build
 
-SETTINGS = dict(
-    entities=40, steps=12, features=8, signals=2, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3
-)
+SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
+SHAPE = uniform(4, 2)
 
 
 class Based(Counter):
@@ -32,22 +32,25 @@ def staging(root, name, shards, based):
     for index in range(4):
         stages[index * shards // 4].write(
             graph_rows(
-                rng, index, "graph_%03d" % index, SETTINGS, Based(index) if based else counter, "query"
+                rng, index, "graph_%03d" % index, SHAPE, SETTINGS, Based(index) if based else counter, "query"
             )
         )
     for stage in stages:
         stage.close()
     Stage.merge(root / name, directories)
     task = root / (name + ".task.json")
-    write_json(task, dict(name=name, database=name + ".lbug", staging=name, target=TARGET))
+    write_json(
+        task,
+        dict(name=name, database=name + ".lbug", staging=name, target=TARGET, schema=SHAPE["schema"]),
+    )
     return task
 
 
 def test_sharded_staging_with_block_ids_builds_the_same_bank(tmp_path):
     reference, sharded = tmp_path / "bank_dense", tmp_path / "bank_based"
-    build(staging(tmp_path, "dense", 1, False), reference, 1)
-    build(staging(tmp_path, "based", 2, True), sharded, 1)
-    source = Staged(tmp_path / "based")
+    build(staging(tmp_path, "dense", 1, False), reference, 1, ("train",))
+    build(staging(tmp_path, "based", 2, True), sharded, 1, ("train",))
+    source = Staged(tmp_path / "based", Schema(SHAPE["schema"]))
     assert (
         source.based >= {"observation"}
         and "observation" not in source.dense
