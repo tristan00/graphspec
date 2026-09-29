@@ -635,6 +635,12 @@ As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, un
 | B1 | clear | No search running, checked 28 September at 22:40 |
 | B2 | clear | Audit of 28 September at 22:53 |
 | 1.1 | done | Copy at `D:/graphspec-runtime/ground/worktree-20260928`; fingerprint of source and copy `391a6b3d3531b6d6930e357df5bc8dd1816367d56156f64ab888f1ab5a76b319` over 1,921 files, `__pycache__` and `*.pyc` left out; recorded in `D:/graphspec-runtime/ground/README.txt` |
+| 1.2 | done | Staged tables under `D:/graphspec-runtime/ground/staged`, fingerprints of the staging folders: first adapter `e4d967eec17a6d8bb04d9770655622802f95cf3c321679b20aee59e699e890cc`, second (4,000 graphs) `6613eba39520ead0a45d130eccdd543302a166f080a15c83a53e95e5dfe9c0c0`, third (runs 1 to 57) `d1f18fa11a87283cb37073962a7c453b1f7c438f23a7b841be7cfe6528fec400`. Fixture under `D:/graphspec-runtime/ground/fixture`, fingerprint `5551d5249accdd2f35a4666435b4242d7ded081493c1577b0c0bd51b2bd3a0c2`, equal over two runs; its ten configurations are in `fixture.json` there |
+| 1.3 | done | `566cc81`; four files differ from `main`; 294 passed in 10.0 s |
+| 1.4 | done | `258151d`; 272 passed in 10.9 s |
+| 1.5 | done | `8c46118`; 276 passed |
+| 1.6 | done | `4ba4f68`; 294 passed |
+| 1.7 | done | `b805c21`; 297 passed in 10.6 s |
 
 **Deviations**
 
@@ -650,3 +656,10 @@ One line per place where the plan was wrong or silent: the subsection, what the 
 | 1.3 | Two corrections applied as they were | The single-thread helper was given a timing log | Every function logs its time |
 | 1.4 | Not stated | The test suite takes a lock of its own, `heavy-tests`, in place of the machine-wide lock | A detached build held the lock and the suite could not run beside it |
 | 8.3, 5.12, 2.9 | Refer to the copy of 2.1, the cases of 4.1, the forks of 3.7 | Read as 1.1, 3.1 and 2.7 | Left from a renumbering |
+| 1.2 | Fingerprints of the staged tables | The fingerprint is of the staging folder, not of the whole output | The build record beside it holds the seconds the build took |
+| 1.2 | Not stated | Arrays of the fixture are written with a fixed date in the archive | The usual writer stamps the time and the fixture would not reproduce |
+| 1.5 | A synthetic fit completes on CPU | The fit in the suite uses the suite's running packer and does not start its own | Starting one costs 1.8 seconds on this system |
+| 1.5, 1.6 | The device is an argument, then a field of the statement | For dense algebra it travels as a required field of the limits passed to operations and to workers | One route; nothing is read from the environment |
+| 1.6 | Every field is required | A bank is opened without a device and stops when asked to derive without one | Most uses of a bank derive nothing |
+| 1.6 | The statement is one record | `plan.json` keeps version 9; each trial writes its statement beside its result | 8.1 changes `plan.json` |
+| 1.7 | A module that defines a function | Functions compiled to machine code are not counted; their callers are timed | Compiled functions cannot log |
