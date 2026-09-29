@@ -58,6 +58,7 @@ def initialize_storage():
     }
     os.environ.update({key: str(output_path(path)) for key, path in directories.items()})
     os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     sys.dont_write_bytecode = True
     tempfile.tempdir = str(temporary)
     if "numba" in sys.modules:

@@ -19,7 +19,6 @@ from .files import write_json
 from .timing import timed
 
 LOG = logging.getLogger(__name__)
-WORKERS = 4
 
 
 class LockBusy(OSError):

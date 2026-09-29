@@ -183,6 +183,17 @@ class Standard:
 
 class OneHot:
     types = ("category",)
+    choices = ("stop", "shared")
+
+    def __init__(self, unseen):
+        started = time.perf_counter()
+        if unseen not in self.choices:
+            raise ValueError(
+                "the encoder states what it does with a value unseen in training as one of %s, found %r"
+                % (", ".join(self.choices), unseen)
+            )
+        self.unseen = unseen
+        LOG.debug("onehot exit unseen=%s seconds=%.4f", unseen, time.perf_counter() - started)
 
     def fit(self, codes, dictionary, column):
         found = np.unique(np.asarray(codes, np.int64))
@@ -199,6 +210,12 @@ class OneHot:
         held = np.where(known, codes, -1).astype(np.int64)
         position = np.minimum(np.searchsorted(seen, held), len(seen) - 1)
         position = np.where(seen[position] == held, position, len(seen))
+        strangers = known & (position == len(seen))
+        if self.unseen == "stop" and strangers.any():
+            raise ValueError(
+                "the encoder stops on a value unseen in training and met the codes "
+                + ", ".join(map(str, np.unique(held[strangers]).tolist()))
+            )
         values = np.zeros((len(codes), len(seen) + 1), np.float32)
         rows = np.flatnonzero(known)
         values[rows, position[rows]] = 1
@@ -211,7 +228,7 @@ TYPES.register("category", Category())
 ENCODERS.register("value", Value())
 ENCODERS.register("logarithm", Logarithm())
 ENCODERS.register("standard", Standard())
-ENCODERS.register("onehot", OneHot())
+ENCODERS.register("onehot", OneHot("shared"))
 
 
 def fields(mapping, names, where):
@@ -640,7 +657,7 @@ class Tables:
                 return "query"
             if typed["tau"] not in ("FLOAT", "DOUBLE"):
                 raise ValueError("%s.tau must be a FLOAT or DOUBLE column, found %s" % (name, typed["tau"]))
-            if typed.get("series") != "STRING":
+            if "series" not in typed or typed["series"] != "STRING":
                 raise ValueError("%s is a path target and requires a series STRING column" % name)
             return "path"
         if "tau" in typed or "series" in typed:
@@ -649,6 +666,6 @@ class Tables:
             return "graph"
         if not destinations or not destinations <= set(self.nodes):
             raise ValueError("%s_of must point to query, graph, or observed node types" % name)
-        if typed.get("step") != "INT32":
+        if "step" not in typed or typed["step"] != "INT32":
             raise ValueError("%s labels node types and requires a step INT32 column" % name)
         return "node"

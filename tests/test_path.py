@@ -2,11 +2,12 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
+from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, write_json
 from graphspec.infra.staging import Stage
 from graphspec.synthetic import TARGET, Counter, generate, graph_rows, uniform
 from tuning.build import build
-from tuning.data import Bank
+from tuning.data import Deriver
 
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SHAPE = uniform(4, 2)
@@ -36,7 +37,7 @@ def test_path_bank_records_one_row_per_point_and_splits_by_query(path_bank):
     supervision = read_json(path_bank / "supervision.json")
     rows = supervision["rows"]
     assert all(row["tau"] >= 1 for row in rows)
-    opened = Bank(path_bank, device="cpu")
+    opened = Deriver(path_bank, "cpu", RESIDENT)
     assert opened.level == "path" and len(opened.taus) == 208
     assert opened.series_names == opened.registry.extras["series"] == ["level", "trend"]
     assert np.bincount(opened.series).tolist() == [104, 104]
@@ -103,7 +104,7 @@ def test_path_windows_carry_every_point_of_their_step(path_bank):
     from tuning.inputs import recipe
     from tuning.model_spec import configuration
 
-    opened = Bank(path_bank, device="cpu")
+    opened = Deriver(path_bank, "cpu", RESIDENT)
     cfg = configuration(opened.registry, dict(view="snapshot"), {"time/history": 4}, 5)
     for partition, indices in ((0, "train_indices"), (1, "validation_indices")):
         blocks = opened.blocks(partition, 4, cfg)
@@ -128,7 +129,7 @@ def test_path_windows_join_like_query_windows(path_bank):
     from tuning.model_spec import configuration
     from tuning.variants import prepare
 
-    opened = Bank(path_bank, device="cpu")
+    opened = Deriver(path_bank, "cpu", RESIDENT)
     single = configuration(
         opened.registry,
         dict(view="snapshot"),
@@ -136,7 +137,7 @@ def test_path_windows_join_like_query_windows(path_bank):
         5,
     )
     prepare(path_bank, single, 1, "cpu")
-    opened = Bank(path_bank, device="cpu")
+    opened = Deriver(path_bank, "cpu", RESIDENT)
     assert opened.groups(single) == [[0, 2], [1, 3]]
     for partition in (0, 1):
         blocks = opened.blocks(partition, 4, single)
@@ -213,7 +214,7 @@ def test_validation_loss_matches_the_training_loss_on_the_same_points():
 def test_objective_blends_series_losses_by_their_weights(path_bank):
     from tuning import objective
 
-    opened = Bank(path_bank, device="cpu")
+    opened = Deriver(path_bank, "cpu", RESIDENT)
     assert objective.weights(opened, None) == {"level": 1.0, "trend": 1.0}
     assert objective.weights(opened, ["trend=2"]) == {"level": 0.0, "trend": 2.0}
     chosen = objective.weights(opened, ["trend=3", "level=1"])
@@ -261,7 +262,7 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     from tuning.training import loss
     from tuning.turns import blocks as turn_blocks
 
-    opened = Bank(path_bank, device="cpu")
+    opened = Deriver(path_bank, "cpu", RESIDENT)
     cfg = configuration(opened.registry, dict(model, hidden=8), {"time/history": 2}, 11)
     assert cfg["model"]["time/encoding"] == "log_cosine"
     full = [block for block in opened.blocks(0, 2, cfg) if block[2] - block[1] == 2]

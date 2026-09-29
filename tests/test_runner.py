@@ -67,11 +67,22 @@ def test_active_measurement_is_saved_before_it_finishes(tmp_path, monkeypatch):
 
 
 def plan_at(directory):
+    from tuning.selector import seeds
+
     items = []
-    for name in ("opaque-first", "opaque-second"):
+    for position, name in enumerate(("opaque-first", "opaque-second")):
         trial = directory / name
         trial.mkdir()
-        write_json(trial / "config.json", dict(seed=5, model={"view": "sequence"}, graph={}, epochs=1))
+        write_json(
+            trial / "config.json",
+            dict(
+                seed=seeds(5, position)[1],
+                model={"view": "sequence"},
+                graph={},
+                epochs=1,
+                max_seconds=10,
+            ),
+        )
         write_json(trial / "selection.json", {"graph_summary": {}})
         items.append(
             dict(
@@ -138,8 +149,8 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
             if cleanup_error:
                 raise RuntimeError("OS refused process termination")
 
-    class Bank:
-        def __init__(self, path, device):
+    class Deriver:
+        def __init__(self, path, device, resident):
             assert device == "cpu"
 
         def stamp(self, config):
@@ -155,7 +166,7 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
     monkeypatch.setattr(runner, "training_layout", layout)
     monkeypatch.setattr(runner.sources, "snapshot", lambda *args: None)
     monkeypatch.setattr(runner, "report", lambda *args: [])
-    monkeypatch.setattr("tuning.data.Bank", Bank)
+    monkeypatch.setattr("tuning.data.Deriver", Deriver)
     monkeypatch.setattr("tuning.variants.prune", lambda *args: None)
 
 
@@ -177,45 +188,65 @@ def test_timeout_is_recorded_then_joined_before_the_next_trial(tmp_path, monkeyp
     assert Outcome.read(tmp_path / "opaque-second", JsonCache()).status == Status.COMPLETE
 
 
-def test_saved_trial_limit_controls_deadline_and_all_terminal_records(tmp_path, monkeypatch, statement):
-    statement = dict(statement, seconds=10)
+def test_the_seconds_of_the_statement_control_deadline_and_all_terminal_records(
+    tmp_path, monkeypatch, statement
+):
+    from tuning.selector import seeds
+
+    statement = dict(statement, seconds=45)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
-    for item, limit in zip(plan["trials"], (45, 75)):
+    for item in plan["trials"]:
         path = tmp_path / item["directory"] / "config.json"
-        write_json(path, dict(read_json(path), max_seconds=limit))
+        write_json(path, dict(read_json(path), max_seconds=45))
     deadlines = []
 
     def wait(process, deadline, directory, preparation):
-        config = read_json(directory / "config.json")
-        assert read_json(tmp_path / "running.json")["max_seconds"] == config["max_seconds"]
+        assert read_json(tmp_path / "running.json")["max_seconds"] == 45
         deadlines.append(deadline - time.perf_counter())
         return process.wait(timeout=1)
 
     monkeypatch.setattr("tuning.budget.wait_worker", wait)
     runner.execute(tmp_path, plan, False, None, stated(statement))
-    assert 44 < deadlines[0] <= 45
-    assert 74 < deadlines[1] <= 75
+    assert all(44 < deadline <= 45 for deadline in deadlines) and len(deadlines) == 2
     assert read_json(tmp_path / "opaque-first" / "timeout.json")["budget"] == 45
     assert read_json(tmp_path / "opaque-first" / "trial.json")["budget"] == 45
-    assert read_json(tmp_path / "opaque-second" / "trial.json")["budget"] == 75
-    assert plan["seconds"] == 10
+    assert read_json(tmp_path / "opaque-second" / "trial.json")["budget"] == 45
+    for position, item in enumerate(plan["trials"]):
+        written = read_json(tmp_path / item["directory"] / "statement.json")
+        assert written == dict(statement, seed=seeds(5, position)[1])
+        assert stated(written).seconds == 45
 
 
-def test_legacy_pending_trial_gets_limit_before_worker_start(tmp_path, monkeypatch, statement):
+@pytest.mark.parametrize(
+    "change,error,message",
+    [
+        (dict(max_seconds=45), ValueError, "config.json of opaque-first holds max_seconds 45"),
+        (dict(seed=5), ValueError, "config.json of opaque-first holds seed 5"),
+        ("max_seconds", KeyError, "config.json of opaque-first lacks max_seconds"),
+        ("seed", KeyError, "config.json of opaque-first lacks seed"),
+    ],
+)
+def test_a_trial_whose_copy_differs_from_the_statement_stops_naming_the_field(
+    tmp_path, monkeypatch, statement, change, error, message
+):
     statement = dict(statement, seconds=10)
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
-
-    def wait(process, deadline, directory, preparation):
-        assert read_json(directory / "config.json")["max_seconds"] == 10
-        return process.wait(timeout=1)
-
-    monkeypatch.setattr("tuning.budget.wait_worker", wait)
-    runner.execute(tmp_path, plan, False, None, stated(statement))
-    assert len(events) == 4
+    path = tmp_path / "opaque-first" / "config.json"
+    config = read_json(path)
+    if isinstance(change, dict):
+        config.update(change)
+    else:
+        del config[change]
+    write_json(path, config)
+    with pytest.raises(error, match=message):
+        runner.execute(tmp_path, plan, False, None, stated(statement))
+    assert events == []
+    assert read_json(path) == config
+    assert not (tmp_path / "opaque-first" / "statement.json").exists()
 
 
 def test_cleanup_failure_preserves_timeout_and_stops_before_another_trial(tmp_path, monkeypatch, statement):

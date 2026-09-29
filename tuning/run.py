@@ -29,8 +29,16 @@ from .training import PACKAGES, fit
 
 REFERENCE_HISTORY = 16
 
-STARTUP = 10
-MIX = dict(random=25, tpe=25, forest=25, botorch=25)
+FLAGS = dict(
+    selector="--selector", random_trials="--startup-trials", mix="--mix", random_params="--random-params"
+)
+COPIES = dict(
+    seed="seed",
+    seconds="seconds",
+    workers="workers",
+    variant_bytes="variant_cache_bytes",
+    batch_sequences="batch_sequences",
+)
 
 
 def fit_timings(directory):
@@ -60,7 +68,7 @@ def worker(args):
             blocks,
             args.batch_sequences,
             args.deadline,
-            read_json(args.statement),
+            statements.state(read_json(args.statement)),
         )
     except TimeoutError as error:
         emit("worker_timeout", error=str(error), deadline=args.deadline)
@@ -80,85 +88,106 @@ def worker(args):
         raise
 
 
+def continued(plan, stated, given):
+    started = time.perf_counter()
+    lacking = [name for name in (*COPIES, *given) if name not in plan]
+    if lacking:
+        raise KeyError("plan.json lacks " + ", ".join(lacking))
+    for name, field in COPIES.items():
+        if plan[name] != getattr(stated, field):
+            raise ValueError(
+                "plan.json holds %s %r and the statement's %s is %r"
+                % (name, plan[name], field, getattr(stated, field))
+            )
+    for name, value in given.items():
+        if value is not None and value != plan[name]:
+            emit(name + "_replaced", previous=plan[name], **{name: value})
+            plan[name] = value
+    emit("plan_continued", trials=len(plan["trials"]), seconds=time.perf_counter() - started)
+    return plan
+
+
+def opened(stated, given, bank_path, manifest, limit):
+    started = time.perf_counter()
+    absent = [FLAGS[name] for name in FLAGS if given[name] is None]
+    if absent:
+        raise ValueError("a new search states " + ", ".join(absent))
+    plan = dict(
+        version=VERSION,
+        seed=stated.seed,
+        bank=bank_path,
+        selector=given["selector"],
+        trials=[],
+        batch_sequences=stated.batch_sequences,
+        workers=stated.workers,
+        variant_bytes=stated.variant_cache_bytes,
+        random_trials=given["random_trials"],
+        random_params=given["random_params"],
+        mix=given["mix"],
+        bounds=given["bounds"],
+        objective=given["objective"],
+        limit=limit,
+        seconds=stated.seconds,
+        train_rows=manifest["train_rows"],
+        holdout_rows=manifest["validation_rows"],
+        supervision_sha256=manifest["supervision_sha256"],
+        spec_sha256=manifest["spec_sha256"],
+        created=datetime.now(timezone.utc).isoformat(),
+    )
+    emit("plan_opened", selector=plan["selector"], seconds=time.perf_counter() - started)
+    return plan
+
+
 @exclusive
 def run(args):
-    given = flags(args)
+    stated = statements.state(flags(args))
     directory = output_path(args.output)
     path = directory / "plan.json"
-    stated = None if path.exists() else statements.state(given)
     from .budget import policy
     from .data import Bank
     from .selector import FAILURE_POLICY, SURROGATES, check_bounds, check_mix
 
-    if type(args.batch_sequences) is not int or args.batch_sequences < 1:
-        raise ValueError("batch_sequences must be a positive integer")
     for name in ("trials", "random_trials"):
         value = getattr(args, name)
         if value is not None and (type(value) is not int or value < 0):
             raise ValueError(name + " must be a nonnegative integer")
-    bank = Bank(args.bank, device=args.device)
-    bounds = read_json(args.bounds) if args.bounds else {}
+    bank = Bank(args.bank)
     mix = None
     if args.mix is not None:
         pairs = [item.split("=") for item in args.mix]
         mix = check_mix({name: float(share) for name, share in pairs})
-    check_bounds(bank.registry, bounds)
-    chosen = objective.weights(bank, args.objective)
     if path.exists():
         plan = read_json(path)
         if plan.get("version") != VERSION:
             raise ValueError("this run was written by another plan version; choose a new output")
         if plan["bank_manifest_sha256"] != sha256_file(Path(args.bank) / "manifest.json"):
             raise ValueError("this run belongs to a different bank")
-        given.setdefault("seconds", plan["seconds"])
-        stated = statements.state(given)
-        if stated.seed != plan["seed"]:
-            raise ValueError(
-                "this run was started with seed %r and the statement says %r" % (plan["seed"], stated.seed)
-            )
-        plan["bank"] = str(Path(args.bank).resolve())
-        plan.update(workers=stated.workers, variant_bytes=stated.variant_cache_bytes, limit=args.trials)
-        plan.setdefault("random_params", [])
-        plan.setdefault("mix", {plan["selector"]: 100})
-        for name, value in (
-            ("selector", args.selector),
-            ("random_trials", args.random_trials),
-            ("mix", mix),
-            ("random_params", args.random_params),
-            ("seconds", stated.seconds),
-            ("bounds", bounds if args.bounds else None),
-            ("objective", chosen if args.objective else None),
-        ):
-            if value is not None and value != plan[name]:
-                emit(name + "_replaced", previous=plan[name], **{name: value})
-                plan[name] = value
-    else:
-        plan = dict(
-            version=VERSION,
-            seed=stated.seed,
-            bank=str(Path(args.bank).resolve()),
-            selector=args.selector or "botorch",
-            trials=[],
-            batch_sequences=args.batch_sequences,
-            workers=stated.workers,
-            variant_bytes=stated.variant_cache_bytes,
-            random_trials=STARTUP if args.random_trials is None else args.random_trials,
-            random_params=args.random_params or [],
-            mix=mix or ({args.selector: 100} if args.selector else dict(MIX)),
-            bounds=bounds,
-            objective=chosen,
-            limit=args.trials,
-            seconds=stated.seconds,
-            train_rows=bank.manifest["train_rows"],
-            holdout_rows=bank.manifest["validation_rows"],
-            supervision_sha256=bank.manifest["supervision_sha256"],
-            spec_sha256=bank.manifest["spec_sha256"],
-            created=datetime.now(timezone.utc).isoformat(),
+        given = dict(
+            selector=args.selector,
+            random_trials=args.random_trials,
+            mix=mix,
+            random_params=args.random_params,
+            bounds=read_json(args.bounds) if args.bounds else None,
+            objective=objective.weights(bank, args.objective) if args.objective else None,
         )
+        plan = continued(plan, stated, given)
+        plan["bank"] = str(Path(args.bank).resolve())
+        plan["limit"] = args.trials
+    else:
+        given = dict(
+            selector=args.selector,
+            random_trials=args.random_trials,
+            mix=mix,
+            random_params=args.random_params,
+            bounds=read_json(args.bounds) if args.bounds else {},
+            objective=objective.weights(bank, args.objective),
+        )
+        plan = opened(stated, given, str(Path(args.bank).resolve()), bank.manifest, args.trials)
+    check_bounds(bank.registry, plan["bounds"])
     if plan["selector"] in SURROGATES:
         from .space import Space
 
-        Space(bank.registry, plan["bounds"], stated.seconds).random_names(plan["random_params"])
+        Space(bank.registry, plan["bounds"], stated.seconds, ()).random_names(plan["random_params"])
     directory.mkdir(parents=True, exist_ok=True)
     with Lock(directory / "runner.lock"):
         running = directory / "running.json"
@@ -186,6 +215,7 @@ def flags(args):
         preparation_seconds=args.preparation_seconds,
         workers=args.workers,
         variant_cache_bytes=None if args.variant_gb is None else args.variant_gb << 30,
+        batch_sequences=args.batch_sequences,
     )
     result = {name: value for name, value in given.items() if value is not None}
     emit("statement_flags", fields=sorted(result), seconds=time.perf_counter() - started)
@@ -206,7 +236,7 @@ def discard_unfinished(directory, plan):
 
 
 @timed("layout")
-def training_layout(directory, plan, config, device):
+def training_layout(directory, plan, config, stated):
     from .data import Bank
 
     started = time.perf_counter()
@@ -217,7 +247,7 @@ def training_layout(directory, plan, config, device):
         "train_blocks_%s.json" % digest(dict(history=history, join=parameters(config["graph"])))[:12]
     )
     if not path.exists():
-        bank = Bank(plan["bank"], device=device)
+        bank = Bank(plan["bank"])
         if bank.manifest["supervision_sha256"] != plan["supervision_sha256"]:
             raise ValueError("training layout changed supervision")
         blocks = bank.blocks(0, history, config)
@@ -229,7 +259,7 @@ def training_layout(directory, plan, config, device):
             rows=len(bank.split["train_indices"]),
             seconds=time.perf_counter() - started,
         )
-    return path, max(1, plan["batch_sequences"] * REFERENCE_HISTORY // history)
+    return path, max(1, stated.batch_sequences * REFERENCE_HISTORY // history)
 
 
 def mark_timeout(trial, max_seconds, started, phases, error):
@@ -256,22 +286,27 @@ def execute_trial(directory, plan, item, index, started, phases, stated):
 
 def execute_trial_body(directory, plan, item, index, started, phases, stated):
     from .budget import wait_worker
+    from .selector import seeds
 
     trial = directory / item["directory"]
     opened = datetime.now(timezone.utc).isoformat()
     config = read_json(trial / "config.json")
-    if "max_seconds" not in config:
-        config["max_seconds"] = stated.seconds
-        write_json(trial / "config.json", config)
-    max_seconds = config["max_seconds"]
-    if type(max_seconds) is not int or max_seconds < 1:
-        raise ValueError("max_seconds must be a positive integer")
-    write_json(trial / "statement.json", stated.replace(seed=config["seed"], seconds=max_seconds).mapping())
+    stated = stated.replace(seed=seeds(stated.seed, plan["trials"].index(item))[1])
+    for name, value in (("seed", stated.seed), ("max_seconds", stated.seconds)):
+        if name not in config:
+            raise KeyError("config.json of %s lacks %s" % (item["directory"], name))
+        if config[name] != value:
+            raise ValueError(
+                "config.json of %s holds %s %r and the statement of the trial says %r"
+                % (item["directory"], name, config[name], value)
+            )
+    max_seconds = stated.seconds
+    write_json(trial / "statement.json", stated.mapping())
     deadline = started + max_seconds
     timeout = None
     try:
         stage = time.perf_counter()
-        blocks, batch_size = training_layout(directory, plan, config, stated.device)
+        blocks, batch_size = training_layout(directory, plan, config, stated)
         phases["layout"] = time.perf_counter() - stage
         arguments = [
             "worker",
@@ -363,7 +398,9 @@ def execute_trial_body(directory, plan, item, index, started, phases, stated):
 
 
 def execute(directory, plan, continuous, registry, stated):
-    from .data import Bank
+    from graphspec.infra.arrays import RESIDENT
+
+    from .data import Deriver
     from .selector import append_trial
     from .variants import prune
 
@@ -396,7 +433,7 @@ def execute(directory, plan, continuous, registry, stated):
             stage = time.perf_counter()
             with Timeline(directory / item["directory"] / "maintenance_timing.json"), measure("maintenance"):
                 with measure("cache_prune"):
-                    keep = Bank(plan["bank"], device=stated.device).stamp(config)
+                    keep = Deriver(plan["bank"], stated.device, RESIDENT).stamp(config)
                     prune(plan["bank"], stated.variant_cache_bytes, keep)
                 emit("trial_prune", seconds=time.perf_counter() - stage)
                 with measure("report"):
@@ -426,18 +463,14 @@ def main():
     run_parser.add_argument("--device", required=True)
     run_parser.add_argument("--seed", type=int, required=True)
     run_parser.add_argument("--preparation-seconds", type=int, required=True)
-    run_parser.add_argument("--batch-sequences", type=int, default=64)
+    run_parser.add_argument("--batch-sequences", type=int, required=True)
     run_parser.add_argument("--continuous", action="store_true")
     run_parser.add_argument("--trials", type=int)
-    run_parser.add_argument(
-        "--seconds",
-        type=int,
-        help="time limit for new trials; required for a new run, otherwise keeps the saved limit when omitted",
-    )
+    run_parser.add_argument("--seconds", type=int, required=True, help="time limit of every trial")
     run_parser.add_argument(
         "--selector",
         choices=("forest", "botorch", "tpe", "random"),
-        help="how trials are chosen; botorch for a new run, otherwise keep the saved selector",
+        help="how trials are chosen; stated for a new run, otherwise keeps the saved selector when omitted",
     )
     run_parser.add_argument(
         "--startup-trials",

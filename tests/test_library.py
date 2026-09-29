@@ -37,11 +37,20 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
     graph = GraphTables(0, "different", schema)
     graph.nodes("customer", ["a", "b", "c", "d"])
     graph.nodes("organization", ["shared"])
-    graph.observe("customer", ["a", "b", "c", "d"], value=np.ones(4), other=[1, 2, None, 4])
-    graph.observe("organization", ["shared"], value=np.ones(1))
-    graph.edges("member", "customer", "organization", ["a", "b", "c", "d"], ["shared"] * 4)
+    graph.observe("customer", ["a", "b", "c", "d"], step=0, value=np.ones(4), other=[1, 2, None, 4])
+    graph.observe("organization", ["shared"], step=0, value=np.ones(1))
+    with pytest.raises(TypeError, match="step|present"):
+        graph.edges("member", "customer", "organization", ["a", "b", "c", "d"], ["shared"] * 4)
+    graph.edges(
+        "member", "customer", "organization", ["a", "b", "c", "d"], ["shared"] * 4, step=0, present=True
+    )
     graph.labels(
-        "customer", ["a", "b", "c", "d"], [0, 1, 0, 1], ["train", "train", "validation", "validation"]
+        "customer",
+        ["a", "b", "c", "d"],
+        [0, 1, 0, 1],
+        ["train", "train", "validation", "validation"],
+        step=0,
+        target="outcome",
     )
     with Stage(tmp_path / "source") as stage:
         graph.write(stage)

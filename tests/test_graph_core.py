@@ -174,11 +174,18 @@ def test_persistence_bounds_widen_only_the_three_named_relations():
 def test_graph_tables_reject_unstated_columns_and_invalid_labels():
     tables = GraphTables(0, "test", stated(dict(client=["value"]), {})).nodes("client", ["a", "b"])
     with pytest.raises(ValueError, match="states the columns value, found other"):
-        tables.observe("client", ["a", "b"], other=[1, 1])
+        tables.observe("client", ["a", "b"], step=0, other=[1, 1])
     with pytest.raises(ValueError, match="needs 2 values"):
-        tables.observe("client", ["a", "b"], value=[1])
+        tables.observe("client", ["a", "b"], step=0, value=[1])
     with pytest.raises(ValueError, match="one finite value"):
-        tables.labels("client", ["a", "b"], [0, np.nan], ["train", "validation"])
+        tables.labels("client", ["a", "b"], [0, np.nan], ["train", "validation"], step=0, target="outcome")
+    for call in (
+        lambda: tables.observe("client", ["a", "b"], value=[1, 1]),
+        lambda: tables.labels("client", ["a", "b"], [0, 1], ["train", "validation"], step=0),
+        lambda: tables.labels("client", ["a", "b"], [0, 1], ["train", "validation"], target="outcome"),
+    ):
+        with pytest.raises(TypeError, match="step|target"):
+            call()
     with pytest.raises(ValueError, match="nonnegative int32"):
         tables.observe("client", ["a"], value=[1], step=0.5)
 

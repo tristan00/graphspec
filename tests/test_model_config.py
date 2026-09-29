@@ -6,8 +6,9 @@ import pytest
 import torch
 
 from graphspec import spec as specs
+from graphspec.infra.arrays import RESIDENT
 from tuning.batching import pack_batch
-from tuning.data import Bank
+from tuning.data import Deriver
 from tuning.layers import CausalAttention, TimeEncoding
 from tuning.model_spec import configuration, configured, samples, space, views
 from tuning.models import build
@@ -21,7 +22,7 @@ def registry(level="query", queries=True, signals=2):
 
 @pytest.fixture(scope="module")
 def opened(bank):
-    return Bank(bank, device="cpu")
+    return Deriver(bank, "cpu", RESIDENT)
 
 
 @pytest.mark.parametrize(
@@ -75,7 +76,7 @@ def test_antisymmetric_state_readout_has_no_unused_time_encoding():
 
 
 def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
-    bank = Bank.__new__(Bank)
+    bank = Deriver.__new__(Deriver)
     bank.registry = registry()
     bank.cache = Path(tmp_path)
     bank.variants, bank.roots, bank.device, bank.directory = {}, {}, "cpu", Path(tmp_path)

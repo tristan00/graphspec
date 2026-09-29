@@ -1,16 +1,17 @@
 import numpy as np
 
 from graphspec import join, operators, transform
+from graphspec.infra.arrays import RESIDENT
 from graphspec.resources import GraphLimits
 from graphspec.truth import Graph
-from tuning.data import Bank, distinct, identical
+from tuning.data import Bank, Deriver, distinct, identical
 from tuning.inputs import recipe
 from tuning.model_spec import configuration
 from tuning.variants import prepare
 
 
 def test_single_join_builds_one_graph_per_group_and_keeps_every_block(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     separate = configuration(registry, dict(view="snapshot"), {"time/history": 4}, 5)
     single = configuration(
         registry,
@@ -19,7 +20,7 @@ def test_single_join_builds_one_graph_per_group_and_keeps_every_block(bank):
         5,
     )
     prepare(bank, single, 1, "cpu")
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     assert opened.groups(single) == [[0, 1, 2], [3]]
     assert opened.graphs(single) == [0, 1]
     assert sorted(opened.sizes(single)) == [0, 1]
@@ -31,12 +32,12 @@ def test_single_join_builds_one_graph_per_group_and_keeps_every_block(bank):
 
 def test_single_join_groups_graphs_within_their_split(bank):
     single = configuration(
-        Bank(bank, device="cpu").registry,
+        Bank(bank).registry,
         dict(view="snapshot"),
         {"graphs/join": "single", "graphs/join_size": 3},
         5,
     )
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     opened.partitions[:] = 0
     held = opened.row_index[1]
     opened.partitions[held[held >= 0]] = 1
@@ -49,7 +50,7 @@ def joined_spec(opened, **graph):
 
 
 def test_unconnected_entities_end_with_their_graph(bank):
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     unlinked = {"graphs/connect/%s" % kind: False for kind in opened.registry.nodes}
     spec = joined_spec(opened, **{"time/scheme": "state"}, **unlinked)
     graphs = [Graph.load(opened.truth(index)).dense() for index in range(4)]
@@ -64,7 +65,7 @@ def test_unconnected_entities_end_with_their_graph(bank):
 
 
 def test_every_periods_restart_at_each_graph(bank):
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
     graphs = [Graph.load(opened.truth(index)).dense() for index in range(4)]
     combined = operators.periods(join.joined(graphs, opened.registry, spec), opened.registry, spec, 0)
@@ -76,7 +77,7 @@ def test_every_periods_restart_at_each_graph(bank):
 
 
 def test_a_join_of_one_graph_equals_the_graph(bank):
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     values = {"graphs/join": "single", "graphs/join_size": 4, "time/scheme": "state"}
     _, spec, chosen = opened.variant(configuration(opened.registry, dict(view="mixed"), values, 5))
     graph = Graph.load(opened.truth(2)).dense()
@@ -103,7 +104,7 @@ def test_window_counts_match_brute_force():
 
 
 def test_joined_windows_use_their_own_entities(bank):
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     cfg = configuration(
         opened.registry,
         dict(view="memory"),
@@ -116,7 +117,7 @@ def test_joined_windows_use_their_own_entities(bank):
         5,
     )
     prepare(bank, cfg, 1, "cpu")
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     for block in opened.blocks(0, 4, cfg)[:12]:
         b = recipe(opened, block, cfg)
         ids = np.concatenate(

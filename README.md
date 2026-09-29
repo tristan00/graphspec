@@ -17,14 +17,16 @@ Source data → adapter → public Stage Parquet tables → bank → transformed
 There is no required database round trip. LadybugDB remains an optional way to query and inspect the same graph; it is not required to create Parquet files. `Stage` writes files and manifests, and `GraphTables` manages contract tables and identifiers. [The loader walkthrough](docs/loader.md) shows a complete custom graph in Python.
 
 ```powershell
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12 --degree 2.0 --max-degree 6 --alive 0.8 --lifetime 4.0 --period 3 --level query --seed 1
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime inspect D:/graphspec-runtime/datasets/demo/demo.task.json
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime build --task D:/graphspec-runtime/datasets/demo/demo.task.json --output D:/graphspec-runtime/banks/demo --trained train --workers 1
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json --device cpu
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --device cuda --seed 1 --seconds 600 --preparation-seconds 300 --workers 4 --variant-gb 64 --continuous --selector botorch --startup-trials 100 --random-params model/view
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json --device cpu --seed 1
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --device cuda --seed 1 --seconds 600 --preparation-seconds 300 --workers 4 --variant-gb 64 --batch-sequences 64 --continuous --selector botorch --startup-trials 10 --mix random=25 tpe=25 forest=25 botorch=25 --random-params model/view
 ```
 
-Replace the Windows paths with your external workspace. `tuning` also exposes `build_bank`, `open_bank`, `configuration` and `fit`. New bank and fit output directories must not already exist. Searches resume when their existing run directory is supplied. Put a STOP file in a run to stop after its current trial.
+No command has a default for a choice of the user. A new search states its selector, its number of random startup trials, its mix and its random parameters; the example states 10 random trials and then an equal mix of random, TPE, forest and BoTorch. `--random-params` with no name after it states that none is held random.
+
+Replace the Windows paths with your external workspace. `tuning` also exposes `build_bank`, `open_bank`, `configuration` and `fit`. New bank and fit output directories must not already exist. Searches resume when their existing run directory is supplied with the statement they were started with. Put a STOP file in a run to stop after its current trial.
 
 On Windows, user-SID named mutexes enforce one resource-intensive build, check, fit, or search across runtime homes. These singleton guards create no lock files.
 

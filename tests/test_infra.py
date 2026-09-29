@@ -144,7 +144,7 @@ def test_bank_build_closes_source_when_validation_fails(tmp_path, monkeypatch):
         ({"workers": 0}, {}, "the statement's workers is 0"),
         ({"seconds": -1}, {}, "the statement's seconds is -1"),
         ({"seconds": float("inf")}, {}, "the statement's seconds is inf"),
-        ({}, {"batch_sequences": 0}, "fit batch_sequences"),
+        ({"batch_sequences": 0}, {}, "the statement's batch_sequences is 0"),
     ],
 )
 def test_fit_rejects_invalid_resource_inputs_before_opening_bank(

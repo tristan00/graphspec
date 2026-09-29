@@ -103,7 +103,7 @@ class GraphTables:
         except KeyError as error:
             raise ValueError("undeclared node in " + kind + ": " + str(error)) from error
 
-    def observe(self, kind, keys, step=0, **columns):
+    def observe(self, kind, keys, step, **columns):
         step = step_index(step)
         owners = self.resolve(kind, keys)
         values = self.stated("the kind of node " + kind, self.schema.nodes[kind], columns, len(owners))
@@ -121,7 +121,7 @@ class GraphTables:
         self.put((OBSERVED + kind, kind, "observation"), pa.table({"from": owners, "to": ids, **values}))
         return self
 
-    def edges(self, table, source, target, sources, targets, step=0, present=True, relation=None, **columns):
+    def edges(self, table, source, target, sources, targets, step, present, relation=None, **columns):
         step = step_index(step)
         if table not in self.schema.edges or type(present) is not bool:
             raise ValueError("edges name a stated edge table and a boolean presence value: " + str(table))
@@ -153,7 +153,7 @@ class GraphTables:
         self.put((EDGE + table, source, target), pa.table(held))
         return self
 
-    def labels(self, kind, keys, values, splits, step=0, target="outcome"):
+    def labels(self, kind, keys, values, splits, step, target):
         step = step_index(step)
         owners = self.resolve(kind, keys)
         values, splits = list(values), list(splits)

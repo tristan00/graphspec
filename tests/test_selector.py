@@ -15,7 +15,7 @@ from tuning.statement import state
 
 
 def test_numeric_parameters_use_full_integer_domains(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     parameters = space(registry) + specs.space(registry, specs.GROUPS)
     expected = {
         "snapshot/heads": (1, 4),
@@ -53,7 +53,7 @@ def test_numeric_parameters_use_full_integer_domains(bank):
 
 
 def test_random_and_tpe_accept_non_power_of_two_settings(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     bounds = {
         "view": "sequence",
         "sequence/operator": "transformer",
@@ -105,8 +105,11 @@ def arguments(bank, output, **overrides):
     return argparse.Namespace(**values)
 
 
+FRESH = dict(selector="random", random_trials=10, mix=["random=100"], random_params=[])
+
+
 def test_hidden_covers_every_integer_and_uses_integer_tpe_distribution(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     hidden = next(parameter for parameter in space(registry) if parameter.name == "hidden")
     domain = distribution(hidden)
     assert isinstance(domain, IntDistribution)
@@ -120,7 +123,7 @@ def test_hidden_covers_every_integer_and_uses_integer_tpe_distribution(bank):
 
 
 def test_tpe_learns_from_every_recorded_trial_inside_the_bounds(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     records = []
     for index in range(14):
         config, _ = random_suggest(registry, 100 + index, 200 + index, {}, 600)
@@ -153,7 +156,7 @@ def test_tpe_learns_from_every_recorded_trial_inside_the_bounds(bank):
 
 
 def test_tpe_excludes_recorded_trials_that_lack_an_active_parameter(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     records = []
     for index in range(3):
         config, _ = random_suggest(registry, 300 + index, 400 + index, {"graphs/join": "single"}, 600)
@@ -168,9 +171,10 @@ def test_tpe_excludes_recorded_trials_that_lack_an_active_parameter(bank):
 
 def test_running_again_continues_and_may_change_selector_random_phase_and_bounds(bank, tmp_path):
     output = tmp_path / "run"
-    run(arguments(bank, output, selector="random"))
+    run(arguments(bank, output, **FRESH))
     plan = read_json(output / "plan.json")
     assert plan["selector"] == "random" and plan["random_trials"] == 10 and plan["bounds"] == {}
+    assert plan["mix"] == {"random": 100} and plan["random_params"] == []
 
     run(arguments(bank, output))
     plan = read_json(output / "plan.json")
@@ -190,13 +194,23 @@ def test_running_again_continues_and_may_change_selector_random_phase_and_bounds
     run(arguments(bank, output, selector="random"))
     assert read_json(output / "plan.json")["selector"] == "random"
 
-    run(arguments(bank, tmp_path / "fresh"))
-    assert read_json(tmp_path / "fresh" / "plan.json")["selector"] == "botorch"
+    with pytest.raises(ValueError, match="a new search states --selector, --startup-trials, --mix"):
+        run(arguments(bank, tmp_path / "fresh"))
+    assert not (tmp_path / "fresh").exists()
 
 
 def test_random_parameter_settings_persist_and_can_be_cleared(bank, tmp_path):
     output = tmp_path / "run"
-    run(arguments(bank, output, selector="botorch", random_trials=100, random_params=["model/view"]))
+    run(
+        arguments(
+            bank,
+            output,
+            selector="botorch",
+            random_trials=100,
+            mix=["botorch=100"],
+            random_params=["model/view"],
+        )
+    )
     plan = read_json(output / "plan.json")
     assert plan["random_params"] == ["model/view"]
     run(arguments(bank, output))
@@ -205,53 +219,110 @@ def test_random_parameter_settings_persist_and_can_be_cleared(bank, tmp_path):
     assert read_json(output / "plan.json")["random_params"] == []
 
 
-def test_random_epoch_and_runtime_ranges_persist_and_use_inclusive_integer_draws(bank, tmp_path):
-    from tuning.space import Space
-
-    registry = Bank(bank, device="cpu").registry
-    bounds = {"epochs": {"low": 1, "high": 5}, "max_seconds": {"low": 600, "high": 1200}}
+def test_random_epoch_ranges_persist_and_use_inclusive_integer_draws(bank, tmp_path):
+    registry = Bank(bank).registry
+    bounds = {"epochs": {"low": 1, "high": 5}}
     bounds_path = tmp_path / "bounds.json"
     write_json(bounds_path, bounds)
     output = tmp_path / "run"
     patterns = ["model/view", "epochs", "max_seconds"]
-    run(arguments(bank, output, bounds=str(bounds_path), random_params=patterns, seconds=1200))
-    run(arguments(bank, output, seconds=None))
+    fresh = dict(FRESH, selector="botorch", mix=["botorch=100"], random_params=patterns)
+    run(arguments(bank, output, bounds=str(bounds_path), seconds=1200, **fresh))
+    run(arguments(bank, output, seconds=1200))
     plan = read_json(output / "plan.json")
     assert plan["bounds"] == bounds
     assert plan["random_params"] == patterns
-    space = Space(registry, bounds)
-    rng = np.random.default_rng(71)
-    runtime = space.proposal_parameters["max_seconds"]
-    samples = {runtime.uniform(rng) for _ in range(10000)}
-    assert samples == set(range(600, 1201))
     configs = [random_suggest(registry, seed, 1, bounds, 2000)[0] for seed in range(40)]
     assert {config["epochs"] for config in configs} == {1, 2, 3, 4, 5}
-    assert all(600 <= config["max_seconds"] <= 1200 for config in configs)
+    assert all(config["max_seconds"] == 2000 for config in configs)
 
 
 @pytest.mark.parametrize(
-    "bound", [0, -1, True, 1.5, {"low": 1200, "high": 600}, {"low": 600, "high": 1200.5}]
+    "bound", [0, -1, True, 1.5, 600, {"low": 1200, "high": 600}, {"low": 600, "high": 1200}]
 )
-def test_invalid_runtime_bounds_are_rejected(bound):
+def test_bounds_that_hold_the_seconds_of_a_trial_are_refused_naming_them(bank, tmp_path, bound):
+    from tuning.selector import check_bounds
+
+    registry = Bank(bank).registry
+    with pytest.raises(ValueError, match="the bounds hold max_seconds"):
+        check_bounds(registry, {"max_seconds": bound})
+    with pytest.raises(ValueError, match="the bounds hold max_seconds"):
+        random_suggest(registry, 1, 2, {"epochs": 2, "max_seconds": bound}, 600)
+    with pytest.raises(ValueError, match="the bounds hold max_seconds"):
+        suggest(registry, [], [], 1, 2, {"max_seconds": bound}, 600)
+    path = tmp_path / "bounds.json"
+    write_json(path, {"max_seconds": bound})
+    with pytest.raises(ValueError, match="the bounds hold max_seconds"):
+        run(arguments(bank, tmp_path / "run", bounds=str(path), **FRESH))
+    assert not (tmp_path / "run").exists()
+
+
+@pytest.mark.parametrize("seconds", [0, -1, True, 1.5, None])
+def test_seconds_of_a_trial_outside_their_meaning_are_refused(seconds):
     from tuning.selector import runtime_parameter
 
-    with pytest.raises(ValueError, match="ordered positive integers"):
-        runtime_parameter({"max_seconds": bound})
+    with pytest.raises(ValueError, match="max_seconds is %r and must be a positive integer" % (seconds,)):
+        runtime_parameter(seconds)
+    found = runtime_parameter(600)
+    assert (found.low, found.high) == (600, 600)
 
 
-def test_time_limit_changes_on_resume_and_omission_preserves_it(bank, tmp_path):
+@pytest.mark.parametrize(
+    "flag,value,field",
+    [
+        ("seed", 4, "seed"),
+        ("seconds", 1800, "seconds"),
+        ("workers", 2, "workers"),
+        ("variant_gb", 2, "variant_bytes"),
+        ("batch_sequences", 16, "batch_sequences"),
+    ],
+)
+def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_field(
+    bank, tmp_path, flag, value, field
+):
     output = tmp_path / "run"
+    run(arguments(bank, output, seconds=1200, **FRESH))
+    before = read_json(output / "plan.json")
+    with pytest.raises(ValueError, match="plan.json holds %s %r and" % (field, before[field])):
+        run(arguments(bank, output, **{"seconds": 1200, flag: value}))
+    with pytest.raises(KeyError, match="the statement lacks"):
+        run(arguments(bank, output, **{"seconds": 1200, flag: None}))
+    assert read_json(output / "plan.json") == before
     run(arguments(bank, output, seconds=1200))
-    run(arguments(bank, output, seconds=1800))
-    assert read_json(output / "plan.json")["seconds"] == 1800
-    run(arguments(bank, output, seconds=None))
-    assert read_json(output / "plan.json")["seconds"] == 1800
+    assert read_json(output / "plan.json")[field] == before[field]
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "seed",
+        "seconds",
+        "workers",
+        "variant_bytes",
+        "batch_sequences",
+        "selector",
+        "random_trials",
+        "mix",
+        "random_params",
+        "bounds",
+        "objective",
+    ],
+)
+def test_a_plan_on_disk_that_lacks_a_field_stops_naming_it(bank, tmp_path, field):
+    output = tmp_path / "run"
+    run(arguments(bank, output, **FRESH))
+    plan = read_json(output / "plan.json")
+    del plan[field]
+    write_json(output / "plan.json", plan)
+    with pytest.raises(KeyError, match="plan.json lacks " + field):
+        run(arguments(bank, output))
+    assert read_json(output / "plan.json") == plan
 
 
 def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path, statement):
     from tuning.selector import append_trial
 
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     plan = dict(
         selector="random",
         seed=5,
@@ -293,13 +364,28 @@ def test_tpe_good_set_is_the_best_hundred_trials():
     assert SETTINGS["good_set"] == 100
 
 
-def test_new_runs_default_to_a_short_random_start_then_a_four_way_mix(bank, tmp_path):
-    run(arguments(bank, tmp_path / "mixed"))
+@pytest.mark.parametrize(
+    "field,flag",
+    [
+        ("selector", "--selector"),
+        ("random_trials", "--startup-trials"),
+        ("mix", "--mix"),
+        ("random_params", "--random-params"),
+    ],
+)
+def test_a_new_run_that_leaves_a_choice_of_the_search_unstated_stops_naming_it(bank, tmp_path, field, flag):
+    with pytest.raises(ValueError, match="a new search states " + flag + "$"):
+        run(arguments(bank, tmp_path / "unstated", **dict(FRESH, **{field: None})))
+    assert not (tmp_path / "unstated").exists()
+
+
+def test_a_new_run_stores_the_choices_of_the_search_as_stated(bank, tmp_path):
+    mix = ["random=25", "tpe=25", "forest=25", "botorch=25"]
+    run(arguments(bank, tmp_path / "mixed", selector="botorch", random_trials=10, mix=mix, random_params=[]))
     plan = read_json(tmp_path / "mixed" / "plan.json")
-    assert plan["random_trials"] == 10
+    assert plan["selector"] == "botorch" and plan["random_trials"] == 10 and plan["random_params"] == []
     assert plan["mix"] == {"random": 25, "tpe": 25, "forest": 25, "botorch": 25}
-    run(arguments(bank, tmp_path / "chosen", selector="tpe"))
-    assert read_json(tmp_path / "chosen" / "plan.json")["mix"] == {"tpe": 100}
+    assert plan["batch_sequences"] == 8 and plan["seconds"] == 10 and plan["seed"] == 3
 
 
 def test_score_histograms_survive_nearly_identical_predictions():

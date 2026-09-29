@@ -63,7 +63,7 @@ def test_failed_trials_train_the_completion_forest():
 
 
 def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, candidate_pool, monkeypatch):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     observations, failures = [], []
     for index in range(6):
         config, _ = selector.random_suggest(registry, index, index + 1, {"epochs": 2}, 600)
@@ -73,7 +73,7 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
         failures.append(failed)
     monkeypatch.setattr(space, "CANDIDATES", 20)
     bounds = {"epochs": {"low": 1, "high": 3}}
-    encoding = space.Space(registry, bounds)
+    encoding = space.Space(registry, bounds, 600, ())
     progress = []
     config, selection = forest.suggest(
         registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu", 600, progress=progress.append
@@ -112,7 +112,7 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
 
 
 def test_startup_counts_toward_the_forest_selector(bank, tmp_path, monkeypatch, statement):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(40)]
     failures = [dict(config=config, status="failed", trial="bad-" + str(i)) for i in range(60)]

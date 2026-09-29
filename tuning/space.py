@@ -45,13 +45,13 @@ def flatten(config):
 
 
 class Space:
-    def __init__(self, registry, bounds, seconds=600, history=()):
+    def __init__(self, registry, bounds, seconds, history):
         self.registry, self.bounds = registry, bounds
         self.models, self.training = spaces(registry, bounds)
-        self.runtime = runtime_parameter(bounds, seconds)
+        self.runtime = runtime_parameter(seconds)
         limits = [self.runtime.low, self.runtime.high]
         limits.extend(
-            runtime_parameter({}, config["max_seconds"]).low for config in history if "max_seconds" in config
+            runtime_parameter(config["max_seconds"]).low for config in history if "max_seconds" in config
         )
         runtime = specs.number("max_seconds", min(limits), max(limits), self.runtime.default)
         self.graphs = {}

@@ -6,11 +6,12 @@ import numba
 import torch
 
 from graphspec.infra import files
+from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.log import emit
 from graphspec.infra.processes import parallel
 from graphspec.infra.timing import Timeline, measure
 
-from .data import Bank
+from .data import Bank, Deriver
 
 WORKER = {}
 
@@ -18,7 +19,7 @@ WORKER = {}
 def attach(bank_directory, threads, device, timing_directory=None):
     numba.set_num_threads(threads)
     torch.set_num_threads(threads)
-    WORKER["bank"] = Bank(bank_directory, device=device)
+    WORKER["bank"] = Deriver(bank_directory, device, RESIDENT)
     WORKER["timeline"] = Timeline(
         None if timing_directory is None else Path(timing_directory) / ("graph-%s.json" % os.getpid())
     )
@@ -36,7 +37,7 @@ def prepare(bank_directory, cfg, workers, device, timing_directory=None):
     started = time.perf_counter()
     if workers < 1:
         raise ValueError("variant preparation requires at least one worker")
-    bank = Bank(bank_directory, device=device)
+    bank = Deriver(bank_directory, device, RESIDENT)
     root = bank.stamp(cfg)
     missing = [index for index in bank.graphs(cfg) if not (root / ("graph_%04d" % index)).exists()]
     seconds = 0.0

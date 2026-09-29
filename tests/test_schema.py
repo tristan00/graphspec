@@ -11,11 +11,13 @@ import support
 
 from graphspec import ENCODERS, TYPES, inspect, join, synthetic
 from graphspec import spec as specs
+from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.schema import VALUE, Encoding, Schema, fitted
 from graphspec.truth import VERSION, Graph, conforms, gather
 from tuning.build import build
-from tuning.data import Bank
+from tuning.data import Deriver
+from tuning.statement import state
 from tuning.training import fit
 
 LOG = logging.getLogger(__name__)
@@ -178,6 +180,27 @@ def test_encoders_are_fitted_on_the_rows_trained_on_and_on_no_other():
         fitted(schema, gather(schema, tables, -1), {})
 
 
+@pytest.mark.parametrize("unseen", ["stop", "shared"])
+def test_the_onehot_encoder_states_what_it_does_with_a_value_unseen_in_training(unseen):
+    from graphspec.schema import OneHot
+
+    encoder = OneHot(unseen)
+    state = encoder.fit(np.asarray([0, 2]), ["low", "mid", "high"], "shade")
+    assert state == dict(codes=[0, 2], values=["low", "high"])
+    values, flags = encoder.encode(np.asarray([0, 2, np.nan], np.float32), state)
+    assert values.tolist() == [[1, 0, 0], [0, 1, 0], [0, 0, 0]] and flags.tolist() == [[1], [1], [0]]
+    if unseen == "stop":
+        with pytest.raises(ValueError, match="stops on a value unseen in training and met the codes 1"):
+            encoder.encode(np.asarray([0, 1], np.float32), state)
+    else:
+        assert encoder.encode(np.asarray([0, 1], np.float32), state)[0].tolist() == [[1, 0, 0], [0, 0, 1]]
+    assert ENCODERS.named("onehot").unseen == "shared"
+    with pytest.raises(TypeError, match="unseen"):
+        OneHot()
+    with pytest.raises(ValueError, match="one of stop, shared, found 'ignore'"):
+        OneHot("ignore")
+
+
 def test_the_varied_graph_builds_with_what_the_check_names(varied):
     manifest = read_json(varied / "manifest.json")
     declared = manifest["spec"]
@@ -192,7 +215,7 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
     assert declared["encoding"]["relations"]["links"] == taken
     assert all(edges[name]["origin"] == ["base", "links"] for name in taken)
     assert declared["extras"]["base"] == ["visits", "owns", "member", "near", "located"] + taken
-    opened = Bank(varied, device="cpu")
+    opened = Deriver(varied, "cpu", RESIDENT)
     assert (
         opened.registry.attribute_width("visits")
         == 2 + len(opened.registry.encoding.states["mode"]["codes"]) + 2
@@ -209,7 +232,7 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
 
 
 def test_the_varied_graph_reads_back_from_the_bank_equal_to_what_was_stated(varied):
-    opened = Bank(varied, device="cpu")
+    opened = Deriver(varied, "cpu", RESIDENT)
     assert set(opened.rows[0]) == {"graph", "step", "ticket", "week", "y"}
     assert opened.split["series"][0]["name"] == synthetic.TARGET and len(opened.split["series"]) == 1
     stated = support.written(varied.parent / "varied.staging", opened.registry.schema)
@@ -225,11 +248,11 @@ def test_the_varied_graph_reads_back_from_the_bank_equal_to_what_was_stated(vari
 
 
 def test_the_varied_graph_completes_one_fit_on_cpu(varied, varied_packed, tmp_path, statement):
-    opened, cfg = Bank(varied, device="cpu"), varied_packed["snapshot"]
+    opened, cfg = Deriver(varied, "cpu", RESIDENT), varied_packed["snapshot"]
     assert cfg["model"]["snapshot/spatial"] == "relational"
     blocks = opened.blocks(0, 4, cfg)
     started = time.perf_counter()
-    fit(varied, tmp_path, cfg, blocks, 16, started + statement["seconds"], statement)
+    fit(varied, tmp_path, cfg, blocks, 16, started + statement["seconds"], state(statement))
     LOG.info("varied fit exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
@@ -240,7 +263,7 @@ def test_the_varied_graph_completes_one_fit_on_cpu(varied, varied_packed, tmp_pa
 
 
 def test_a_schema_is_checked_after_an_operation_for_what_the_operation_changes(varied):
-    opened = Bank(varied, device="cpu")
+    opened = Deriver(varied, "cpu", RESIDENT)
     registry = opened.registry
     dense = Graph.load(opened.truth(0)).dense()
     conforms(dense, registry, ("time", "observations", "facts"))
@@ -275,7 +298,7 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
 def test_a_bank_of_version_7_is_refused_with_an_error_naming_its_version(ground):
     old = ground / "01_plain" / "bank"
     with pytest.raises(ValueError, match="has version 7; this code reads version 8"):
-        Bank(old, device="cpu")
+        Deriver(old, "cpu", RESIDENT)
     with pytest.raises(ValueError, match="has version 7; this code reads version 8"):
         inspect(old)
 
@@ -317,7 +340,7 @@ def test_the_inputs_of_a_configuration_of_the_fixture_are_equal_under_the_names_
     for key, table in old.items():
         assert support.sorted_by_key(table).equals(support.sorted_by_key(new[key])), key
     held = fixture.arrays(ground / entry["folder"] / entry["files"]["input"])
-    opened = Bank(root / "bank", device="cpu")
+    opened = Deriver(root / "bank", "cpu", RESIDENT)
     assert [graph["name"] for graph in opened.manifest["graphs"]] == entry["graphs"]
     for graph in opened.manifest["graphs"]:
         dense = Graph.load(opened.truth(graph["index"])).dense()
@@ -333,7 +356,7 @@ def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(g
     entries, joined = fixture.configurations(ground)
     entry = joined[place]
     source = {held["name"]: held for held in entries}[entry["configuration"]]["source"]
-    opened = Bank(built[source["name"]] / "bank", device="cpu")
+    opened = Deriver(built[source["name"]] / "bank", "cpu", RESIDENT)
     started = time.perf_counter()
     spec = specs.configured(specs.space(opened.registry, tuple(entry["groups"])), entry["values"])
     assert spec == entry["spec"]

@@ -3,9 +3,10 @@ import pytest
 
 from graphspec import join, representations, segments, transform
 from graphspec import spec as specs
+from graphspec.infra.arrays import RESIDENT
 from graphspec.resources import GraphLimits
 from graphspec.truth import DENSE, Graph
-from tuning.data import Bank, identical
+from tuning.data import Deriver, identical
 
 
 def shortened(graph, stop):
@@ -23,7 +24,7 @@ def shortened(graph, stop):
 
 @pytest.mark.parametrize("draw", range(6))
 def test_segment_engine_equals_the_physical_join(bank, draw):
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     registry = opened.registry
     rng = np.random.default_rng(draw)
     spec = specs.draw(

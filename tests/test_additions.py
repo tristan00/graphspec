@@ -53,7 +53,7 @@ def test_model_space_offers_the_additions(bank):
     from tuning.data import Bank
     from tuning.model_spec import configured
 
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     names = {parameter.name for parameter in space(registry)}
     assert {"snapshot/chebyshev_order", "time/encoding", "keys/embedding", "keys/table"} <= names
     spec = configured(registry, {"view": "snapshot", "snapshot/spatial": "chebyshev", "keys/embedding": True})

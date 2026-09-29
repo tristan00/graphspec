@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from torch.optim import Optimizer
 
     from .budget import FitBudget
-    from .data import Bank
+    from .data import Deriver
     from .packing import Packer
 
 PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / "graphspec")
@@ -118,7 +118,9 @@ class TrainingSession:
     def __init__(self, bank_directory, directory, config: dict, budget, stated):
         import torch
 
-        from .data import Bank
+        from graphspec.infra.arrays import RESIDENT
+
+        from .data import Deriver
         from .model_spec import describe
         from .models import build
         from .variants import prepare
@@ -127,7 +129,7 @@ class TrainingSession:
         self.directory = output_path(directory)
         self.stated = stated
         self.device = stated.device
-        self.cuda = compute.require(self.device) == "cuda"
+        self.cuda = compute.require(self.device).type == "cuda"
         self.budget: FitBudget = budget
         with self.budget.measure("graph_prepare"):
             prepare(bank_directory, config, stated.workers, self.device, self.directory / "timing_workers")
@@ -143,7 +145,7 @@ class TrainingSession:
             np.random.seed(stated.seed)
             compute.reserve(self.device)
         with measure("bank_load_and_verify"):
-            self.bank: Bank = Bank(bank_directory, device=self.device)
+            self.bank: Deriver = Deriver(bank_directory, self.device, RESIDENT)
             self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
@@ -447,9 +449,9 @@ class TrainingSession:
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, statement):
     from .budget import FitBudget
     from .packing import Packer
-    from .statement import state
+    from .statement import stated as checked
 
-    stated = state(statement)
+    stated = checked(statement)
     compute.require(stated.device)
     if config["seed"] != stated.seed:
         raise ValueError(

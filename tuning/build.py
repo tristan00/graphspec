@@ -11,7 +11,7 @@ import numpy as np
 from graphspec import Registry, graphdb, staged, vocabulary
 from graphspec.infra.files import read_json, sha256_file, write_json
 from graphspec.infra.log import configure
-from graphspec.infra.processes import WORKERS, parallel
+from graphspec.infra.processes import parallel
 from graphspec.infra.runtime import exclusive, output_path
 from graphspec.schema import Schema, fitted
 from graphspec.truth import VERSION, gather, parse
@@ -426,7 +426,7 @@ def main():
     parser.add_argument("--task", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--trained", required=True, nargs="+", help="the splits the encoders are fitted on")
-    parser.add_argument("--workers", type=int, default=WORKERS)
+    parser.add_argument("--workers", type=int, required=True)
     args = parser.parse_args()
     configure()
     manifest = build(args.task, args.output, args.workers, args.trained)

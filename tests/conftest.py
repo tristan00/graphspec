@@ -104,15 +104,16 @@ def ground():
 
 
 def running(directory, view):
-    from tuning.data import Bank
+    from graphspec.infra.arrays import RESIDENT
+    from tuning.data import Bank, Deriver
     from tuning.model_spec import configuration
     from tuning.packing import Packer
     from tuning.variants import prepare
 
     started = time.perf_counter()
-    cfg = configuration(Bank(directory, device="cpu").registry, dict(view=view), {"time/history": 4}, 5)
+    cfg = configuration(Bank(directory).registry, dict(view=view), {"time/history": 4}, 5)
     prepare(directory, cfg, 1, "cpu")
-    packer = Packer(Bank(directory, device="cpu"), cfg, "cpu", 1)
+    packer = Packer(Deriver(directory, "cpu", RESIDENT), cfg, "cpu", 1)
     HELD.append((directory, cfg, packer))
     LOG.debug("running exit view=%s seconds=%.4f", view, time.perf_counter() - started)
     return cfg, packer
@@ -175,6 +176,7 @@ def statement():
         preparation_seconds=300,
         workers=1,
         variant_cache_bytes=1 << 30,
+        batch_sequences=16,
     )
 
 

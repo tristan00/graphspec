@@ -12,7 +12,7 @@ from numba import njit
 
 from graphspec import Registry, join, segments
 from graphspec import spec as specs
-from graphspec.infra.arrays import RESIDENT, Residents, between
+from graphspec.infra.arrays import Residents, between
 from graphspec.infra.files import ArrayStore, load_arrays, read_json, save_arrays, sha256_file, write_json
 from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import measure, timed
@@ -109,10 +109,9 @@ class Windows:
 
 
 class Bank:
-    def __init__(self, directory, resident=RESIDENT, device=None):
+    def __init__(self, directory):
         started = time.perf_counter()
         self.directory = Path(directory)
-        self.device = device
         self.manifest = admitted(self.directory, read_json(self.directory / "manifest.json"))
         self.cache = cache_path("banks", sha256_file(self.directory / "manifest.json"))
         self.registry = Registry.from_declaration(self.manifest["spec"])
@@ -148,8 +147,7 @@ class Bank:
                 self.row_index[index][labels["label_step"]] = labels["label_row"]
                 self.row_steps[index] = np.arange(graph["steps"], dtype=np.int32)
             self.entities[index] = graph["entities"]
-        self.variants, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES, resident)
-        self.roots = {}
+        self.variants = {}
         self._groups = {}
         self._shared_kinds = None
         self._tokens = WeakKeyDictionary()
@@ -253,15 +251,65 @@ class Bank:
             self.level,
         )
 
-    def limits(self):
+    def stated(self, cfg):
+        from .model_spec import groups
+
+        chosen = groups(cfg["model"])
+        key = (chosen, specs.digest(cfg["graph"]))
+        if key not in self.variants:
+            started = time.perf_counter()
+            self.variants[key] = (specs.canonical(specs.space(self.registry, chosen), cfg["graph"]), chosen)
+            LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)
+        return key, *self.variants[key]
+
+    @timed("blocks")
+    def blocks(self, partition, history, cfg):
         started = time.perf_counter()
-        if self.device is None:
-            raise ValueError(
-                "bank %s was opened without a device and cannot derive a variant" % self.directory
-            )
-        result = GraphLimits(self.device)
-        LOG.debug("bank limits exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
+        if self.joining(cfg):
+            steps = {graph["index"]: graph["steps"] for graph in self.manifest["graphs"]}
+            result = []
+            for group, members in enumerate(self.groups(cfg)):
+                rows, moments = join.layout(
+                    [(steps[member], self.row_index[member], self.row_steps[member]) for member in members],
+                    self.level,
+                )
+                result.extend(layout(group, rows, moments, self.partitions, partition, history, self.level))
+        else:
+            result = []
+            for graph in self.manifest["graphs"]:
+                index = graph["index"]
+                result.extend(
+                    layout(
+                        index,
+                        self.row_index[index],
+                        self.row_steps[index],
+                        self.partitions,
+                        partition,
+                        history,
+                        self.level,
+                    )
+                )
+        LOG.info(
+            "bank blocks exit seconds=%.3f partition=%d history=%d blocks=%d",
+            time.perf_counter() - started,
+            partition,
+            history,
+            len(result),
+        )
         return result
+
+
+class Deriver(Bank):
+    def __init__(self, directory, device, resident):
+        started = time.perf_counter()
+        self.held = GraphLimits(device)
+        self.device = device
+        super().__init__(directory)
+        self.roots, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES, resident)
+        LOG.debug("deriver exit device=%s seconds=%.4f", device, time.perf_counter() - started)
+
+    def limits(self):
+        return self.held
 
     @timed("segmented")
     def segmented(self, indices, cfg, workers):
@@ -312,27 +360,11 @@ class Bank:
             for group, members in enumerate(self.groups(cfg))
         }
 
-    def stated(self, cfg):
-        from .model_spec import groups
-
-        chosen = groups(cfg["model"])
-        key = (chosen, specs.digest(cfg["graph"]))
-        if key not in self.variants:
-            started = time.perf_counter()
-            self.variants[key] = (specs.canonical(specs.space(self.registry, chosen), cfg["graph"]), chosen)
-            LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)
-        return key, *self.variants[key]
-
     def identity(self, cfg):
         started = time.perf_counter()
         _, spec, chosen = self.stated(cfg)
-        if self.device is None:
-            raise ValueError(
-                "the key of a variant of bank %s holds the device of dense algebra and no device was stated"
-                % self.directory
-            )
         result = dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE, device=self.device)
-        LOG.debug("bank identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
+        LOG.debug("deriver identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
         return result
 
     def variant(self, cfg):
@@ -414,42 +446,6 @@ class Bank:
             JOINED_RESIDENT if self.joining(cfg) else MEMORY_BYTES,
             JOINED_BUDGET if self.joining(cfg) else None,
         )
-
-    @timed("blocks")
-    def blocks(self, partition, history, cfg):
-        started = time.perf_counter()
-        if self.joining(cfg):
-            steps = {graph["index"]: graph["steps"] for graph in self.manifest["graphs"]}
-            result = []
-            for group, members in enumerate(self.groups(cfg)):
-                rows, moments = join.layout(
-                    [(steps[member], self.row_index[member], self.row_steps[member]) for member in members],
-                    self.level,
-                )
-                result.extend(layout(group, rows, moments, self.partitions, partition, history, self.level))
-        else:
-            result = []
-            for graph in self.manifest["graphs"]:
-                index = graph["index"]
-                result.extend(
-                    layout(
-                        index,
-                        self.row_index[index],
-                        self.row_steps[index],
-                        self.partitions,
-                        partition,
-                        history,
-                        self.level,
-                    )
-                )
-        LOG.info(
-            "bank blocks exit seconds=%.3f partition=%d history=%d blocks=%d",
-            time.perf_counter() - started,
-            partition,
-            history,
-            len(result),
-        )
-        return result
 
 
 def identical(left, right):

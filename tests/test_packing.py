@@ -167,11 +167,12 @@ def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
 
 
 def test_mixed_nodes_without_an_entity_carry_no_token(bank):
-    from tuning.data import Bank
+    from graphspec.infra.arrays import RESIDENT
+    from tuning.data import Deriver
     from tuning.inputs import recipe
     from tuning.model_spec import configuration
 
-    opened = Bank(bank, device="cpu")
+    opened = Deriver(bank, "cpu", RESIDENT)
     cfg = configuration(opened.registry, {"view": "mixed", "keys/embedding": True}, {"time/history": 4}, 5)
     block = opened.blocks(1, 4, cfg)[-1]
     held = opened.resident(block[0], cfg, "cpu")

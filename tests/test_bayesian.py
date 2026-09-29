@@ -65,7 +65,7 @@ def test_failed_trials_train_feasibility_without_fake_objective_values():
 def test_history_and_candidates_preserve_parameters_and_condition_on_random_values(
     bank, candidate_pool, monkeypatch
 ):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     observations, failures = [], []
     for index, view in enumerate(("snapshot", "mixed", "sequence", "memory")):
         config, _ = selector.random_suggest(registry, index, index + 1, {"view": view, "epochs": 4}, 600)
@@ -105,8 +105,8 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
 
     monkeypatch.setattr(bayesian, "Search", InspectSearch)
     monkeypatch.setattr(space, "CANDIDATES", 12)
-    bounds = {"epochs": {"low": 1, "high": 3}, "max_seconds": {"low": 600, "high": 1200}, "hidden": 37}
-    encoding = space.Space(registry, bounds, history=[entry["config"] for entry in original])
+    bounds = {"epochs": {"low": 1, "high": 3}, "hidden": 37}
+    encoding = space.Space(registry, bounds, 600, [entry["config"] for entry in original])
     names = list(encoding.parameters)
     preceding = {name: names[: names.index(name)] for name in ("epochs", "max_seconds")}
     random_params = ["model/view", "lr", "epochs", "max_seconds"]
@@ -122,7 +122,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     assert config["lr"] == selection["fixed_params"]["lr"]
     assert config["epochs"] == selection["fixed_params"]["epochs"]
     assert config["max_seconds"] == selection["fixed_params"]["max_seconds"]
-    assert 600 <= config["max_seconds"] <= 1200
+    assert config["max_seconds"] == 600
     assert config["model"]["hidden"] == 37
     assert config["epochs"] <= 3
     assert len(seen) == 1
@@ -147,8 +147,8 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
 
 
 def test_random_view_covers_snapshot_and_other_choices(bank):
-    registry = Bank(bank, device="cpu").registry
-    encoding = space.Space(registry, {})
+    registry = Bank(bank).registry
+    encoding = space.Space(registry, {}, 600, ())
     parameter = encoding.proposal_parameters["model/view"]
     values = {parameter.uniform(np.random.default_rng(seed)) for seed in range(200)}
     assert values == set(parameter.options)
@@ -160,7 +160,7 @@ def test_random_view_covers_snapshot_and_other_choices(bank):
 
 @pytest.mark.parametrize("finished,expected", [(99, "random"), (100, "botorch")])
 def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, statement, finished, expected):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(40)]
     failures = [dict(config=config, status="failed", trial="bad-" + str(i)) for i in range(finished - 40)]
@@ -211,28 +211,28 @@ def test_acquisition_conditions_remaining_choices_on_epochs_and_runtime():
 
 
 def test_unknown_historical_runtime_stays_unknown(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     config, _ = selector.random_suggest(registry, 1, 2, {}, 600)
     unknown = copy.deepcopy(config)
     del unknown["max_seconds"]
-    encoding = space.Space(registry, {"max_seconds": {"low": 600, "high": 1200}})
+    encoding = space.Space(registry, {}, 600, [dict(config, max_seconds=1200)])
     encoded = encoding.encode([config, unknown])
     assert encoded[0, -1] == 1
     assert encoded[1, -1] == 0
 
 
 def test_inactive_parameters_are_distinct_from_active_minimum_values(bank):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     config, _ = selector.random_suggest(registry, 1, 2, {"view": "mixed"}, 600)
     other = copy.deepcopy(config)
     other["model"]["snapshot/layers"] = 1
-    encoding = space.Space(registry, {})
+    encoding = space.Space(registry, {}, 600, ())
     encoded = encoding.encode([config, other])
     assert not np.array_equal(encoded[0], encoded[1])
 
 
 def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch, statement):
-    registry = Bank(bank, device="cpu").registry
+    registry = Bank(bank).registry
     config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(20)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, [], [], []))

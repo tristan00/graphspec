@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from contextlib import contextmanager
 
@@ -15,13 +14,17 @@ THREADS = 2
 
 def require(device):
     started = time.perf_counter()
-    kind = torch.device(device).type
-    if kind not in ("cpu", "cuda"):
+    parsed = torch.device(device)
+    if parsed.type not in ("cpu", "cuda"):
         raise ValueError("device %s is neither cpu nor cuda" % device)
-    if kind == "cuda" and not torch.cuda.is_available():
+    if parsed.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("device %s was requested and no GPU is present" % device)
+    if parsed.type == "cuda" and parsed.index is not None and parsed.index >= torch.cuda.device_count():
+        raise RuntimeError(
+            "device %s was requested and %d GPUs are present" % (device, torch.cuda.device_count())
+        )
     LOG.debug("require exit device=%s seconds=%.4f", device, time.perf_counter() - started)
-    return kind
+    return parsed
 
 
 def device_for(size, device):
@@ -152,7 +155,6 @@ def top(scores, width, device):
 def reserve(device):
     started = time.perf_counter()
     torch.set_num_threads(THREADS)
-    if require(device) == "cuda":
-        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    if require(device).type == "cuda":
         torch.cuda.set_per_process_memory_fraction(FRACTION, device)
     LOG.info("reserve exit device=%s seconds=%.3f", device, time.perf_counter() - started)

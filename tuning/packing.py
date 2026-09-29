@@ -17,7 +17,7 @@ from graphspec.infra.processes import worker_threads
 from graphspec.infra.timing import Timeline, measure, timed
 
 from .batching import recipe_batch
-from .data import Bank
+from .data import Deriver
 from .tensors import keys, prepare, resolve
 
 LOG = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results)
     configure(json_lines=True)
     numba.set_num_threads(threads)
     torch.set_num_threads(1)
-    bank = Bank(bank_directory, resident, device)
+    bank = Deriver(bank_directory, device, resident)
     slots = {}
     while True:
         with measure("queue_wait"):

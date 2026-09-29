@@ -14,13 +14,13 @@ def build(x, losses, complete, seed, device):
     import botorch
 
     started = time.perf_counter()
-    kind = compute.require(device)
+    compute.require(device)
     with torch.random.fork_rng():
         torch.manual_seed(seed)
         model = Search(x, losses, complete, device)
     model.sampler, model.phase = "BoTorch", "botorch"
-    model.settings = dict(model="MAP-SAAS GP", device=kind, botorch_version=botorch.__version__)
-    emit("botorch_build", device=kind, seconds=time.perf_counter() - started)
+    model.settings = dict(model="MAP-SAAS GP", device=device, botorch_version=botorch.__version__)
+    emit("botorch_build", device=device, seconds=time.perf_counter() - started)
     return model
 
 

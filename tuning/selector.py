@@ -41,12 +41,10 @@ def spaces(registry, bounds):
     return narrow_group(model_space(registry), bounds), narrow_group(TRAINING, bounds)
 
 
-def runtime_parameter(bounds, seconds=600):
-    bound = bounds.get("max_seconds", seconds)
-    low, high = (bound["low"], bound["high"]) if isinstance(bound, dict) else (bound, bound)
-    if type(low) is not int or type(high) is not int or not 1 <= low <= high:
-        raise ValueError("max_seconds bounds must be ordered positive integers")
-    return specs.number("max_seconds", low, high, low)
+def runtime_parameter(seconds):
+    if type(seconds) is not int or seconds < 1:
+        raise ValueError("max_seconds is %r and must be a positive integer" % (seconds,))
+    return specs.number("max_seconds", seconds, seconds, seconds)
 
 
 def narrow_group(parameters, bounds):
@@ -59,8 +57,10 @@ def narrow_group(parameters, bounds):
 
 
 def check_bounds(registry, bounds):
-    runtime_parameter(bounds)
-    bounds = {name: value for name, value in bounds.items() if name != "max_seconds"}
+    if "max_seconds" in bounds:
+        raise ValueError(
+            "the bounds hold max_seconds; the seconds of a trial are those of the statement and no other"
+        )
     known = {
         parameter.name for parameter in model_space(registry) + TRAINING + specs.space(registry, specs.GROUPS)
     }
@@ -91,7 +91,7 @@ def observation(registry, config, value, bounds, **attrs):
     enter("", trainings, training(config))
     enter("graph/", graph_space(registry, config["model"], bounds), config["graph"])
     if "max_seconds" in config:
-        enter("", (runtime_parameter(bounds, config["max_seconds"]),), {"max_seconds": config["max_seconds"]})
+        enter("", (runtime_parameter(config["max_seconds"]),), {"max_seconds": config["max_seconds"]})
     return search.record(value, params, distributions, config=config, **attrs)
 
 
@@ -119,11 +119,7 @@ def excluded(registry, config, bounds):
         outside(models, config["model"])
         + outside(trainings, training(config))
         + outside(graph_space(registry, config["model"], bounds), config["graph"])
-        + (
-            outside((runtime_parameter(bounds, config["max_seconds"]),), config)
-            if "max_seconds" in config
-            else []
-        )
+        + (outside((runtime_parameter(config["max_seconds"]),), config) if "max_seconds" in config else [])
     )
 
 
@@ -152,7 +148,7 @@ def configuration(registry, choose, training_seed, bounds, seconds):
     config["graph"] = specs.draw(
         graph_space(registry, model, bounds), lambda parameter: choose("graph/", parameter)
     )
-    config["max_seconds"] = choose("", runtime_parameter(bounds, seconds))
+    config["max_seconds"] = choose("", runtime_parameter(seconds))
     return config
 
 
@@ -257,6 +253,14 @@ def load_history(directory, plan):
     return observations, failures, history, failure_history
 
 
+def seeds(seed, index):
+    started = time.perf_counter()
+    rng = np.random.default_rng(np.random.SeedSequence([seed, index, 1]))
+    result = tuple(int(value) for value in rng.integers(1, 2**31, size=2))
+    emit("trial_seeds", index=index, seconds=time.perf_counter() - started)
+    return result
+
+
 def roll():
     return np.random.default_rng().random()
 
@@ -283,8 +287,7 @@ def append_trial(directory, plan, registry, stated):
     started = time.perf_counter()
     observations, failures, history, failure_history = load_history(directory, plan)
     index = len(plan["trials"])
-    rng = np.random.default_rng(np.random.SeedSequence([stated.seed, index, 1]))
-    selector_seed, training_seed = (int(v) for v in rng.integers(1, 2**31, size=2))
+    selector_seed, training_seed = seeds(stated.seed, index)
     bounds = plan["bounds"]
     finished = len(observations) + len(failures)
     startup = (

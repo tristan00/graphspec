@@ -6,12 +6,13 @@ import torch
 
 from graphspec import spec as specs
 from graphspec.infra import compute
+from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, write_json
 from graphspec.infra.log import configure, emit
 from graphspec.infra.runtime import exclusive, output_path
 
 from .batching import pack_batch
-from .data import Bank
+from .data import Deriver
 from .model_spec import configuration, describe, groups, samples
 from .models import build
 from .training import loss
@@ -53,11 +54,11 @@ def probe(bank, block, cfg, device):
 
 
 @exclusive
-def check(directory, output, device, graph=None, spec_path=None):
+def check(directory, output, device, seed, graph=None, spec_path=None):
     entered = time.perf_counter()
     output = output_path(output)
     compute.reserve(device)
-    bank = Bank(directory, device=device)
+    bank = Deriver(directory, device, RESIDENT)
     chosen = (
         max(bank.manifest["graphs"], key=lambda entry: entry["observations"])["index"]
         if graph is None
@@ -73,7 +74,7 @@ def check(directory, output, device, graph=None, spec_path=None):
         raise ValueError("spec file names unknown parameters: " + ", ".join(unknown))
     results = []
     for model in models:
-        cfg = configuration(bank.registry, model, given, 771)
+        cfg = configuration(bank.registry, model, given, seed)
         candidates = sorted(
             block
             for partition in (0, 1)
@@ -100,11 +101,12 @@ def main():
     parser.add_argument("directory")
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", required=True)
+    parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--graph", type=int)
     parser.add_argument("--spec")
     args = parser.parse_args()
     configure()
-    check(args.directory, args.output, args.device, args.graph, args.spec)
+    check(args.directory, args.output, args.device, args.seed, args.graph, args.spec)
 
 
 if __name__ == "__main__":
