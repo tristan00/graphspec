@@ -241,9 +241,10 @@ class Spatial(nn.Module):
                 widths = list(attributes.values())
                 self.attribute_weights = nn.Parameter(torch.zeros(len(widths), max(widths), hidden))
                 for slot, width in enumerate(widths):
-                    self.attribute_weights.data[slot, :width] = nn.init.kaiming_uniform_(
-                        torch.empty(hidden, width), a=math.sqrt(5)
-                    ).T
+                    if width:
+                        self.attribute_weights.data[slot, :width] = nn.init.kaiming_uniform_(
+                            torch.empty(hidden, width), a=math.sqrt(5)
+                        ).T
         elif mode == "chebyshev":
             self.weights = nn.Parameter(torch.empty(order + 1, hidden, hidden))
             nn.init.xavier_uniform_(self.weights)

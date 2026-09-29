@@ -704,7 +704,6 @@ def sampled(facts, registry, held, several):
         removed = np.flatnonzero(np.asarray(shown.removal_step) <= bound)
         owners = np.unique(np.asarray(shown.obs_entity, np.int64)[observed > 0])
         inner = np.isin(np.asarray(facts.inner_owner, np.int64), owners)
-        within = inner[np.asarray(facts.within_source, np.int64)]
         codes = np.r_[
             np.repeat(np.asarray(shown.fact_code, np.int64), stated),
             np.asarray(shown.removal_code, np.int64)[removed],
@@ -717,7 +716,6 @@ def sampled(facts, registry, held, several):
             (layout, np.asarray(shown.task_values)[tasks]),
             (schema.graph, np.asarray(facts.graph_values)[None, :]),
             (schema.inner_columns(), np.asarray(facts.inner_values)[inner]),
-            (schema.within_columns(), np.asarray(facts.within_values)[within]),
         ]
         parts += [
             (registry.by_code[code].attributes, values[codes == code]) for code in np.unique(codes).tolist()

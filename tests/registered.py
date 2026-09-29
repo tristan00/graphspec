@@ -97,4 +97,4 @@ def ready():
 
 
 TRIPLE = Sort(True, False, 3, 3, True)
-STORED = Form(node, True)
+STORED = Form(node, True, True)

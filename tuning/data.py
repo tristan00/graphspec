@@ -196,14 +196,16 @@ class Viewed:
     def build(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
         registry, entries = bank.registry, []
-        samples = {name: [] for name in registry.schema.columns}
+        columns = sets.shown(registry, storage)
+        samples = {name: [] if name in columns else None for name in registry.schema.columns}
         rows = [row for code in looking.trained for row in bank.split["indices"][looking.splits[code]]]
         trained = {bank.rows[row]["graph"] for row in rows}
         for stored in (graph for graph in bank.manifest["graphs"] if graph["name"] in trained):
             facts = sets.stored(Facts.load(bank.truth(stored["index"])), registry, storage)
             for held in sequences(facts, registry, steps, looking):
-                for name, found in sampled(facts, registry, held, several).items():
-                    samples[name] += found
+                found = sampled(facts, registry, held, several)
+                for name in columns:
+                    samples[name] += found[name]
         encoding = fitted(registry.encoding, samples)
         self.folder.mkdir(parents=True, exist_ok=True)
         write_json(self.folder / "encoders.json", dict(states=encoding.states))

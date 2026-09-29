@@ -13,7 +13,7 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
 from graphspec.resources import GraphLimits
-from graphspec.schema import VERSION, Encoding, Schema
+from graphspec.schema import VERSION, Encoding, Schema, fitted
 from graphspec.truth import Facts, Graph
 from graphspec.view import sequences, unstated, view
 from tuning.build import build
@@ -72,7 +72,7 @@ def stated():
         columns=dict(
             level=VALUE,
             load=VALUE,
-            share=VALUE,
+            share=dict(type="number", encoder="standard"),
             scale=VALUE,
             strength=VALUE,
             mark=VALUE,
@@ -469,6 +469,22 @@ def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, 
         owners=3, owner=np.asarray([0, 0, 2]), values=np.zeros((3, 2)), source=owner[:0], target=owner[:0]
     )
     assert other.held["tray"][1] == 1 and other.graphs("tray", graphs)[:, 0].tolist() == [2.0, 0.0, 1.0]
+
+
+def test_a_column_no_view_of_the_statement_shows_is_not_encoded_and_a_shown_one_without_values_stops(bank):
+    held = Deriver(bank, "cpu", RESIDENT)
+    for form, width in (("node", 2), ("pairs", 0)):
+        cfg = configuration(held.registry, dict(view="snapshot"), STORED[form], 5, SPLITS)
+        registry = held.fitted(cfg)
+        states = read_json(held.viewed(cfg).folder / "encoders.json")["states"]
+        assert (states["share"] is None) == (form == "pairs") and states["tie"] is None
+        assert states["mass"]["sd"] > 0 and registry.attribute_width("gathering") == 2
+        assert registry.attribute_width("gathering.lead") == width
+    samples = dict.fromkeys(held.registry.schema.columns, [])
+    samples.update(mass=[np.asarray([1.0, 2.0], np.float32)], share=None, tie=None)
+    assert fitted(held.registry.encoding, samples).width(("share", "tie")) == 0
+    with pytest.raises(ValueError, match="the column share has fewer than two differing values"):
+        fitted(held.registry.encoding, dict(samples, share=[np.asarray([3.0], np.float32)]))
 
 
 def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edges(bank, monkeypatch):

@@ -17,14 +17,18 @@ PARAMETER = "sets/%s/storage"
 
 
 class Form:
-    def __init__(self, function, nodes):
+    def __init__(self, function, nodes, members):
         started = time.perf_counter()
         if type(nodes) is not bool:
             raise ValueError(
                 "a form of storage states with true or false whether it makes each set edge a node"
             )
-        self.function, self.nodes = function, nodes
-        LOG.debug("form exit nodes=%s seconds=%.4f", nodes, time.perf_counter() - started)
+        if type(members) is not bool:
+            raise ValueError(
+                "a form of storage states with true or false whether it shows the values of the members"
+            )
+        self.function, self.nodes, self.members = function, nodes, members
+        LOG.debug("form exit nodes=%s members=%s seconds=%.4f", nodes, members, time.perf_counter() - started)
 
     @timed("sets.form.call")
     def __call__(self, facts, registry, kind):
@@ -176,8 +180,8 @@ def pairs(facts, registry, kind):
     return result
 
 
-STORAGE.register(NODE, Form(node, True))
-STORAGE.register("pairs", Form(pairs, False))
+STORAGE.register(NODE, Form(node, True, True))
+STORAGE.register("pairs", Form(pairs, False, False))
 
 
 def offered(registry, kind):
@@ -194,6 +198,20 @@ def offered(registry, kind):
         name for name in STORAGE.names() if STORAGE.named(name).nodes or not (about or stops or revealed)
     )
     LOG.debug("offered exit kind=%s forms=%d seconds=%.4f", kind, len(result), time.perf_counter() - started)
+    return result
+
+
+def shown(registry, storage):
+    started = time.perf_counter()
+    schema = registry.schema
+    groups = [schema.graph, schema.layout(), schema.inner_columns()]
+    groups += [entry["columns"] for entry in schema.edges.values()]
+    groups += [entry["members"] for kind, entry in schema.sets.items() if STORAGE.named(storage[kind]).members]
+    found = {name for columns in groups for name in columns}
+    result = tuple(name for name in schema.columns if name in found)
+    LOG.debug(
+        "shown exit columns=%d of=%d seconds=%.4f", len(result), len(schema.columns), time.perf_counter() - started
+    )
     return result
 
 

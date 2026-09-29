@@ -1140,7 +1140,10 @@ class Encoding:
             lacking = [name for name in schema.columns if name not in states]
             if lacking:
                 raise ValueError("the columns %s have no fitted encoder" % ", ".join(lacking))
-            self.sizes = {name: schema.encoder(name).widths(states[name]) for name in schema.columns}
+            self.sizes = {
+                name: (0, 0) if states[name] is None else schema.encoder(name).widths(states[name])
+                for name in schema.columns
+            }
             self.values = sum(self.sizes[name][0] for name in self.layout)
             self.held, self.inner = {}, 0
             for kind, held in schema.holds.items():
@@ -1178,7 +1181,9 @@ class Encoding:
 
     def encoded(self, columns, codes):
         parts = [
-            self.schema.encoder(name).encode(
+            (np.zeros((len(codes), 0), np.float32),) * 2
+            if self.states[name] is None
+            else self.schema.encoder(name).encode(
                 codes[:, position],
                 self.states[name],
                 self.dictionaries[name] if self.schema.kind(name).symbols else None,
@@ -1260,13 +1265,17 @@ def fitted(encoding, samples):
     started = time.perf_counter()
     schema, states = encoding.schema, {}
     for name in schema.columns:
+        if samples[name] is None:
+            states[name] = None
+            continue
         codes = np.concatenate(samples[name] + [np.zeros(0, np.float32)])
         dictionary = encoding.dictionaries[name] if schema.kind(name).symbols else None
         states[name] = schema.encoder(name).fit(codes, dictionary, name)
     result = Encoding(schema, encoding.dictionaries, states, encoding.relations)
     LOG.info(
-        "encoders fitted exit columns=%d features=%d seconds=%.3f",
+        "encoders fitted exit columns=%d unshown=%d features=%d seconds=%.3f",
         len(states),
+        sum(state is None for state in states.values()),
         result.features,
         time.perf_counter() - started,
     )
