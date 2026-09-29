@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from conftest import SPLITS
 from graphspec import spec as specs
 from graphspec.infra.arrays import RESIDENT
 from tuning.batching import pack_batch
@@ -13,11 +14,11 @@ from tuning.layers import CausalAttention, TimeEncoding
 from tuning.model_spec import configuration, configured, samples, space, views
 from tuning.models import build
 from tuning.packing import Packer
-from tuning.turns import blocks as turn_blocks
+from tuning.periods import blocks as period_blocks
 
 
-def registry(level="query", queries=True, signals=2):
-    return SimpleNamespace(extras={"level": level, "queries": queries, "signals": signals})
+def registry(single=True, events=True, signals=2):
+    return SimpleNamespace(extras=dict(single=single, events=events, signals=signals, target="number"))
 
 
 @pytest.fixture(scope="module")
@@ -63,9 +64,10 @@ def test_all_model_samples_are_canonical_and_cover_each_available_view():
     }
 
 
-def test_node_targets_offer_only_models_that_support_multiple_labels_per_frame():
-    assert "signal" not in views(registry("node"))
-    assert "affinity" not in views(registry("node"))
+def test_several_tasks_at_a_step_offer_only_the_families_that_read_them():
+    assert "signal" not in views(registry(False))
+    assert "affinity" not in views(registry(False))
+    assert "affinity" not in views(registry(True, False)) and "signal" in views(registry(True, False))
 
 
 def test_antisymmetric_state_readout_has_no_unused_time_encoding():
@@ -83,7 +85,7 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     monkeypatch.setattr(
         specs, "space", lambda declaration, groups: (specs.number("time/history", 1, 32, 16),)
     )
-    cfg = {"model": {"view": "signal"}, "graph": {"time/history": 1}}
+    cfg = {"model": {"view": "signal"}, "graph": {"time/history": 1}, "splits": SPLITS}
     assert bank.variant(cfg)[1]["time/history"] == 1
     cfg["graph"]["time/history"] = 2
     assert bank.variant(cfg)[1]["time/history"] == 2
@@ -121,11 +123,11 @@ def test_encoding_and_attention_reject_invalid_parameters_at_construction():
 @pytest.mark.parametrize("hidden", [1, 7, 128])
 def test_each_model_produces_finite_predictions_for_its_labels(opened, model, hidden):
     cfg = configuration(
-        opened.registry, dict(model, hidden=hidden), {"time/history": 2, "time/context": 1}, 11
+        opened.registry, dict(model, hidden=hidden), {"time/history": 2, "time/context": 1}, 11, SPLITS
     )
     blocks = opened.blocks(0, 2, cfg)
-    batch = pack_batch(opened, turn_blocks(opened, [blocks[-1]], cfg), cfg, "cpu")
-    net = build(cfg, opened.registry, len(opened.categories)).eval()
+    batch = pack_batch(opened, period_blocks(opened, [blocks[-1]], cfg), cfg, "cpu")
+    net = build(cfg, opened.registry).eval()
     with torch.inference_mode():
         prediction = net(batch)
     assert prediction.shape == batch["target"].shape

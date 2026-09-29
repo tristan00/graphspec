@@ -2,6 +2,7 @@ import logging
 import time
 
 from graphspec import spec as specs
+from graphspec.references import SORTS
 from graphspec.spec import GROUPS, among, choice, draw, equals, flag, number, real
 
 LOG = logging.getLogger(__name__)
@@ -44,14 +45,58 @@ TRAINING = (
 )
 
 
+STARTS = dict(sorts=("node",), least=1, most=3, absent=False)
+SINGLE = ("signal", "affinity")
+
+
 def views(registry):
     extras = registry.extras
     excluded = set()
-    if not extras["signals"] or extras["level"] == "node":
+    if not extras["signals"] or not extras["single"]:
         excluded.add("signal")
-    if extras["level"] == "node" or not extras["queries"]:
+    if not extras["single"] or not extras["events"]:
         excluded.add("affinity")
     return tuple(view for view in VIEWS if view not in excluded)
+
+
+def reads(cfg):
+    started = time.perf_counter()
+    spec = cfg["model"]
+    result = dict(STARTS)
+    if spec["view"] == "snapshot" and cfg["graph"]["time/context"] == 0:
+        result = dict(sorts=SORTS.names(), least=0, most=None, absent=True)
+    LOG.debug("reads exit view=%s seconds=%.4f", spec["view"], time.perf_counter() - started)
+    return result
+
+
+def readable(registry, cfg):
+    started = time.perf_counter()
+    held, stated = reads(cfg), registry.schema.tasks
+    family = cfg["model"]["view"]
+    for kind, entry in stated["kinds"].items():
+        if entry["target"] is None:
+            continue
+        names = entry["references"]
+        for name in names:
+            sort = stated["references"][name]["sort"]
+            if sort not in held["sorts"]:
+                raise ValueError(
+                    "the family %s reads references of the sorts %s and cannot read the reference %s "
+                    "of the kind of task %s, which is of the sort %s"
+                    % (family, ", ".join(held["sorts"]), name, kind, sort)
+                )
+        if len(names) < held["least"] or (held["most"] is not None and len(names) > held["most"]):
+            raise ValueError(
+                "the family %s reads from %d to %d references and the kind of task %s states %d: %s"
+                % (family, held["least"], held["most"], kind, len(names), ", ".join(names) or "none")
+            )
+        if entry["absent"] != "stop" and not held["absent"]:
+            raise ValueError(
+                "the family %s reads the nodes of the references %s of the kind of task %s as they are "
+                "observed at the time of the task, and the kind states that an absent node is kept"
+                % (family, ", ".join(names), kind)
+            )
+    LOG.debug("readable exit family=%s seconds=%.4f", family, time.perf_counter() - started)
 
 
 def view(*names):
@@ -94,7 +139,7 @@ def space(registry):
     offered = views(registry)
     updates = (
         UPDATES
-        if registry.extras["queries"]
+        if registry.extras["events"]
         else tuple(update for update in UPDATES if update != "mutual_rnn")
     )
     parameters = [
@@ -167,7 +212,7 @@ def space(registry):
             "time/encoding",
             ENCODINGS,
             "log_cosine",
-            lambda spec: registry.extras["level"] == "path" or reads_time(spec),
+            lambda spec: registry.extras["target"] == "path" or reads_time(spec),
         ),
         flag("keys/embedding", False, embeds_keys),
         number("keys/table", 4096, 65536, 16384, lambda spec: spec.get("keys/embedding") is True),
@@ -201,12 +246,12 @@ def blocks(spec):
     if kind == "projection":
         return frozenset(("events", "history", "history_targets"))
     if kind == "sequence":
-        result = {"history", "history_targets", "turn_history"}
+        result = {"history", "history_targets", "period_history"}
         if spec["sequence/structure"] == "overlap":
             result.add("structure")
         return frozenset(result)
     if kind == "tree":
-        return frozenset(("tree", "turn_history"))
+        return frozenset(("tree", "period_history"))
     if kind == "walks":
         return frozenset(("walks",))
     return {"affinity": frozenset(("events",)), "signal": frozenset()}[kind]
@@ -243,11 +288,11 @@ def configured(registry, values):
     return specs.configured(space(registry), values)
 
 
-def configuration(registry, values, graph_values, seed):
+def configuration(registry, values, graph_values, seed, splits):
     spec = configured(registry, values)
     parameters = specs.space(registry, groups(spec))
     graph = specs.configured(parameters, graph_values)
-    return dict(seed=seed, model=spec, graph=graph, **specs.default(TRAINING))
+    return dict(seed=seed, model=spec, graph=graph, splits=splits, **specs.default(TRAINING))
 
 
 def samples(registry):

@@ -22,8 +22,7 @@ def device(value):
     except RuntimeError:
         parsed = None
     result = parsed is not None and (
-        parsed.type == "cpu"
-        or (parsed.type == "cuda" and (parsed.index or 0) < torch.cuda.device_count())
+        parsed.type == "cpu" or (parsed.type == "cuda" and (parsed.index or 0) < torch.cuda.device_count())
     )
     LOG.debug("statement device exit device=%r seconds=%.4f", value, time.perf_counter() - started)
     return result
@@ -39,6 +38,30 @@ def positive(value):
 
 def processors(value):
     return type(value) is int and 1 <= value <= os.cpu_count()
+
+
+def named(value):
+    return (
+        isinstance(value, list)
+        and len(set(value)) == len(value)
+        and all(type(name) is str and name for name in value)
+    )
+
+
+def splits(value):
+    return named(value) and len(value) > 0
+
+
+def seeing(value):
+    from graphspec.view import SEES
+
+    started = time.perf_counter()
+    result = isinstance(value, dict) and all(
+        type(split) is str and named(rules) and set(rules) <= set(SEES.names())
+        for split, rules in value.items()
+    )
+    LOG.debug("statement seeing exit seconds=%.4f", time.perf_counter() - started)
+    return result
 
 
 def held(check, meaning):
@@ -58,6 +81,13 @@ class Statement:
     workers: int = held(processors, "an integer from 1 to the number of logical processors")
     variant_cache_bytes: int = held(positive, "a positive integer")
     batch_sequences: int = held(positive, "a positive integer")
+    trained: list = held(splits, "a list of the distinct names of the splits trained on, at least one")
+    scored: list = held(splits, "a list of the distinct names of the splits scored on, at least one")
+    sees: dict = held(
+        seeing,
+        "a mapping from every split trained on or scored on to the list of the registered rules "
+        "of what its tasks may see",
+    )
 
     def __init__(self, **mapping):
         started = time.perf_counter()
@@ -74,12 +104,30 @@ class Statement:
                     "the statement's %s is %r and must be %s" % (entry.name, value, entry.metadata["meaning"])
                 )
             object.__setattr__(self, entry.name, value)
+        both = sorted(set(self.trained) & set(self.scored))
+        if both:
+            raise ValueError("the statement trains on and scores on the same splits: %s" % ", ".join(both))
+        if sorted(self.sees) != sorted(self.trained + self.scored):
+            raise ValueError(
+                "the statement's sees names the splits %s and must name the splits trained on and scored on, %s"
+                % (", ".join(sorted(self.sees)) or "none", ", ".join(sorted(self.trained + self.scored)))
+            )
         LOG.debug("statement exit fields=%d seconds=%.4f", len(mapping), time.perf_counter() - started)
 
     def mapping(self):
         started = time.perf_counter()
         result = dataclasses.asdict(self)
         LOG.debug("statement mapping exit seconds=%.4f", time.perf_counter() - started)
+        return result
+
+    def splits(self):
+        started = time.perf_counter()
+        result = dict(
+            trained=list(self.trained),
+            scored=list(self.scored),
+            sees={name: list(rules) for name, rules in self.sees.items()},
+        )
+        LOG.debug("statement splits exit seconds=%.4f", time.perf_counter() - started)
         return result
 
     def replace(self, **changes):

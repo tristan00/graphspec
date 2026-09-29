@@ -1,6 +1,6 @@
 **graphspec**
 
-Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. The learning objective is scalar regression on nodes, queries, or graphs, or paths: many `(series, tau, y)` points per query, each predicted from the query's embedding, a learned embedding of the series and an encoding of the elapsed time `tau`. A fit and a search run on the device their statement names, `cpu` or `cuda`, and stop with an error when it names a GPU and none is present.
+Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. What is predicted is stated as tasks: a task has a kind, a time, named references to nodes, edges, sets of nodes, paths, subgraphs or the graph, and a target, a number or a path of many `(series, tau, y)` points, each predicted from the task's embedding, a learned embedding of the series and an encoding of the elapsed time `tau`. A fit and a search run on the device their statement names, `cpu` or `cuda`, and stop with an error when it names a GPU and none is present.
 
 **Install and storage**
 
@@ -17,14 +17,14 @@ Source data → loader script → public Stage Parquet tables → bank → trans
 There is no required database round trip. LadybugDB remains an optional way to query and inspect the same graph; it is not required to create Parquet files. `Stage` writes files and manifests, and `GraphTables` manages contract tables and identifiers. [The loader walkthrough](docs/loader.md) shows a complete custom graph in Python.
 
 ```powershell
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12 --degree 2.0 --max-degree 6 --alive 0.8 --lifetime 4.0 --period 3 --level query --seed 1
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12 --degree 2.0 --max-degree 6 --alive 0.8 --lifetime 4.0 --period 3 --level task --seed 1
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime inspect D:/graphspec-runtime/datasets/demo/demo.task.json
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime build --task D:/graphspec-runtime/datasets/demo/demo.task.json --output D:/graphspec-runtime/banks/demo --trained train --workers 1
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json --device cpu --seed 1
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --device cuda --seed 1 --seconds 600 --preparation-seconds 300 --workers 4 --variant-gb 64 --batch-sequences 64 --continuous --selector botorch --startup-trials 10 --mix random=25 tpe=25 forest=25 botorch=25 --random-params model/view
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime check D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/checks-demo.json --device cpu --seed 1 --trained train --scored validation --sees train= validation=
+./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --device cuda --seed 1 --seconds 600 --preparation-seconds 300 --workers 4 --variant-gb 64 --batch-sequences 64 --trained train --scored validation --sees train= validation= --continuous --selector botorch --startup-trials 10 --mix random=25 tpe=25 forest=25 botorch=25 --random-params model/view
 ```
 
-No command has a default for a choice of the user. A new search states its selector, its number of random startup trials, its mix and its random parameters; the example states 10 random trials and then an equal mix of random, TPE, forest and BoTorch. `--random-params` with no name after it states that none is held random.
+No command has a default for a choice of the user. A fit and a search state the splits they train on, the splits they score on and, for each of them after `--sees`, the rules of what its tasks may see, none after the `=` for a split that sees every fact. A new search states its selector, its number of random startup trials, its mix and its random parameters; the example states 10 random trials and then an equal mix of random, TPE, forest and BoTorch. `--random-params` with no name after it states that none is held random.
 
 Replace the Windows paths with your external workspace. `tuning` also exposes `build_bank`, `open_bank`, `configuration` and `fit`. New bank and fit output directories must not already exist. Searches resume when their existing run directory is supplied with the statement they were started with. Put a STOP file in a run to stop after its current trial.
 

@@ -8,7 +8,8 @@ from graphspec.infra.database import columns, connect, connections, query, table
 from graphspec.infra.timing import timed
 
 from .clock import UNITED
-from .schema import EDGE, OBSERVED, QUERY, VALUE, Tables
+from .references import SORTS
+from .schema import EDGE, LINK, OBSERVED, TARGET, TASK, VALUE
 
 LOG = logging.getLogger(__name__)
 
@@ -24,18 +25,37 @@ def stamped(holder, names):
 
 @timed("graphdb.asked")
 def asked(stated):
-    held = dict(id="id")
+    held = dict(id="id", kind="kind", split="split", weight="weight")
     if stated.model != "none":
         held["time"] = "time"
     if stated.observers:
         held["observer"] = "observer"
-    if stated.queries["grouping"] is not None:
-        held[stated.queries["grouping"]] = "period"
-    held[stated.queries["key"]] = "key"
+    if stated.tasks["grouping"] is not None:
+        held[stated.tasks["grouping"]] = "period"
+    held[stated.tasks["key"]] = "key"
     return held
 
 
-class Database(Tables):
+@timed("graphdb.aimed")
+def aimed(stated):
+    return (
+        "t.id AS id, t.y AS y"
+        + ("" if stated.model == "none" else ", t.known AS known")
+        + (", t.tau AS tau, t.series AS series" if stated.aim() == "path" else "")
+        + ", q.id AS owner"
+    )
+
+
+@timed("graphdb.placed")
+def placed(found, ids, name, where):
+    wanted = found.column(name).to_numpy().astype(np.int64)
+    position = np.searchsorted(ids, wanted)
+    if np.any(position >= len(ids)) or not np.array_equal(ids[np.minimum(position, len(ids) - 1)], wanted):
+        raise ValueError("%s names tasks the source does not hold" % where)
+    return found.drop_columns([name]).append_column("task", pa.array(position, pa.int64()))
+
+
+class Database:
     def __init__(self, path, stated, buffer_pool_size=4 << 30):
         started = time.perf_counter()
         self.location, self.stated = str(path), stated
@@ -43,19 +63,15 @@ class Database(Tables):
         try:
             self.kinds = {row["name"]: row["type"] for row in tables(self.connection)}
             self.nodes = tuple(stated.nodes)
-            self.queries = stated.queries is not None
-            self.signals = stated.queries["signals"] if self.queries else 0
             stated.conform(self)
         except Exception:
             self.close()
             raise
         LOG.info(
-            "database exit seconds=%.3f nodes=%d edges=%d signals=%d queries=%s",
+            "database exit seconds=%.3f nodes=%d edges=%d",
             time.perf_counter() - started,
             len(self.nodes),
             len(stated.edges),
-            self.signals,
-            self.queries,
         )
 
     def pairs(self, table):
@@ -70,101 +86,60 @@ class Database(Tables):
         finally:
             self.store.close()
 
-    def reader(self, target):
-        return Reader(self, target)
+    def reader(self):
+        return Reader(self)
 
     def graphs(self):
         return query(self.connection, "MATCH (g:graph) RETURN g.id AS id, g.name AS name ORDER BY id")
 
-    def categories(self):
-        return (
-            query(self.connection, "MATCH (q:query) RETURN DISTINCT q.category AS category ORDER BY category")
-            .column("category")
-            .to_pylist()
-        )
-
-    def query_index(self):
+    def asked(self):
         started = time.perf_counter()
         result = query(
             self.connection,
-            "MATCH (q:query) RETURN q.graph AS graph%s ORDER BY id"
-            % "".join(
-                ", q.`%s` AS `%s`" % pair for pair in asked(self.stated).items() if pair[1] != "observer"
-            ),
+            "MATCH (q:task) RETURN q.graph AS graph%s ORDER BY id"
+            % "".join(", q.`%s` AS `%s`" % pair for pair in asked(self.stated).items()),
         )
-        LOG.debug("query index exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+        LOG.debug("asked exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
         return result
 
-    def targets(self, level, target):
-        if level == "node":
-            return query(
-                self.connection,
-                "MATCH (t:`%s`)-[:`%s_of`]->(n) RETURN t.id AS id, t.y AS y, t.split AS split%s, "
-                "n.graph AS graph, n.entity AS entity, n.key AS node ORDER BY id"
-                % (target, target, "" if self.stated.model == "none" else ", t.time AS time"),
-            )
-        if level in ("query", "path"):
-            return query(
-                self.connection,
-                "MATCH (t:`%s`)-[:`%s_of`]->(q:query) RETURN t.id AS id, t.y AS y, t.split AS split, "
-                "q.graph AS graph, q.id AS query%s ORDER BY id"
-                % (target, target, ", t.tau AS tau, t.series AS series" if level == "path" else ""),
-            )
-        return query(
+    def aims(self):
+        started = time.perf_counter()
+        found = query(
             self.connection,
-            "MATCH (t:`%s`)-[:`%s_of`]->(g:graph) RETURN t.id AS id, t.y AS y, t.split AS split, g.id AS graph ORDER BY id"
-            % (target, target),
+            "MATCH (t:`%s`)-[:`%s`]->(q:task) RETURN %s ORDER BY id" % (TARGET, LINK, aimed(self.stated)),
         )
+        ids = self.asked().column("id").to_numpy().astype(np.int64)
+        result = placed(found, ids, "owner", "a target")
+        LOG.debug("aims exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+        return result
 
 
 class Reader:
-    def __init__(self, source, target):
+    def __init__(self, source):
         started = time.perf_counter()
         self.source, self.connection, stated = source, source.connection, source.stated
-        self.level = source.target(target)
         self.statements = dict(
             graph="MATCH (g:graph) WHERE g.id = $graph RETURN g.name AS name"
             + (", g.unit AS unit" if stated.model in UNITED else "")
             + valued("g", stated.graph)
         )
-        if source.queries:
-            names = asked(stated)
-            self.statements["queries"] = (
-                "MATCH %s WHERE q.graph = $graph "
-                "RETURN q.category AS category%s%s%s%s "
-                "ORDER BY %sid"
-                % (
-                    ", ".join(
-                        "(%s)-[:`%s%s`]->(r%d)" % ("q:query" if place == 0 else "q", QUERY, name, place)
-                        for place, name in enumerate(stated.queries["references"])
-                    ),
-                    "".join(", q.`%s` AS `%s`" % pair for pair in names.items()),
-                    "".join(
-                        ", r%d.entity AS r%d" % (place, place)
-                        for place in range(len(stated.queries["references"]))
-                    ),
-                    valued("q", stated.queries["columns"]),
-                    ", q.signal AS signal, q.signal_observed AS signal_observed" if source.signals else "",
-                    "" if stated.model == "none" else "time, ",
+        self.statements["tasks"] = "MATCH (q:task) WHERE q.graph = $graph RETURN %s%s%s ORDER BY id" % (
+            ", ".join("q.`%s` AS `%s`" % pair for pair in asked(stated).items()),
+            valued("q", stated.asked_columns()),
+            ", q.signal AS signal, q.signal_observed AS signal_observed" if stated.tasks["signals"] else "",
+        )
+        for name, entry in stated.tasks["references"].items():
+            stored = SORTS.named(entry["sort"]).columns()
+            if stored is not None:
+                self.statements["reference:" + name] = (
+                    "MATCH (q:task)-[r:`%s%s`]->(n) WHERE q.graph = $graph "
+                    "RETURN q.id AS owner, n.entity AS source%s"
+                    % (TASK, name, "".join(", r.`%s` AS `%s`" % (held, held) for held in stored))
                 )
-            )
-        if self.level in ("query", "path"):
-            self.statements["targets"] = (
-                "MATCH (t:`%s`)-[:`%s_of`]->(q:query) WHERE q.graph = $graph "
-                "RETURN t.id AS id, t.y AS y, t.split AS split%s"
-                % (target, target, ", t.tau AS tau" if self.level == "path" else "")
-            )
-        elif self.level == "graph":
-            self.statements["targets"] = (
-                "MATCH (t:`%s`)-[:`%s_of`]->(g:graph) WHERE g.id = $graph "
-                "RETURN t.id AS id, t.y AS y, t.split AS split" % (target, target)
-            )
-        else:
-            self.statements["targets"] = (
-                "MATCH (t:`%s`)-[:`%s_of`]->(n) WHERE n.graph = $graph "
-                "RETURN t.id AS id, t.y AS y, t.split AS split%s, n.entity AS entity"
-                % (target, target, "" if stated.model == "none" else ", t.time AS time")
-            )
+        self.statements["targets"] = (
+            "MATCH (t:`%s`)-[:`%s`]->(q:task) WHERE q.graph = $graph RETURN %s ORDER BY id"
+            % (TARGET, LINK, aimed(stated))
+        )
         for kind, held in stated.nodes.items():
             self.statements["node:" + kind] = (
                 "MATCH (n:`%s`) WHERE n.graph = $graph RETURN n.entity AS entity, n.key AS key" % kind
@@ -187,26 +162,47 @@ class Reader:
                 )
             )
         LOG.info(
-            "reader exit seconds=%.3f level=%s edges=%d",
+            "reader exit seconds=%.3f edges=%d",
             time.perf_counter() - started,
-            self.level,
             len(stated.edges),
         )
 
     def run(self, name, graph):
         return query(self.connection, self.statements[name], dict(graph=graph))
 
-    def queries(self, index):
+    def references(self, index, nodes, ids):
         started = time.perf_counter()
-        found = self.run("queries", index)
-        count = len(self.source.stated.queries["references"])
-        references = np.stack(
-            [found.column("r%d" % place).to_numpy().astype(np.int32) for place in range(count)], 1
-        )
-        result = found.drop_columns(["r%d" % place for place in range(count)]).append_column(
-            "references", pa.FixedSizeListArray.from_arrays(pa.array(references.reshape(-1)), count)
-        )
-        LOG.debug("read queries exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
+        found = {}
+        for entity, key, kind in zip(*(nodes.column(name).to_pylist() for name in ("entity", "key", "kind"))):
+            found[(kind, key)] = entity
+        result = {}
+        for name, entry in self.source.stated.tasks["references"].items():
+            stored = SORTS.named(entry["sort"]).columns()
+            if stored is None:
+                continue
+            links = placed(
+                self.run("reference:" + name, index),
+                ids,
+                "owner",
+                "the reference %s of graph %d" % (name, index),
+            )
+            columns = dict(task=links.column("task"), source=links.column("source").cast(pa.int32()))
+            if "relation" in stored:
+                ends = list(zip(links.column("to_kind").to_pylist(), links.column("to_key").to_pylist()))
+                strangers = sorted({end for end in ends if end[0] is not None and end not in found})
+                if strangers:
+                    raise ValueError(
+                        "the reference %s of graph %d names nodes the graph does not hold: %s"
+                        % (name, index, ", ".join("%s %s" % end for end in strangers))
+                    )
+                columns["relation"] = links.column("relation")
+                columns["target"] = pa.array(
+                    [None if end[0] is None else found[end] for end in ends], pa.int32()
+                )
+            if "place" in stored:
+                columns["place"] = links.column("place")
+            result[name] = pa.table(columns)
+        LOG.debug("read references exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
         return result
 
     def graph(self, index):
@@ -216,15 +212,17 @@ class Reader:
         for kind in stated.nodes:
             part = self.run("node:" + kind, index)
             parts.append(part.append_column("kind", pa.array([kind] * part.num_rows, pa.string())))
+        nodes, tasks = pa.concat_tables(parts), self.run("tasks", index)
+        ids = tasks.column("id").to_numpy().astype(np.int64)
         tables = dict(
             graph=self.run("graph", index),
-            nodes=pa.concat_tables(parts),
+            nodes=nodes,
             observations={kind: self.run("observed:" + kind, index) for kind in stated.nodes},
-            targets=self.run("targets", index),
             edges={table: self.run("edge:" + table, index) for table in stated.edges},
+            tasks=tasks,
+            references=self.references(index, nodes, ids),
+            targets=placed(self.run("targets", index), ids, "owner", "a target of graph %d" % index),
         )
-        if self.source.queries:
-            tables["queries"] = self.queries(index)
         LOG.info(
             "read graph exit graph=%d seconds=%.3f observations=%d",
             index,

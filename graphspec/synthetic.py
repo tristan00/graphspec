@@ -13,15 +13,22 @@ from graphspec.infra.timing import timed
 
 from . import forms
 from .clock import UNITED
-from .schema import DECLARED, EDGE, LEVELS, OBSERVED, QUERY, STAMP, VERSION, Schema
+from .references import SORTS
+from .schema import DECLARED, EDGE, LINK, OBSERVED, STAMP, TARGET, TASK, VERSION, Schema
 
 LOG = logging.getLogger(__name__)
-CATEGORIES = ("buy", "sell", "move")
-TARGET = "outcome"
+KINDS = ("buy", "sell", "move")
+OUTCOME = "outcome"
 SERIES = ("level", "trend")
+LEVELS = ("node", "task", "graph", "path")
 SETTINGS = ("entities", "steps", "degree", "max_degree", "alive", "lifetime", "period")
 SHARES = dict(person=0.5, place=0.2, item=0.2, team=0.1)
-REFERENCES = dict(person=["person"], place=["place"], team=["team"])
+REFERENCES = dict(
+    person=dict(sort="node", kinds=["person"]),
+    place=dict(sort="node", kinds=["place"]),
+    team=dict(sort="node", kinds=["team"]),
+)
+HOLDER = "holder"
 UNIT = "step"
 TIME = dict(model="clock", units=[UNIT], ties="sequence")
 WRITTEN = {STAMP: pa.int64(), "INT32": pa.int32(), "STRING[]": pa.list_(pa.string())}
@@ -31,7 +38,46 @@ def edge(source, target, columns, directed=True, relation=DECLARED):
     return dict(endpoints=[[source, target]], directed=directed, columns=list(columns), relation=relation)
 
 
-def uniform(columns, signals):
+@timed("synthetic.kind")
+def kind(references, columns, target, event):
+    return dict(
+        references=list(references),
+        columns=list(columns),
+        target=target,
+        weight=False,
+        absent="stop",
+        event=event,
+        matures=None,
+    )
+
+
+def asked(key, grouping, columns, signals, level):
+    started = time.perf_counter()
+    if level not in LEVELS:
+        raise ValueError("a synthetic shape states what holds its targets as one of " + ", ".join(LEVELS))
+    target = dict(kind="number", series=OUTCOME)
+    if level == "path":
+        target = dict(kind="path", series=list(SERIES))
+    references = dict(REFERENCES)
+    kinds = {
+        name: kind(REFERENCES, columns, None if level == "node" else target, ["person", "place"])
+        for name in sorted(KINDS)
+    }
+    if level == "node":
+        references[HOLDER] = dict(sort="node", kinds=["person"])
+        kinds[OUTCOME] = kind([HOLDER], [], target, None)
+    result = dict(
+        key=key,
+        grouping=grouping,
+        signals=0 if level == "node" else signals,
+        references=references,
+        kinds=kinds,
+    )
+    LOG.debug("asked exit level=%s kinds=%d seconds=%.4f", level, len(kinds), time.perf_counter() - started)
+    return result
+
+
+def uniform(columns, signals, level):
     started = time.perf_counter()
     names = ["v%d" % index for index in range(columns)]
     stated = {name: dict(type="number", encoder="value") for name in names}
@@ -53,16 +99,18 @@ def uniform(columns, signals):
                 near=edge("place", "place", []),
                 located=edge("team", "place", ["distance"]),
             ),
-            queries=dict(key="key", grouping="period", columns=names, references=REFERENCES, signals=signals),
+            tasks=asked("key", "period", names, signals, level),
         ),
         shares=SHARES,
         symbols={},
+        level=level,
+        signals=signals,
     )
     LOG.debug("uniform shape exit columns=%d seconds=%.4f", columns, time.perf_counter() - started)
     return result
 
 
-def varied():
+def varied(level):
     started = time.perf_counter()
     result = dict(
         schema=dict(
@@ -94,9 +142,7 @@ def varied():
                 located=edge("team", "place", ["distance"]),
                 links=edge("person", "item", ["mode"], relation=dict(column="predicate")),
             ),
-            queries=dict(
-                key="ticket", grouping="week", columns=["size", "speed"], references=REFERENCES, signals=2
-            ),
+            tasks=asked("ticket", "week", ["size", "speed"], 2, level),
         ),
         shares=SHARES,
         symbols=dict(
@@ -105,6 +151,8 @@ def varied():
             season=["dry", "wet"],
             predicate=["likes", "lends", "sells", "seeks", "sends", "shows"],
         ),
+        level=level,
+        signals=2,
     )
     LOG.debug("varied shape exit seconds=%.4f", time.perf_counter() - started)
     return result
@@ -166,12 +214,13 @@ class Counter:
         return np.arange(start, start + count, dtype=np.int64)
 
 
-def graph_rows(rng, index, name, shape, settings, counter, level):
+def graph_rows(rng, index, name, shape, settings, counter):
     started = time.perf_counter()
-    schema = Schema(shape["schema"])
+    schema, level = Schema(shape["schema"]), shape["level"]
     entities, steps = settings["entities"], settings["steps"]
     nodes, layout = tuple(schema.nodes), schema.layout()
-    width, signals = len(layout), schema.queries["signals"]
+    width, signals = len(layout), shape["signals"]
+    asked_columns = schema.asked_columns()
     counts = np.maximum(
         np.floor(np.asarray([shape["shares"][kind] for kind in nodes]) * entities).astype(np.int64), 2
     )
@@ -183,8 +232,8 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
         np.arange(steps)[:, None] >= birth[None, :]
     )
     roles = {}
-    for role, allowed in schema.queries["references"].items():
-        place = nodes.index(allowed[0])
+    for role, allowed in REFERENCES.items():
+        place = nodes.index(allowed["kinds"][0])
         roles[role] = rng.choice(np.arange(offsets[place], offsets[place + 1]), steps)
         observed[np.arange(steps), roles[role]] = True
     first = roles[next(iter(roles))]
@@ -226,7 +275,6 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
     x[:, :width] *= x[:, width:]
     node_ids = {kind: counter.take(kind, int(counts[place])) for place, kind in enumerate(nodes)}
     entity_id = np.concatenate([node_ids[kind] for kind in nodes])
-    query_ids = counter.take("query", steps)
     moments = np.arange(steps)
     described = dict(id=pa.array([index], pa.int32()), name=pa.array([name]), unit=pa.array([UNIT]))
     for column in schema.graph:
@@ -253,29 +301,9 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
             links[column] = stated(shape, column, x[picked, position], x[picked, width + position] > 0)
         tables[(OBSERVED + kind, kind, "observation")] = pa.table(links)
     tables.update(node_facts(schema, tables, moments, counter))
-    chosen = rng.integers(0, len(CATEGORIES), steps)
-    asked = vectors(rng, steps, width)
-    query = dict(
-        id=pa.array(query_ids),
-        graph=pa.array(np.full(steps, index), pa.int32()),
-        time=pa.array(np.arange(steps), pa.int64()),
-    )
-    query[schema.queries["grouping"]] = pa.array(np.arange(steps) // settings["period"], pa.int32())
-    query[schema.queries["key"]] = pa.array(query_ids * 7 + 3)
-    query["category"] = pa.array([CATEGORIES[value] for value in chosen])
-    for column in schema.queries["columns"]:
-        position = layout.index(column)
-        query[column] = stated(shape, column, asked[:, position], asked[:, width + position] > 0)
-    if signals:
-        query.update(
-            signal=fixed(rng.normal(size=(steps, signals))),
-            signal_observed=fixed(rng.random((steps, signals)) < 0.7),
-        )
-    tables[("query", None, None)] = pa.table(query)
-    for role, allowed in schema.queries["references"].items():
-        tables[(QUERY + role, "query", allowed[0])] = pa.table(
-            {"from": pa.array(query_ids), "to": pa.array(entity_id[roles[role]])}
-        )
+    chosen = rng.integers(0, len(KINDS), steps)
+    given = vectors(rng, steps, width)
+    drawn = dict(signal=rng.normal(size=(steps, signals)), signal_observed=rng.random((steps, signals)) < 0.7)
     fact_seq = {}
     for table, entry in schema.edges.items():
         present, absent = facts[table]
@@ -305,35 +333,21 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
         tables[(EDGE + table,) + entry["endpoints"][0]] = pa.table(columns)
     tables.update(edge_facts(schema, tables, moments))
     first_x = base[first, :width]
+    held = np.zeros(0, np.int64)
     if level == "node":
-        moments = np.arange(settings["period"] - 1, steps, settings["period"])
+        times = np.arange(settings["period"] - 1, steps, settings["period"])
         members = np.arange(offsets[0], offsets[1])
-        label_step, label_member = np.nonzero(observed[moments][:, members])
-        label_step, label_member = moments[label_step], members[label_member]
-        y = base[label_member, :3].sum(1) + 0.1 * label_step + rng.normal(scale=0.5, size=len(label_step))
-        split = np.where(label_step >= steps * 0.8, "validation", "train")
-        label_ids = counter.take(TARGET, len(y))
-        tables[(TARGET, None, None)] = pa.table(
-            dict(
-                id=pa.array(label_ids),
-                y=pa.array(y, pa.float64()),
-                split=pa.array(split),
-                time=pa.array(label_step, pa.int64()),
-            )
-        )
-        tables[(TARGET + "_of", TARGET, nodes[0])] = pa.table(
-            {"from": pa.array(label_ids), "to": pa.array(entity_id[label_member])}
-        )
-    elif level == "query":
+        label_step, label_member = np.nonzero(observed[times][:, members])
+        label_step, held = times[label_step], members[label_member]
+        y = base[held, :3].sum(1) + 0.1 * label_step + rng.normal(scale=0.5, size=len(label_step))
+        owner = steps + np.arange(len(y))
+        split = [None] * steps + np.where(label_step >= steps * 0.8, "validation", "train").tolist()
+        points = {}
+    elif level == "task":
         y = first_x[:, :3].sum(1) + (chosen == 0) + rng.normal(scale=0.5, size=steps)
-        split = np.where(np.arange(steps) >= steps * 0.8, "validation", "train")
-        label_ids = counter.take(TARGET, steps)
-        tables[(TARGET, None, None)] = pa.table(
-            dict(id=pa.array(label_ids), y=pa.array(y, pa.float64()), split=pa.array(split))
-        )
-        tables[(TARGET + "_of", TARGET, "query")] = pa.table(
-            {"from": pa.array(label_ids), "to": pa.array(query_ids)}
-        )
+        owner = np.arange(steps)
+        split = np.where(np.arange(steps) >= steps * 0.8, "validation", "train").tolist()
+        label_step, points = np.zeros(0, np.int64), {}
     elif level == "path":
         source, later = path_points(steps, settings["period"])
         tau = (later - source).astype(np.float64)
@@ -344,32 +358,63 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
                 -2.0 * np.log1p(tau) * drift + rng.normal(scale=0.2, size=len(source)),
             )
         )
-        source, tau = np.tile(source, len(SERIES)), np.tile(tau, len(SERIES))
-        label_ids = counter.take(TARGET, len(source))
-        tables[(TARGET, None, None)] = pa.table(
-            dict(
-                id=pa.array(label_ids),
-                y=pa.array(y, pa.float64()),
-                split=pa.array(["validation" if index % 2 == 1 else "train"] * len(source)),
-                tau=pa.array(tau, pa.float32()),
-                series=pa.array(np.repeat(SERIES, len(source) // len(SERIES)).tolist(), pa.string()),
-            )
-        )
-        tables[(TARGET + "_of", TARGET, "query")] = pa.table(
-            {"from": pa.array(label_ids), "to": pa.array(query_ids[source])}
+        owner, tau = np.tile(source, len(SERIES)), np.tile(tau, len(SERIES))
+        aimed = np.isin(np.arange(steps), source)
+        split = np.where(aimed, "validation" if index % 2 == 1 else "train", None).tolist()
+        label_step = np.zeros(0, np.int64)
+        points = dict(
+            tau=pa.array(tau, pa.float32()),
+            series=pa.array(np.repeat(SERIES, len(source)).tolist(), pa.string()),
         )
     else:
-        label_ids = counter.take(TARGET, 1)
-        tables[(TARGET, None, None)] = pa.table(
-            dict(
-                id=pa.array(label_ids),
-                y=pa.array([float(first_x[:, 0].mean() + rng.normal(scale=0.2))], pa.float64()),
-                split=pa.array(["validation" if index % 2 == 1 else "train"]),
-            )
+        y = np.asarray([float(first_x[:, 0].mean() + rng.normal(scale=0.2))])
+        owner = np.asarray([steps - 1])
+        split = [None] * (steps - 1) + ["validation" if index % 2 == 1 else "train"]
+        label_step, points = np.zeros(0, np.int64), {}
+    count = steps + len(held)
+    ids, numbers = counter.take("task", count), counter.take(TARGET, len(y))
+    keys = np.r_[counter.take("key", steps) * 7 + 3, -(numbers[: len(held)] + 1)]
+    tasks = dict(
+        id=pa.array(ids),
+        graph=pa.array(np.full(count, index), pa.int32()),
+        kind=pa.array([KINDS[value] for value in chosen] + [OUTCOME] * len(held)),
+        time=pa.array(np.r_[np.arange(steps), label_step], pa.int64()),
+        split=pa.array(split, pa.string()),
+        weight=pa.array([None] * count, pa.float32()),
+    )
+    tasks[schema.tasks["grouping"]] = pa.array(
+        np.r_[np.arange(steps), label_step] // settings["period"], pa.int32()
+    )
+    tasks[schema.tasks["key"]] = pa.array(keys)
+    stated_by = np.r_[np.ones(steps, bool), np.zeros(len(held), bool)]
+    for column in asked_columns:
+        position = layout.index(column)
+        tasks[column] = stated(
+            shape,
+            column,
+            np.r_[given[:, position], np.zeros(len(held), np.float32)],
+            np.r_[given[:, width + position] > 0, np.zeros(len(held), bool)] & stated_by,
         )
-        tables[(TARGET + "_of", TARGET, "graph")] = pa.table(
-            {"from": pa.array(label_ids), "to": pa.array([index], pa.int64())}
+    if schema.tasks["signals"]:
+        tasks.update({part: fixed(values) for part, values in drawn.items()})
+    tables[("task", None, None)] = pa.table(tasks)
+    for role, allowed in REFERENCES.items():
+        tables[(TASK + role, "task", allowed["kinds"][0])] = pa.table(
+            {"from": pa.array(ids[:steps]), "to": pa.array(entity_id[roles[role]])}
         )
+    if level == "node":
+        tables[(TASK + HOLDER, "task", nodes[0])] = pa.table(
+            {"from": pa.array(ids[steps:]), "to": pa.array(entity_id[held])}
+        )
+    tables[(TARGET, None, None)] = pa.table(
+        dict(
+            id=pa.array(numbers),
+            y=pa.array(y, pa.float64()),
+            known=pa.array([None] * len(y), pa.int64()),
+            **points,
+        )
+    )
+    tables[(LINK, TARGET, "task")] = pa.table({"from": pa.array(numbers), "to": pa.array(ids[owner])})
     LOG.info(
         "synthetic graph exit graph=%d seconds=%.3f entities=%d observations=%d facts=%d",
         index,
@@ -432,7 +477,7 @@ def path_points(steps, period):
 
 def labels(graphs, level, settings):
     steps, period = settings["steps"], settings["period"]
-    if level == "query":
+    if level == "task":
         return steps - (steps + 4) // 5, (steps + 4) // 5
     if level == "node":
         moments = np.arange(period - 1, steps, period)
@@ -444,10 +489,11 @@ def labels(graphs, level, settings):
 
 
 @exclusive
-def generate(output, name, graphs, level, seed, shape, **settings):
+def generate(output, name, graphs, seed, shape, **settings):
     started = time.perf_counter()
+    level = shape["level"]
     if graphs < 1 or level not in LEVELS:
-        raise ValueError("synthetic data requires graphs and a target level among " + ", ".join(LEVELS))
+        raise ValueError("synthetic data requires graphs and targets held by one of " + ", ".join(LEVELS))
     lacking = [key for key in SETTINGS if key not in settings]
     if lacking or len(settings) != len(SETTINGS):
         raise ValueError(
@@ -455,8 +501,8 @@ def generate(output, name, graphs, level, seed, shape, **settings):
             % (", ".join(SETTINGS), ", ".join(lacking))
         )
     schema = Schema(shape["schema"])
-    if schema.queries is None or set(shape["shares"]) != set(schema.nodes):
-        raise ValueError("a synthetic shape states queries and a share of the entities for every kind")
+    if set(shape["shares"]) != set(schema.nodes):
+        raise ValueError("a synthetic shape states a share of the entities for every kind")
     if settings["entities"] < len(schema.nodes) * 2 or settings["steps"] < 1 or settings["period"] < 1:
         raise ValueError("synthetic data requires two entities for every kind and positive steps and period")
     if (
@@ -469,7 +515,7 @@ def generate(output, name, graphs, level, seed, shape, **settings):
     train, validation = labels(graphs, level, settings)
     if train < 2 or validation < 2:
         raise ValueError(
-            "%s-level targets with %d graphs, %d steps and period %d give %d training and %d validation label groups; each needs two"
+            "targets held by %s with %d graphs, %d steps and period %d give %d training and %d validation label groups; each needs two"
             % (level, graphs, settings["steps"], settings["period"], train, validation)
         )
     output = output_path(output)
@@ -480,10 +526,10 @@ def generate(output, name, graphs, level, seed, shape, **settings):
     counter = Counter()
     with Stage(output / (name + ".staging")) as stage:
         for index in range(graphs):
-            stage.write(graph_rows(rng, index, "graph_%03d" % index, shape, settings, counter, level))
+            stage.write(graph_rows(rng, index, "graph_%03d" % index, shape, settings, counter))
     write_json(
         output / (name + ".task.json"),
-        dict(name=name, staging=name + ".staging", target=TARGET, schema=schema.mapping()),
+        dict(name=name, staging=name + ".staging", schema=schema.mapping()),
     )
     LOG.info(
         "synthetic exit seconds=%.3f staging=%s graphs=%d level=%s",
@@ -511,8 +557,9 @@ GIVEN = dict(
     observers=pa.list_(pa.string()),
 )
 OPTIONAL = ("known", "replaced", "observers")
-PARTS = ("schema", "level", "graphs")
-GRAPH = ("name", "unit", "columns", "nodes", "values", "edges", "tasks", "targets")
+PARTS = ("schema", "graphs")
+GRAPH = ("name", "unit", "columns", "nodes", "values", "edges", "tasks")
+ASKED = ("key", "kind", "split", "weight", "references", "target", "known")
 STATEMENT = ("form", "parameters", "rows")
 
 
@@ -586,7 +633,7 @@ def gathered(schema, statements, given, values, where):
     return pa.concat_tables(found) if found else none(schema, given, values)
 
 
-def case_rows(schema, index, graph, counter, level):
+def case_rows(schema, index, graph, counter):
     started = time.perf_counter()
     where = "the graph %s" % parted(graph, GRAPH, "a graph of a synthetic case")["name"]
     united = schema.model in UNITED
@@ -665,53 +712,132 @@ def case_rows(schema, index, graph, counter, level):
                 columns[entry["column"]] = held_rows.column("relation")
             columns.update({column: held_rows.column(column) for column in entry["columns"]})
             tables[(EDGE + name,) + ends] = pa.table(columns)
-    tasks = graph["tasks"]
-    count = len(tasks["key"])
-    ids = counter.take("query", count)
-    asked = dict(id=pa.array(ids), graph=pa.array(np.full(count, index), pa.int32()))
-    asked["category"] = pa.array(tasks["category"], pa.string())
-    if schema.model != "none":
-        asked["time"] = pa.array(tasks["time"], pa.int64())
-    if schema.observers:
-        asked["observer"] = pa.array(tasks["observer"], pa.string())
-    if schema.queries["grouping"] is not None:
-        asked[schema.queries["grouping"]] = pa.array(tasks["grouping"], pa.int32())
-    asked[schema.queries["key"]] = pa.array(tasks["key"], pa.int64())
-    asked.update(
-        table(
-            schema, {name: tasks[name] for name in schema.queries["columns"]}, where + ", tasks"
-        ).to_pydict()
-    )
-    if schema.queries["signals"]:
-        asked.update(signal=fixed(tasks["signal"]), signal_observed=fixed(tasks["signal_observed"]))
-    tables[("query", None, None)] = table_of(schema, asked)
-    for name, kinds in schema.queries["references"].items():
-        keys = list(tasks["references"][name])
-        for kind in kinds:
-            rows = [row for row, key in enumerate(keys) if key in lookup[kind]]
-            tables[(QUERY + name, "query", kind)] = pa.table(
-                {"from": pa.array(ids[rows]), "to": found(kind, [keys[row] for row in rows])}
-            )
-    targets = graph["targets"]
-    labelled = counter.take(TARGET, len(targets["y"]))
-    labels = dict(
-        id=pa.array(labelled), y=pa.array(targets["y"], pa.float64()), split=pa.array(targets["split"])
-    )
-    if level == "query":
-        links = {"from": pa.array(labelled), "to": pa.array(ids[list(targets["task"])])}
-        tables[(TARGET + "_of", TARGET, "query")] = pa.table(links)
-    else:
-        if schema.model != "none":
-            labels["time"] = pa.array(targets["time"], pa.int64())
-        links = {"from": pa.array(labelled), "to": found(targets["kind"], targets["key"])}
-        tables[(TARGET + "_of", TARGET, targets["kind"])] = pa.table(links)
-    tables[(TARGET, None, None)] = pa.table(labels)
+    tables.update(case_tasks(schema, index, graph["tasks"], counter, lookup, where))
     LOG.info(
         "synthetic case graph exit graph=%s tables=%d seconds=%.3f",
         graph["name"],
         len(tables),
         time.perf_counter() - started,
     )
+    return tables
+
+
+def ended(schema, lookup, reference, member, where):
+    started = time.perf_counter()
+    source, relation, target = member
+    if relation is None:
+        target_kind, target = None, None
+    else:
+        found = [kind for kind in schema.nodes if target in lookup[kind]]
+        if len(found) != 1:
+            raise ValueError(
+                "%s names the node %s as the end of an edge, which %d kinds of node hold"
+                % (where, target, len(found))
+            )
+        target_kind = found[0]
+    found = [kind for kind in schema.tasks["references"][reference]["kinds"] if source in lookup[kind]]
+    if len(found) != 1:
+        raise ValueError(
+            "%s names the node %s under the reference %s, which %d of its kinds of node hold"
+            % (where, source, reference, len(found))
+        )
+    LOG.debug("ended exit reference=%s seconds=%.4f", reference, time.perf_counter() - started)
+    return found[0], source, relation, target_kind, target
+
+
+def members(sort, stated):
+    started = time.perf_counter()
+    if sort.nodes and not sort.edges:
+        held = [(key, None, None) for key in (stated if isinstance(stated, list) else [stated])]
+    elif sort.edges and not sort.nodes:
+        held = [tuple(member) for member in (stated if isinstance(stated, list) else [stated])]
+    else:
+        held = [(key, None, None) for key in stated["nodes"]] + [tuple(member) for member in stated["edges"]]
+    LOG.debug("members exit members=%d seconds=%.4f", len(held), time.perf_counter() - started)
+    return held
+
+
+def case_tasks(schema, index, tasks, counter, lookup, where):
+    started = time.perf_counter()
+    asked = schema.tasks
+    names = list(ASKED) + list(schema.asked_columns())
+    names += ["time"] if schema.model != "none" else []
+    names += ["observer"] if schema.observers else []
+    names += ["grouping"] if asked["grouping"] is not None else []
+    names += ["signal", "signal_observed"] if asked["signals"] else []
+    parted(tasks, names, where + ", tasks")
+    count = len(tasks["key"])
+    ids = counter.take("task", count)
+    held = dict(
+        id=pa.array(ids),
+        graph=pa.array(np.full(count, index), pa.int32()),
+        kind=pa.array(tasks["kind"], pa.string()),
+    )
+    if schema.model != "none":
+        held["time"] = pa.array(tasks["time"], pa.int64())
+    if schema.observers:
+        held["observer"] = pa.array(tasks["observer"], pa.string())
+    held["split"] = pa.array(tasks["split"], pa.string())
+    held["weight"] = pa.array(tasks["weight"], pa.float32())
+    if asked["grouping"] is not None:
+        held[asked["grouping"]] = pa.array(tasks["grouping"], pa.int32())
+    held[asked["key"]] = pa.array(tasks["key"], pa.int64())
+    held.update(
+        table(schema, {name: tasks[name] for name in schema.asked_columns()}, where + ", tasks").to_pydict()
+    )
+    if asked["signals"]:
+        held.update(signal=fixed(tasks["signal"]), signal_observed=fixed(tasks["signal_observed"]))
+    tables = {("task", None, None): table_of(schema, held)}
+    for name, entry in asked["references"].items():
+        sort = SORTS.named(entry["sort"])
+        stored = sort.columns()
+        if stored is None:
+            continue
+        rows = {
+            kind: dict(task=[], source=[], relation=[], to_kind=[], to_key=[], place=[])
+            for kind in entry["kinds"]
+        }
+        for task, stated in enumerate(tasks["references"][name]):
+            if stated is None:
+                continue
+            for place, member in enumerate(members(sort, stated)):
+                kind, source, relation, to_kind, to_key = ended(schema, lookup, name, member, where)
+                part = rows[kind]
+                part["task"].append(int(ids[task]))
+                part["source"].append(lookup[kind][source])
+                part["relation"].append(relation)
+                part["to_kind"].append(to_kind)
+                part["to_key"].append(to_key)
+                part["place"].append(place)
+        for kind, part in rows.items():
+            columns = {"from": pa.array(part["task"], pa.int64()), "to": pa.array(part["source"], pa.int64())}
+            for column in stored:
+                columns[column] = pa.array(part[column], pa.int32() if column == "place" else pa.string())
+            tables[(TASK + name, "task", kind)] = pa.table(columns)
+    path = schema.aim() == "path"
+    aimed = dict(task=[], y=[], known=[], tau=[], series=[])
+    for task, (target, known) in enumerate(zip(tasks["target"], tasks["known"])):
+        if target is None:
+            continue
+        for point in target if path else [(None, None, target)]:
+            aimed["task"].append(int(ids[task]))
+            aimed["tau"].append(point[0])
+            aimed["series"].append(point[1])
+            aimed["y"].append(point[2])
+            aimed["known"].append(known)
+    numbers = counter.take(TARGET, len(aimed["y"]))
+    columns = dict(id=pa.array(numbers), y=pa.array(aimed["y"], pa.float64()))
+    if schema.model != "none":
+        columns["known"] = pa.array(aimed["known"], pa.int64())
+    if path:
+        columns.update(
+            tau=pa.array(aimed["tau"], pa.float32()), series=pa.array(aimed["series"], pa.string())
+        )
+    tables[(TARGET, None, None)] = pa.table(columns)
+    tables[(LINK, TARGET, "task")] = pa.table(
+        {"from": pa.array(numbers), "to": pa.array(aimed["task"], pa.int64())}
+    )
+    LOG.debug("case tasks exit tasks=%d seconds=%.4f", count, time.perf_counter() - started)
     return tables
 
 
@@ -794,8 +920,6 @@ def snapshots(case):
 def stage(output, name, case):
     started = time.perf_counter()
     schema = Schema(parted(case, PARTS, "a synthetic case")["schema"])
-    if schema.queries is None or case["level"] not in ("query", "node"):
-        raise ValueError("a synthetic case states queries and targets on queries or on nodes")
     output = output_path(output)
     output.mkdir(parents=True, exist_ok=True)
     if output.joinpath(name + ".staging").exists():
@@ -803,10 +927,10 @@ def stage(output, name, case):
     counter = Counter()
     with Stage(output / (name + ".staging")) as held_stage:
         for index, graph in enumerate(case["graphs"]):
-            held_stage.write(case_rows(schema, index, graph, counter, case["level"]))
+            held_stage.write(case_rows(schema, index, graph, counter))
     write_json(
         output / (name + ".task.json"),
-        dict(name=name, staging=name + ".staging", target=TARGET, schema=schema.mapping()),
+        dict(name=name, staging=name + ".staging", schema=schema.mapping()),
     )
     LOG.info(
         "synthetic case exit seconds=%.3f staging=%s graphs=%d",
@@ -842,12 +966,15 @@ def main():
         parser.error("the uniform shape needs --columns and --signals")
     if args.shape != "uniform" and stated_widths != (None, None):
         parser.error("--columns and --signals belong to the uniform shape")
-    shape = uniform(args.columns, args.signals) if args.shape == "uniform" else SHAPES[args.shape]()
+    shape = (
+        uniform(args.columns, args.signals, args.level)
+        if args.shape == "uniform"
+        else SHAPES[args.shape](args.level)
+    )
     task = generate(
         args.output,
         args.name,
         args.graphs,
-        args.level,
         args.seed,
         shape,
         entities=args.entities,

@@ -19,12 +19,12 @@ from .training import loss
 
 
 def probe(bank, block, cfg, device):
-    from .turns import blocks as turn_blocks
+    from .periods import blocks as period_blocks
 
     started = time.perf_counter()
-    b = pack_batch(bank, turn_blocks(bank, [block], cfg), cfg, device)
+    b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, device)
     packed = time.perf_counter()
-    net = build(cfg, bank.registry, len(bank.categories)).to(device)
+    net = build(cfg, bank.registry).to(device)
     if torch.device(device).type == "cuda":
         torch.cuda.reset_peak_memory_stats()
     values = net(b)
@@ -39,7 +39,7 @@ def probe(bank, block, cfg, device):
     net.eval()
     with torch.no_grad():
         before = net(b)
-        clone = build(cfg, bank.registry, len(bank.categories)).to(device).eval()
+        clone = build(cfg, bank.registry).to(device).eval()
         clone.load_state_dict(net.state_dict(), strict=True)
         torch.testing.assert_close(before, clone(b))
     return dict(
@@ -54,7 +54,7 @@ def probe(bank, block, cfg, device):
 
 
 @exclusive
-def check(directory, output, device, seed, graph=None, spec_path=None):
+def check(directory, output, device, seed, splits, graph=None, spec_path=None):
     entered = time.perf_counter()
     output = output_path(output)
     compute.reserve(device)
@@ -67,11 +67,11 @@ def check(directory, output, device, seed, graph=None, spec_path=None):
     )
     if unknown:
         raise ValueError("spec file names unknown parameters: " + ", ".join(unknown))
-    shown = bank.viewed(configuration(bank.registry, models[0], given, seed)).graphs
+    shown = bank.viewed(configuration(bank.registry, models[0], given, seed, splits)).graphs
     chosen = max(shown, key=lambda entry: entry["observations"])["index"] if graph is None else graph
     results = []
     for model in models:
-        cfg = configuration(bank.registry, model, given, seed)
+        cfg = configuration(bank.registry, model, given, seed, splits)
         candidates = sorted(
             block
             for partition in (0, 1)
@@ -99,11 +99,17 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--trained", nargs="+", required=True)
+    parser.add_argument("--scored", nargs="+", required=True)
+    parser.add_argument("--sees", nargs="+", required=True)
     parser.add_argument("--graph", type=int)
     parser.add_argument("--spec")
     args = parser.parse_args()
     configure()
-    check(args.directory, args.output, args.device, args.seed, args.graph, args.spec)
+    from .run import seen
+
+    splits = dict(trained=args.trained, scored=args.scored, sees=seen(args.sees))
+    check(args.directory, args.output, args.device, args.seed, splits, args.graph, args.spec)
 
 
 if __name__ == "__main__":

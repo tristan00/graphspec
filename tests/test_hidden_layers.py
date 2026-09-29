@@ -47,21 +47,21 @@ def test_projected_attention_preserves_causality_and_input_gradient(hidden):
 
 def test_walks_accept_every_hidden_width_with_finite_gradients():
     torch.manual_seed(31)
-    registry = SimpleNamespace(features=3, extras={"level": "query"})
+    registry = SimpleNamespace(features=3, extras={"target": "number"})
     for hidden in range(1, 129):
         cfg = {
             "graph": {"time/context": 0},
             "model": {"hidden": hidden, "walks/hops": 3, "time/encoding": "log_cosine"},
         }
-        net = WalkNet(cfg, registry, 0)
+        net = WalkNet(cfg, registry)
         values = torch.randn(1, 2, 2, 3, 3, requires_grad=True)
         batch = {
             "walk_x": values,
             "walk_identity": torch.ones(1, 2, 2, 3, 6),
             "walk_gap": torch.arange(3).float().expand(1, 2, 2, 3),
             "walk_mask": torch.tensor([[[[True, True, True], [False, False, False]]] * 2]),
-            "context": torch.randn(1, 3, 3),
-            "query": torch.randn(1, 3),
+            "start_x": torch.randn(1, 3, 3),
+            "task": torch.randn(1, 3),
             "selected": torch.tensor([0]),
         }
         prediction = net(batch)
@@ -98,7 +98,7 @@ def test_layer_widths_reject_nonpositive_or_noninteger_values(width):
     with pytest.raises(ValueError, match="positive integer"):
         CausalAttention(width)
     with pytest.raises(ValueError, match="positive integer"):
-        WalkNet({"model": {"hidden": width}}, None, 0)
+        WalkNet({"model": {"hidden": width}}, None)
 
 
 @pytest.mark.parametrize("heads", (0, -1, True, 1.5))

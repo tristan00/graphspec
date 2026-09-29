@@ -153,13 +153,30 @@ class TimeEncoding(nn.Module):
         )
 
 
+class References(nn.Module):
+    @timed("layers.references")
+    def __init__(self, registry, width, output):
+        super().__init__()
+        self.names = tuple(registry.references)
+        self.output = output
+        self.project = nn.ModuleList(nn.Linear(width, output, bias=False) for _ in self.names)
+
+    def forward(self, rows, values):
+        result = None
+        for project, name in zip(self.project, self.names):
+            owner, value = values[name]
+            held = project(mean(value, owner, rows))
+            result = held if result is None else result + held
+        return result
+
+
 class Head(nn.Module):
     @timed("layers.head")
     def __init__(self, width, spec, registry):
         super().__init__()
         hidden = spec["hidden"]
-        self.path = registry.extras["level"] == "path"
-        self.query = nn.Sequential(nn.Linear(width, hidden), nn.SiLU())
+        self.path = registry.extras["target"] == "path"
+        self.task = nn.Sequential(nn.Linear(width, hidden), nn.SiLU())
         if self.path:
             self.time = TimeEncoding(hidden, spec["time/encoding"])
             self.series = nn.Embedding(len(registry.extras["series"]), hidden)
@@ -168,9 +185,9 @@ class Head(nn.Module):
             self.output = nn.Linear(hidden, 1)
 
     def forward(self, features, b):
-        h = self.query(features)
+        h = self.task(features)
         if self.path:
-            h = torch.cat((h[b["point_query"]], self.time(b["tau"]), self.series(b["series"])), -1)
+            h = torch.cat((h[b["point_row"]], self.time(b["tau"]), self.series(b["series"])), -1)
         return self.output(h).squeeze(-1)
 
 

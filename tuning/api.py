@@ -24,7 +24,7 @@ def open_bank(path):
     return result
 
 
-def configuration(bank, model=None, graph=None, training=None, *, seed):
+def configuration(bank, model=None, graph=None, training=None, *, seed, splits):
     from graphspec.spec import configured
 
     from .model_spec import TRAINING
@@ -32,7 +32,7 @@ def configuration(bank, model=None, graph=None, training=None, *, seed):
 
     started = time.perf_counter()
     registry = open_bank(bank).registry
-    result = configure(registry, {} if model is None else model, {} if graph is None else graph, seed)
+    result = configure(registry, {} if model is None else model, {} if graph is None else graph, seed, splits)
     result.update(configured(TRAINING, {} if training is None else training))
     LOG.info("configuration exit seconds=%.3f", time.perf_counter() - started)
     return result

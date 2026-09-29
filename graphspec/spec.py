@@ -14,6 +14,8 @@ LOG = logging.getLogger(__name__)
 GROUPS = ("coupling", "events", "neighbors", "walks", "mixed")
 PACKING = ("time/history", "time/context", "neighbors/order", "neighbors/decay")
 FILTERS = ("none", "degree", "total_degree", "core", "activity", "sample")
+REFERRED = ("keep",)
+REMOVED = ("remove",)
 
 
 class Parameter:
@@ -122,13 +124,12 @@ def space(registry, groups):
     if unknown:
         raise ValueError("unknown representation groups: " + ", ".join(unknown))
     nodes, extras = registry.nodes, registry.extras
-    protected = set(extras["protected"])
     base = [registry.by_name[name] for name in extras["base"]]
 
     def kept(spec, kind):
-        return kind in protected or spec["nodes/%s/keep" % kind]
+        return spec["nodes/%s/keep" % kind]
 
-    grouped = registry.schema.queries is not None and registry.schema.queries["grouping"] is not None
+    grouped = registry.schema.tasks["grouping"] is not None
     ungrouped = "truth" if grouped else "steps"
 
     def periodic(spec):
@@ -190,11 +191,10 @@ def space(registry, groups):
         ]
 
     projected = [edge for edge in registry.edges if edge.origin[0] == "project"]
-    unprotected = [kind for kind in nodes if kind not in protected]
     parameters = [
         number("time/history", 1, 32, 16),
         choice("time/periods", (ungrouped, "every"), ungrouped),
-        number("time/period_length", 1 if extras["queries"] else 2, 16, 4, equals("time/periods", "every")),
+        number("time/period_length", 1 if extras["events"] else 2, 16, 4, equals("time/periods", "every")),
         choice("time/scheme", ("window", "state"), "window"),
         choice(
             "time/unit",
@@ -218,9 +218,12 @@ def space(registry, groups):
     parameters.append(
         real("graphs/connect_fraction", 0.01, 1.0, 1.0, equals("graphs/join", "single"), log=True)
     )
-    parameters += [flag("nodes/%s/keep" % kind, True) for kind in unprotected]
+    parameters += [flag("nodes/%s/keep" % kind, True) for kind in nodes]
     parameters += [flag("nodes/untyped", False)] if len(nodes) > 1 else []
-    for kind in unprotected:
+    parameters += [
+        choice("nodes/referenced", REFERRED if registry.stops.any() else REFERRED + REMOVED, "keep")
+    ]
+    for kind in nodes:
         prefix = "nodes/%s/" % kind
         parameters += [
             choice(prefix + "filter", FILTERS, "none", lambda spec, kind=kind: spec["nodes/%s/keep" % kind]),
@@ -293,7 +296,7 @@ def space(registry, groups):
         choice("relations/types", ("typed", "untyped"), "typed", linked),
         choice("relations/parallel", ("keep", "merge"), "keep", linked),
     ]
-    queries = ("query",) if extras["queries"] else ()
+    tasks = ("task",) if extras["events"] else ()
     if "coupling" in groups:
         parameters += [
             choice("coupling/scheme", ("ordinal", "lags", "window", "all"), "ordinal"),
@@ -317,7 +320,7 @@ def space(registry, groups):
             number("coupling/period_window", 2, 128, 64, lambda spec: spec["coupling/periods"] > 0),
         ]
     if "events" in groups:
-        kinds = subsets(("observation", "relation") + queries)
+        kinds = subsets(("observation", "relation") + tasks)
         parameters += [
             choice("events/kinds", kinds, kinds[-1]),
             choice("events/link", ("next", "lags", "window"), "lags"),
@@ -328,7 +331,7 @@ def space(registry, groups):
             number("events/period_window", 2, 128, 64, lambda spec: spec["events/periods"] > 0),
         ]
     if "neighbors" in groups or "walks" in groups:
-        kinds = subsets(("relation",) + queries)
+        kinds = subsets(("relation",) + tasks)
         parameters += [
             choice("neighbors/kinds", kinds, kinds[-1]),
             flag("neighbors/removals", True, lambda spec: "relation" in spec["neighbors/kinds"].split("+")),

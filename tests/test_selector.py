@@ -100,6 +100,9 @@ def arguments(bank, output, **overrides):
         bounds=None,
         workers=1,
         variant_gb=1,
+        trained=["train"],
+        scored=["validation"],
+        sees=["train=", "validation="],
     )
     values.update(overrides)
     return argparse.Namespace(**values)

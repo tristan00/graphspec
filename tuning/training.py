@@ -44,12 +44,12 @@ def score(targets, predictions):
     return dict(raw_val_mse=mse, val_r2=1 - mse / variance)
 
 
-def path_score(targets, predictions, queries, series, names, scale):
+def path_score(targets, predictions, tasks, series, names, scale):
     started = time.perf_counter()
     targets = np.asarray(targets, dtype=np.float64)
     values = np.asarray(predictions, dtype=np.float64)
-    if targets.ndim != 1 or not targets.shape == values.shape == queries.shape == series.shape:
-        raise ValueError("every point needs a target, a prediction, a query and a series")
+    if targets.ndim != 1 or not targets.shape == values.shape == tasks.shape == series.shape:
+        raise ValueError("every point needs a target, a prediction, a task and a series")
     if not len(values) or not np.isfinite(values).all() or not np.isfinite(targets).all():
         raise ValueError("validation predictions must be nonempty and finite")
     result = {}
@@ -57,14 +57,14 @@ def path_score(targets, predictions, queries, series, names, scale):
         member = series == code
         if not member.any():
             raise ValueError("series %s has no validation points" % name)
-        owner = np.unique(queries[member], return_inverse=True)[1].reshape(-1)
+        owner = np.unique(tasks[member], return_inverse=True)[1].reshape(-1)
         weight = 1.0 / np.bincount(owner)[owner]
         mse = float((weight * (values[member] - targets[member]) ** 2).sum() / weight.sum())
         result[name] = dict(
             val_loss=mse / float(scale[code]) ** 2,
             raw_val_mse=mse,
             points=int(member.sum()),
-            queries=int(owner.max()) + 1,
+            tasks=int(owner.max()) + 1,
         )
     emit(
         "score",
@@ -75,35 +75,39 @@ def path_score(targets, predictions, queries, series, names, scale):
     return dict(val_loss=float(np.mean([entry["val_loss"] for entry in result.values()])), series=result)
 
 
-def path_loss(predictions, targets, point_query, series, queries, count):
+def path_loss(predictions, targets, weights, point_row, series, tasks, count):
     import torch
 
     error = (predictions - targets).square()
-    group = point_query * count + series
-    total = error.new_zeros(queries * count).index_add_(0, group, error)
-    points = error.new_zeros(queries * count).index_add_(0, group, error.new_ones(len(error)))
-    present = (points > 0).to(error.dtype)
-    kind = torch.arange(queries * count, device=error.device) % count
-    series_total = error.new_zeros(count).index_add_(0, kind, total / points.clamp_min(1))
-    series_queries = error.new_zeros(count).index_add_(0, kind, present)
-    return (series_total / series_queries.clamp_min(1)).sum() / (series_queries > 0).sum()
+    group = point_row * count + series
+    total = error.new_zeros(tasks * count).index_add_(0, group, error)
+    points = error.new_zeros(tasks * count).index_add_(0, group, error.new_ones(len(error)))
+    weight = error.new_zeros(tasks * count).index_add_(0, group, weights) / points.clamp_min(1)
+    kind = torch.arange(tasks * count, device=error.device) % count
+    series_total = error.new_zeros(count).index_add_(0, kind, weight * total / points.clamp_min(1))
+    series_tasks = error.new_zeros(count).index_add_(0, kind, weight)
+    return (series_total / series_tasks.clamp_min(1e-12)).sum() / (series_tasks > 0).sum()
 
 
 def standardisation(predictions, batch, bank):
     center, scale = predictions.new_tensor(bank.center), predictions.new_tensor(bank.scale)
-    if bank.level == "path":
-        return center[batch["series"]], scale[batch["series"]]
-    return center[0], scale[0]
+    return center[batch["series"]], scale[batch["series"]]
 
 
 def loss(predictions, batch, bank):
     center, scale = standardisation(predictions, batch, bank)
     targets = (batch["target"] - center) / scale
-    if bank.level == "path":
+    if bank.path:
         return path_loss(
-            predictions, targets, batch["point_query"], batch["series"], batch["queries"], len(bank.center)
+            predictions,
+            targets,
+            batch["weight"],
+            batch["point_row"],
+            batch["series"],
+            batch["tasks"],
+            len(bank.center),
         )
-    return (predictions - targets).square().mean()
+    return (batch["weight"] * (predictions - targets).square()).sum() / batch["weight"].sum()
 
 
 @dataclass(frozen=True)
@@ -120,8 +124,8 @@ class TrainingSession:
 
         from graphspec.infra.arrays import RESIDENT
 
-        from .data import Deriver
-        from .model_spec import describe
+        from .data import Bank, Deriver
+        from .model_spec import describe, readable
         from .models import build
         from .variants import prepare
 
@@ -131,6 +135,7 @@ class TrainingSession:
         self.device = stated.device
         self.cuda = compute.require(self.device).type == "cuda"
         self.budget: FitBudget = budget
+        readable(Bank(bank_directory).registry, config)
         with self.budget.measure("graph_prepare"):
             prepare(bank_directory, config, stated.workers, self.device, self.directory / "timing_workers")
         self.budget.check()
@@ -150,7 +155,7 @@ class TrainingSession:
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
         with measure("model_build"):
-            self.net: nn.Module = build(config, self.bank.registry, len(self.bank.categories)).to(self.device)
+            self.net: nn.Module = build(config, self.bank.registry).to(self.device)
         with measure("optimizer_setup"):
             self.optimizer: Optimizer = torch.optim.AdamW(
                 self.net.parameters(),
@@ -175,15 +180,17 @@ class TrainingSession:
     @timed("schedule")
     def schedule(self, training_blocks: Sequence[Block], batch_size: int) -> Schedule:
         from .batching import batches
-        from .turns import blocks as turn_blocks
+        from .periods import blocks as period_blocks
 
         if sorted(map(tuple, training_blocks)) != sorted(self.bank.blocks(0, self.history, self.config)):
             raise ValueError("training blocks must cover the entire frozen training partition")
+        self.trained = self.bank.members(self.config, 0)
+        self.scored = self.bank.members(self.config, 1)
         epochs = self.config["epochs"]
         if epochs < 1:
             raise ValueError("each fit requires at least one complete training epoch")
-        with measure("turn_context"):
-            context = turn_blocks(self.bank, training_blocks, self.config)
+        with measure("period_context"):
+            context = period_blocks(self.bank, training_blocks, self.config)
         with measure("graph_sizes"):
             sizes = self.bank.sizes(self.config)
         with measure("batch_schedule"):
@@ -202,7 +209,7 @@ class TrainingSession:
             graph=self.graph_digest[:10],
             updates=len(training),
             epochs=epochs,
-            training_rows=len(self.bank.split["train_indices"]),
+            training_rows=len(self.trained),
             batch_sequences=batch_size,
             config=self.config,
         )
@@ -235,7 +242,7 @@ class TrainingSession:
 
     @timed("epoch_bookkeeping")
     def complete_epoch(self, epoch: int, rows: list[int], loss_sum: float, started: float) -> float:
-        if not np.array_equal(np.sort(rows), np.asarray(self.bank.split["train_indices"])):
+        if not np.array_equal(np.sort(rows), self.trained):
             raise ValueError("epoch omitted or duplicated training rows")
         self.epoch_losses.append(loss_sum / len(rows))
         finished = time.perf_counter()
@@ -259,7 +266,7 @@ class TrainingSession:
         self.budget.pulse("training")
         for update, ((epoch, _), batch) in enumerate(zip(schedule.training, stream, strict=True)):
             self.budget.check()
-            if np.any(self.bank.partitions[batch["rows"]] != 0):
+            if np.any(self.bank.partitions(self.config)[batch["rows"]] != 0):
                 raise ValueError("holdout row reached the optimizer")
             self.trained_rows.extend(batch["rows"].tolist())
             epoch_rows.extend(batch["rows"].tolist())
@@ -317,7 +324,7 @@ class TrainingSession:
             loaded = torch.load(
                 self.directory / "checkpoint.pt", map_location=self.device, weights_only=False
             )
-        clone = build(loaded["config"], self.bank.registry, len(self.bank.categories)).to(self.device).eval()
+        clone = build(loaded["config"], self.bank.registry).to(self.device).eval()
         clone.load_state_dict(loaded["state_dict"], strict=True)
         torch.testing.assert_close(predictions, clone(batch), atol=2e-5, rtol=2e-5)
 
@@ -328,12 +335,12 @@ class TrainingSession:
         self.budget.pulse("evaluation")
 
         from .batching import batches
-        from .turns import blocks as turn_blocks
+        from .periods import blocks as period_blocks
 
         values, indices = [], []
         with measure("validation_schedule"):
             validation = batches(
-                turn_blocks(self.bank, self.bank.blocks(1, self.history, self.config), self.config),
+                period_blocks(self.bank, self.bank.blocks(1, self.history, self.config), self.config),
                 schedule.batch_size,
                 schedule.sizes,
                 frame_budget=1024,
@@ -374,16 +381,16 @@ class TrainingSession:
         self.budget.pulse("scoring")
         ordering = np.argsort(indices)
         indices, values = indices[ordering], values[ordering]
-        if not np.array_equal(indices, np.asarray(self.bank.split["validation_indices"])):
+        if not np.array_equal(indices, self.scored):
             raise ValueError("holdout predictions do not exactly cover the frozen partition")
-        path = self.bank.level == "path"
+        path = self.bank.path
         with measure("metrics"):
             targets = self.bank.targets[indices].astype(np.float64)
             if path:
                 metrics = path_score(
                     targets,
                     values,
-                    self.bank.query_of[indices],
+                    self.bank.task_of[indices],
                     self.bank.series[indices],
                     self.bank.series_names,
                     self.bank.scale,
@@ -421,7 +428,7 @@ class TrainingSession:
             training_coverage_complete=True,
             training_examples_seen=len(self.trained_rows),
             train_unique_rows=len(set(self.trained_rows)),
-            train_available_rows=len(self.bank.split["train_indices"]),
+            train_available_rows=len(self.trained),
             train_graphs=len({self.bank.rows[i]["graph"] for i in self.trained_rows}),
             holdout_rows=len(indices),
             training_losses=self.losses,
@@ -457,6 +464,13 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         raise ValueError(
             "the seed of the configuration is %r and the seed of the statement is %r"
             % (config["seed"], stated.seed)
+        )
+    if "splits" not in config:
+        raise KeyError("the configuration states no splits to train on and to score on")
+    if config["splits"] != stated.splits():
+        raise ValueError(
+            "the splits of the configuration are %r and those of the statement are %r"
+            % (config["splits"], stated.splits())
         )
     with FitBudget(directory, deadline, stated.preparation_seconds) as budget:
         with budget.measure("prepare"):

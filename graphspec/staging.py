@@ -9,30 +9,48 @@ import pyarrow as pa
 from .clock import UNITED
 from .infra.files import write_json
 from .infra.runtime import output_path
-from .schema import EDGE, OBSERVED, PREFIXES, STAMP, TABLES
+from .references import SORTS
+from .schema import EDGE, LINK, OBSERVED, STAMP, TARGET, TASK
 
 LOG = logging.getLogger(__name__)
 
 
-def write_task(path, name, staging, target, schema):
+def write_task(path, name, staging, schema):
     started = time.perf_counter()
     path = output_path(path)
     staging = Path(staging).resolve()
     location = (
         staging.relative_to(path.parent).as_posix() if staging.is_relative_to(path.parent) else str(staging)
     )
-    write_json(path, dict(name=name, staging=location, target=target, schema=schema.mapping()))
+    write_json(path, dict(name=name, staging=location, schema=schema.mapping()))
     LOG.debug("write_task exit path=%s seconds=%.4f", path, time.perf_counter() - started)
     return path
 
 
 WRITTEN = {STAMP: pa.int64(), "INT32": pa.int32(), "STRING[]": pa.list_(pa.string())}
+FIELDS = dict(
+    WRITTEN,
+    STRING=pa.string(),
+    FLOAT=pa.float32(),
+    DOUBLE=pa.float64(),
+    BOOL=pa.bool_(),
+)
 
 
 class GraphTables:
     def __init__(self, index, name, unit, schema, **attributes):
-        if schema.queries is not None:
-            raise ValueError("graph tables state no queries; the schema must state none")
+        asked = schema.tasks
+        held = [
+            name
+            for name, entry in asked["references"].items()
+            if not SORTS.named(entry["sort"]).whole
+            and (SORTS.named(entry["sort"]).columns() != {} or SORTS.named(entry["sort"]).most != 1)
+        ]
+        if asked["grouping"] is not None or asked["signals"] or schema.aim() != "number" or held:
+            raise ValueError(
+                "graph tables state tasks without a grouping and without signals, whose targets are numbers "
+                "and whose references are one node each or the graph"
+            )
         if not isinstance(index, Integral) or index < 0 or index >= 1 << 31:
             raise ValueError("graph index must be a nonnegative int32")
         if (unit is not None) != (schema.model in UNITED) or (unit is not None and unit not in schema.units):
@@ -173,31 +191,115 @@ class GraphTables:
         self.put((EDGE + table, source, target), pa.table(held))
         return self
 
-    def labels(self, kind, keys, values, splits, moment, target):
-        timed = self.schema.model != "none"
+    def tasks(self, kind, keys, moment, references, splits, targets, known, weights, observers, **columns):
+        started = time.perf_counter()
+        schema, asked = self.schema, self.schema.tasks
+        if kind not in asked["kinds"]:
+            raise ValueError("the schema states no kind of task named " + str(kind))
+        entry, timed = asked["kinds"][kind], schema.model != "none"
         if timed != isinstance(moment, Integral):
             raise ValueError(
-                "labels state their time as a whole number, or none where the schema has no time; found %r"
+                "tasks state their time as a whole number, or none where the schema has no time; found %r"
                 % (moment,)
             )
-        owners = self.resolve(kind, keys)
-        values, splits = list(values), list(splits)
-        if target in self.lookup or target in TABLES or target.startswith(PREFIXES):
-            raise ValueError("invalid or reserved target table: " + target)
-        if not set(splits) <= {"train", "validation"}:
-            raise ValueError("labels need train or validation splits")
-        if len(values) != len(owners) or len(splits) != len(owners) or not np.isfinite(values).all():
-            raise ValueError("labels need one finite value and one split per node")
-        ids = self.ids(target, len(owners))
-        held = dict(id=ids, y=pa.array(values, pa.float64()), split=pa.array(splits, pa.string()))
+        keys = list(keys)
+        count = len(keys)
+        if sorted(references) != sorted(entry["references"]):
+            raise ValueError(
+                "tasks of the kind %s state the references %s, found %s"
+                % (kind, ", ".join(entry["references"]) or "none", ", ".join(sorted(references)) or "none")
+            )
+        given = dict(splits=splits, targets=targets, known=known, weights=weights, observers=observers)
+        wanted = dict(
+            splits=True,
+            targets=entry["target"] is not None,
+            known=entry["target"] is not None and timed,
+            weights=entry["weight"],
+            observers=schema.observers,
+        )
+        for name, values in given.items():
+            if (values is not None) != wanted[name] or (values is not None and len(list(values)) != count):
+                raise ValueError(
+                    "tasks of the kind %s state %s"
+                    % (kind, "one of %s for every task" % name if wanted[name] else "no " + name)
+                )
+        if (
+            targets is not None
+            and not np.isfinite(
+                np.asarray([np.nan if value is None else value for value in targets], np.float64)
+            ).all()
+        ):
+            raise ValueError("tasks of the kind %s state one finite target for every task" % kind)
+        ids = self.ids("task", count)
+        held = dict(
+            id=ids,
+            graph=pa.array(np.full(count, self.index), pa.int32()),
+            kind=pa.array([kind] * count, pa.string()),
+        )
         if timed:
-            held["time"] = pa.array(np.full(len(ids), moment), pa.int64())
-        self.put((target, None, None), pa.table(held))
-        self.put((target + "_of", target, kind), pa.table({"from": ids, "to": owners}))
+            held["time"] = pa.array(np.full(count, moment), pa.int64())
+        if schema.observers:
+            held["observer"] = pa.array(list(observers), pa.string())
+        held["split"] = pa.array(list(splits), pa.string())
+        held["weight"] = pa.array([None] * count if weights is None else list(weights), pa.float32())
+        held[asked["key"]] = pa.array(keys, pa.int64())
+        for name in schema.asked_columns():
+            if name in entry["columns"]:
+                held.update(self.stated("the kind of task " + kind, [name], {name: columns[name]}, count))
+            else:
+                held[name] = pa.array([None] * count, schema.kind(name).written)
+        if sorted(columns) != sorted(entry["columns"]):
+            raise ValueError(
+                "tasks of the kind %s state the columns %s, found %s"
+                % (kind, ", ".join(entry["columns"]), ", ".join(sorted(columns)))
+            )
+        self.put(("task", None, None), pa.table(held))
+        for name, (node, members) in references.items():
+            if node not in asked["references"][name]["kinds"]:
+                raise ValueError("the reference %s is not stated to name nodes of the kind %s" % (name, node))
+            self.put((TASK + name, "task", node), pa.table({"from": ids, "to": self.resolve(node, members)}))
+        if targets is not None:
+            numbers = self.ids(TARGET, count)
+            aimed = dict(id=numbers, y=pa.array(list(targets), pa.float64()))
+            if timed:
+                aimed["known"] = pa.array(list(known), pa.int64())
+            self.put((TARGET, None, None), pa.table(aimed))
+            self.put((LINK, TARGET, "task"), pa.table({"from": numbers, "to": ids}))
+        LOG.debug(
+            "graph tables tasks exit kind=%s tasks=%d seconds=%.4f",
+            kind,
+            count,
+            time.perf_counter() - started,
+        )
         return self
+
+    def completed(self):
+        started = time.perf_counter()
+        schema = self.schema
+        for name, entry in schema.tables().items():
+            pairs = entry["pairs"] if entry["kind"] == "REL" else ((None, None),)
+            for source, target in pairs:
+                if (name, source, target) not in self.tables:
+                    required = {held: kind for held, kind in entry["required"].items() if type(kind) is str}
+                    required.update(
+                        {held: kind[0] for held, kind in entry["required"].items() if type(kind) is not str}
+                    )
+                    fields = ([("from", pa.int64()), ("to", pa.int64())] if source is not None else []) + [
+                        (held, FIELDS[kind]) for held, kind in required.items()
+                    ]
+                    fields += [(held, schema.kind(held).written) for held in entry["columns"]]
+                    self.tables[(name, source, target)] = pa.table(
+                        {held: pa.array([], kind) for held, kind in fields}
+                    )
+        LOG.debug(
+            "graph tables completed exit tables=%d seconds=%.4f",
+            len(self.tables),
+            time.perf_counter() - started,
+        )
 
     def write(self, stage):
         started = time.perf_counter()
+        self.completed()
         stage.write(self.tables)
         LOG.info(
             "graph tables exit graph=%d entities=%d facts=%d seconds=%.3f",

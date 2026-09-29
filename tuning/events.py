@@ -18,21 +18,21 @@ from .layers import (
     mean,
     normalization,
 )
-from .turns import EndContext, enabled, lookback
+from .periods import EndContext, enabled, lookback
 
 
 class EventGraphNet(nn.Module):
     @timed("events.eventgraphnet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         hidden = spec["hidden"]
-        self.features, self.turn_context = registry.features, registry.marker("turn_context")
-        self.has_turns = enabled(cfg)
-        if self.has_turns:
-            self.turn_time = nn.Linear(3, hidden)
+        self.features, self.period_context = registry.features, registry.marker("period_context")
+        self.has_periods = enabled(cfg)
+        if self.has_periods:
+            self.period_time = nn.Linear(3, hidden)
         self.input = nn.Linear(registry.features, hidden)
-        self.kind = nn.Embedding(5 if self.has_turns else 4, hidden)
+        self.kind = nn.Embedding(5 if self.has_periods else 4, hidden)
         self.keys = keys_of(spec, hidden)
         self.layers = nn.ModuleList(
             TemporalEdges(
@@ -44,7 +44,7 @@ class EventGraphNet(nn.Module):
             )
             for _ in range(spec["event_graph/layers"])
         )
-        self.reward = Head(hidden * 4, spec, registry)
+        self.head = Head(hidden * 4, spec, registry)
 
     def forward(self, b):
         event = self.input(b["event_x"]) + self.kind(b["events"][:, 3])
@@ -60,35 +60,35 @@ class EventGraphNet(nn.Module):
         edges = torch.cat((b["dag_edges"], torch.stack((roots, destinations))), 1)
         relation = torch.cat((b["dag_relation"], torch.full_like(destinations, 3)))
         gap = torch.cat((b["dag_gap"], (b["events"][:, 2] - b["start"] * 2 + 1).float().repeat(2)))
-        if self.has_turns:
+        if self.has_periods:
             mask = b["end_raw_mask"].reshape(-1)
             anchors = self.input(b["end_raw"].reshape(-1, self.features)[mask]) + self.kind.weight[3]
-            anchors = anchors + self.turn_time(b["end_token_gaps"].reshape(-1, 3)[mask].log1p())
+            anchors = anchors + self.period_time(b["end_token_gaps"].reshape(-1, 3)[mask].log1p())
             anchor_ids = torch.arange(len(anchors), device=x.device) + len(x)
-            queries = torch.arange(b["predictions"], device=x.device) + len(x) + len(anchors)
-            source, target = b["dag_query_edges"]
-            anchor_target = queries[:, None, None].expand(-1, 3, b["end_steps"].shape[1]).reshape(-1)[mask]
+            tasks = torch.arange(b["predictions"], device=x.device) + len(x) + len(anchors)
+            source, target = b["dag_row_edges"]
+            anchor_target = tasks[:, None, None].expand(-1, 3, b["end_steps"].shape[1]).reshape(-1)[mask]
             edges = torch.cat(
-                (edges, torch.stack((source, queries[target])), torch.stack((anchor_ids, anchor_target))), 1
+                (edges, torch.stack((source, tasks[target])), torch.stack((anchor_ids, anchor_target))), 1
             )
             relation = torch.cat(
-                (relation, b["events"][source, 3], torch.full_like(anchor_ids, self.turn_context))
+                (relation, b["events"][source, 3], torch.full_like(anchor_ids, self.period_context))
             )
             gap = torch.cat(
                 (
                     gap,
-                    ((b["query_steps"][target] + b["start"]) * 2 - b["events"][source, 2]).float(),
+                    ((b["row_steps"][target] + b["start"]) * 2 - b["events"][source, 2]).float(),
                     b["end_token_gaps"].reshape(-1, 3)[mask, 0],
                 )
             )
-            x = torch.cat((x, anchors, self.input(b["query"]) + self.kind.weight[4]))
+            x = torch.cat((x, anchors, self.input(b["task"]) + self.kind.weight[4]))
         for layer in self.layers:
             x = layer(x, edges, relation, gap)
-        source, destination = b["dag_query_edges"]
-        q = self.input(b["query"])
-        pooled = x[queries] if self.has_turns else mean(x[source], destination, b["predictions"])
-        features = torch.cat((pooled, self.input(b["context"][:, 0]), self.input(b["context"][:, 1]), q), -1)
-        return self.reward(features[b["selected"]], b)
+        source, destination = b["dag_row_edges"]
+        q = self.input(b["task"])
+        pooled = x[tasks] if self.has_periods else mean(x[source], destination, b["predictions"])
+        features = torch.cat((pooled, self.input(b["start_x"][:, 0]), self.input(b["start_x"][:, 1]), q), -1)
+        return self.head(features[b["selected"]], b)
 
 
 class Rule(nn.Module):
@@ -149,11 +149,11 @@ class MutualRNN(Rule):
 
     def read(self, memory, roots, last, frame_tick=None):
         left, right, observed, _ = memory
-        actor, subject = roots[:, 0], roots[:, 1]
-        head = left[actor]
+        first, second = roots[:, 0], roots[:, 1]
+        head = left[first]
         if frame_tick is not None:
-            head = head * (1 + self.projection(torch.log1p((frame_tick - last[actor]).clamp_min(0))[:, None]))
-        return torch.stack((head + observed[actor], right[subject] + observed[subject]), 1)
+            head = head * (1 + self.projection(torch.log1p((frame_tick - last[first]).clamp_min(0))[:, None]))
+        return torch.stack((head + observed[first], right[second] + observed[second]), 1)
 
     def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
         left, right, observed, initialized = memory
@@ -240,7 +240,7 @@ class Antisymmetric(Rule):
 
 class MemoryNet(nn.Module):
     @timed("events.memorynet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         self.cfg, self.values = cfg, registry.values
@@ -249,7 +249,7 @@ class MemoryNet(nn.Module):
         self.attention = not mutual and spec["memory/embedding"] == "attention"
         self.pair_terms = not mutual and spec["memory/pair_terms"]
         if enabled(cfg):
-            self.turns = EndContext(hidden * 2)
+            self.periods = EndContext(hidden * 2)
         self.input = nn.Linear(registry.features, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
         self.keys = keys_of(spec, hidden)
@@ -267,17 +267,17 @@ class MemoryNet(nn.Module):
             )
         if self.attention:
             self.query_key, self.query_value = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
-        self.reward = Head(hidden * (5 if self.pair_terms else 3), spec, registry)
+        self.head = Head(hidden * (5 if self.pair_terms else 3), spec, registry)
 
     def readout(self, endpoints, neighbors, common, end_values, order, b):
         if self.attention:
-            values = endpoints + self.input(b["context"][order, :2])
+            values = endpoints + self.input(b["start_x"][order, :2])
             neighbors = neighbors + self.time(b["history_gap"][order])
             scores = (self.query_key(values)[:, :, None] * neighbors).sum(-1) / math.sqrt(values.shape[-1])
             weights = masked_weights(scores, b["history_mask"][order])
             endpoints = values + (self.query_value(neighbors) * weights[..., None]).sum(2)
         if end_values is not None:
-            endpoints = self.turns(
+            endpoints = self.periods(
                 endpoints.flatten(1),
                 end_values.reshape(b["predictions"], lookback(self.cfg), -1)[order],
                 b["end_gaps"][order],
@@ -326,12 +326,12 @@ class MemoryNet(nn.Module):
             end_values = state.new_zeros(b["predictions"] * lookback(self.cfg), hidden * 2)
         previous = b["start"] * 2 - 1
         for time_step in range(b["time_steps"]):
-            step = b["frame_queries"][time_step]
+            step = b["frame_rows"][time_step]
             tick = (b["start"] + time_step) * 2
             for phase in (0, 1):
                 now = tick + phase
                 if phase:
-                    roots = torch.stack((b["actor"][step], b["subject"][step]), -1)
+                    roots = torch.stack((b["first"][step], b["second"][step]), -1)
                     endpoints.append(self.rule.read(memory, roots, last, tick))
                     order.append(step)
                     if self.attention:
@@ -377,35 +377,35 @@ class MemoryNet(nn.Module):
             order,
             b,
         )
-        features = torch.cat((features, self.input(b["query"][order])), -1)
-        return self.reward(features[torch.argsort(order)][b["selected"]], b)
+        features = torch.cat((features, self.input(b["task"][order])), -1)
+        return self.head(features[torch.argsort(order)][b["selected"]], b)
 
 
 class ProjectionNet(nn.Module):
     @timed("events.projectionnet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         self.cfg = cfg
         hidden, hops = spec["hidden"], spec["projection/hops"]
         if enabled(cfg):
-            self.turns = EndContext(hidden)
+            self.periods = EndContext(hidden)
         self.input = nn.Linear(registry.features, hidden)
         self.keys = keys_of(spec, hidden)
         self.time = TimeEncoding(hidden, spec["time/encoding"])
         self.projection = nn.Sequential(
             nn.Linear((2 * (hops + 1)) ** 2, hidden), nn.SiLU(), normalization(hidden)
         )
-        self.reward = Head(hidden * 4, spec, registry)
+        self.head = Head(hidden * 4, spec, registry)
 
     def structural(self, b):
         spec = self.cfg["model"]
         hops, width, decay = spec["projection/hops"], spec["projection/width"], spec["projection/decay"]
         basis = []
         for graph, size in zip(b["graphs"], b["entity_sizes"]):
-            generator = torch.Generator(device=b["query"].device).manual_seed(self.cfg["seed"] + graph)
+            generator = torch.Generator(device=b["task"].device).manual_seed(self.cfg["seed"] + graph)
             basis.append(
-                torch.randn(size, width, device=b["query"].device, generator=generator) / math.sqrt(width)
+                torch.randn(size, width, device=b["task"].device, generator=generator) / math.sqrt(width)
             )
         basis = torch.cat(basis)
         state = basis.new_zeros(b["entities"], hops + 1, width)
@@ -417,13 +417,13 @@ class ProjectionNet(nn.Module):
         if context:
             end_values = basis.new_zeros(b["predictions"] * lookback(self.cfg), (2 * (hops + 1)) ** 2)
         for time_step in range(b["time_steps"]):
-            step = b["frame_queries"][time_step]
+            step = b["frame_rows"][time_step]
             for phase in (0, 1):
                 tick = (b["start"] + time_step) * 2 + phase
                 state = state * torch.exp(-decay * orders * (tick - previous))
                 previous = tick
                 if phase:
-                    ids = torch.stack((b["actor"][step], b["subject"][step]), -1)
+                    ids = torch.stack((b["first"][step], b["second"][step]), -1)
                     values = state[ids].reshape(len(step), 2 * (hops + 1), width)
                     gram = values @ values.transpose(1, 2)
                     output.append((gram.sign() * gram.abs().log1p()).flatten(1))
@@ -452,14 +452,14 @@ class ProjectionNet(nn.Module):
     def forward(self, b):
         values = self.structural(b)
         if enabled(self.cfg):
-            structural = self.turns(
+            structural = self.periods(
                 self.projection(values[0]), self.projection(values[1]), b["end_gaps"], b["end_mask"]
             )
         else:
             structural = self.projection(values)
         history = self.input(b["history_x"]) + self.time(b["history_gap"])
-        roots = self.input(b["context"][:, :2]) + masked_mean(history, b["history_mask"], 2)
+        roots = self.input(b["start_x"][:, :2]) + masked_mean(history, b["history_mask"], 2)
         if self.keys is not None:
-            roots = roots + self.keys(b["entity_token"][torch.stack((b["actor"], b["subject"]), 1)])
-        features = torch.cat((roots.reshape(b["predictions"], -1), structural, self.input(b["query"])), -1)
-        return self.reward(features[b["selected"]], b)
+            roots = roots + self.keys(b["entity_token"][torch.stack((b["first"], b["second"]), 1)])
+        features = torch.cat((roots.reshape(b["predictions"], -1), structural, self.input(b["task"])), -1)
+        return self.head(features[b["selected"]], b)

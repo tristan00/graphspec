@@ -26,11 +26,11 @@ NETS = dict(
 )
 
 
-def build(cfg, registry, categories):
+def build(cfg, registry):
     started = time.perf_counter()
     spec = canonical(space(registry), cfg["model"])
     cfg = dict(cfg, model=spec)
-    net = NETS[spec["view"]](cfg, registry, categories)
+    net = NETS[spec["view"]](cfg, registry)
     LOG.info(
         "build exit seconds=%.4f parameters=%d model=%s",
         time.perf_counter() - started,

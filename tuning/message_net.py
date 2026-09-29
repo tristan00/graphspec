@@ -46,7 +46,7 @@ class MessageLayer(nn.Module):
 
 class MixedNet(nn.Module):
     @timed("message_net.mixednet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         hidden = spec["hidden"]
@@ -57,7 +57,7 @@ class MixedNet(nn.Module):
             MessageLayer(hidden, spec["mixed/aggregation"], spec["mixed/update"], spec["dropout"])
             for _ in range(spec["mixed/layers"])
         )
-        self.reward = Head(hidden, spec, registry)
+        self.head = Head(hidden, spec, registry)
         self.register_buffer("shifts", torch.arange(CODE_BITS), persistent=False)
 
     def forward(self, b):
@@ -68,4 +68,4 @@ class MixedNet(nn.Module):
         edge = torch.cat((((mixed["edge_code"][:, None] >> self.shifts) & 1).float(), mixed["edge_gap"]), 1)
         for layer in self.layers:
             h = layer(h, mixed["edge_index"], edge)
-        return self.reward(h[mixed["query"]][b["selected"]], b)
+        return self.head(h[mixed["row"]][b["selected"]], b)

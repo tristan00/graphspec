@@ -5,38 +5,38 @@ from graphspec.infra.timing import timed
 from graphspec.transform import SEED
 
 from .inputs import tree
+from .periods import lookback
 from .tensors import Features, array, features, gathered, joined, length
-from .turns import lookback
 
 
-def prior_rows(held, turns, entities, actor=False):
-    turns, entities = np.broadcast_arrays(turns, entities)
-    count = len(held.numpy("turn_ends"))
-    keys = held.numpy("turn_actor_keys" if actor else "turn_observation_keys")
-    rows = held.numpy("turn_actor_rows" if actor else "observation_ids")
+def prior_rows(held, periods, entities, first=False):
+    periods, entities = np.broadcast_arrays(periods, entities)
+    count = len(held.numpy("period_ends"))
+    keys = held.numpy("period_first_keys" if first else "period_observation_keys")
+    rows = held.numpy("period_first_rows" if first else "observation_ids")
     if not len(keys):
-        return np.full(turns.shape, -1, np.int32)
-    positions = np.searchsorted(keys, entities.astype(np.int64) * count + turns, side="right") - 1
+        return np.full(periods.shape, -1, np.int32)
+    positions = np.searchsorted(keys, entities.astype(np.int64) * count + periods, side="right") - 1
     safe = positions.clip(0)
     valid = (positions >= 0) & (keys[safe] // count == entities)
     return np.where(valid, rows[safe], -1).astype(np.int32)
 
 
-@timed("turn_inputs.add")
+@timed("period_inputs.add")
 def add(b, graph, held, first, last, start, cfg):
-    queries = held.numpy("query_step")[first:last].astype(np.int64)
-    membership = held.numpy("turn_membership")[queries]
+    tasks = held.numpy("row_step")[first:last].astype(np.int64)
+    membership = held.numpy("period_membership")[tasks]
     previous = membership[:, None] - np.arange(1, lookback(cfg) + 1)
     valid = previous >= 0
     prior = previous.clip(0)
-    ends = held.numpy("turn_ends")[prior]
+    ends = held.numpy("period_ends")[prior]
     valid &= ends >= start
     entity, step = held.numpy("entity"), held.numpy("step")
     roots = np.stack(
         (
-            held.numpy("actor")[first:last],
-            held.numpy("subject")[first:last],
-            entity[held.numpy("query_context")[first:last, 2]],
+            held.numpy("first")[first:last],
+            held.numpy("second")[first:last],
+            entity[held.numpy("starts")[first:last, 2]],
         ),
         1,
     )
@@ -44,15 +44,15 @@ def add(b, graph, held, first, last, start, cfg):
     mask = (observed >= 0) & valid[:, :, None]
     age = np.maximum(ends[:, :, None] - step[observed.clip(0)], 0)
     age[~mask] = 0
-    delta = queries[:, None] - ends
-    numbers = held.numpy("turn_numbers")
-    turn_gap = numbers[membership, None] - numbers[prior]
-    gaps = np.stack((delta, turn_gap, age.max(-1)), -1).clip(0).astype(np.float32)
+    delta = tasks[:, None] - ends
+    numbers = held.numpy("period_numbers")
+    period_gap = numbers[membership, None] - numbers[prior]
+    gaps = np.stack((delta, period_gap, age.max(-1)), -1).clip(0).astype(np.float32)
     token_gaps = (
         np.stack(
             (
-                queries[:, None, None] - step[observed.clip(0)],
-                np.broadcast_to(turn_gap[:, :, None], age.shape),
+                tasks[:, None, None] - step[observed.clip(0)],
+                np.broadcast_to(period_gap[:, :, None], age.shape),
                 age,
             ),
             -1,
@@ -72,29 +72,29 @@ def add(b, graph, held, first, last, start, cfg):
         end_observation_local=array(np.where(mask & (local >= 0), local, -1), torch.long),
     )
     if cfg["model"]["view"] == "affinity":
-        decision = prior_rows(held, prior, roots[:, 0, None], actor=True)
-        category = held.numpy("turn_action_category")
-        affinity = np.array(held.numpy("affinity")[decision.clip(0)], np.float32)
-        affinity += np.eye(affinity.shape[-1], dtype=np.float32)[category[decision.clip(0)]]
-        affinity[(decision < 0) | ~valid] = 0
+        seen = prior_rows(held, prior, roots[:, 0, None], first=True)
+        kind = held.numpy("period_kind")
+        affinity = np.array(held.numpy("affinity")[seen.clip(0)], np.float32)
+        affinity += np.eye(affinity.shape[-1], dtype=np.float32)[kind[seen.clip(0)]]
+        affinity[(seen < 0) | ~valid] = 0
         global_affinity = np.array(held.numpy("global_affinity")[ends], np.float32)
-        global_affinity += np.eye(affinity.shape[-1], dtype=np.float32)[category[ends]]
+        global_affinity += np.eye(affinity.shape[-1], dtype=np.float32)[kind[ends]]
         global_affinity[~valid] = 0
         b.update(end_affinity=affinity, end_global_affinity=global_affinity)
 
 
-@timed("turn_inputs.temporal_edges")
+@timed("period_inputs.temporal_edges")
 def temporal_edges(b, graph, held, lo, hi, registry, tokens):
-    temporal, context = registry.code("temporal"), registry.marker("turn_context")
+    temporal, context = registry.code("temporal"), registry.marker("period_context")
     nodes = np.arange(lo, hi)
     step, entity = held.numpy("step"), held.numpy("entity")
-    query = step[nodes]
-    membership = held.numpy("turn_membership")[query]
+    task = step[nodes]
+    membership = held.numpy("period_membership")[task]
     prior = membership[:, None] - np.arange(1, b["end_steps"].shape[1] + 1)
     valid = prior >= 0
     observed = prior_rows(held, prior.clip(0), entity[nodes, None])
     valid &= observed >= 0
-    valid &= held.numpy("turn_ends")[prior.clip(0)] >= b["start"]
+    valid &= held.numpy("period_ends")[prior.clip(0)] >= b["start"]
     source = observed[valid]
     destination = np.broadcast_to(nodes[:, None], observed.shape)[valid]
     ghosts = np.unique(source[source < lo])
@@ -119,22 +119,22 @@ def temporal_edges(b, graph, held, lo, hi, registry, tokens):
     edges = np.asarray(list(pairs), np.int64).reshape(-1, 2)
     original_ids = np.r_[np.arange(lo, hi), ghosts]
     steps = step[original_ids]
-    turns = held.numpy("turn")[original_ids]
+    periods = held.numpy("obs_period")[original_ids]
     b.update(
         temporal_edges=array(edges.T, torch.long),
         temporal_relation=array(np.asarray(list(pairs.values())), torch.long),
         temporal_gap=array(steps[edges[:, 1]] - steps[edges[:, 0]], torch.float32),
-        temporal_turn_gap=array(turns[edges[:, 1]] - turns[edges[:, 0]], torch.float32),
+        temporal_period_gap=array(periods[edges[:, 1]] - periods[edges[:, 0]], torch.float32),
     )
 
 
-@timed("turn_inputs.mixed_edges")
+@timed("period_inputs.mixed_edges")
 def mixed_edges(b, graph):
     mixed = b["mixed"]
     mask = b["end_raw_mask"].reshape(-1)
     chosen = b["end_raw"].segments[0][2][0][1].reshape(-1)[mask]
     source = np.arange(len(chosen)) + length(mixed["x"])
-    destination = np.broadcast_to(mixed["query"][:, None, None], b["end_raw_mask"].shape).reshape(-1)[mask]
+    destination = np.broadcast_to(mixed["row"][:, None, None], b["end_raw_mask"].shape).reshape(-1)[mask]
     gaps = b["end_token_gaps"].reshape(-1, 3)[mask]
     mixed["x"] = joined([mixed["x"], features(graph, (len(chosen),), ("x", chosen, 1.0))])
     mixed["kind"] = np.concatenate((mixed["kind"], np.zeros(len(chosen), np.int64)))
@@ -155,11 +155,11 @@ def mixed_edges(b, graph):
         )
 
 
-@timed("turn_inputs.history_tokens")
+@timed("period_inputs.history_tokens")
 def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
     n, depth = last - first, lookback(cfg)
     if cfg["model"]["view"] == "tree":
-        roots = np.stack((held.numpy("actor")[first:last], held.numpy("subject")[first:last]), 1)
+        roots = np.stack((held.numpy("first")[first:last], held.numpy("second")[first:last]), 1)
         roots = np.broadcast_to(roots[:, :, None], (n, 2, depth)).reshape(-1).copy()
         ends = b["end_steps"] + start
         cutoffs = np.broadcast_to((ends * 2 + 1)[:, None, :], (n, 2, depth)).reshape(-1).copy()
@@ -195,7 +195,7 @@ def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
     end_time = np.zeros((n, 2, original + depth, 3), np.float32)
     end_time[:, :, original:] = gaps
     b["history_end_time"] = end_time
-    b["history_turn_kind"] = np.concatenate(
+    b["history_period_kind"] = np.concatenate(
         (np.zeros((n, 2, original), np.int64), np.ones((n, 2, depth), np.int64)), 2
     )
     for key, width in (("occurrence", 2), ("structure", 12)):
@@ -209,7 +209,7 @@ def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
         "history_mask",
         "history_gap",
         "history_end_time",
-        "history_turn_kind",
+        "history_period_kind",
         "occurrence",
         "structure",
     ) + (("history_token",) if "history_token" in b else ()):
@@ -226,16 +226,16 @@ def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
     b["history_x"] = Features([(graph, (n, 2, original + depth), pieces)])
 
 
-@timed("turn_inputs.capture_schedule")
+@timed("period_inputs.capture_schedule")
 def capture_schedule(b):
     ends = b["end_steps"]
     result = []
     for time_step in range(b["time_steps"]):
-        query, slot = np.nonzero((ends >= 0) & (ends % b["time_steps"] == time_step))
+        task, slot = np.nonzero((ends >= 0) & (ends % b["time_steps"] == time_step))
         result.append(
             (
-                (query * ends.shape[1] + slot).astype(np.int64),
-                np.stack((b["actor"][query], b["subject"][query]), -1),
+                (task * ends.shape[1] + slot).astype(np.int64),
+                np.stack((b["first"][task], b["second"][task]), -1),
             )
         )
     b["end_capture"] = result

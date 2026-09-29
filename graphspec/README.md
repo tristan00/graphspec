@@ -9,12 +9,13 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types and encoders; `Encoding`, the fitted encoders of a bank. |
 | `inspect.py` | `inspect` prints the schema of a task file or of a bank. |
 | `graphdb.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. Both go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `graphspec.infra.staging`. |
-| `vocabulary.py` | `registry(source, task, series, encoding)`: the relations stated or taken from a column, and every relation a spec can derive. |
+| `references.py` | The sorts of reference, registered: what a task may refer to, how it is stored and how it resolves at the time of the task. |
+| `vocabulary.py` | `registry(task, encoding, single)`: the relations stated or taken from a column, and every relation a spec can derive. |
 | `declarations.py`, `registry.py` | `EdgeType` and `Registry`, which allocates relation codes, indexes types and fingerprints the declaration. `Registry.from_declaration` rebuilds a registry from a pinned declaration. |
 | `clock.py` | The models of time, the rules for ties and the choices among several facts, each a registry; `visible` and `allowed`, the one guard that says which facts a task sees. |
 | `forms.py` | The shorthand forms, registered, each reducing rows to facts with intervals. |
 | `truth.py` | `parse` turns one graph's rows into `Facts`, the stored facts with their intervals, and `check` checks them; `Graph` is a view as spans over steps, which `verify` checks; `Graph.dense()` expands the spans into the per-step working graph by reference. |
-| `view.py` | The choices of steps, registered; `view` shows the facts of a graph at the steps of one sequence as a `Graph`. |
+| `view.py` | The choices of steps and the rules of what a split may see, each registered; `sequences` gives the sequences of a graph and `view` shows the facts of a graph at the steps of one sequence as a `Graph`. |
 | `spans.py` | Interval primitives: encoding rows as spans, expanding spans to rows, fact order, coverage checks. |
 | `spec.py` | The spec space: conditional parameters generated from a registry and a set of representation groups, with `draw`, `canonical` and `digest`. |
 | `operators.py` | One function per graph stage. |
@@ -30,9 +31,9 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 - observation spans `obs_entity`, `obs_start`, `obs_stop` (exclusive), `obs_values` and `obs_x`: an entity's maximal run of consecutive steps with identical stated values, the values as stated and as encoded; within a step observations are ordered by entity
 - fact spans `fact_source`, `fact_target`, `fact_code`, `fact_start`, `fact_stop`, `fact_values`: a maximal run of consecutive steps at which the same fact with the same attributes is present, and `fact_rank`, which with the patches `order_step`, `order_position`, `order_span` reproduces the `seq` order of facts within every step exactly
 - removals `removal_source`, `removal_target`, `removal_code`, `removal_step`, `removal_values`: the absent facts, in their `seq` order
-- queries `query_key`, `query_category`, `query_references` (one column per reference the schema names), `query_values`, `query_x`, `query_signals`, labels `label_entity`, `label_step`, `label_row`, `label_id`, and `graph_values`, the attributes of the graph
+- tasks `task_step`, `task_key`, `task_kind`, `task_values`, `task_x`, `task_signals`, the members of their references `member_task`, `member_name`, `member_place`, `member_source`, `member_target`, `member_code`, targets `label_task`, `label_row`, and `graph_values`, the attributes of the graph
 
-`verify` checks a view, in time linear in the spans: steps in range, a period for every step, canonical relation codes, one query per step when there are queries, observation spans of one entity that neither overlap nor could merge, present facts observed at every step of their span, queries and node labels observed at their step, absent facts observed at or before theirs, and tokens that match the keys. It also checks that the encoders reproduce the encoded values from the stated ones. A bank build refuses two keys of one type that share a token.
+`verify` checks a view, in time linear in the spans: steps in range, a period for every step, canonical relation codes, tasks in the order of their steps, observation spans of one entity that neither overlap nor could merge, present facts observed at every step of their span, the nodes that the references of a task name observed at its step where its kind states that an absent node stops the work, absent facts observed at or before theirs, and tokens that match the keys. It also checks that the encoders reproduce the encoded values from the stated ones. A bank build refuses two keys of one type that share a token.
 
 The stages work on `truth.Dense`, the per-step expansion: rows reference their features and attributes (`obs_ref`, `fact_ref`) in `x_table` and `value_table` instead of copying them, so a stage that copies or filters rows moves integers. `step_graph` and `entity_connected` carry the joined timeline (all zeros for a single graph).
 
@@ -43,7 +44,7 @@ The stages work on `truth.Dense`, the per-step expansion: rows reference their f
 | Relation | Symmetric | Meaning |
 |---|---|---|
 | `<relation>` | as stated | A base relation, from an edge table. |
-| `project:<relation>:<side>:<A>:<B>` | yes | Entities of types A and B on one side of a relation that share a counterpart at a step, such as two units located in one region. One per relation, side and pair of types whose FROM/TO pairs share a counterpart type. |
+| `project:<relation>:<side>:<A>:<B>` | yes | Entities of types A and B on one side of a relation that share a counterpart at a step. One per relation, side and pair of types whose FROM/TO pairs share a counterpart type. |
 | `complete:<A>:<B>` | yes | Pairs of completed entities of types A and B at a step. |
 | `hop:2`, `hop:3` | yes | Pairs at exactly that shortest distance in the step's graph. |
 | `diffusion` | no | Top-k graph-diffusion neighbours. |
@@ -52,13 +53,13 @@ The stages work on `truth.Dense`, the per-step expansion: rows reference their f
 | `temporal` | yes | An entity's link to its own earlier observation. |
 | `boundary:first`, `boundary:last`, `boundary:both` | yes | Links from the first, last or only observation or event of an earlier period. |
 
-The markers `non_relation` and `turn_context` take codes above every relation. The registry extras record:
+The markers `non_relation` and `period_context` take codes above every relation. The registry extras record:
 
-- the target level
-- whether queries exist
+- the kind of target, a number or a path, and the series
+- whether a kind of task is seen as an event
+- whether every time holds exactly one task
 - the signal width
 - the base relations
-- the protected node types: the destinations of `<target>_of` for node targets, and none otherwise
 
 `declaration()` serialises everything and `fingerprint()` hashes it. The bank manifest, the run plan and every trial's `selection.json` pin that hash.
 
@@ -77,7 +78,7 @@ The markers `non_relation` and `turn_context` take codes above every relation. T
 | Parameter | Range | Effect |
 |---|---|---|
 | `time/periods` | truth or steps, every | truth, offered where the tasks state a grouping, keeps it as the periods; steps, offered where they state none, makes every step a period; every starts a new period every `time/period_length` steps. Periods are runs of equal values and need not increase. |
-| `time/period_length` | 1–16 with queries, 2–16 without | Steps per period. Offered for every. |
+| `time/period_length` | 1–16 with tasks seen as events, 2–16 without | Steps per period. Offered for every. |
 
 2. Time
 
@@ -101,6 +102,7 @@ Every unprotected type has its own switch and filter.
 | `graphs/connect/<type>` | on, off | Whether entities of the type are unified by key when joining. Offered for single. |
 | `graphs/connect_fraction` | 0.01–1, logarithmic | The share of keys that are unified, chosen by a hash of the key; the rest stay per graph. Offered for single. |
 | `nodes/<type>/keep` | on, off | Removes the entities of the type and every fact that touches them. |
+| `nodes/referenced` | keep, and remove where every kind of task keeps an absent node | What becomes of a node that a reference names and that the stage would remove at the step of the task: kept as an anchor, or removed. |
 | `nodes/untyped` | on, off | Gives every entity one kind in the model inputs. The stages still read types, and features are untouched. Offered with more than one node type. |
 | `nodes/<type>/filter` | none, degree, total_degree, core, activity, sample | Removes observations of the type's entities that fail the filter, and the facts that lose an endpoint. Offered while the type is kept. |
 | `nodes/<type>/min_degree` | 1–16 | degree: an observation stays if its entity has at least that many stated incident facts among kept types at that step, a self-loop counting once. total_degree: counted over every step so far. |
@@ -108,7 +110,7 @@ Every unprotected type has its own switch and filter.
 | `nodes/<type>/min_activity` | 2–16 | activity: an entity stays from its n-th observation, counting the copies stage 2 carried forward. |
 | `nodes/<type>/sample` | 0.1–0.9 | sample: a seeded hash keeps that fraction of the type's entities for the whole graph. |
 
-Protected types are never removed or filtered. An observation a query needs at its step is never removed; when its type is removed or it fails its type's filter, it stays as an anchor, marked in `obs_anchor`: no present fact touches it and no derivation links it, while removals of relations its entity held earlier still end at its step. Representations built on observations (coupling, events, mixed) include anchors like any other observation.
+With `nodes/referenced` set to keep, an observation that a reference of a task names at the step of the task is never removed; when its type is removed or it fails its type's filter, it stays as an anchor, marked in `obs_anchor`: no present fact touches it and no derivation links it, while removals of relations its entity held earlier still end at its step. Representations built on observations (coupling, events, mixed) include anchors like any other observation.
 
 4. Derived relations
 
@@ -167,19 +169,20 @@ Whenever a stage removes present facts, it also removes absent rows left without
 
 Base arrays:
 
-- snapshots: `x_ref` per observation into the feature table `x_table`, which for separate graphs is a copy of the `obs_x` file of its view when no stage changed it; `entity`, `step`, `turn` and `snapshot_offsets` per observation; `observation_ids` and `observation_offsets` per entity; `entity_kind`, all zero when nodes are untyped; relation edges `spatial` as source observation, target observation and code, with `spatial_step`, `spatial_attribute_row` and `attributes_<relation>`
-- predictions: `actor`, `subject`, `query_context`, `query_step`, `row_index`, `decision`, `signals`; a node target is its own actor and subject
-- queries: `query` and `decision_actor`
-- `affinity` and `global_affinity`: counts of earlier query categories, per actor and overall
-- `events`: one row per observation change, relation change or query. Observations and facts of step s sit at tick 2s and the query of step s at tick 2s+1.
-- periods: `period`, and the index `turn_starts`, `turn_ends`, `turn_numbers`, `turn_membership`, `turn_observations`, `turn_actor_decision`, `turn_action_category`
+- snapshots: `x_ref` per observation into the feature table `x_table`, which for separate graphs is a copy of the `obs_x` file of its view when no stage changed it; `entity`, `step`, `obs_period` and `snapshot_offsets` per observation; `observation_ids` and `observation_offsets` per entity; `entity_kind`, all zero when nodes are untyped; relation edges `spatial` as source observation, target observation and code, with `spatial_step`, `spatial_attribute_row` and `attributes_<relation>`
+- rows, one per task of a kind that states a target: `row_task`, `row_step`, `row_index`, `key`, `signals`; `first` and `second`, the first two nodes its references name in the order its kind states them, and `starts`, the observations of the first three at its step, the last node filling the places left and -1 where there is none
+- references of the rows: `member_row`, `member_name`, `member_entity`, `member_observed`, one entry per node a reference names, an edge giving two; `whole_row` and `whole_name` for references to the graph itself
+- tasks: `task`, the features of every task, and for the tasks seen as events `event_first`, `event_task` and `event_step`
+- `affinity` and `global_affinity`: counts of the earlier tasks seen as events by kind, per first node and overall
+- `events`: one row per observation change, relation change or task seen as an event. Observations and facts of step s sit at tick 2s and the tasks of step s at tick 2s+1; the row of a task holds its place in `task`.
+- periods: `period`, and the index `period_starts`, `period_ends`, `period_numbers`, `period_membership`, `period_observation_keys`, `period_first_keys`, `period_first_rows`, `period_kind`
 
 | Group | Parameters | Arrays |
 |---|---|---|
 | `coupling` | `coupling/scheme` ordinal, lags, window, all; `coupling/unit` observation, step, for ordinal and lags; `coupling/max_lag` 2–64, for lags; `coupling/lag_window` 1–512, for lags by observation; `coupling/window` 2–128 and `coupling/cap` 1–128, for window; `coupling/periods` 0–3; `coupling/period_window` 2–128, for periods above 0 | `coupling` links an observation to earlier observations of its entity. ordinal takes the previous one. lags takes those 1, 2, 4, … up to and including the exact `max_lag` back, within `lag_window` steps. window takes every earlier one less than `window` steps back, at most the latest `cap`. all takes every earlier one. With unit step, ordinal and lags count steps and need an observation exactly that far back. `coupling_boundaries` links from the entity's first and last observations in each of the previous `periods` periods, less than `period_window` steps back. |
-| `events` | `events/kinds` any subset of observation, relation and, with queries, query; `events/link` next, lags, window; `events/max_lag` 2–16, for lags; `events/window` 1–1024; `events/cap` 0–64; `events/periods` 0–3; `events/period_window` 2–128, for periods above 0 | `event_dag` links each member event, once per earlier event, from its participants' earlier tick groups within `window` ticks. next takes the previous group, lags the groups 1, 2, 4, … up to and including the exact `max_lag` back, and window every earlier group. With `cap` above 0, only the last `cap` events of each group link. `event_member` marks the chosen kinds. `event_boundaries` links from the first and last tick groups of each participant's previous `periods` periods, less than `period_window` steps back. |
-| `neighbors` | `neighbors/kinds` relation and, with queries, query or both; `neighbors/removals` on, off, when relation events are included; `neighbors/order` recent, uniform, decay; `neighbors/decay` 0.001–1, log, for decay | `neighbor_ids` and `neighbor_offsets` index each entity's relation events, with or without removals, and query events. When packing, a model takes its neighbour count from before each cutoff: the latest, a uniform sample, or a sample weighted by exp(−decay × elapsed steps), drawn by Gumbel top-k with keys hashed from the entity, the cutoff and the candidate event. Candidates start at the packed window's first step. |
-| `walks` | `neighbors/kinds`, `neighbors/removals`; `walks/bias` 0–1; `walks/window` 1–512; `walks/fanout` 1–128 | Builds the neighbour index as above. `walks` holds 32 walks of 4 hops from the actor and the subject of each prediction, over events within `window` steps of it. Each hop picks one of the current entity's latest `fanout` events strictly before the current time, weighted by exp(−bias × steps before the current time). Draws are keyed by the walk's root, prediction step, side, sample and hop, so no walk depends on other predictions. `turn_walks` does the same inside each of the 3 previous periods, bounded by the period instead of `window`. |
-| `mixed` | `mixed/changes` on, off; `mixed/trace` 0–8; `mixed/bundles` on, off | `mixed_*` is a graph of derived nodes: one per observation linked to the entity's previous one, change nodes holding feature deltas, trace nodes averaging every `trace` observations of an entity, bundle nodes averaging each step, and one action node per query. |
+| `events` | `events/kinds` any subset of observation, relation and, with tasks seen as events, task; `events/link` next, lags, window; `events/max_lag` 2–16, for lags; `events/window` 1–1024; `events/cap` 0–64; `events/periods` 0–3; `events/period_window` 2–128, for periods above 0 | `event_dag` links each member event, once per earlier event, from its participants' earlier tick groups within `window` ticks. next takes the previous group, lags the groups 1, 2, 4, … up to and including the exact `max_lag` back, and window every earlier group. With `cap` above 0, only the last `cap` events of each group link. `event_member` marks the chosen kinds. `event_boundaries` links from the first and last tick groups of each participant's previous `periods` periods, less than `period_window` steps back. |
+| `neighbors` | `neighbors/kinds` relation and, with tasks seen as events, task or both; `neighbors/removals` on, off, when relation events are included; `neighbors/order` recent, uniform, decay; `neighbors/decay` 0.001–1, log, for decay | `neighbor_ids` and `neighbor_offsets` index each entity's relation events, with or without removals, and the events of tasks. When packing, a model takes its neighbour count from before each cutoff: the latest, a uniform sample, or a sample weighted by exp(−decay × elapsed steps), drawn by Gumbel top-k with keys hashed from the entity, the cutoff and the candidate event. Candidates start at the packed window's first step. |
+| `walks` | `neighbors/kinds`, `neighbors/removals`; `walks/bias` 0–1; `walks/window` 1–512; `walks/fanout` 1–128 | Builds the neighbour index as above. `walks` holds 32 walks of 4 hops from the first and the second node of each row, over events within `window` steps of it. Each hop picks one of the current entity's latest `fanout` events strictly before the current time, weighted by exp(−bias × steps before the current time). Draws are keyed by the walk's root, prediction step, side, sample and hop, so no walk depends on other predictions. `period_walks` does the same inside each of the 3 previous periods, bounded by the period instead of `window`. |
+| `mixed` | `mixed/changes` on, off; `mixed/trace` 0–8; `mixed/bundles` on, off | `mixed_*` is a graph of derived nodes: one per observation linked to the entity's previous one, change nodes holding feature deltas, trace nodes averaging every `trace` observations of an entity, bundle nodes averaging each step, and one node per task seen as an event. |
 
 **Causality.** Every stage and representation reads only steps at or before the one it writes, and the stages never read labels. Truncating a truth graph after any step and transforming it gives a prefix of the transformed full graph, apart from the period-index rows of the last, unfinished period.

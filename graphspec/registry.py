@@ -4,7 +4,9 @@ from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 
 from .declarations import EdgeType
-from .schema import LEVELS, Encoding, Schema
+from .schema import TARGETS, Encoding, Schema
+
+EXTRAS = ("target", "series", "signals", "base", "events", "single")
 
 
 class Registry:
@@ -41,15 +43,27 @@ class Registry:
         self.marker_index = {marker: self.relations + i for i, marker in enumerate(self.markers)}
         self.relation_slots = self.relations + len(self.markers)
         self.extras = dict(extras)
-        if self.extras["level"] not in LEVELS:
+        lacking = [name for name in EXTRAS if name not in self.extras]
+        if lacking or len(self.extras) != len(EXTRAS):
             raise ValueError(
-                "registry level must be one of %s, found %s" % (", ".join(LEVELS), self.extras["level"])
+                "a registry records exactly %s; it lacks %s" % (", ".join(EXTRAS), ", ".join(lacking))
             )
-        path = self.extras["level"] == "path"
-        if path != ("series" in self.extras) or (path and not self.extras["series"]):
-            raise ValueError("path registries, and only they, name their target series")
-        if not set(self.extras["protected"]) <= set(self.nodes):
-            raise ValueError("protected node types must be declared")
+        if self.extras["target"] not in TARGETS or self.extras["target"] != self.schema.aim():
+            raise ValueError(
+                "the registry records targets of the kind %r and its schema states %s"
+                % (self.extras["target"], self.schema.aim())
+            )
+        if list(self.extras["series"]) != list(self.schema.series()):
+            raise ValueError("the registry and its schema name different series")
+        kinds = self.schema.tasks["kinds"]
+        self.tasks = tuple(kinds)
+        self.stops = np.asarray([entry["absent"] == "stop" for entry in kinds.values()], bool)
+        self.aimed = np.asarray([entry["target"] is not None for entry in kinds.values()], bool)
+        self.events = self.schema.events()
+        self.seen = np.asarray(
+            [self.events.index(kind) if kind in self.events else -1 for kind in kinds], np.int64
+        )
+        self.references = tuple(self.schema.tasks["references"])
         if not set(self.extras["base"]) <= set(self.by_name):
             raise ValueError("base relation types must be declared")
         self.tables = {}

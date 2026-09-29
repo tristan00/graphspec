@@ -1,6 +1,7 @@
 import numpy as np
 import support
 
+from conftest import SPLITS
 from graphspec import join, operators, transform
 from graphspec.infra.arrays import RESIDENT
 from graphspec.resources import GraphLimits
@@ -12,12 +13,13 @@ from tuning.variants import prepare
 
 def test_single_join_builds_one_graph_per_group_and_keeps_every_block(bank):
     registry = Bank(bank).registry
-    separate = configuration(registry, dict(view="snapshot"), {"time/history": 4}, 5)
+    separate = configuration(registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
     single = configuration(
         registry,
         dict(view="snapshot"),
         {"time/history": 4, "graphs/join": "single", "graphs/join_size": 3},
         5,
+        SPLITS,
     )
     prepare(bank, single, 1, "cpu")
     opened = Deriver(bank, "cpu", RESIDENT)
@@ -36,17 +38,19 @@ def test_single_join_groups_graphs_within_their_split(bank):
         dict(view="snapshot"),
         {"graphs/join": "single", "graphs/join_size": 3},
         5,
+        SPLITS,
     )
     opened = Deriver(bank, "cpu", RESIDENT)
-    opened.partitions[:] = 0
+    partitions = opened.partitions(single)
+    partitions[:] = 0
     held = opened.viewed(single).row_index[1]
-    opened.partitions[held[held >= 0]] = 1
+    partitions[held[held >= 0]] = 1
     assert opened.groups(single) == [[0, 2, 3], [1]]
 
 
 def joined_spec(opened, **graph):
     values = {"graphs/join": "single", "graphs/join_size": 4, **graph}
-    return opened.variant(configuration(opened.registry, dict(view="snapshot"), values, 5))[1]
+    return opened.variant(configuration(opened.registry, dict(view="snapshot"), values, 5, SPLITS))[1]
 
 
 def test_unconnected_entities_end_with_their_graph(bank):
@@ -79,16 +83,11 @@ def test_every_periods_restart_at_each_graph(bank):
 def test_a_join_of_one_graph_equals_the_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     values = {"graphs/join": "single", "graphs/join_size": 4, "time/scheme": "state"}
-    _, spec, chosen = opened.variant(configuration(opened.registry, dict(view="mixed"), values, 5))
+    _, spec, chosen = opened.variant(configuration(opened.registry, dict(view="mixed"), values, 5, SPLITS))
     graph = support.shown(opened, 2).dense()
-    alone = transform.materialize(graph, opened.registry, spec, chosen, opened.categories, GraphLimits("cpu"))
+    alone = transform.materialize(graph, opened.registry, spec, chosen, GraphLimits("cpu"))
     together = transform.materialize(
-        join.joined([graph], opened.registry, spec),
-        opened.registry,
-        spec,
-        chosen,
-        opened.categories,
-        GraphLimits("cpu"),
+        join.joined([graph], opened.registry, spec), opened.registry, spec, chosen, GraphLimits("cpu")
     )
     assert sorted(alone) == sorted(together)
     assert all(identical(np.asarray(alone[name]), np.asarray(together[name])) for name in alone)
@@ -115,14 +114,14 @@ def test_joined_windows_use_their_own_entities(bank):
             **{"graphs/connect/" + kind: False for kind in opened.registry.nodes},
         },
         5,
+        SPLITS,
     )
     prepare(bank, cfg, 1, "cpu")
     opened = Deriver(bank, "cpu", RESIDENT)
     for block in opened.blocks(0, 4, cfg)[:12]:
         b = recipe(opened, block, cfg)
         ids = np.concatenate(
-            [np.asarray(b[key]).reshape(-1) for key in ("actor", "subject")]
-            + [b["events"][:, :2].reshape(-1)]
+            [np.asarray(b[key]).reshape(-1) for key in ("first", "second")] + [b["events"][:, :2].reshape(-1)]
         )
         assert (
             b["entities"] == len(np.unique(ids[ids >= 0])) < len(opened.arrays(block[0], cfg)["entity_kind"])

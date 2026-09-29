@@ -18,7 +18,6 @@ from graphspec.truth import VERSION, gather, parse
 from graphspec.view import validate
 
 LOG = logging.getLogger(__name__)
-SPLITS = ("train", "validation")
 WORKER = {}
 
 
@@ -42,9 +41,9 @@ def seen_until(rows, groups, trained, names):
     started = time.perf_counter()
     chosen = np.zeros(len(rows["rows"]), bool)
     for split in trained:
-        chosen[rows["split"][split + "_indices"]] = True
+        chosen[rows["split"]["indices"][split]] = True
     result = {index: None for index in names}
-    for index, _, _, members, times in groups:
+    for index, _, members, times in groups:
         if chosen[members].any():
             result[index] = int(np.asarray(times)[chosen[members]].max())
     LOG.info(
@@ -63,8 +62,8 @@ def observing(tables):
         if "observers" in table.column_names:
             for names in table.column("observers").to_pylist():
                 found.update(names or ())
-    if "queries" in tables and "observer" in tables["queries"].column_names:
-        found.update(tables["queries"].column("observer").to_pylist())
+    if "observer" in tables["tasks"].column_names:
+        found.update(tables["tasks"].column("observer").to_pylist())
     found.discard(None)
     LOG.debug("observing exit observers=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return sorted(found)
@@ -121,181 +120,163 @@ def related(stated, found):
     return result
 
 
-def series_statistics(name, y, member, held):
-    train, validation = y[member & ~held].astype(np.float32), y[member & held].astype(np.float32)
-    if len(train) < 2 or len(validation) < 2 or np.ptp(train) == 0 or np.ptp(validation) == 0:
-        raise ValueError("series %s needs at least two varying training and validation points" % name)
-    return dict(
-        name=name, mean=float(train.astype(np.float64).mean()), sd=float(train.astype(np.float64).std(ddof=1))
-    )
-
-
-def asked(source, names):
+def single(stated, found):
     started = time.perf_counter()
-    queries = source.query_index()
-    owners = queries.column("graph").to_numpy().astype(np.int64)
-    timed = "time" in queries.column_names
-    if timed and queries.column("time").null_count:
-        raise ValueError("a task of the source states no time")
-    moments = queries.column("time").to_numpy().astype(np.int64) if timed else np.zeros(len(owners), np.int64)
-    ids = queries.column("id").to_numpy().astype(np.int64)
-    order = np.lexsort((ids, moments, owners))
-    first = np.searchsorted(owners[order], owners[order])
-    place = np.empty(len(order), np.int64)
-    place[order] = np.arange(len(order)) - first
-    counts = dict(zip(*(values.tolist() for values in np.unique(owners, return_counts=True))))
-    empty = sorted(set(names) - set(counts))
-    if empty:
-        raise ValueError("%d graphs have no queries, for example graph %d" % (len(empty), empty[0]))
-    result = dict(
-        counts=counts,
-        row={number: row for row, number in enumerate(ids.tolist())},
-        last={int(owners[row]): row for row in order.tolist()},
-        place=place,
-        time=moments,
-        timed=timed,
-        key=queries.column("key").to_numpy().astype(np.int64),
-        period=queries.column("period").to_numpy().astype(np.int64)
-        if "period" in queries.column_names
-        else None,
+    owners = found.column("graph").to_numpy().astype(np.int64)
+    timed = "time" in found.column_names
+    moments = found.column("time").to_numpy().astype(np.int64) if timed else np.zeros(len(owners), np.int64)
+    looking = (
+        np.unique(np.asarray(found.column("observer").to_pylist(), object).astype(str), return_inverse=True)[
+            1
+        ]
+        if "observer" in found.column_names
+        else np.zeros(len(owners), np.int64)
     )
-    LOG.info("asked exit seconds=%.3f tasks=%d", time.perf_counter() - started, len(ids))
+    places = np.stack((owners, looking.reshape(-1), moments), 1)
+    aimed = set(stated.aimed_kinds())
+    result = bool(
+        len(places)
+        and len(np.unique(places, axis=0)) == len(places)
+        and all(kind in aimed for kind in found.column("kind").to_pylist())
+    )
+    LOG.debug(
+        "single exit tasks=%d single=%s seconds=%.4f", len(owners), result, time.perf_counter() - started
+    )
     return result
 
 
-def supervision(source, level, target, names):
+def supervision(source, trained, names):
     started = time.perf_counter()
-    if level == "node":
-        found = source.targets(level, target)
-        owners = found.column("graph").to_numpy().astype(np.int64)
-        timed = "time" in found.column_names
-        if timed and found.column("time").null_count:
-            raise ValueError("a target of the source states no time")
-        times = found.column("time").to_numpy().astype(np.int64) if timed else np.zeros(len(owners), np.int64)
-        places = times
-        if len(
-            np.unique(
-                np.stack((owners, found.column("entity").to_numpy().astype(np.int64), times), 1), axis=0
-            )
-        ) != len(owners):
-            raise ValueError("a node carries more than one target at one time")
-        described = [
-            dict(graph=names[owner], node=node, **(dict(time=moment) if timed else {}))
-            for owner, moment, node in zip(owners.tolist(), times.tolist(), found.column("node").to_pylist())
-        ]
-    else:
-        queries = asked(source, names)
-        found = source.targets(level, target)
-        owners = found.column("graph").to_numpy().astype(np.int64)
-        if level == "graph":
-            rows = np.asarray([queries["last"][owner] for owner in owners.tolist()], np.int64)
-        else:
-            rows = np.asarray(
-                [queries["row"][number] for number in found.column("query").to_pylist()], np.int64
-            )
-        places, times = queries["place"][rows], queries["time"][rows]
-        stated = source.stated.queries
-        described = []
-        for owner, row in zip(owners.tolist(), rows.tolist()):
-            entry = {"graph": names[owner], stated["key"]: int(queries["key"][row])}
-            if queries["timed"]:
-                entry["time"] = int(queries["time"][row])
-            if queries["period"] is not None:
-                entry[stated["grouping"]] = int(queries["period"][row])
-            described.append(entry)
-        if level == "path":
-            tau = found.column("tau").to_numpy().astype(np.float64)
-            if not np.isfinite(tau).all() or np.any(tau <= 0):
-                raise ValueError("path tau values must be finite and strictly positive")
-            series = found.column("series").to_pylist()
-            if None in series or "" in series:
-                raise ValueError("every path point needs a series name")
-            names_of, series_index = np.unique(np.asarray(series, object), return_inverse=True)
-            order = np.lexsort((tau, series_index, places, owners))
-            keys = np.stack((owners, places, series_index), 1)[order]
-            same = (np.diff(keys, axis=0) == 0).all(1) & (np.diff(tau[order]) == 0)
-            if same.any():
-                raise ValueError(
-                    "graph %s has two points with one query, one series and one tau"
-                    % names[int(owners[order][np.flatnonzero(same)[0]])]
-                )
-            described = [
-                dict(entry, tau=value, series=name)
-                for entry, value, name in zip(described, tau.tolist(), series)
-            ]
-        else:
-            order = np.argsort(owners, kind="stable")
-            if len(np.unique(np.stack((owners, places), 1), axis=0)) != len(owners):
-                raise ValueError("a query or graph carries more than one target")
-    split = found.column("split").to_pylist()
-    unknown = sorted(set(split) - set(SPLITS))
-    if unknown:
-        raise ValueError("target splits must be train or validation, found " + ", ".join(map(str, unknown)))
-    unlabelled = sorted(set(names) - set(owners.tolist()))
-    if unlabelled:
-        raise ValueError("%d graphs have no target, for example graph %d" % (len(unlabelled), unlabelled[0]))
-    held = np.asarray([value == "validation" for value in split])
-    if level == "path":
-        queries = np.unique(np.stack((owners, places), 1), axis=0)
-        if len(np.unique(np.stack((owners, places, held), 1), axis=0)) != len(queries):
-            raise ValueError("every point of one query must carry the same split")
+    stated = source.stated
+    tasks, found = source.asked(), source.aims()
+    kinds = tasks.column("kind").to_pylist()
+    strangers = sorted({str(kind) for kind in kinds if kind not in stated.tasks["kinds"]})
+    if strangers:
+        raise ValueError("tasks are of kinds the schema does not state: " + ", ".join(strangers))
+    owner = found.column("task").to_numpy().astype(np.int64)
+    graphs = tasks.column("graph").to_numpy().astype(np.int64)[owner]
+    timed = "time" in tasks.column_names
+    if timed and tasks.column("time").null_count:
+        raise ValueError("a task of the source states no time")
+    times = (
+        tasks.column("time").to_numpy().astype(np.int64)[owner] if timed else np.zeros(len(owner), np.int64)
+    )
+    keys = tasks.column("key").to_numpy().astype(np.int64)
+    grouping = tasks.column("period").to_numpy().astype(np.int64) if "period" in tasks.column_names else None
+    splits, weights = tasks.column("split").to_pylist(), tasks.column("weight").to_pylist()
+    known = found.column("known").to_pylist() if "known" in found.column_names else [None] * len(owner)
+    path = stated.aim() == "path"
     y = found.column("y").to_numpy().astype(np.float64)
-    train, validation = np.flatnonzero(~held), np.flatnonzero(held)
-    stored = y.astype(np.float32)
-    if not np.isfinite(stored).all():
+    if not np.isfinite(y.astype(np.float32)).all():
         raise ValueError("targets must be finite at float32 precision")
-    if len(train) < 2 or len(validation) < 2 or np.ptp(stored[train]) == 0 or np.ptp(stored[validation]) == 0:
-        raise ValueError("need at least two varying training targets and two varying validation targets")
-    rows = [dict(entry, y=value) for entry, value in zip(described, y.tolist())]
-    if level == "path":
-        standard = dict(
-            series=[
-                series_statistics(name, y, series_index == code, held)
-                for code, name in enumerate(names_of.tolist())
-            ]
+    rows, series = [], []
+    for place, task in enumerate(owner.tolist()):
+        kind = stated.tasks["kinds"][kinds[task]]
+        if kind["target"] is None:
+            raise ValueError(
+                "a task of the kind %s holds a target, which its kind does not state" % kinds[task]
+            )
+        if splits[task] is None:
+            raise ValueError("a task of graph %s holds a target and states no split" % names[graphs[place]])
+        entry = {
+            "graph": names[int(graphs[place])],
+            "kind": kinds[task],
+            stated.tasks["key"]: int(keys[task]),
+        }
+        if timed:
+            entry["time"] = int(times[place])
+        if grouping is not None:
+            entry[stated.tasks["grouping"]] = int(grouping[task])
+        if weights[task] is not None:
+            entry["weight"] = float(weights[task])
+        if known[place] is not None:
+            entry["known"] = int(known[place])
+        series.append(kind["target"]["series"][0])
+        rows.append(entry)
+    if path:
+        tau = found.column("tau").to_numpy(zero_copy_only=False).astype(np.float64)
+        if not np.isfinite(tau).all() or np.any(tau <= 0):
+            raise ValueError("path tau values must be finite and strictly positive")
+        series = found.column("series").to_pylist()
+        for place, (task, name) in enumerate(zip(owner.tolist(), series)):
+            if name not in stated.tasks["kinds"][kinds[task]]["target"]["series"]:
+                raise ValueError(
+                    "a point of a task of the kind %s names the series %r, which its kind does not state"
+                    % (kinds[task], name)
+                )
+        listed = list(stated.series())
+        order = np.lexsort((tau, [listed.index(name) for name in series], owner))
+        same = (
+            (np.diff(owner[order]) == 0)
+            & (np.diff(tau[order]) == 0)
+            & (np.asarray(series, object)[order][1:] == np.asarray(series, object)[order][:-1])
         )
-    else:
-        standard = dict(
-            series=[dict(name=target, mean=float(y[train].mean()), sd=float(y[train].std(ddof=1)))]
+        if same.any():
+            raise ValueError(
+                "graph %s has two points with one task, one series and one tau"
+                % names[int(graphs[order][np.flatnonzero(same)[0]])]
+            )
+        rows = [dict(entry, tau=value, series=name) for entry, value, name in zip(rows, tau.tolist(), series)]
+    elif len(np.unique(owner)) != len(owner):
+        raise ValueError("a task carries more than one target")
+    rows = [dict(entry, y=value) for entry, value in zip(rows, y.tolist())]
+    held = np.asarray([splits[task] for task in owner.tolist()], object)
+    found_splits = sorted({name for name in splits if name is not None})
+    strangers = [name for name in trained if name not in found_splits]
+    if strangers:
+        raise ValueError(
+            "the splits trained on name %s, and the source holds the splits %s"
+            % (", ".join(map(str, strangers)), ", ".join(found_splits))
         )
+    chosen = np.isin(held, list(trained))
+    statistics = []
+    for name in stated.series():
+        values = y[chosen & (np.asarray(series, object) == name)]
+        if len(values) < 2 or np.ptp(values.astype(np.float32)) == 0:
+            raise ValueError(
+                "the series %s needs at least two varying targets in the splits trained on" % name
+            )
+        statistics.append(dict(name=name, mean=float(values.mean()), sd=float(values.std(ddof=1))))
     result = dict(
         rows=rows,
-        split=dict(train_indices=train.tolist(), validation_indices=validation.tolist(), **standard),
+        split=dict(
+            indices={name: np.flatnonzero(held == name).tolist() for name in found_splits},
+            series=statistics,
+        ),
     )
     ids = found.column("id").to_numpy().astype(np.int64)
-    if level == "node":
-        order = np.argsort(owners, kind="stable")
-    boundaries = np.r_[0, np.flatnonzero(np.diff(owners[order])) + 1, len(order)]
-    groups = [
-        (
-            int(owners[order[lo]]),
-            places[order[lo:hi]],
+    order = np.argsort(graphs, kind="stable")
+    boundaries = np.r_[0, np.flatnonzero(np.diff(graphs[order])) + 1, len(order)][: len(order) + 1]
+    groups = {
+        int(graphs[order[lo]]): (
+            int(graphs[order[lo]]),
             ids[order[lo:hi]],
             order[lo:hi].astype(np.int64),
             times[order[lo:hi]],
         )
         for lo, hi in zip(boundaries[:-1], boundaries[1:])
-    ]
+        if hi > lo
+    }
+    empty = np.zeros(0, np.int64)
+    groups = [groups.get(index, (index, empty, empty, empty)) for index in names]
     LOG.info(
-        "supervision exit seconds=%.3f rows=%d train=%d validation=%d level=%s",
+        "supervision exit seconds=%.3f rows=%d splits=%s",
         time.perf_counter() - started,
         len(rows),
-        len(train),
-        len(validation),
-        level,
+        ",".join(found_splits),
     )
-    return result, groups
+    return result, groups, found_splits, single(stated, tasks)
 
 
-def attach(task_path, declared, categories, observers, target, output, level):
+def attach(task_path, declared, splits, observers, output, level):
     configure(level)
     release()
     source = open_source(task_path, read_json(task_path))
     try:
         WORKER.update(
-            reader=source.reader(target),
+            reader=source.reader(),
             registry=None if declared is None else Registry.from_declaration(declared),
-            categories=categories,
+            splits=splits,
             observers=observers,
             output=Path(output),
             finalizer=Finalize(None, source.close, exitpriority=10),
@@ -314,26 +295,24 @@ def release():
 
 
 def graph(job):
-    index, name, places, ids, rows = job
+    index, name, ids, rows = job
     started = time.perf_counter()
     registry = WORKER["registry"]
     tables = WORKER["reader"].graph(index)
-    if registry.extras["level"] == "node":
-        found = tables["targets"].column("id").to_numpy().astype(np.int64)
-        position = np.searchsorted(ids, found)
-        if len(found) != len(ids) or np.any(position >= len(ids)) or not np.array_equal(ids[position], found):
-            raise ValueError("graph %s reads different targets than its supervision" % name)
-        labels = rows[position]
-    elif registry.extras["level"] == "path":
-        labels = (places, rows)
-    else:
-        labels = np.full(tables["queries"].num_rows, -1, np.int64)
-        labels[places] = rows
-    truth = parse(registry, WORKER["categories"], WORKER["observers"], tables, labels, name)
-    validate(truth, registry)
+    found = tables["targets"].column("id").to_numpy().astype(np.int64)
+    position = np.searchsorted(ids, found)
+    if len(found) != len(ids) or np.any(position >= len(ids)) or not np.array_equal(ids[position], found):
+        raise ValueError("graph %s reads different targets than its supervision" % name)
+    truth = parse(registry, WORKER["splits"], WORKER["observers"], tables, rows[position], name)
+    shown = validate(truth, registry, WORKER["splits"])
     truth.save(WORKER["output"] / "truth" / ("graph_%04d" % index))
-    metrics = dict(index=index, name=name, **counts(truth), seconds=time.perf_counter() - started)
-    LOG.info("bank graph exit graph=%d seconds=%.3f", index, metrics["seconds"])
+    metrics = dict(
+        index=index,
+        name=name,
+        **counts(truth),
+        seconds=time.perf_counter() - started,
+    )
+    LOG.info("bank graph exit graph=%d views=%d seconds=%.3f", index, len(shown), metrics["seconds"])
     return metrics
 
 
@@ -343,8 +322,8 @@ def counts(truth):
         entities=len(truth.kinds),
         observations=len(truth.obs_since),
         facts=len(truth.fact_since),
-        tasks=len(truth.query_time),
-        labels=len(truth.label_time),
+        tasks=len(truth.task_time),
+        targets=len(truth.target_task),
     )
 
 
@@ -380,43 +359,38 @@ def build(task_path, output, workers, trained):
     if type(workers) is not int or workers < 1:
         raise ValueError("build workers must be a positive integer")
     trained = tuple(trained)
-    if not trained or not set(trained) <= set(SPLITS) or "validation" in trained:
+    if not trained or len(set(trained)) != len(trained):
         raise ValueError(
-            "the splits trained on are stated among %s and leave validation out, found %s"
-            % (", ".join(SPLITS), ", ".join(map(str, trained)))
+            "the splits trained on are stated as distinct names, found %s" % ", ".join(map(str, trained))
         )
     task, output = read_json(task_path), output_path(output)
     if output.exists():
         raise FileExistsError("bank exists; choose a new output")
     with closing(open_source(task_path, task)) as source:
-        level = vocabulary.target_level(source, task)
         graphs = source.graphs()
         names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
         if len(set(names.values())) != len(names):
             raise ValueError("graph names must be unique")
-        categories = source.categories() if source.queries else []
-        rows, groups = supervision(source, level, task["target"], names)
-        series = [entry["name"] for entry in rows["split"]["series"]] if level == "path" else []
+        rows, groups, splits, alone = supervision(source, trained, names)
         location = source.location
     until = seen_until(rows, groups, trained, names)
     try:
         found = parallel(
             scanned,
-            [(index, until[index]) for index, _, _, _, _ in groups],
+            [(index, until[index]) for index, _, _, _ in groups],
             workers,
             attach,
-            (str(task_path), None, categories, [], task["target"], str(output), LOG.getEffectiveLevel()),
+            (str(task_path), None, splits, [], str(output), LOG.getEffectiveLevel()),
         )
     finally:
         release()
     stated = Schema(task["schema"])
     encoding = fitted(stated, merged(stated, [entry[0] for entry in found]), related(stated, found))
     observers = sorted({name for entry in found for name in entry[2]})
-    with closing(open_source(task_path, task)) as source:
-        registry = vocabulary.registry(source, task, series, encoding)
+    registry = vocabulary.registry(task, encoding, alone)
     (output / "truth").mkdir(parents=True)
     write_json(output / "supervision.json", rows)
-    jobs = [(index, names[index], places, ids, members) for index, places, ids, members, _ in groups]
+    jobs = [(index, names[index], ids, members) for index, ids, members, _ in groups]
     try:
         metrics = parallel(
             graph,
@@ -426,9 +400,8 @@ def build(task_path, output, workers, trained):
             (
                 str(task_path),
                 registry.declaration(),
-                categories,
+                splits,
                 observers,
-                task["target"],
                 str(output),
                 LOG.getEffectiveLevel(),
             ),
@@ -439,28 +412,26 @@ def build(task_path, output, workers, trained):
         version=VERSION,
         database=location,
         task=task,
-        target=dict(table=task["target"], level=level),
         trained=list(trained),
         spec=registry.declaration(),
         spec_sha256=registry.fingerprint(),
-        categories=categories,
+        splits=splits,
         observers=observers,
         signals=registry.extras["signals"],
         graphs=metrics,
         distinct_entities=catalogue(output, metrics),
         rows=len(rows["rows"]),
-        train_rows=len(rows["split"]["train_indices"]),
-        validation_rows=len(rows["split"]["validation_indices"]),
+        split_rows={name: len(members) for name, members in rows["split"]["indices"].items()},
         supervision_sha256=sha256_file(output / "supervision.json"),
         seconds=time.perf_counter() - started,
     )
     write_json(output / "manifest.json", manifest)
     LOG.info(
-        "bank exit seconds=%.3f graphs=%d rows=%d level=%s",
+        "bank exit seconds=%.3f graphs=%d rows=%d target=%s",
         manifest["seconds"],
         len(metrics),
         manifest["rows"],
-        level,
+        registry.extras["target"],
     )
     return manifest
 

@@ -3,8 +3,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from support import VALUES, asked, stated
 from support import registry as registered
-from support import stated
 
 from graphspec import kernels, operators, spans, spec
 from graphspec.declarations import EdgeType
@@ -105,14 +105,13 @@ def test_configuration_rejects_unused_overrides():
 
 def test_graph_registry_rejects_duplicate_relations():
     edge = EdgeType("rel", ("base", "rel"), [("person", "person")])
-    extras = {"protected": [], "base": ["rel"], "level": "node"}
     with pytest.raises(ValueError, match="duplicate edge type name"):
-        registered("test", ["person"], [edge, EdgeType("rel", ("rewire",), [("person", "person")])], extras)
+        registered("test", ["person"], [edge, EdgeType("rel", ("rewire",), [("person", "person")])])
 
 
 def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
     relation = EdgeType("rel", ("base", "rel"), [("person", "person")])
-    registry = registered("test", ["person"], [relation], {"protected": [], "base": ["rel"], "level": "node"})
+    registry = registered("test", ["person"], [relation])
     steps = np.array([0, 1, 2, 3, 4, 5, 6, 7, 7, 8, 10, 11], np.int32)
     graph = SimpleNamespace(
         fact_step=steps,
@@ -144,12 +143,7 @@ def test_persistence_bounds_widen_only_the_three_named_relations():
         EdgeType("diffusion", ("diffusion",), [("person", "place")]),
         EdgeType("rewire", ("rewire",), [("person", "place")]),
     ]
-    registry = registered(
-        "test",
-        ["person", "place"],
-        edges,
-        {"protected": [], "base": ["beside", "visits"], "queries": [], "level": "node", "signals": 0},
-    )
+    registry = registered("test", ["person", "place"], edges)
     selected = {
         "edges/project:beside:sources:place:place/persistence",
         "edges/project:visits:sources:person:person/persistence",
@@ -171,27 +165,36 @@ def test_persistence_bounds_widen_only_the_three_named_relations():
             parameter.check(maximum + 1)
 
 
-def test_graph_tables_reject_unstated_columns_and_invalid_labels():
-    schema = stated(dict(client=["value"]), {})
+def test_graph_tables_reject_unstated_columns_and_invalid_tasks():
+    schema = stated(dict(client=["value"]), {}, VALUES, asked(["client"]))
     tables = GraphTables(0, "test", "step", schema).nodes("client", ["a", "b"])
     when = dict(since=0, until=None, seq=0)
     with pytest.raises(ValueError, match="states the columns value, found other"):
         tables.observe("client", ["a", "b"], when, other=[1, 1])
     with pytest.raises(ValueError, match="needs 2 values"):
         tables.observe("client", ["a", "b"], when, value=[1])
-    with pytest.raises(ValueError, match="one finite value"):
-        tables.labels("client", ["a", "b"], [0, np.nan], ["train", "validation"], moment=0, target="outcome")
+    holder, splits = dict(holder=("client", ["a", "b"])), ["train", "validation"]
+    with pytest.raises(ValueError, match="one finite target"):
+        tables.tasks("outcome", [1, 2], 0, holder, splits, [0, np.nan], [None, None], None, None)
     for call in (
         lambda: tables.observe("client", ["a", "b"], value=[1, 1]),
-        lambda: tables.labels("client", ["a", "b"], [0, 1], ["train", "validation"], moment=0),
-        lambda: tables.labels("client", ["a", "b"], [0, 1], ["train", "validation"], target="outcome"),
+        lambda: tables.tasks("outcome", [1, 2], 0, holder, splits, [0, 1], [None, None], None),
+        lambda: tables.tasks("outcome", [1, 2], 0, holder, splits),
     ):
-        with pytest.raises(TypeError, match="when|moment|target"):
+        with pytest.raises(TypeError, match="when|observers|targets"):
             call()
     with pytest.raises(ValueError, match="states when it holds as exactly since, until, seq"):
         tables.observe("client", ["a"], dict(since=0), value=[1])
-    with pytest.raises(ValueError, match="labels state their time as a whole number"):
-        tables.labels("client", ["a", "b"], [0, 1], ["train", "validation"], moment=0.5, target="outcome")
+    with pytest.raises(ValueError, match="tasks state their time as a whole number"):
+        tables.tasks("outcome", [1, 2], 0.5, holder, splits, [0, 1], [None, None], None, None)
+    with pytest.raises(ValueError, match="the schema states no kind of task named income"):
+        tables.tasks("income", [1, 2], 0, holder, splits, [0, 1], [None, None], None, None)
+    with pytest.raises(ValueError, match="tasks of the kind outcome state the references holder, found none"):
+        tables.tasks("outcome", [1, 2], 0, {}, splits, [0, 1], [None, None], None, None)
+    with pytest.raises(ValueError, match="tasks of the kind outcome state no weights"):
+        tables.tasks("outcome", [1, 2], 0, holder, splits, [0, 1], [None, None], [1.0, 2.0], None)
+    with pytest.raises(ValueError, match="tasks of the kind outcome state one of targets for every task"):
+        tables.tasks("outcome", [1, 2], 0, holder, splits, None, [None, None], None, None)
     with pytest.raises(ValueError, match="a graph states one of the units of time of its schema"):
         GraphTables(0, "test", "hour", schema)
 
@@ -204,8 +207,9 @@ def test_truth_shape_is_checked_before_compiled_audit(monkeypatch):
         obs_start=np.zeros(2, np.int32),
         fact_start=np.empty(0, np.int32),
         removal_step=np.empty(0, np.int32),
-        query_key=np.empty(0, np.int64),
-        label_step=np.empty(0, np.int32),
+        task_key=np.empty(0, np.int64),
+        member_task=np.empty(0, np.int32),
+        label_task=np.empty(0, np.int32),
         arrays={"obs_entity": np.zeros(1, np.int32)},
     )
 

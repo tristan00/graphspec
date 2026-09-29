@@ -10,27 +10,33 @@ from graphspec.infra.timing import timed
 
 from .clock import MODELS, STAMPS, TIES, UNITED
 from .names import Names
+from .references import ABSENT, SORTS
 
 LOG = logging.getLogger(__name__)
-VERSION = 2
+VERSION = 3
 EDGE = "edge_"
 OBSERVED = "observed_"
-QUERY = "query_"
+TASK = "task_"
+TARGET = "target"
+LINK = "target_of"
 FACTS = ("present",)
 STAMP = "INT64"
 SEQUENCE = dict(seq="INT32")
 WATCHERS = "STRING[]"
-TABLES = ("graph", "observation", "query")
-PREFIXES = (EDGE, OBSERVED, QUERY)
-LEVELS = ("node", "query", "graph", "path")
-FIELDS = ("version", "time", "observers", "columns", "graph", "nodes", "edges", "queries")
+TABLES = ("graph", "observation", "task", TARGET, LINK)
+PREFIXES = (EDGE, OBSERVED, TASK)
+TARGETS = ("number", "path")
+FIELDS = ("version", "time", "observers", "columns", "graph", "nodes", "edges", "tasks")
 TIMED = ("model", "units", "ties")
 DECLARED = "declared"
-ASKED = ("key", "grouping", "columns", "references", "signals")
-GIVEN = ("id", "graph", "time", "observer", "category", "signal", "signal_observed", "y", "tau", "series")
+ASKED = ("key", "grouping", "signals", "references", "kinds")
+REFERRED = ("sort", "kinds")
+KIND = ("references", "columns", "target", "weight", "absent", "event", "matures")
+AIMED = ("kind", "series")
+MATURED = ("reference", "column")
+GIVEN = ("id", "graph", "time", "observer", "kind", "split", "weight", "signal", "signal_observed")
 VALUE = "column:"
 ENDS = ("from", "to")
-REFERENCES = 3
 
 
 TYPES = Names("column type")
@@ -339,38 +345,7 @@ class Schema:
                 columns=columns,
                 column=None if relation == DECLARED else relation,
             )
-        self.queries = None
-        if held["queries"] is not None:
-            entry = fields(held["queries"], ASKED, "the queries")
-            references = entry["references"]
-            if not isinstance(references, dict) or len(references) != REFERENCES:
-                raise ValueError(
-                    "the queries state %d named references until tasks replace them, found %r"
-                    % (REFERENCES, references)
-                )
-            for name, kinds in references.items():
-                where = "the reference " + named(name, "a reference")
-                if not isinstance(kinds, list) or not kinds or not set(kinds) <= set(self.nodes):
-                    raise ValueError("%s names kinds of node that are stated" % where)
-            if type(entry["signals"]) is not int or entry["signals"] < 0:
-                raise ValueError("the queries state the width of their signals as a whole number")
-            for part in ("key", "grouping"):
-                if part == "grouping" and entry[part] is None:
-                    continue
-                if named(entry[part], "the %s of the queries" % part) in GIVEN:
-                    raise ValueError(
-                        "the %s of the queries collides with a column of the contract: %s"
-                        % (part, entry[part])
-                    )
-            if entry["key"] == entry["grouping"]:
-                raise ValueError("the key and the grouping of the queries are two columns")
-            self.queries = dict(
-                key=entry["key"],
-                grouping=entry["grouping"],
-                columns=listed(entry["columns"], self.columns, "the queries"),
-                references={name: tuple(kinds) for name, kinds in references.items()},
-                signals=entry["signals"],
-            )
+        self.tasks = self.asked(held["tasks"])
         LOG.debug(
             "schema exit kinds=%d edges=%d columns=%d seconds=%.4f",
             len(self.nodes),
@@ -378,6 +353,160 @@ class Schema:
             len(self.columns),
             time.perf_counter() - started,
         )
+
+    def asked(self, stated):
+        started = time.perf_counter()
+        entry = fields(stated, ASKED, "the tasks")
+        if type(entry["signals"]) is not int or entry["signals"] < 0:
+            raise ValueError("the tasks state the width of their signals as a whole number")
+        for part in ("key", "grouping"):
+            if part == "grouping" and entry[part] is None:
+                continue
+            if named(entry[part], "the %s of the tasks" % part) in GIVEN:
+                raise ValueError(
+                    "the %s of the tasks collides with a column of the contract: %s" % (part, entry[part])
+                )
+        if entry["key"] == entry["grouping"]:
+            raise ValueError("the key and the grouping of the tasks are two columns")
+        if not isinstance(entry["references"], dict):
+            raise ValueError("the references of the tasks are a mapping from name to sort and kinds of node")
+        references = {}
+        for name, found in entry["references"].items():
+            where = "the reference " + named(name, "a reference")
+            found = fields(found, REFERRED, where)
+            sort = SORTS.named(found["sort"])
+            kinds = found["kinds"]
+            if (
+                not isinstance(kinds, list)
+                or len(set(kinds)) != len(kinds)
+                or not set(kinds) <= set(self.nodes)
+            ):
+                raise ValueError("%s names kinds of node that are stated, each once" % where)
+            if bool(kinds) == sort.whole:
+                raise ValueError(
+                    "%s is of the sort %s and names %s"
+                    % (
+                        where,
+                        found["sort"],
+                        "kinds of node, which the sort does not hold" if kinds else "no kind of node",
+                    )
+                )
+            references[name] = dict(sort=found["sort"], kinds=tuple(kinds))
+        if not isinstance(entry["kinds"], dict) or not entry["kinds"]:
+            raise ValueError("the tasks state at least one kind of task")
+        kinds = {}
+        for kind, found in entry["kinds"].items():
+            where = "the kind of task " + named(kind, "a kind of task")
+            found = fields(found, KIND, where)
+            names = found["references"]
+            if not isinstance(names, list) or len(set(names)) != len(names):
+                raise ValueError("the references of %s are a list of distinct names" % where)
+            unstated = [name for name in names if name not in references]
+            if unstated:
+                raise ValueError(
+                    "%s names references not stated: %s" % (where, ", ".join(map(str, unstated)))
+                )
+            if type(found["weight"]) is not bool:
+                raise ValueError("%s states whether its tasks carry a weight as true or false" % where)
+            if found["absent"] not in ABSENT:
+                raise ValueError(
+                    "%s states what a reference to a node not observed resolves to as one of %s, found %r"
+                    % (where, ", ".join(ABSENT), found["absent"])
+                )
+            target = self.aimed(found["target"], where)
+            kinds[kind] = dict(
+                references=tuple(names),
+                columns=listed(found["columns"], self.columns, where),
+                target=target,
+                weight=found["weight"],
+                absent=found["absent"],
+                event=self.seen(found["event"], names, references, found["absent"], where),
+                matures=self.matured(found["matures"], target, names, references, where),
+            )
+        forms = {held["target"]["kind"] for held in kinds.values() if held["target"] is not None}
+        if len(forms) > 1:
+            raise ValueError(
+                "the kinds of task of one schema state targets of one kind, found %s"
+                % ", ".join(sorted(forms))
+            )
+        result = dict(
+            key=entry["key"],
+            grouping=entry["grouping"],
+            signals=entry["signals"],
+            references=references,
+            kinds=kinds,
+        )
+        LOG.debug(
+            "schema asked exit kinds=%d references=%d seconds=%.4f",
+            len(kinds),
+            len(references),
+            time.perf_counter() - started,
+        )
+        return result
+
+    @timed("schema.aimed")
+    def aimed(self, stated, where):
+        if stated is None:
+            return None
+        stated = fields(stated, AIMED, "the target of " + where)
+        if stated["kind"] not in TARGETS:
+            raise ValueError(
+                "the target of %s is one of %s, found %r" % (where, ", ".join(TARGETS), stated["kind"])
+            )
+        series = [stated["series"]] if stated["kind"] == "number" else stated["series"]
+        if (
+            not isinstance(series, list)
+            or not series
+            or len(set(series)) != len(series)
+            or any(type(name) is not str or not name or ":" in name for name in series)
+        ):
+            raise ValueError(
+                "the target of %s names %s, found %r"
+                % (
+                    where,
+                    "its series" if stated["kind"] == "number" else "its series as a list of distinct names",
+                    stated["series"],
+                )
+            )
+        return dict(kind=stated["kind"], series=tuple(series))
+
+    @timed("schema.seen")
+    def seen(self, stated, names, references, absent, where):
+        if stated is None:
+            return None
+        if (
+            not isinstance(stated, list)
+            or len(stated) != 2
+            or any(name not in names or references[name]["sort"] != "node" for name in stated)
+        ):
+            raise ValueError(
+                "%s is seen by later tasks as an event between two of its references of the sort node, "
+                "found %r" % (where, stated)
+            )
+        if absent != "stop":
+            raise ValueError("%s is seen as an event, and its references are observed at its time" % where)
+        return tuple(stated)
+
+    @timed("schema.matured")
+    def matured(self, stated, target, names, references, where):
+        if stated is None:
+            return None
+        stated = fields(stated, MATURED, "what matures of " + where)
+        if target is None or target["kind"] != "number":
+            raise ValueError("%s states what matures, and only a target that is a number matures" % where)
+        name, column = stated["reference"], stated["column"]
+        if name not in names or references[name]["sort"] != "node":
+            raise ValueError(
+                "what matures of %s is a value of one of its references of the sort node, found %r"
+                % (where, name)
+            )
+        lacking = [kind for kind in references[name]["kinds"] if column not in self.nodes[kind]]
+        if lacking or column not in self.columns or not self.kind(column).ordered:
+            raise ValueError(
+                "what matures of %s is a column of numbers of every kind of node of the reference %s, "
+                "found %r" % (where, name, column)
+            )
+        return dict(reference=name, column=column)
 
     def mapping(self):
         started = time.perf_counter()
@@ -397,14 +526,33 @@ class Schema:
                 )
                 for table, entry in self.edges.items()
             },
-            queries=None
-            if self.queries is None
-            else dict(
-                key=self.queries["key"],
-                grouping=self.queries["grouping"],
-                columns=list(self.queries["columns"]),
-                references={name: list(kinds) for name, kinds in self.queries["references"].items()},
-                signals=self.queries["signals"],
+            tasks=dict(
+                key=self.tasks["key"],
+                grouping=self.tasks["grouping"],
+                signals=self.tasks["signals"],
+                references={
+                    name: dict(sort=entry["sort"], kinds=list(entry["kinds"]))
+                    for name, entry in self.tasks["references"].items()
+                },
+                kinds={
+                    kind: dict(
+                        references=list(entry["references"]),
+                        columns=list(entry["columns"]),
+                        target=None
+                        if entry["target"] is None
+                        else dict(
+                            kind=entry["target"]["kind"],
+                            series=entry["target"]["series"][0]
+                            if entry["target"]["kind"] == "number"
+                            else list(entry["target"]["series"]),
+                        ),
+                        weight=entry["weight"],
+                        absent=entry["absent"],
+                        event=None if entry["event"] is None else list(entry["event"]),
+                        matures=None if entry["matures"] is None else dict(entry["matures"]),
+                    )
+                    for kind, entry in self.tasks["kinds"].items()
+                },
             ),
         )
         LOG.debug("schema mapping exit seconds=%.4f", time.perf_counter() - started)
@@ -423,8 +571,42 @@ class Schema:
         return held
 
     def layout(self):
-        groups = list(self.nodes.values()) + ([] if self.queries is None else [self.queries["columns"]])
+        groups = list(self.nodes.values()) + [self.asked_columns()]
         return tuple(dict.fromkeys(name for columns in groups for name in columns))
+
+    @timed("schema.asked_columns")
+    def asked_columns(self):
+        return tuple(
+            dict.fromkeys(name for entry in self.tasks["kinds"].values() for name in entry["columns"])
+        )
+
+    @timed("schema.series")
+    def series(self):
+        return tuple(
+            dict.fromkeys(
+                name
+                for entry in self.tasks["kinds"].values()
+                if entry["target"] is not None
+                for name in entry["target"]["series"]
+            )
+        )
+
+    @timed("schema.aim")
+    def aim(self):
+        forms = {
+            entry["target"]["kind"] for entry in self.tasks["kinds"].values() if entry["target"] is not None
+        }
+        if not forms:
+            raise ValueError("no kind of task of the schema states a target")
+        return next(iter(forms))
+
+    @timed("schema.events")
+    def events(self):
+        return tuple(kind for kind, entry in self.tasks["kinds"].items() if entry["event"] is not None)
+
+    @timed("schema.aimed_kinds")
+    def aimed_kinds(self):
+        return tuple(kind for kind, entry in self.tasks["kinds"].items() if entry["target"] is not None)
 
     def kind(self, name):
         return TYPES.named(self.columns[name]["type"])
@@ -455,23 +637,36 @@ class Schema:
             result[EDGE + table] = dict(
                 kind="REL", required=required, columns=entry["columns"], pairs=entry["endpoints"]
             )
-        if self.queries is not None:
-            required = dict(keys, category="STRING")
-            if self.model != "none":
-                required["time"] = STAMP
-            if self.observers:
-                required["observer"] = "STRING"
-            if self.queries["grouping"] is not None:
-                required[self.queries["grouping"]] = "INT32"
-            required[self.queries["key"]] = "INT64"
-            if self.queries["signals"]:
-                vector = "FLOAT[%d]" % self.queries["signals"]
-                required.update(signal=vector, signal_observed=vector)
-            result["query"] = dict(kind="NODE", required=required, columns=self.queries["columns"])
-            for name, kinds in self.queries["references"].items():
-                result[QUERY + name] = dict(
-                    kind="REL", required={}, columns=(), pairs=tuple(("query", kind) for kind in kinds)
+        asked = self.tasks
+        required = dict(keys, kind="STRING")
+        if self.model != "none":
+            required["time"] = STAMP
+        if self.observers:
+            required["observer"] = "STRING"
+        required.update(split="STRING", weight="FLOAT")
+        if asked["grouping"] is not None:
+            required[asked["grouping"]] = "INT32"
+        required[asked["key"]] = "INT64"
+        if asked["signals"]:
+            vector = "FLOAT[%d]" % asked["signals"]
+            required.update(signal=vector, signal_observed=vector)
+        result["task"] = dict(kind="NODE", required=required, columns=self.asked_columns())
+        for name, entry in asked["references"].items():
+            stored = SORTS.named(entry["sort"]).columns()
+            if stored is not None:
+                result[TASK + name] = dict(
+                    kind="REL",
+                    required=stored,
+                    columns=(),
+                    pairs=tuple(("task", kind) for kind in entry["kinds"]),
                 )
+        required = dict(id="INT64", y="DOUBLE")
+        if self.model != "none":
+            required["known"] = STAMP
+        if self.aim() == "path":
+            required.update(tau="FLOAT", series="STRING")
+        result[TARGET] = dict(kind="NODE", required=required, columns=())
+        result[LINK] = dict(kind="REL", required={}, columns=(), pairs=((TARGET, "task"),))
         LOG.debug("schema tables exit tables=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result
 
@@ -569,25 +764,41 @@ class Schema:
                     wide(entry["columns"]),
                 )
             )
-        if self.queries is None:
-            lines.append("queries: none")
-        else:
+        asked = self.tasks
+        lines.append(
+            "tasks: keyed by %s, %s, signals of width %d"
+            % (
+                asked["key"],
+                "not grouped" if asked["grouping"] is None else "grouped by " + asked["grouping"],
+                asked["signals"],
+            )
+        )
+        lines += [
+            "  reference %s: %s%s"
+            % (name, entry["sort"], " of " + ", ".join(entry["kinds"]) if entry["kinds"] else "")
+            for name, entry in asked["references"].items()
+        ]
+        for kind, entry in asked["kinds"].items():
             lines.append(
-                "queries: keyed by %s, %s, %s%s, signals of width %d"
+                "  kind %s: references %s; %s%s; target %s; %s; absent %s; %s; %s"
                 % (
-                    self.queries["key"],
-                    "not grouped"
-                    if self.queries["grouping"] is None
-                    else "grouped by " + self.queries["grouping"],
-                    described(self.queries["columns"]),
-                    wide(self.queries["columns"]),
-                    self.queries["signals"],
+                    kind,
+                    ", ".join(entry["references"]) or "none",
+                    described(entry["columns"]),
+                    wide(entry["columns"]),
+                    "none"
+                    if entry["target"] is None
+                    else "%s of %s" % (entry["target"]["kind"], ", ".join(entry["target"]["series"])),
+                    "weighted" if entry["weight"] else "not weighted",
+                    entry["absent"],
+                    "not seen as an event"
+                    if entry["event"] is None
+                    else "seen as an event between %s and %s" % entry["event"],
+                    "nothing matures"
+                    if entry["matures"] is None
+                    else "matures as %s of %s" % (entry["matures"]["column"], entry["matures"]["reference"]),
                 )
             )
-            lines += [
-                "  reference %s: %s" % (name, ", ".join(kinds))
-                for name, kinds in self.queries["references"].items()
-            ]
         if encoding is not None:
             lines.append("relations:")
             lines += [
@@ -679,38 +890,3 @@ def fitted(schema, gathered, relations):
         time.perf_counter() - started,
     )
     return result
-
-
-class Tables:
-    def destinations(self, table):
-        return tuple(dict.fromkeys(target for _, target in self.pairs(table)))
-
-    def target(self, name):
-        started = time.perf_counter()
-        if self.kinds.get(name) != "NODE" or self.kinds.get(name + "_of") != "REL":
-            raise ValueError("graph source requires target table %s with a %s_of relationship" % (name, name))
-        if any(source != name for source, _ in self.pairs(name + "_of")):
-            raise ValueError("%s_of relationships must start at %s" % (name, name))
-        destinations = set(self.destinations(name + "_of"))
-        typed = self.columns(name)
-        LOG.debug("target exit table=%s seconds=%.4f", name, time.perf_counter() - started)
-        if destinations == {"query"}:
-            if "tau" not in typed:
-                return "query"
-            if typed["tau"] not in ("FLOAT", "DOUBLE"):
-                raise ValueError("%s.tau must be a FLOAT or DOUBLE column, found %s" % (name, typed["tau"]))
-            if "series" not in typed or typed["series"] != "STRING":
-                raise ValueError("%s is a path target and requires a series STRING column" % name)
-            return "path"
-        if "tau" in typed or "series" in typed:
-            raise ValueError("%s carries tau or series columns, which only path targets may have" % name)
-        if destinations == {"graph"}:
-            return "graph"
-        if not destinations or not destinations <= set(self.nodes):
-            raise ValueError("%s_of must point to query, graph, or observed node types" % name)
-        timed = self.stated.model != "none"
-        if timed and typed.get("time") != STAMP:
-            raise ValueError("%s labels node types and requires a time %s column" % (name, STAMP))
-        if not timed and "time" in typed:
-            raise ValueError("%s states a time and the graphs of the schema have none" % name)
-        return "node"

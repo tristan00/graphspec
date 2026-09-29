@@ -56,15 +56,11 @@ def joined(graphs, registry, spec):
         raise ValueError("joining requires at least one graph")
     maps, kinds, tokens, connected = unify(graphs, registry, spec)
     step_offsets = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
+    task_offsets = np.r_[0, np.cumsum([len(graph.task_key) for graph in graphs])]
     period_offsets = np.r_[0, np.cumsum([int(graph.period.max(initial=-1)) + 1 for graph in graphs])]
-    entities = {
-        "obs_entity",
-        "fact_source",
-        "fact_target",
-        "query_references",
-        "label_entity",
-    }
-    moments = {"obs_step", "fact_step", "label_step"}
+    entities = {"obs_entity", "fact_source", "fact_target", "member_source", "member_target"}
+    moments = {"obs_step", "fact_step", "task_step"}
+    tasks = {"member_task", "label_task"}
     references = dict(obs_ref="x_table", fact_ref="value_table")
     tables = {
         table: np.r_[0, np.cumsum([len(graph.arrays[table]) for graph in graphs])]
@@ -90,6 +86,8 @@ def joined(graphs, registry, spec):
                     part = np.where(part >= 0, table[np.maximum(part, 0)], -1)
                 elif name in moments:
                     part = part + step_offset
+                elif name in tasks:
+                    part = part + task_offsets[member]
                 elif name == "period":
                     part = part + period_offset
                 elif name in references:
@@ -117,13 +115,14 @@ def joined(graphs, registry, spec):
     return result
 
 
-def layout(graphs, level):
+def layout(graphs):
+    started = time.perf_counter()
     offsets = np.r_[0, np.cumsum([steps for steps, _, _ in graphs])]
-    if level in ("node", "path"):
-        rows = np.concatenate([row_index for _, row_index, _ in graphs])
-        steps = np.concatenate(
-            [(row_steps + offset).astype(np.int32) for (_, _, row_steps), offset in zip(graphs, offsets)]
-        )
-        return rows, steps
     rows = np.concatenate([row_index for _, row_index, _ in graphs])
-    return rows, np.arange(int(offsets[-1]), dtype=np.int32)
+    steps = np.concatenate(
+        [(row_steps + offset).astype(np.int32) for (_, _, row_steps), offset in zip(graphs, offsets)]
+    )
+    LOG.debug(
+        "layout exit graphs=%d rows=%d seconds=%.4f", len(graphs), len(rows), time.perf_counter() - started
+    )
+    return rows, steps

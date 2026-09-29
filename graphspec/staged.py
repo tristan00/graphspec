@@ -10,7 +10,8 @@ from graphspec.infra.files import sha256_json
 from graphspec.infra.runtime import cache_path
 from graphspec.infra.staging import manifest
 
-from .schema import EDGE, FACTS, OBSERVED, QUERY, VALUE, Tables
+from .references import SORTS
+from .schema import EDGE, FACTS, LINK, OBSERVED, TARGET, TASK, VALUE
 
 LOG = logging.getLogger(__name__)
 IDS = 32
@@ -99,7 +100,7 @@ class Unit:
         return self.rows_between(int(self.bounds[graph]), int(self.bounds[graph + 1]), columns)
 
 
-class Staged(Tables):
+class Staged:
     def __init__(self, directory, stated):
         started = time.perf_counter()
         self.directory, self.stated = Path(directory), stated
@@ -121,8 +122,6 @@ class Staged(Tables):
             table: "NODE" if units[0].source is None else "REL" for table, units in self.by_table.items()
         }
         self.nodes = tuple(stated.nodes)
-        self.queries = stated.queries is not None
-        self.signals = stated.queries["signals"] if self.queries else 0
         stated.conform(self)
         self.entity_of, self.graph_of, self.ids, self.dense, self.based = {}, {}, {}, set(), set()
         self.location = str(self.directory)
@@ -208,10 +207,10 @@ class Staged(Tables):
         count = len(graphs)
         graph_unit.bounds = np.arange(count + 1)
         self.graph_of["graph"] = graphs
-        for table in list(self.nodes) + (["query"] if self.queries else []):
+        for table in list(self.nodes) + ["task"]:
             (unit,) = self.by_table[table]
             self.graph_of[table] = numbers(unit.read(columns=["graph"]), "graph")
-            if table != "query":
+            if table != "task":
                 self.entity_of[table] = numbers(unit.read(columns=["entity"]), "entity")
             unit.bounds = self.bounds_of(self.graph_of[table], count, table)
             self.classify(table, unit)
@@ -292,8 +291,8 @@ class Staged(Tables):
             raise ValueError("rows of %s are not grouped by graph in order" % table)
         return np.searchsorted(graph, np.arange(count + 1))
 
-    def reader(self, target):
-        return Reader(self, target)
+    def reader(self):
+        return Reader(self)
 
     def close(self):
         for unit in self.units:
@@ -304,77 +303,34 @@ class Staged(Tables):
         (unit,) = self.by_table["graph"]
         return unit.read(columns=["id", "name"])
 
-    def categories(self):
-        (unit,) = self.by_table["query"]
-        return sorted(set(unit.column("category").to_pylist()))
-
-    def query_index(self):
-        (unit,) = self.by_table["query"]
+    def asked(self):
+        (unit,) = self.by_table["task"]
         started = time.perf_counter()
-        asked, names = self.stated.queries, dict(id="id", graph="graph")
+        stated, names = self.stated.tasks, dict(id="id", graph="graph", kind="kind", split="split")
+        names["weight"] = "weight"
         if self.stated.model != "none":
             names["time"] = "time"
-        if asked["grouping"] is not None:
-            names[asked["grouping"]] = "period"
-        names[asked["key"]] = "key"
+        if self.stated.observers:
+            names["observer"] = "observer"
+        if stated["grouping"] is not None:
+            names[stated["grouping"]] = "period"
+        names[stated["key"]] = "key"
         result = unit.read(columns=list(names)).rename_columns(list(names.values()))
-        LOG.debug("query index exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+        LOG.debug("asked exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
         return result
 
-    def targets(self, level, target):
-        (unit,) = self.by_table[target]
+    def aims(self):
+        started = time.perf_counter()
+        (unit,) = self.by_table[TARGET]
         table = unit.read()
-        rows, kinds, destinations = [], [], []
-        for link in self.by_table[target + "_of"]:
-            source, destination = self.endpoints(link)
-            rows.append(source)
-            destinations.append(destination)
-            kinds.append(
-                np.full(
-                    len(source), self.nodes.index(link.target) if link.target in self.nodes else -1, np.int64
-                )
-            )
-        rows, kinds, destinations = (np.concatenate(values) for values in (rows, kinds, destinations))
+        (link,) = self.by_table[LINK]
+        rows, tasks = self.endpoints(link)
         order = np.argsort(rows, kind="stable")
-        rows, kinds, destinations = rows[order], kinds[order], destinations[order]
-        if not np.array_equal(rows, np.arange(table.num_rows)):
-            raise ValueError("every %s row needs exactly one %s_of link" % (target, target))
-        columns = dict(id=table.column("id"), y=table.column("y"), split=table.column("split"))
-        if level in ("query", "path"):
-            (asked,) = self.by_table["query"]
-            columns.update(
-                graph=pa.array(self.graphs_of("query")[destinations], pa.int32()),
-                query=pa.array(numbers(asked.read(columns=["id"]), "id")[destinations], pa.int64()),
-            )
-            if level == "path":
-                columns.update(tau=table.column("tau"), series=table.column("series"))
-        elif level == "graph":
-            columns.update(graph=pa.array(destinations, pa.int32()))
-        else:
-            keys = {
-                kind: self.by_table[self.nodes[kind]][0].column("key").to_pylist()
-                for kind in np.unique(kinds).tolist()
-            }
-            if self.stated.model != "none":
-                columns.update(time=table.column("time"))
-            columns.update(
-                graph=pa.array(
-                    [
-                        int(self.graphs_of(self.nodes[k])[d])
-                        for k, d in zip(kinds.tolist(), destinations.tolist())
-                    ],
-                    pa.int32(),
-                ),
-                entity=pa.array(
-                    [
-                        int(self.entity_of[self.nodes[k]][d])
-                        for k, d in zip(kinds.tolist(), destinations.tolist())
-                    ],
-                    pa.int32(),
-                ),
-                node=pa.array([keys[k][d] for k, d in zip(kinds.tolist(), destinations.tolist())]),
-            )
-        return pa.table(columns)
+        if not np.array_equal(rows[order], np.arange(table.num_rows)):
+            raise ValueError("every target belongs to exactly one task")
+        result = table.append_column("task", pa.array(tasks[order], pa.int64()))
+        LOG.debug("aims exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+        return result
 
 
 def valued(rows, names):
@@ -382,8 +338,8 @@ def valued(rows, names):
 
 
 class Reader:
-    def __init__(self, source, target):
-        self.source, self.level, self.target_name = source, source.target(target), target
+    def __init__(self, source):
+        self.source = source
 
     def graph(self, index):
         started = time.perf_counter()
@@ -422,15 +378,16 @@ class Reader:
         named = dict(name=described.column("name"))
         if "unit" in described.column_names:
             named["unit"] = described.column("unit")
+        nodes = pa.concat_tables(parts)
         tables = dict(
             graph=pa.table(dict(named, **valued(described, stated.graph))),
-            nodes=pa.concat_tables(parts),
+            nodes=nodes,
             observations=observations,
             edges={table: self.edges(index, table) for table in stated.edges},
+            tasks=self.tasks(index),
+            references=self.references(index, nodes),
+            targets=self.targets(index),
         )
-        if source.queries:
-            tables["queries"] = self.queries(index)
-        tables["targets"] = self.targets(index)
         LOG.info(
             "read graph exit graph=%d seconds=%.3f observations=%d",
             index,
@@ -466,69 +423,91 @@ class Reader:
             parts.append(pa.table(columns))
         return pa.concat_tables(parts)
 
-    def queries(self, index):
-        source, stated = self.source, self.source.stated.queries
-        (query,) = source.by_table["query"]
-        rows = query.graph_rows(index)
-        start = int(query.bounds[index])
-        references = []
-        for name in stated["references"]:
-            found = np.full(rows.num_rows, -1, np.int64)
-            for unit in source.by_table[QUERY + name]:
-                links = unit.graph_rows(index)
-                positions = source.positions("query", numbers(links, "from")) - start
-                unique_positions(positions, found, QUERY + name)
-                found[positions] = source.entity_of[unit.target][
-                    source.positions(unit.target, numbers(links, "to"))
-                ]
-            if (found < 0).any():
-                raise ValueError("graph %d has queries without the reference %s" % (index, name))
-            references.append(found)
-        timed = source.stated.model != "none"
-        if timed and rows.column("time").null_count:
-            raise ValueError("graph %d has a task that states no time" % index)
-        order = np.argsort(numbers(rows, "time"), kind="stable") if timed else np.arange(rows.num_rows)
-        rows = rows.take(pa.array(order))
-        columns = dict(id=rows.column("id"), key=rows.column(stated["key"]), category=rows.column("category"))
-        if timed:
+    def tasks(self, index):
+        started = time.perf_counter()
+        source, stated = self.source, self.source.stated.tasks
+        (task,) = source.by_table["task"]
+        rows = task.graph_rows(index)
+        columns = dict(
+            id=rows.column("id"),
+            key=rows.column(stated["key"]),
+            kind=rows.column("kind"),
+            split=rows.column("split"),
+            weight=rows.column("weight"),
+        )
+        if source.stated.model != "none":
             columns["time"] = rows.column("time")
         if source.stated.observers:
             columns["observer"] = rows.column("observer")
         if stated["grouping"] is not None:
             columns["period"] = rows.column(stated["grouping"])
-        columns["references"] = pa.FixedSizeListArray.from_arrays(
-            pa.array(np.stack(references, 1)[order].reshape(-1), pa.int32()), len(references)
-        )
-        columns.update(valued(rows, stated["columns"]))
-        if source.signals:
+        columns.update(valued(rows, source.stated.asked_columns()))
+        if stated["signals"]:
             columns.update(signal=rows.column("signal"), signal_observed=rows.column("signal_observed"))
+        LOG.debug("read tasks exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
         return pa.table(columns)
 
+    def references(self, index, nodes):
+        started = time.perf_counter()
+        source, stated = self.source, self.source.stated.tasks
+        (task,) = source.by_table["task"]
+        start = int(task.bounds[index])
+        found = {}
+        for entity, key, kind in zip(*(nodes.column(name).to_pylist() for name in ("entity", "key", "kind"))):
+            found[(kind, key)] = entity
+        result = {}
+        for name, entry in stated["references"].items():
+            stored = SORTS.named(entry["sort"]).columns()
+            if stored is None:
+                continue
+            parts = []
+            for unit in source.by_table[TASK + name]:
+                links = unit.graph_rows(index)
+                columns = dict(
+                    task=pa.array(source.positions("task", numbers(links, "from")) - start, pa.int64()),
+                    source=pa.array(
+                        source.entity_of[unit.target][source.positions(unit.target, numbers(links, "to"))],
+                        pa.int32(),
+                    ),
+                )
+                if "relation" in stored:
+                    ends = list(zip(links.column("to_kind").to_pylist(), links.column("to_key").to_pylist()))
+                    strangers = sorted({end for end in ends if end[0] is not None and end not in found})
+                    if strangers:
+                        raise ValueError(
+                            "the reference %s of graph %d names nodes the graph does not hold: %s"
+                            % (name, index, ", ".join("%s %s" % end for end in strangers))
+                        )
+                    columns["relation"] = links.column("relation")
+                    columns["target"] = pa.array(
+                        [None if end[0] is None else found[end] for end in ends], pa.int32()
+                    )
+                if "place" in stored:
+                    columns["place"] = links.column("place")
+                parts.append(pa.table(columns))
+            result[name] = pa.concat_tables(parts)
+        LOG.debug(
+            "read references exit graph=%d references=%d seconds=%.4f",
+            index,
+            len(result),
+            time.perf_counter() - started,
+        )
+        return result
+
     def targets(self, index):
+        started = time.perf_counter()
         source = self.source
-        (unit,) = source.by_table[self.target_name]
+        (unit,) = source.by_table[TARGET]
+        (task,) = source.by_table["task"]
         rows = unit.graph_rows(index)
         start = int(unit.bounds[index])
-        kinds, destinations = np.full(rows.num_rows, -1, np.int64), np.full(rows.num_rows, -1, np.int64)
-        for link in source.by_table[self.target_name + "_of"]:
-            found = link.graph_rows(index)
-            position = source.positions(self.target_name, numbers(found, "from")) - start
-            unique_positions(position, destinations, self.target_name + "_of")
-            kinds[position] = source.nodes.index(link.target) if link.target in source.nodes else -1
-            destinations[position] = source.positions(link.target, numbers(found, "to"))
-        if (destinations < 0).any():
-            raise ValueError("graph %d has %s rows without a link" % (index, self.target_name))
-        columns = dict(id=rows.column("id"), y=rows.column("y"), split=rows.column("split"))
-        if self.level == "path":
-            columns["tau"] = rows.column("tau")
-        elif self.level == "node":
-            if source.stated.model != "none":
-                columns["time"] = rows.column("time")
-            columns["entity"] = pa.array(
-                [
-                    int(source.entity_of[source.nodes[k]][d])
-                    for k, d in zip(kinds.tolist(), destinations.tolist())
-                ],
-                pa.int32(),
-            )
-        return pa.table(columns)
+        owners = np.full(rows.num_rows, -1, np.int64)
+        (link,) = source.by_table[LINK]
+        found = link.graph_rows(index)
+        position = source.positions(TARGET, numbers(found, "from")) - start
+        unique_positions(position, owners, LINK)
+        owners[position] = source.positions("task", numbers(found, "to")) - int(task.bounds[index])
+        if (owners < 0).any():
+            raise ValueError("graph %d has targets that belong to no task" % index)
+        LOG.debug("read targets exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
+        return rows.append_column("task", pa.array(owners, pa.int64()))

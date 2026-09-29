@@ -1,6 +1,6 @@
 **Building a graph without a database**
 
-`graphspec.Stage` is the public Parquet writer. It writes the table manifest and shards; users do not need to reproduce file naming or internal identifiers. `graphspec.GraphTables` constructs contract tables from a schema and named nodes, observations, edges, and node labels. Temporal query tables are written through the same `Stage` interface.
+`graphspec.Stage` is the public Parquet writer. It writes the table manifest and shards; users do not need to reproduce file naming or internal identifiers. `graphspec.GraphTables` constructs contract tables from a schema and named nodes, observations, edges and tasks whose references are one node each or the graph. Other tables of tasks are written through the same `Stage` interface.
 
 Set an absolute `GRAPHSPEC_HOME` before launching the Python process. For example, an external Windows environment can run a saved loader with:
 
@@ -20,7 +20,7 @@ workspace = runtime / "datasets" / "example"
 staging = workspace / "example.staging"
 schema = Schema(
     dict(
-        version=2,
+        version=3,
         time=dict(model="clock", units=["day"], ties="key"),
         observers=False,
         columns=dict(
@@ -33,7 +33,23 @@ schema = Schema(
         edges=dict(
             assigned=dict(endpoints=[["client", "branch"]], directed=True, columns=[], relation="declared")
         ),
-        queries=None,
+        tasks=dict(
+            key="number",
+            grouping=None,
+            signals=0,
+            references=dict(holder=dict(sort="node", kinds=["client"])),
+            kinds=dict(
+                outcome=dict(
+                    references=["holder"],
+                    columns=[],
+                    target=dict(kind="number", series="outcome"),
+                    weight=False,
+                    absent="stop",
+                    event=None,
+                    matures=None,
+                )
+            ),
+        ),
     )
 )
 graph = GraphTables(index=0, name="customers", unit="day", schema=schema)
@@ -43,14 +59,24 @@ graph.nodes("branch", ["north"])
 graph.observe("client", ["a", "b", "c", "d"], always, balance=[1.0, 2.5, None, 4.0], tier=["low", "high", "low", None])
 graph.observe("branch", ["north"], always, open=[True])
 graph.edges("assigned", "client", "branch", ["a", "b", "c", "d"], ["north"] * 4, always, present=True)
-graph.labels("client", ["a", "b", "c", "d"], [0, 1, 0, 1], ["train", "train", "validation", "validation"], moment=0, target="outcome")
+graph.tasks(
+    "outcome",
+    [1, 2, 3, 4],
+    0,
+    dict(holder=("client", ["a", "b", "c", "d"])),
+    ["train", "train", "validation", "validation"],
+    [0, 1, 0, 1],
+    [None, None, None, None],
+    None,
+    None,
+)
 with Stage(staging) as stage:
     graph.write(stage)
-task = write_task(workspace / "example.task.json", "example", staging, "outcome", schema)
+task = write_task(workspace / "example.task.json", "example", staging, schema)
 build_bank(task, runtime / "banks" / "example", workers=1, trained=("train",))
 ```
 
-The schema states every kind of node, every edge table and every column with its type and encoder; [the contract](contract.md) describes it. Each kind has its own columns, and `None` states a missing value. Integer identifiers in raw tables are managed by `GraphTables`; readable keys are strings. Nodes must be declared before referencing them. A graph states its unit of time, one of those of the schema, or `None` where the schema has no clock. Each `observe` and `edges` call states when its facts hold as a mapping of exactly the columns of time the schema states, each one value for every row or a list with one value per row; a missing `until` states no end. `labels` states the time of its labels as `moment`. Rows stated in a shorthand form are reduced to such facts by `graphspec.forms.reduced`. Facts and views follow the [contract's rules of time](contract.md). The values of edges are keyword lists named as the columns of their edge table; an edge table that takes its relations from a column is given them as `relation`.
+The schema states every kind of node, every edge table and every column with its type and encoder; [the contract](contract.md) describes it. Each kind has its own columns, and `None` states a missing value. Integer identifiers in raw tables are managed by `GraphTables`; readable keys are strings. Nodes must be declared before referencing them. A graph states its unit of time, one of those of the schema, or `None` where the schema has no clock. Each `observe` and `edges` call states when its facts hold as a mapping of exactly the columns of time the schema states, each one value for every row or a list with one value per row; a missing `until` states no end. `tasks` states, in this order, the kind of its tasks, their keys, their time, under each reference of the kind the kind of node and the keys it names, their splits, their targets, the times from which the targets are known, their weights and their observers, each of the last four as a list or as `None` where the kind or the schema states none. Rows stated in a shorthand form are reduced to such facts by `graphspec.forms.reduced`. Facts and views follow the [contract's rules of time](contract.md). The values of edges are keyword lists named as the columns of their edge table; an edge table that takes its relations from a column is given them as `relation`.
 
 Use the public configuration builder for one model fit on a bank:
 
@@ -67,6 +93,9 @@ statement = dict(
     workers=1,
     variant_cache_bytes=1 << 30,
     batch_sequences=64,
+    trained=["train"],
+    scored=["validation"],
+    sees=dict(train=[], validation=[]),
 )
 config = configuration(
     bank,
@@ -74,15 +103,16 @@ config = configuration(
     graph={"time/history": 1},
     training={"epochs": 1},
     seed=statement["seed"],
+    splits={name: statement[name] for name in ("trained", "scored", "sees")},
 )
 result = fit(bank, config, runtime / "runs" / "example-fit", statement)
 ```
 
-Put multiprocessing workflows inside a `main` function called under `if __name__ == "__main__":` when saving them as Python scripts. `fit` takes its statement, in which every field is required and an absent field stops the fit with an error naming it; it runs on the device the statement names and scores every validation label after full training epochs. The same bank can also be passed to the search CLI; [tuning/README.md](../tuning/README.md) describes the model and graph parameter names.
+Put multiprocessing workflows inside a `main` function called under `if __name__ == "__main__":` when saving them as Python scripts. `fit` takes its statement, in which every field is required and an absent field stops the fit with an error naming it; it runs on the device the statement names, trains on the splits the statement names and scores every target of the splits it names for scoring after full training epochs. The same bank can also be passed to the search CLI; [tuning/README.md](../tuning/README.md) describes the model and graph parameter names.
 
 For multiple graphs, use consecutive graph indices from zero. Each graph writes its own tables into the same Stage, in graph order. A source that produces its tables by query can call `Stage.write` directly with Arrow tables keyed by `(table, source_type, target_type)`. `Stage.merge` combines manifests from shards below the staging directory without copying their Parquet data.
 
-Sources declare `staging` or `database` in a task file. A staging-only task needs `name`, `staging`, `target` and `schema`; it does not need a fictional database filename. For older task files naming both, staging is explicitly preferred and must exist. Missing staging never falls back to another source.
+Sources declare `staging` or `database` in a task file. A staging-only task needs `name`, `staging` and `schema`; it does not need a fictional database filename. For older task files naming both, staging is explicitly preferred and must exist. Missing staging never falls back to another source.
 
 LadybugDB is an optional query and inspection format. Install `graphspec[ladybug]`, then export any staging with `graphspec database --staging STAGING --output DATABASE.lbug`. The exporter derives the tables of the database from the staged tables; a task that reads the database states the same schema. There is no CSV → LadybugDB → Parquet round trip: a loader writes Parquet once, bank building reads it, and database export is optional. Existing database-only task files still work.
 

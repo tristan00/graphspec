@@ -8,8 +8,8 @@ import torch
 from graphspec.infra.arrays import Bundle, Slot, shared, slot_bytes, views
 from tuning.batching import batches, recipe_batch
 from tuning.packing import Packer
+from tuning.periods import blocks as period_blocks
 from tuning.tensors import materialise
-from tuning.turns import blocks as turn_blocks
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -51,27 +51,27 @@ def test_prefetch_window_matches_distinct_graph_budget(device):
     assert not failures and copied and packer.position > 0
 
 
-def test_turn_context_preserves_interleaved_windows():
+def test_period_context_preserves_interleaved_windows():
     class ContextBank:
         def __init__(self):
             self.calls = []
 
         def arrays(self, graph, cfg):
             self.calls.append(graph)
-            return dict(turn_membership=np.array([0, 0, 1, 1, 2]), turn_starts=np.array([0, 2, 4]))
+            return dict(period_membership=np.array([0, 0, 1, 1, 2]), period_starts=np.array([0, 2, 4]))
 
     bank = ContextBank()
     original = [(0, 4, 5, 4, 0, 3, 5), (1, 2, 5, 4, 1, 0, 2), (0, 0, 3, 2, 0, 1, 3)]
     for context in (1, 2, 8):
         bank.calls.clear()
-        actual = turn_blocks(bank, original, {"graph": {"time/context": context}})
+        actual = period_blocks(bank, original, {"graph": {"time/context": context}})
         assert actual == [
             (0, 2 if context == 1 else 0, 5, 4, 0, 3, 5),
             (1, 0, 5, 4, 1, 0, 2),
             (0, 0, 3, 2, 0, 1, 3),
         ]
         assert bank.calls == [0, 1]
-    assert turn_blocks(bank, original, {"graph": {"time/context": 0}}) is original
+    assert period_blocks(bank, original, {"graph": {"time/context": 0}}) is original
 
 
 def same(a, b):
@@ -145,7 +145,7 @@ def test_slot_transfer_and_growth(device):
 def test_packer_matches_single_process(packers, view):
     cfg, packer = packers[view]
     opened = packer.bank
-    blocks = turn_blocks(opened, opened.blocks(0, cfg["graph"]["time/history"], cfg), cfg)
+    blocks = period_blocks(opened, opened.blocks(0, cfg["graph"]["time/history"], cfg), cfg)
     groups = batches(blocks, 2, opened.sizes(cfg), 5, frame_budget=1024)[:5]
     assert len(groups) == 5
     for group, streamed in zip(groups, packer.stream(groups), strict=True):
@@ -168,20 +168,23 @@ def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
 
 
 def test_mixed_nodes_without_an_entity_carry_no_token(bank):
+    from conftest import SPLITS
     from graphspec.infra.arrays import RESIDENT
     from tuning.data import Deriver
     from tuning.inputs import recipe
     from tuning.model_spec import configuration
 
     opened = Deriver(bank, "cpu", RESIDENT)
-    cfg = configuration(opened.registry, {"view": "mixed", "keys/embedding": True}, {"time/history": 4}, 5)
+    cfg = configuration(
+        opened.registry, {"view": "mixed", "keys/embedding": True}, {"time/history": 4}, 5, SPLITS
+    )
     block = opened.blocks(1, 4, cfg)[-1]
     held = opened.resident(block[0], cfg, "cpu")
     found = recipe(opened, block, cfg)["mixed"]
     owner = held.numpy("mixed_entity")
     tokens = opened.tokens(held)
     assert (owner < 0).any() and tokens[-1] != -1
-    given = found["token"][: len(found["token"]) - len(found["query"])]
+    given = found["token"][: len(found["token"]) - len(found["row"])]
     kinds = found["kind"][: len(given)]
     assert len(given) and set(np.unique(given[given >= 0]).tolist()) <= set(tokens.tolist())
     left = int(np.flatnonzero(held.numpy("mixed_tick") >= 2 * block[1])[0])

@@ -34,13 +34,19 @@ def lacking(mapping, *path):
 
 
 def test_the_schema_is_built_from_a_mapping_and_written_back_to_one():
-    mapping = synthetic.varied()["schema"]
+    mapping = synthetic.varied("task")["schema"]
     schema = Schema(mapping)
     assert schema.mapping() == mapping and Schema(schema.mapping()).fingerprint() == schema.fingerprint()
     assert schema.layout() == ("size", "speed", "colour", "open")
     assert schema.edges["near"]["directed"] is False and schema.edges["links"]["column"] == "predicate"
     assert schema.model == "clock" and schema.units == ("step",) and schema.graph == ("season",)
     assert schema.ties == "sequence" and schema.observers is False
+    assert schema.events() == ("buy", "move", "sell") and schema.series() == ("outcome",)
+    assert schema.aim() == "number" and schema.asked_columns() == ("size", "speed")
+    assert Schema(synthetic.varied("path")["schema"]).series() == ("level", "trend")
+    held = Schema(synthetic.varied("node")["schema"])
+    assert held.aimed_kinds() == ("outcome",) and held.tasks["signals"] == 0
+    assert held.tasks["kinds"]["outcome"]["references"] == ("holder",)
 
 
 @pytest.mark.parametrize(
@@ -62,20 +68,33 @@ def test_the_schema_is_built_from_a_mapping_and_written_back_to_one():
         (("edges", "near", "directed"), "the edge table near lacks directed"),
         (("edges", "links", "relation"), "the edge table links lacks relation"),
         (("edges", "links", "relation", "column"), "the relation of the edge table links lacks column"),
-        (("queries",), "the schema lacks queries"),
-        (("queries", "signals"), "the queries lacks signals"),
-        (("queries", "grouping"), "the queries lacks grouping"),
-        (("queries", "key"), "the queries lacks key"),
+        (("tasks",), "the schema lacks tasks"),
+        (("tasks", "signals"), "the tasks lacks signals"),
+        (("tasks", "grouping"), "the tasks lacks grouping"),
+        (("tasks", "key"), "the tasks lacks key"),
+        (("tasks", "references"), "the tasks lacks references"),
+        (("tasks", "kinds"), "the tasks lacks kinds"),
+        (("tasks", "references", "place", "sort"), "the reference place lacks sort"),
+        (("tasks", "references", "place", "kinds"), "the reference place lacks kinds"),
+        (("tasks", "references", "team"), "the kind of task buy names references not stated: team"),
+        (("tasks", "kinds", "buy", "references"), "the kind of task buy lacks references"),
+        (("tasks", "kinds", "buy", "columns"), "the kind of task buy lacks columns"),
+        (("tasks", "kinds", "buy", "target"), "the kind of task buy lacks target"),
+        (("tasks", "kinds", "buy", "target", "series"), "the target of the kind of task buy lacks series"),
+        (("tasks", "kinds", "buy", "weight"), "the kind of task buy lacks weight"),
+        (("tasks", "kinds", "buy", "absent"), "the kind of task buy lacks absent"),
+        (("tasks", "kinds", "buy", "event"), "the kind of task buy lacks event"),
+        (("tasks", "kinds", "buy", "matures"), "the kind of task buy lacks matures"),
     ],
 )
 def test_a_schema_with_a_statement_absent_stops_naming_it(path, message):
     with pytest.raises(ValueError, match=message):
-        Schema(lacking(synthetic.varied()["schema"], *path))
+        Schema(lacking(synthetic.varied("task")["schema"], *path))
 
 
 def test_a_schema_of_another_version_or_with_an_unknown_name_is_refused():
-    mapping = synthetic.varied()["schema"]
-    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 2"):
+    mapping = synthetic.varied("task")["schema"]
+    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 3"):
         Schema(dict(mapping, version=0))
     with pytest.raises(KeyError, match="no column type is registered under the name 'colourful'"):
         Schema(dict(mapping, columns=dict(mapping["columns"], size=dict(type="colourful", encoder="value"))))
@@ -135,6 +154,7 @@ def test_column_types_and_encoders_are_registered_by_name_from_outside():
         dict(shelf=["stock", "value"], crate=["stock"]),
         {},
         dict(stock=dict(type="count", encoder="halved"), value=dict(type="number", encoder="value")),
+        support.asked(["shelf"]),
     )
     table = pa.table(
         {
@@ -161,6 +181,7 @@ def test_encoders_are_fitted_on_the_rows_trained_on_and_on_no_other():
         dict(shelf=["shade", "height"]),
         {},
         dict(shade=dict(type="category", encoder="onehot"), height=dict(type="number", encoder="standard")),
+        support.asked(["shelf"]),
     )
     table = pa.table(
         {
@@ -209,7 +230,9 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
     manifest = read_json(varied / "manifest.json")
     declared = manifest["spec"]
     assert manifest["version"] == VERSION == 8 and manifest["trained"] == ["train"]
-    assert declared["schema"] == synthetic.varied()["schema"]
+    assert declared["schema"] == synthetic.varied("task")["schema"]
+    assert manifest["splits"] == ["train", "validation"] and declared["extras"]["single"] is True
+    assert declared["extras"]["events"] is True and declared["extras"]["target"] == "number"
     assert declared["widths"] == dict(person=11, place=2, item=7, team=2) and declared["features"] == 11
     edges = {edge["name"]: edge for edge in declared["edges"]}
     assert edges["visits"]["attributes"] == ["weight", "mode"]
@@ -237,16 +260,20 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
 
 def test_the_varied_graph_reads_back_from_the_bank_equal_to_what_was_stated(varied):
     opened = Deriver(varied, "cpu", RESIDENT)
-    assert set(opened.rows[0]) == {"graph", "time", "ticket", "week", "y"}
-    assert opened.split["series"][0]["name"] == synthetic.TARGET and len(opened.split["series"]) == 1
-    stated = support.written(varied.parent / "varied.staging", opened.registry.schema)
+    assert set(opened.rows[0]) == {"graph", "kind", "time", "ticket", "week", "y"}
+    assert opened.split["series"][0]["name"] == synthetic.OUTCOME and len(opened.split["series"]) == 1
+    assert sorted(opened.split["indices"]) == ["train", "validation"]
+    schema = opened.registry.schema
+    stated = support.written(varied.parent / "varied.staging", schema)
     for graph in opened.manifest["graphs"]:
         truth = Facts.load(opened.truth(graph["index"]))
-        found = truth.stated(opened.registry, opened.categories, opened.manifest["observers"])
+        found = truth.stated(opened.registry, opened.splits, opened.manifest["observers"])
         wanted = stated[truth.name]
         assert found["graph"] == wanted["graph"] and found["nodes"] == wanted["nodes"]
-        for part in ("observations", "edges", "queries"):
+        for part in ("observations", "edges"):
             assert support.alike(found[part], wanted[part]), (truth.name, part)
+        assert support.normal(found["tasks"], schema) == wanted["tasks"]
+        assert found["targets"] == wanted["targets"]
         assert any(value is None for value in found["observations"]["person"][VALUE + "colour"])
         assert set(found["edges"]["visits"][VALUE + "mode"]) <= {"foot", "road", "rail", "air", None}
 
@@ -260,10 +287,8 @@ def test_the_varied_graph_completes_one_fit_on_cpu(varied, varied_packed, tmp_pa
     LOG.info("varied fit exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
-    assert saved["train_unique_rows"] == len(opened.split["train_indices"])
-    assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(
-        opened.split["validation_indices"]
-    )
+    assert saved["train_unique_rows"] == len(opened.members(cfg, 0))
+    assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(opened.members(cfg, 1))
 
 
 def test_a_schema_is_checked_after_an_operation_for_what_the_operation_changes(varied):
@@ -295,9 +320,14 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
     monkeypatch.setattr(sys, "argv", ["graphspec", "inspect", str(varied)])
     main()
     printed = capsys.readouterr().out
-    assert "schema version 2" in printed and "  place: size number by standard, width 2" in printed
+    assert "schema version 3" in printed and "  place: size number by standard, width 2" in printed
     assert "width 11" in printed and "  lends: from links" in printed
-    assert "  reference person: person" in printed and "keyed by ticket, grouped by week" in printed
+    assert "  reference person: node of person" in printed and "keyed by ticket, grouped by week" in printed
+    assert (
+        "  kind buy: references person, place, team; size number by standard, speed number by standard, "
+        "width 4; target number of outcome; not weighted; absent stop; "
+        "seen as an event between person and place; nothing matures" in printed
+    )
 
 
 def test_a_bank_of_version_7_is_refused_with_an_error_naming_its_version(ground):
@@ -308,11 +338,6 @@ def test_a_bank_of_version_7_is_refused_with_an_error_naming_its_version(ground)
         inspect(old)
 
 
-def shaped(source):
-    settings = dict(source["settings"])
-    return synthetic.uniform(settings.pop("features") // 2, settings.pop("signals")), settings
-
-
 @pytest.fixture(scope="module")
 def built(ground, tmp_path_factory):
     started = time.perf_counter()
@@ -321,10 +346,8 @@ def built(ground, tmp_path_factory):
         source = entry["source"]
         if source["name"] not in found:
             root = tmp_path_factory.mktemp("ground-" + source["name"])
-            shape, settings = shaped(source)
-            task = synthetic.generate(
-                root, "source", source["graphs"], source["level"], source["seed"], shape, **settings
-            )
+            shape, settings = fixture.shaped(source)
+            task = synthetic.generate(root, "source", source["graphs"], source["seed"], shape, **settings)
             build(task, root / "bank", 1, ("train",))
             found[source["name"]] = root
     LOG.info("built exit sources=%d seconds=%.3f", len(found), time.perf_counter() - started)
@@ -338,20 +361,20 @@ def test_the_inputs_of_a_configuration_of_the_fixture_are_equal_under_the_names_
     entry = fixture.configurations(ground)[0][place]
     root = built[entry["source"]["name"]]
     started = time.perf_counter()
-    schema = Schema(shaped(entry["source"])[0]["schema"])
-    old = fixture.tables(ground / entry["folder"] / entry["files"]["staged"], schema)
+    schema, level = Schema(fixture.shaped(entry["source"])[0]["schema"]), entry["source"]["level"]
+    old = fixture.tables(ground / entry["folder"] / entry["files"]["staged"], schema, level)
     new = support.staged(root / "source.staging")
     assert sorted(map(str, old)) == sorted(map(str, new))
     for key, table in old.items():
         assert support.sorted_by_key(table).equals(support.sorted_by_key(new[key])), key
-    held = fixture.arrays(ground / entry["folder"] / entry["files"]["input"])
+    held = fixture.arrays(ground / entry["folder"] / entry["files"]["input"], level)
     opened = Deriver(root / "bank", "cpu", RESIDENT)
     assert [graph["name"] for graph in opened.manifest["graphs"]] == entry["graphs"]
     for graph in opened.manifest["graphs"]:
         dense = support.shown(opened, graph["index"]).dense()
         assert fixture.differing(dense.arrays, held[dense.name]) == []
     assert read_json(root / "bank" / "supervision.json") == fixture.supervision(
-        ground / entry["folder"] / entry["files"]["bank"], synthetic.TARGET, schema
+        ground / entry["folder"] / entry["files"]["bank"], schema, level, old
     )
     LOG.info("fixture inputs exit name=%s seconds=%.3f", entry["name"], time.perf_counter() - started)
 
@@ -366,6 +389,6 @@ def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(g
     spec = specs.configured(specs.space(opened.registry, tuple(entry["groups"])), entry["values"])
     assert spec == fixture.spec(entry["spec"])
     members = [support.shown(opened, graph["index"]).dense() for graph in opened.manifest["graphs"]]
-    held = fixture.joined(ground / entry["folder"] / entry["files"]["input"])
+    held = fixture.joined(ground / entry["folder"] / entry["files"]["input"], source["level"], members)
     assert fixture.differing(join.joined(members, opened.registry, spec).arrays, held) == []
     LOG.info("fixture joined exit name=%s seconds=%.3f", entry["name"], time.perf_counter() - started)

@@ -32,6 +32,9 @@ def arguments(bank, output, statement):
         workers=statement["workers"],
         variant_gb=statement["variant_cache_bytes"] >> 30,
         batch_sequences=statement["batch_sequences"],
+        trained=statement["trained"],
+        scored=statement["scored"],
+        sees=["%s=%s" % (name, ",".join(rules)) for name, rules in statement["sees"].items()],
         continuous=False,
         trials=None,
         selector="random",
@@ -54,7 +57,7 @@ def test_synthetic_fit_completes_on_cpu(bank, packed, tmp_path, statement):
     assert saved["status"] == "complete" and saved["peak_cuda_bytes"] == 0
     assert saved["statement"] == statement
     assert 0 < saved["optimizer_updates"] <= 20
-    assert saved["train_unique_rows"] == len(opened.split["train_indices"])
+    assert saved["train_unique_rows"] == len(opened.members(cfg, 0))
     weights = torch.load(tmp_path / "checkpoint.pt", weights_only=False)["state_dict"]
     assert all(value.device.type == "cpu" for value in weights.values())
 
@@ -103,9 +106,10 @@ def test_a_bank_opened_to_read_cannot_derive_and_deriving_states_its_device(bank
 
 
 def test_the_key_of_a_variant_holds_the_device(bank):
+    from conftest import SPLITS
     from tuning.model_spec import configuration
 
-    cfg = configuration(Bank(bank).registry, dict(view="snapshot"), {"time/history": 4}, 5)
+    cfg = configuration(Bank(bank).registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
     central, graphic = Deriver(bank, "cpu", RESIDENT), Deriver(bank, "cuda", RESIDENT)
     left, right = central.identity(cfg), graphic.identity(cfg)
     assert {name for name in left if left[name] != right[name]} == {"device"}
@@ -164,6 +168,14 @@ def test_fit_with_a_field_absent_stops_naming_the_field(tmp_path, statement, nam
         ("variant_cache_bytes", -1),
         ("batch_sequences", 0),
         ("batch_sequences", None),
+        ("trained", []),
+        ("trained", "train"),
+        ("trained", ["train", "train"]),
+        ("scored", []),
+        ("scored", [""]),
+        ("sees", ["train", "validation"]),
+        ("sees", dict(train=["unregistered"], validation=[])),
+        ("sees", dict(train="without_targets", validation=[])),
     ],
 )
 def test_a_statement_with_a_value_outside_its_meaning_stops_naming_it(monkeypatch, statement, name, value):
@@ -219,6 +231,39 @@ def test_statement_holds_every_field_and_no_other(statement):
         state(dict(statement, version=0))
     with pytest.raises(ValueError, match="the statement's device is 'gpu'"):
         state(dict(statement, device="gpu"))
+
+
+def test_a_statement_names_every_split_once_and_says_what_each_may_see(statement):
+    held = state(statement)
+    assert held.splits() == dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
+    with pytest.raises(ValueError, match="the statement trains on and scores on the same splits: train"):
+        state(dict(statement, scored=["train"], sees=dict(train=[])))
+    with pytest.raises(ValueError, match="the statement's sees names the splits train and must name"):
+        state(dict(statement, sees=dict(train=[])))
+    with pytest.raises(ValueError, match="the statement's sees names the splits other, train, validation"):
+        state(dict(statement, sees=dict(train=[], validation=[], other=[])))
+    seen = state(dict(statement, sees=dict(train=["without_targets", "without_scored"], validation=[])))
+    assert seen.sees["train"] == ["without_targets", "without_scored"]
+
+
+def test_fit_rejects_a_configuration_whose_splits_are_not_the_statements(tmp_path, statement):
+    from conftest import SPLITS
+
+    given = dict(seed=statement["seed"])
+    with pytest.raises(KeyError, match="the configuration states no splits"):
+        fit(tmp_path / "bank", tmp_path, given, [], 8, time.perf_counter() + 30, state(statement))
+    other = dict(SPLITS, sees=dict(train=["without_targets"], validation=[]))
+    with pytest.raises(ValueError, match="the splits of the configuration are"):
+        fit(
+            tmp_path / "bank",
+            tmp_path,
+            dict(given, splits=other),
+            [],
+            8,
+            time.perf_counter() + 30,
+            state(statement),
+        )
+    assert not list(tmp_path.iterdir())
 
 
 def test_fit_rejects_a_configuration_whose_seed_is_not_the_statements(tmp_path, statement):

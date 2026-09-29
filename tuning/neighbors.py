@@ -16,18 +16,18 @@ from .layers import (
     masked_weights,
     normalization,
 )
-from .turns import EndContext, enabled, lookback
+from .periods import EndContext, enabled, lookback
 
 
 class TreeNet(nn.Module):
     @timed("neighbors.treenet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         hidden = spec["hidden"]
-        self.has_turns = enabled(cfg)
-        if self.has_turns:
-            self.turns = EndContext(hidden * 2)
+        self.has_periods = enabled(cfg)
+        if self.has_periods:
+            self.periods = EndContext(hidden * 2)
         self.depth = spec["tree/depth"]
         self.input = nn.Linear(registry.features, hidden)
         self.kind = nn.Embedding(len(registry.nodes), hidden)
@@ -41,7 +41,7 @@ class TreeNet(nn.Module):
             nn.Sequential(nn.Linear(2 * hidden, hidden), nn.SiLU(), normalization(hidden))
             for _ in range(self.depth)
         )
-        self.reward = Head(hidden * 3, spec, registry)
+        self.head = Head(hidden * 3, spec, registry)
 
     def encode(self, tree, depth):
         root = self.input(tree["x"]) + self.kind(tree["kind"])
@@ -60,14 +60,14 @@ class TreeNet(nn.Module):
 
     def forward(self, b):
         roots = self.encode(b["tree"], self.depth).reshape(b["predictions"], -1)
-        if self.has_turns:
+        if self.has_periods:
             previous = self.encode(b["end_tree"], self.depth).reshape(
                 b["predictions"], 2, -1, roots.shape[-1] // 2
             )
             previous = previous * b["end_raw_mask"][:, :2, :, None]
             previous = previous.transpose(1, 2).reshape(b["predictions"], -1, roots.shape[-1])
-            roots = self.turns(roots, previous, b["end_gaps"], b["end_mask"])
-        return self.reward(torch.cat((roots, self.input(b["query"])), -1)[b["selected"]], b)
+            roots = self.periods(roots, previous, b["end_gaps"], b["end_mask"])
+        return self.head(torch.cat((roots, self.input(b["task"])), -1)[b["selected"]], b)
 
 
 class MixerLayer(nn.Module):
@@ -87,15 +87,15 @@ class MixerLayer(nn.Module):
 
 class SequenceNet(nn.Module):
     @timed("neighbors.sequencenet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         self.cfg = cfg
         self.operator, self.structure_mode = spec["sequence/operator"], spec["sequence/structure"]
         hidden, depth = spec["hidden"], spec["sequence/layers"]
         if enabled(cfg):
-            self.turn_time = nn.Linear(3, hidden)
-            self.turn_kind = nn.Embedding(2, hidden)
+            self.period_time = nn.Linear(3, hidden)
+            self.period_kind = nn.Embedding(2, hidden)
         self.input = nn.Linear(registry.features, hidden)
         self.keys = keys_of(spec, hidden)
         self.time = TimeEncoding(hidden, spec["time/encoding"])
@@ -125,7 +125,7 @@ class SequenceNet(nn.Module):
             )
             self.opposite = nn.Linear(hidden, hidden)
             self.temporal_select = nn.Linear(hidden, hidden)
-        self.reward = Head(hidden * 3, spec, registry)
+        self.head = Head(hidden * 3, spec, registry)
 
     def mixer(self, x, raw, mask, roots, b):
         for layer in self.layers:
@@ -173,8 +173,8 @@ class SequenceNet(nn.Module):
 
     def forward(self, b):
         keys = (
-            "context",
-            "query",
+            "start_x",
+            "task",
             "history_x",
             "history_mask",
             "history_gap",
@@ -184,11 +184,11 @@ class SequenceNet(nn.Module):
             "pair_mask",
         )
         if enabled(self.cfg):
-            keys += ("history_end_time", "history_turn_kind")
+            keys += ("history_end_time", "history_period_kind")
         if self.keys is not None:
             keys += ("history_token", "root_token")
         full, b = b, {key: b[key][b["selected"]] for key in keys}
-        roots = self.input(b["context"][:, :2])
+        roots = self.input(b["start_x"][:, :2])
         mask = b["history_mask"]
         raw = self.input(b["history_x"])
         if self.keys is not None:
@@ -197,7 +197,9 @@ class SequenceNet(nn.Module):
         x = self.norm(raw + self.time(b["history_gap"])) * mask[..., None]
         if enabled(self.cfg):
             x = (
-                x + self.turn_time(b["history_end_time"].log1p()) + self.turn_kind(b["history_turn_kind"])
+                x
+                + self.period_time(b["history_end_time"].log1p())
+                + self.period_kind(b["history_period_kind"])
             ) * mask[..., None]
         if self.structure_mode != "none":
             structure = b["occurrence"].log1p() if self.structure_mode == "occurrence" else b["structure"]
@@ -208,21 +210,21 @@ class SequenceNet(nn.Module):
             summary = self.transformer(x, mask, roots)
         else:
             summary = self.ssm(x, mask, roots, b)
-        return self.reward(torch.cat((summary, self.input(b["query"])), -1), full)
+        return self.head(torch.cat((summary, self.input(b["task"])), -1), full)
 
 
 class WalkNet(nn.Module):
     @timed("neighbors.walknet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         hidden = spec["hidden"]
         if type(hidden) is not int or hidden < 1:
             raise ValueError("walk hidden width must be a positive integer")
-        self.has_turns = enabled(cfg)
-        if self.has_turns:
-            self.turn_time = nn.Linear(3, hidden)
-            self.turn_kind = nn.Embedding(2, hidden)
+        self.has_periods = enabled(cfg)
+        if self.has_periods:
+            self.period_time = nn.Linear(3, hidden)
+            self.period_kind = nn.Embedding(2, hidden)
         self.input = nn.Linear(registry.features, hidden)
         self.anonymous = nn.Sequential(
             nn.Linear(2 * spec["walks/hops"], hidden), nn.ReLU(), nn.Linear(hidden, hidden)
@@ -235,14 +237,14 @@ class WalkNet(nn.Module):
             nn.Identity() if direction_width * 2 == hidden else nn.Linear(direction_width * 2, hidden)
         )
         self.score = nn.Linear(hidden, 1)
-        self.reward = Head(hidden * 3, spec, registry)
+        self.head = Head(hidden * 3, spec, registry)
 
     def forward(self, b):
         raw = self.input(b["walk_x"]) + self.anonymous(b["walk_identity"].log1p()) + self.time(b["walk_gap"])
         if self.keys is not None:
             raw = raw + self.keys(b["walk_token"])
-        if self.has_turns:
-            raw = raw + self.turn_time(b["walk_end_time"].log1p()) + self.turn_kind(b["walk_turn_kind"])
+        if self.has_periods:
+            raw = raw + self.period_time(b["walk_end_time"].log1p()) + self.period_kind(b["walk_period_kind"])
         mask = b["walk_mask"]
         n, sides, walks, hops, hidden = raw.shape
         x = (raw * mask[..., None]).reshape(-1, hops, hidden)
@@ -254,8 +256,8 @@ class WalkNet(nn.Module):
         encoded = self.walk_output(state.transpose(0, 1).reshape(n, sides, walks, -1))
         valid = lengths.reshape(n, sides, walks) > 0
         weight = masked_weights(self.score(encoded).squeeze(-1), valid)
-        summary = (encoded * weight[..., None]).sum(2) + self.input(b["context"][:, :2])
+        summary = (encoded * weight[..., None]).sum(2) + self.input(b["start_x"][:, :2])
         if self.keys is not None:
             summary = summary + self.keys(b["root_token"])
-        features = torch.cat((summary.reshape(n, -1), self.input(b["query"])), -1)
-        return self.reward(features[b["selected"]], b)
+        features = torch.cat((summary.reshape(n, -1), self.input(b["task"])), -1)
+        return self.head(features[b["selected"]], b)

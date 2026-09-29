@@ -5,12 +5,12 @@ import torch
 from graphspec.infra import workspace
 from graphspec.infra.arrays import MappedRows, join_tensors
 from graphspec.infra.files import ArrayStore, save_arrays
-from graphspec.representations import turns
+from graphspec.representations import periods
 from graphspec.resources import GraphBudget, GraphLimits
-from tuning.turn_inputs import prior_rows
+from tuning.period_inputs import prior_rows
 
 
-def test_sparse_turn_lookup_matches_dense_history():
+def test_sparse_period_lookup_matches_dense_history():
     from types import SimpleNamespace
 
     entity = np.array([0, 2, 0, 1, 2, 0, 3], np.int32)
@@ -22,20 +22,20 @@ def test_sparse_turn_lookup_matches_dense_history():
         step=step,
         events=np.array([[2, 0, 0, 2, 0, 0, 1], [0, 0, 6, 2, 0, 0, 2]]),
     )
-    arrays.update(turns(arrays, GraphBudget(GraphLimits("cpu"))))
+    arrays.update(periods(arrays, GraphBudget(GraphLimits("cpu"))))
     held = SimpleNamespace(numpy=arrays.__getitem__)
-    for actor in (False, True):
+    for first in (False, True):
         expected = np.full((3, 5), -1, np.int32)
         for period in range(3):
-            if actor:
+            if first:
                 for row in arrays["events"]:
-                    if row[2] // 2 <= arrays["turn_ends"][period]:
+                    if row[2] // 2 <= arrays["period_ends"][period]:
                         expected[period, row[0]] = row[2] // 2
             else:
                 for row, (owner, moment) in enumerate(zip(entity, step)):
-                    if moment <= arrays["turn_ends"][period]:
+                    if moment <= arrays["period_ends"][period]:
                         expected[period, owner] = row
-        actual = prior_rows(held, np.arange(3)[:, None], np.arange(5)[None, :], actor)
+        actual = prior_rows(held, np.arange(3)[:, None], np.arange(5)[None, :], first)
         np.testing.assert_array_equal(actual, expected)
 
 

@@ -7,7 +7,7 @@ SERIES = "series/%s/loss"
 
 @timed("objective.weights")
 def weights(bank, given):
-    if bank.level != "path":
+    if not bank.path:
         if given:
             raise ValueError("only path targets have series to weight")
         return None

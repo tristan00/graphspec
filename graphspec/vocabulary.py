@@ -5,8 +5,8 @@ from .declarations import EdgeType
 from .registry import Registry
 
 LOG = logging.getLogger(__name__)
-TASK_KEYS = frozenset(("name", "database", "staging", "target", "schema"))
-MARKERS = ("non_relation", "turn_context")
+TASK_KEYS = frozenset(("name", "database", "staging", "schema"))
+MARKERS = ("non_relation", "period_context")
 HOPS = (2, 3)
 COUPLING = "temporal"
 UNTYPED = "untyped"
@@ -26,23 +26,11 @@ def hop(distance):
     return "hop:%d" % distance
 
 
-def target_level(source, task):
+def registry(task, encoding, single):
+    started = time.perf_counter()
     unknown = sorted(set(task) - TASK_KEYS)
     if unknown:
         raise ValueError("unknown task keys: " + ", ".join(unknown))
-    found = source.target(task["target"])
-    if found != "node" and not source.queries:
-        raise ValueError(
-            "%s-level targets are predicted at queries, so the source needs a query table" % found
-        )
-    return found
-
-
-def registry(source, task, series, encoding):
-    started = time.perf_counter()
-    level = target_level(source, task)
-    if (level == "path") != bool(series) or list(series) != sorted(set(series)):
-        raise ValueError("path targets need their sorted distinct series names, and other targets none")
     schema = encoding.schema
     nodes = tuple(schema.nodes)
     relations = [
@@ -111,22 +99,20 @@ def registry(source, task, series, encoding):
     edges.extend(
         EdgeType(name, ("boundary", name.split(":")[1]), everything, symmetric=True) for name in BOUNDARIES
     )
-    labelled = set(source.destinations(task["target"] + "_of")) if level == "node" else set()
     extras = dict(
-        level=level,
-        queries=source.queries,
-        signals=0 if level == "node" else source.signals,
+        target=schema.aim(),
+        series=list(schema.series()),
+        signals=schema.tasks["signals"],
         base=[relation["name"] for relation in relations],
-        protected=[kind for kind in nodes if kind in labelled],
+        events=bool(schema.events()),
+        single=single,
     )
-    if level == "path":
-        extras["series"] = list(series)
     result = Registry(task["name"], encoding, edges, MARKERS, extras)
     LOG.info(
-        "vocabulary exit seconds=%.3f nodes=%d relations=%d level=%s",
+        "vocabulary exit seconds=%.3f nodes=%d relations=%d target=%s",
         time.perf_counter() - started,
         len(nodes),
         result.relations,
-        level,
+        extras["target"],
     )
     return result

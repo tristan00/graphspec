@@ -13,7 +13,7 @@ import numpy as np
 
 from graphspec.infra.files import Arrays
 from graphspec.infra.processes import worker_threads
-from graphspec.infra.timing import measure
+from graphspec.infra.timing import measure, timed
 
 from . import join, kernels, representations, transform
 from .carry import Segment, Table, encode
@@ -34,7 +34,7 @@ from .operators import (
 )
 from .representations import (
     EMPTY,
-    TURN_LOOKBACK,
+    PERIOD_LOOKBACK,
     base,
     coupling_edges,
     coupling_setting,
@@ -48,21 +48,17 @@ from .representations import (
     neighbors,
     observation_boundaries,
     observed_features,
-    turns,
+    periods,
+    rooted,
     walk_arrays,
 )
 from .resources import GraphBudget
 from .truth import DENSE, Dense, Graph, verify_dense
 
 LOG = logging.getLogger(__name__)
-ENTITIES = (
-    "obs_entity",
-    "fact_source",
-    "fact_target",
-    "query_references",
-    "label_entity",
-)
-MOMENTS = ("obs_step", "fact_step", "label_step")
+ENTITIES = ("obs_entity", "fact_source", "fact_target", "member_source", "member_target")
+MOMENTS = ("obs_step", "fact_step", "task_step")
+TASKED = ("member_task", "label_task")
 GROUP = ("kinds", "entity_token", "entity_connected", "x_table", "value_table")
 
 
@@ -82,6 +78,7 @@ class Plan:
         self.maps, self.kinds, self.tokens, self.connected = join.unify(graphs, registry, spec)
         steps = np.asarray([graph.steps for graph in graphs], np.int64)
         self.step_offsets = np.r_[0, np.cumsum(steps)]
+        self.task_offsets = np.r_[0, np.cumsum([len(graph.task_key) for graph in graphs])]
         self.truth_periods = np.r_[0, np.cumsum([int(graph.period.max(initial=-1)) + 1 for graph in graphs])]
         if spec["time/periods"] == "every":
             self.period_offsets = np.r_[0, np.cumsum(-(-steps // spec["time/period_length"]))]
@@ -169,12 +166,14 @@ def derived(plan, graphs, registry, spec, limits):
     return outputs
 
 
-def globalized(carry, index, name, values):
+def globalized(plan, carry, index, name, values):
     values = np.asarray(values)
     if name in ENTITIES:
         return np.where(values >= 0, carry.glob[np.maximum(values, 0)], -1).astype(values.dtype)
     if name in MOMENTS:
         return (values + carry.step0).astype(values.dtype)
+    if name in TASKED:
+        return (values + plan.task_offsets[index]).astype(values.dtype)
     if name == "obs_ref":
         return carry.x_global[values].astype(values.dtype)
     if name == "fact_ref":
@@ -190,7 +189,7 @@ def stitch(plan, graphs, outputs):
     columns = {
         name: np.concatenate(
             [
-                globalized(carry, index, name, dense.arrays[name])
+                globalized(plan, carry, index, name, dense.arrays[name])
                 for index, (carry, dense) in enumerate(outputs)
             ]
         )
@@ -279,18 +278,20 @@ class Link:
 class Context:
     def __init__(self, plan, spec, groups):
         self.steps = int(plan.step_offsets[-1])
-        self.obs0 = self.events0 = self.nodes0 = self.holders0 = self.turns = 0
+        self.obs0 = self.events0 = self.nodes0 = self.holders0 = self.periods = 0
+        self.tasks0 = self.rows0 = 0
         self.attributes = {}
-        self.turn_starts, self.turn_ends = [EMPTY], [EMPTY]
+        self.period_starts, self.period_ends = [EMPTY], [EMPTY]
         self.history = []
-        horizon, turns = 0, 0
+        horizon, lookback = 0, 0
         if "coupling" in groups:
-            turns = max(turns, spec["coupling/periods"])
+            lookback = max(lookback, spec["coupling/periods"])
         if "events" in groups:
-            horizon, turns = max(horizon, spec["events/window"] // 2 + 2), max(turns, spec["events/periods"])
+            horizon = max(horizon, spec["events/window"] // 2 + 2)
+            lookback = max(lookback, spec["events/periods"])
         if "walks" in groups:
-            horizon, turns = max(horizon, spec["walks/window"] + 2), max(turns, TURN_LOOKBACK)
-        self.horizon, self.turn_horizon = horizon, turns + 1
+            horizon, lookback = max(horizon, spec["walks/window"] + 2), max(lookback, PERIOD_LOOKBACK)
+        self.horizon, self.period_horizon = horizon, lookback + 1
 
     def remember(self, piece, next_step):
         self.history.append(piece)
@@ -298,7 +299,7 @@ class Context:
             item
             for item in self.history
             if item["last_step"] >= next_step - self.horizon
-            or item["last_turn"] >= self.turns - self.turn_horizon
+            or item["last_period"] >= self.periods - self.period_horizon
         ]
 
     def recent(self, name, empty):
@@ -350,15 +351,15 @@ def coupled_segment(own, spec, context, state, budget):
     return np.stack((source, target), 1).astype(np.int32).reshape(-1, 2)
 
 
-EMPTY_OBS = dict(entity=EMPTY, step=EMPTY, group=EMPTY, turn=EMPTY, row=EMPTY)
+EMPTY_OBS = dict(entity=EMPTY, step=EMPTY, group=EMPTY, period=EMPTY, row=EMPTY)
 EMPTY_EVENTS = dict(
-    events=np.zeros((0, 9), np.int32), id=EMPTY, group=EMPTY, turn=EMPTY, member=np.zeros(0, bool)
+    events=np.zeros((0, 9), np.int32), id=EMPTY, group=EMPTY, period=EMPTY, member=np.zeros(0, bool)
 )
 
 
 def boundary_segment(own, lookback, window, registry, context, budget):
     recent = context.recent("obs", EMPTY_OBS)
-    shift = max(context.turns - lookback, 0)
+    shift = max(context.periods - lookback, 0)
     halo = np.flatnonzero((recent["group"] >= shift) & np.isin(recent["entity"], own["entity"]))
     count = len(halo)
     values, (ext_entity,) = localized(np.r_[recent["entity"][halo], own["entity"]])
@@ -366,11 +367,11 @@ def boundary_segment(own, lookback, window, registry, context, budget):
         ext_entity,
         np.r_[recent["step"][halo], own["step"]].astype(np.int64),
         np.r_[recent["group"][halo], own["group"]].astype(np.int64) - shift,
-        np.r_[recent["turn"][halo], own["turn"]],
+        np.r_[recent["period"][halo], own["obs_period"]],
         lookback,
         window,
         len(values),
-        context.turns + own["turns"] - shift,
+        context.periods + own["periods"] - shift,
         registry,
         budget,
     ).astype(np.int64)
@@ -407,7 +408,7 @@ def event_segment(own, spec, registry, context, budget):
     )
     lookback = spec["events/periods"]
     if lookback:
-        shift = max(context.turns - lookback, 0)
+        shift = max(context.periods - lookback, 0)
         halo = np.flatnonzero(recent["group"] >= shift)
         count = len(halo)
         values, ext = extended(recent, halo, events)
@@ -415,7 +416,7 @@ def event_segment(own, spec, registry, context, budget):
             ext,
             np.r_[recent["member"][halo], member],
             np.r_[recent["group"][halo], own["event_group"]].astype(np.int64) - shift,
-            np.r_[recent["turn"][halo], own["event_turn"]],
+            np.r_[recent["period"][halo], own["event_period"]],
             lookback,
             spec["events/period_window"],
             len(values),
@@ -429,17 +430,17 @@ def event_segment(own, spec, registry, context, budget):
     return result
 
 
-def walk_segment(own, spec, seed, context, budget):
-    query = own["query_step"].astype(np.int64)
-    roots = np.stack((own["actor"], own["subject"]), 1).astype(np.int64)
-    starts = np.concatenate(context.turn_starts + [own["turn_starts"]])
-    ends = np.concatenate(context.turn_ends + [own["turn_ends"]])
-    prior = own["query_group"][:, None].astype(np.int64) - np.arange(1, TURN_LOOKBACK + 1)
+def walk_segment(own, spec, seed, context, budget, name):
+    moments = own["row_step"].astype(np.int64)
+    roots = rooted(own["first"], own["second"], name)
+    first = np.concatenate(context.period_starts + [own["period_starts"]])
+    last = np.concatenate(context.period_ends + [own["period_ends"]])
+    prior = own["row_group"][:, None].astype(np.int64) - np.arange(1, PERIOD_LOOKBACK + 1)
     floor = np.inf
-    if len(query):
-        floor = min(floor, int(np.maximum(0, (query - spec["walks/window"] + 1) * 2).min()))
+    if len(moments):
+        floor = min(floor, int(np.maximum(0, (moments - spec["walks/window"] + 1) * 2).min()))
     if (prior >= 0).any():
-        floor = min(floor, int(2 * starts[prior[prior >= 0]].min()))
+        floor = min(floor, int(2 * first[prior[prior >= 0]].min()))
     recent = context.recent("events", EMPTY_EVENTS)
     halo = np.flatnonzero(neighbor_members(recent["events"], spec) & (recent["events"][:, 2] >= floor))
     count = len(halo)
@@ -453,28 +454,36 @@ def walk_segment(own, spec, seed, context, budget):
         ext,
         local_roots.reshape(roots.shape),
         roots,
-        query,
+        moments,
         prior,
-        starts[prior.clip(0)].astype(np.int64),
-        ends[prior.clip(0)].astype(np.int64),
+        first[prior.clip(0)].astype(np.int64),
+        last[prior.clip(0)].astype(np.int64),
         spec,
         seed,
         budget,
     )
-    for name in ("walks", "turn_walks"):
-        walked = result[name].astype(np.int64)
-        result[name] = np.where(
+    for held in ("walks", "period_walks"):
+        walked = result[held].astype(np.int64)
+        result[held] = np.where(
             walked < 0, -1, resolved(walked, count, recent["id"][halo], context.events0)
         ).astype(np.int32)
     return result
+
+
+class Shifted:
+    def __init__(self, table, base):
+        self.table, self.base = table, base
+
+    def __getitem__(self, rows):
+        return self.table[np.asarray(rows, np.int64) - self.base]
 
 
 def mixed_segment(graph, arrays, link, spec, context, state, budget, values):
     entity, offsets = arrays["entity"].astype(np.int64), arrays["snapshot_offsets"]
     x, glob = observed_features(arrays), link.glob
     changes, trace, bundles = spec["mixed/changes"], spec["mixed/trace"], spec["mixed/bundles"]
-    decided = len(arrays["query"]) > 0
     rows, moments, entities = len(entity), len(offsets) - 1, len(graph.kinds)
+    placed = np.searchsorted(np.asarray(arrays["event_step"], np.int64), np.arange(moments + 1))
     order = np.argsort(entity, kind="stable")
     prior = np.full(rows, -1, np.int64)
     heads = order
@@ -529,20 +538,20 @@ def mixed_segment(graph, arrays, link, spec, context, state, budget, values):
         seen = np.flatnonzero(prior >= 0)
         altered[seen] = np.any(x[seen] != lookup(prior[seen]), axis=1)
     limit, wires, holders = mixed_sizes(
-        rows, moments, trace, changes, bundles, decided, int(trace_count.sum())
+        rows, moments, trace, changes, bundles, int(placed[-1]), int(trace_count.sum())
     )
     budget.pairs(wires, "mixed representation edges")
     budget.workspace(limit * (32 + x.shape[1] * 2) + wires * 12 + holders * 4, "mixed representation")
-    actor = np.asarray(arrays["decision_actor"], np.int32) if decided else np.zeros(0, np.int32)
     kind, tick, owner, mode, fill, member_offset, member_id, source, target, flag, action = kernels.bundled(
         np.ascontiguousarray(entity, np.int64),
         np.ascontiguousarray(offsets, np.int64),
         prior,
         altered,
-        actor,
+        np.asarray(arrays["event_first"], np.int64),
+        np.asarray(arrays["event_task"], np.int64) + context.tasks0,
+        placed,
         trace,
         bundles,
-        decided,
         limit,
         wires,
         holders,
@@ -563,10 +572,9 @@ def mixed_segment(graph, arrays, link, spec, context, state, budget, values):
         lookup,
         x.shape[1],
         values,
-        arrays["query"],
+        Shifted(arrays["task"], context.tasks0),
         offsets,
         spec,
-        decided,
         context.obs0,
     )
     state["mixed/action"] = int(action)
@@ -596,64 +604,78 @@ def mixed_segment(graph, arrays, link, spec, context, state, budget, values):
     )
 
 
+@timed("segments.shifted")
+def shifted(values, base):
+    values = np.asarray(values).astype(np.int64)
+    return np.where(values >= 0, values + base, -1).astype(np.int32)
+
+
 def own_arrays(arrays, carry, context, graph, spec):
     glob, step0, obs0 = carry.glob, carry.step0, context.obs0
     events = np.asarray(arrays["events"]).astype(np.int64)
     moments = events[:, 2] // 2
     events[:, 0], events[:, 1] = glob[events[:, 0]], glob[events[:, 1]]
     events[:, 2] += 2 * step0
+    events[events[:, 3] == 2, 7] += context.tasks0
     spatial = np.asarray(arrays["spatial"]).astype(np.int64)
     spatial[:, :2] += obs0
     period = np.asarray(arrays["period"])
-    starts = np.r_[0, np.flatnonzero(np.diff(period)) + 1]
-    ends = np.r_[starts[1:] - 1, len(period) - 1]
-    membership = np.repeat(np.arange(len(starts)), ends - starts + 1) + context.turns
+    first = np.r_[0, np.flatnonzero(np.diff(period)) + 1]
+    last = np.r_[first[1:] - 1, len(period) - 1]
+    membership = np.repeat(np.arange(len(first)), last - first + 1) + context.periods
     step = np.asarray(arrays["step"])
     own = dict(
         x_ref=carry.x_global[arrays["x_ref"]].astype(np.int32),
         entity=glob[arrays["entity"]].astype(np.int32),
         step=(step + step0).astype(np.int32),
-        turn=arrays["turn"],
+        obs_period=arrays["obs_period"],
         spatial=spatial.astype(np.int32),
         spatial_attribute_row=arrays["spatial_attribute_row"],
         spatial_step=(arrays["spatial_step"] + step0).astype(np.int32),
-        query=arrays["query"],
-        decision_actor=mapped(glob, arrays["decision_actor"].astype(np.int64)),
-        actor=mapped(glob, arrays["actor"]),
-        subject=mapped(glob, arrays["subject"]),
-        query_context=(np.asarray(arrays["query_context"]).astype(np.int64) + obs0)
-        .astype(np.int32)
-        .reshape(-1, 3),
-        query_step=(arrays["query_step"] + step0).astype(np.int32),
+        task=arrays["task"],
+        event_first=mapped(glob, arrays["event_first"].astype(np.int64)),
+        event_task=(arrays["event_task"] + context.tasks0).astype(np.int32),
+        event_step=(arrays["event_step"] + step0).astype(np.int32),
+        first=mapped(glob, arrays["first"]),
+        second=mapped(glob, arrays["second"]),
+        starts=shifted(arrays["starts"], obs0).reshape(-1, arrays["starts"].shape[1]),
+        row_step=(arrays["row_step"] + step0).astype(np.int32),
+        row_task=(arrays["row_task"] + context.tasks0).astype(np.int32),
         events=events.astype(np.int32),
         affinity=arrays["affinity"],
         global_affinity=arrays["global_affinity"],
         signals=arrays["signals"],
         row_index=arrays["row_index"],
-        decision=arrays["decision"],
+        key=arrays["key"],
         period=arrays["period"],
+        member_row=(arrays["member_row"] + context.rows0).astype(np.int32),
+        member_name=arrays["member_name"],
+        member_entity=mapped(glob, arrays["member_entity"]),
+        member_observed=shifted(arrays["member_observed"], obs0),
+        whole_row=(arrays["whole_row"] + context.rows0).astype(np.int32),
+        whole_name=arrays["whole_name"],
         **{name: value for name, value in arrays.items() if name.startswith("attributes_")},
     )
     extra = dict(
         connected=graph.entity_connected[arrays["entity"]],
         group=membership[step],
         event_group=membership[moments],
-        event_turn=period[moments],
-        turns=len(starts),
-        turn_starts=(starts + step0).astype(np.int64),
-        turn_ends=(ends + step0).astype(np.int64),
-        query_group=membership[np.asarray(arrays["query_step"])],
+        event_period=period[moments],
+        periods=len(first),
+        period_starts=(first + step0).astype(np.int64),
+        period_ends=(last + step0).astype(np.int64),
+        row_group=membership[np.asarray(arrays["row_step"])],
         first_step=step0,
         member=np.zeros(len(events), bool),
     )
     return own, extra
 
 
-def represent_segment(carry, graph, registry, spec, groups, categories, seed, limits, state, context):
+def represent_segment(carry, graph, registry, spec, groups, seed, limits, state, context):
     started = time.perf_counter()
     budget = GraphBudget(limits)
     link = Link(carry, state, context.obs0, dict(context.attributes))
-    arrays = base(graph, registry, spec, categories, link)
+    arrays = base(graph, registry, spec, link)
     own, extra = own_arrays(arrays, carry, context, graph, spec)
     work = dict(own, **extra)
     piece = dict(own)
@@ -670,7 +692,7 @@ def represent_segment(carry, graph, registry, spec, groups, categories, seed, li
         work["member"] = event_members(own["events"], spec)
         piece.update(event_segment(work, spec, registry, context, budget))
     if "walks" in groups:
-        piece.update(walk_segment(work, spec, seed, context, budget))
+        piece.update(walk_segment(work, spec, seed, context, budget, graph.name))
     if "mixed" in groups:
         piece.update(mixed_segment(graph, arrays, link, spec, context, state, budget, registry.values))
     rows, count = len(own["entity"]), len(own["events"])
@@ -680,28 +702,30 @@ def represent_segment(carry, graph, registry, spec, groups, categories, seed, li
                 entity=own["entity"].astype(np.int64),
                 step=own["step"].astype(np.int64),
                 group=work["group"].astype(np.int64),
-                turn=own["turn"],
+                period=own["obs_period"],
                 row=context.obs0 + np.arange(rows, dtype=np.int64),
             ),
             events=dict(
                 events=own["events"],
                 id=context.events0 + np.arange(count, dtype=np.int64),
                 group=work["event_group"].astype(np.int64),
-                turn=work["event_turn"],
+                period=work["event_period"],
                 member=work["member"] if "events" in groups else np.zeros(count, bool),
             ),
             last_step=carry.step0 + graph.steps - 1,
-            last_turn=context.turns + work["turns"] - 1,
+            last_period=context.periods + work["periods"] - 1,
         ),
         carry.step0 + graph.steps,
     )
-    context.turn_starts.append(work["turn_starts"])
-    context.turn_ends.append(work["turn_ends"])
+    context.period_starts.append(work["period_starts"])
+    context.period_ends.append(work["period_ends"])
     for name in registry.attributed:
         context.attributes[name] = context.attributes.get(name, 0) + len(own["attributes_" + name])
     context.obs0 += rows
     context.events0 += count
-    context.turns += work["turns"]
+    context.periods += work["periods"]
+    context.tasks0 += len(own["task"])
+    context.rows0 += len(own["row_step"])
     if "mixed" in groups:
         context.nodes0 += len(piece["mixed_kind"])
         context.holders0 += len(piece["mixed_member_ids"])
@@ -714,11 +738,11 @@ def represent_segment(carry, graph, registry, spec, groups, categories, seed, li
     return piece
 
 
-def represented(plan, outputs, registry, spec, groups, categories, seed, limits):
+def represented(plan, outputs, registry, spec, groups, seed, limits):
     started = time.perf_counter()
     state, context = {}, Context(plan, spec, groups)
     pieces = [
-        represent_segment(carry, graph, registry, spec, groups, categories, seed, limits, state, context)
+        represent_segment(carry, graph, registry, spec, groups, seed, limits, state, context)
         for carry, graph in outputs
     ]
     tables = [
@@ -801,7 +825,7 @@ def stitched_arrays(plan, arrays, tables, registry, spec, groups, limits, contex
         spatial_code_offsets=spatial_code_offsets,
     )
     budget = GraphBudget(limits)
-    arrays.update(turns(arrays, budget))
+    arrays.update(periods(arrays, budget))
     if "neighbors" in groups or "walks" in groups:
         arrays.update(neighbors(arrays, spec))
     if destination is not None:
@@ -817,7 +841,7 @@ def finished(appender, context, groups):
     appender.close()
 
 
-def build(members, registry, spec, groups, categories, seed, spill, limits, destination=None):
+def build(members, registry, spec, groups, seed, spill, limits, destination=None):
     started = time.perf_counter()
     plan = Plan(members, registry, spec)
     transform_state, representation_state, context = {}, {}, Context(plan, spec, groups)
@@ -830,7 +854,7 @@ def build(members, registry, spec, groups, categories, seed, spill, limits, dest
         carry, graph = derive_segment(plan, index, dense, transform_state, registry, spec, limits)
         with measure("represent"):
             piece = represent_segment(
-                carry, graph, registry, spec, groups, categories, seed, limits, representation_state, context
+                carry, graph, registry, spec, groups, seed, limits, representation_state, context
             )
         with measure("spill"):
             appender.add(piece)
@@ -865,7 +889,7 @@ SHARDS = 3
 RANK = dict(stitch=0, assemble=1, steps=2, expand=3)
 
 
-def attach(jobs, registry, spec, groups, categories, seed, limits, threads):
+def attach(jobs, registry, spec, groups, seed, limits, threads):
     numba.set_num_threads(threads)
     PIPE.clear()
     PIPE.update(
@@ -883,7 +907,6 @@ def attach(jobs, registry, spec, groups, categories, seed, limits, threads):
         registry=registry,
         spec=spec,
         groups=groups,
-        categories=categories,
         seed=seed,
         limits=limits,
         filtering=any(filtering(spec, edge.name) for edge in registry.edges),
@@ -1126,7 +1149,6 @@ def represent_task(job, index):
         PIPE["registry"],
         PIPE["spec"],
         PIPE["groups"],
-        PIPE["categories"],
         PIPE["seed"],
         PIPE["limits"],
         state,
@@ -1183,7 +1205,7 @@ def balanced(rows, count):
     return [tuple(shard) for shard in shards]
 
 
-def build_parallel(jobs, registry, spec, groups, categories, seed, workers, limits):
+def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
     started = time.perf_counter()
     count = min(SHARDS, sum(filtering(spec, edge.name) for edge in registry.edges))
     deriving = derivation(registry, spec) is not None
@@ -1198,7 +1220,6 @@ def build_parallel(jobs, registry, spec, groups, categories, seed, workers, limi
         registry,
         spec,
         groups,
-        categories,
         seed,
         limits,
         max(1, numba.config.NUMBA_NUM_THREADS // workers),

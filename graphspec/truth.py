@@ -11,26 +11,36 @@ from graphspec.infra.workspace import finite
 
 from . import clock, kernels, spans
 from .clock import ALWAYS, NEVER
-from .schema import REFERENCES, VALUE
+from .references import MEMBERS, SORTS, ends
+from .schema import VALUE, absent
 
 LOG = logging.getLogger(__name__)
 VERSION = 8
-QUERIES = ("query_key", "query_category", "query_references", "query_x", "query_signals")
-LABELS = ("label_entity", "label_step", "label_row", "label_id")
+TASKS = ("task_step", "task_key", "task_kind", "task_x", "task_signals")
+LABELS = ("label_task", "label_row")
 OBSERVATIONS = ("obs_entity", "obs_start", "obs_stop", "obs_x")
 FACTS = ("fact_source", "fact_target", "fact_code", "fact_start", "fact_stop", "fact_rank", "fact_values")
 ORDER = ("order_step", "order_position", "order_span")
 REMOVALS = ("removal_source", "removal_target", "removal_code", "removal_step", "removal_values")
-STATED = ("obs_values", "query_values", "graph_values")
+STATED = ("obs_values", "task_values", "graph_values")
 ARRAYS = (
-    ("kinds", "entity_token", "period") + OBSERVATIONS + FACTS + ORDER + REMOVALS + QUERIES + LABELS + STATED
+    ("kinds", "entity_token", "period")
+    + OBSERVATIONS
+    + FACTS
+    + ORDER
+    + REMOVALS
+    + TASKS
+    + MEMBERS
+    + LABELS
+    + STATED
 )
 DENSE = (
     ("kinds", "entity_token", "entity_connected", "period", "step_graph")
     + ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
     + ("fact_source", "fact_target", "fact_code", "fact_step", "fact_present", "fact_ref")
     + ("x_table", "value_table")
-    + QUERIES
+    + TASKS
+    + MEMBERS
     + LABELS
 )
 CHANGES = ("time", "observations", "facts")
@@ -42,9 +52,10 @@ STORED = (
     + ("fact_source", "fact_target", "fact_code", "fact_present")
     + ("fact_since", "fact_until", "fact_seq", "fact_values")
     + tuple(group + "_" + name for group in GROUPS for name in SPARSE)
-    + ("query_time", "query_observer", "query_grouping")
-    + ("query_key", "query_category", "query_references", "query_values", "query_x", "query_signals")
-    + ("label_entity", "label_query", "label_time", "label_row", "label_id")
+    + ("task_time", "task_observer", "task_grouping", "task_key", "task_kind", "task_split")
+    + ("task_weight", "task_values", "task_x", "task_signals")
+    + MEMBERS
+    + ("target_task", "target_row", "target_known", "target_y")
     + ("graph_values",)
 )
 
@@ -136,7 +147,7 @@ class Graph(Arrays):
             x_table=self.obs_x,
             value_table=np.concatenate((self.fact_values, self.removal_values)),
             **facts,
-            **{name: np.asarray(self.arrays[name]) for name in QUERIES + LABELS},
+            **{name: np.asarray(self.arrays[name]) for name in TASKS + MEMBERS + LABELS},
         )
         LOG.debug(
             "dense exit graph=%s observations=%d facts=%d seconds=%.4f",
@@ -254,7 +265,31 @@ class Facts:
         )
         return result
 
-    def stated(self, registry, categories, observers):
+    def referred(self, registry):
+        started = time.perf_counter()
+        schema, keys = registry.schema, self.keys
+        names = [edge.name for edge in registry.edges]
+        kinds = list(schema.tasks["kinds"])
+        held = {name: [None] * len(self.task_key) for name in schema.tasks["references"]}
+        owner = np.asarray(self.task_kind).tolist()
+        for name, entry in schema.tasks["references"].items():
+            for task, kind in enumerate(owner):
+                if name in schema.tasks["kinds"][kinds[kind]]["references"]:
+                    held[name][task] = []
+        listed = list(schema.tasks["references"])
+        for task, name, source, target, code in zip(
+            *(
+                np.asarray(self.arrays[key]).tolist()
+                for key in ("member_task", "member_name", "member_source", "member_target", "member_code")
+            )
+        ):
+            held[listed[name]][task].append(
+                (keys[source], None if code < 0 else names[code], None if target < 0 else keys[target])
+            )
+        LOG.debug("facts referred exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
+        return held
+
+    def stated(self, registry, splits, observers):
         started = time.perf_counter()
         schema, encoding, keys = registry.schema, registry.encoding, np.asarray(self.keys, object)
         kinds, entity = np.asarray(self.kinds), np.asarray(self.obs_entity)
@@ -281,30 +316,30 @@ class Facts:
                 **self.timed("fact", rows, observers, sequenced),
                 **prefixed(stated(registry, entry["columns"], held[rows])),
             )
-        queries = None
-        if schema.queries is not None:
-            asked = schema.queries["columns"]
-            references = np.asarray(self.query_references)
-            queries = dict(
-                time=[
-                    None if schema.model == "none" else moment(value) for value in np.asarray(self.query_time)
-                ],
-                observer=[
-                    None if value < 0 else observers[value]
-                    for value in np.asarray(self.query_observer).tolist()
-                ],
-                key=np.asarray(self.query_key).tolist(),
-                category=[categories[value] for value in np.asarray(self.query_category).tolist()],
-                references={
-                    name: keys[references[:, place]].tolist()
-                    for place, name in enumerate(schema.queries["references"])
-                },
-                **prefixed(
-                    stated(registry, asked, np.asarray(self.query_values)[:, encoding.positions(asked)])
-                ),
-            )
-            if schema.queries["grouping"] is not None:
-                queries["grouping"] = np.asarray(self.query_grouping).tolist()
+        asked, listed = schema.asked_columns(), list(schema.tasks["kinds"])
+        tasks = dict(
+            time=[None if schema.model == "none" else moment(value) for value in np.asarray(self.task_time)],
+            observer=[
+                None if value < 0 else observers[value] for value in np.asarray(self.task_observer).tolist()
+            ],
+            key=np.asarray(self.task_key).tolist(),
+            kind=[listed[value] for value in np.asarray(self.task_kind).tolist()],
+            split=[None if value < 0 else splits[value] for value in np.asarray(self.task_split).tolist()],
+            weight=[
+                None if np.isnan(value) else float(value)
+                for value in np.asarray(self.task_weight, np.float32)
+            ],
+            references=self.referred(registry),
+            **prefixed(stated(registry, asked, np.asarray(self.task_values)[:, encoding.positions(asked)])),
+        )
+        if schema.tasks["grouping"] is not None:
+            tasks["grouping"] = np.asarray(self.task_grouping).tolist()
+        targets = dict(
+            task=np.asarray(self.target_task).tolist(),
+            row=np.asarray(self.target_row).tolist(),
+            y=np.asarray(self.target_y, np.float64).tolist(),
+            known=[moment(value) for value in np.asarray(self.target_known)],
+        )
         result = dict(
             graph=dict(
                 unit=self.unit,
@@ -318,7 +353,8 @@ class Facts:
             nodes={kind: keys[kinds == registry.kind(kind)].tolist() for kind in schema.nodes},
             observations=observations,
             edges=edges,
-            queries=queries,
+            tasks=tasks,
+            targets=targets,
         )
         LOG.debug("stated exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
         return result
@@ -380,10 +416,24 @@ def gather(schema, tables, until):
     for held, entry in schema.edges.items():
         table = tables["edges"][held]
         places.append((table, entry["columns"], clock.reached(table, facts, until)))
-    if schema.queries is not None:
-        table = tables["queries"]
-        places.append((table, schema.queries["columns"], clock.reached(table, ("time",), until)))
     found = {name: dict(trained=[], distinct=[]) for name in schema.columns}
+    if "tasks" in tables:
+        table = tables["tasks"]
+        places.append((table, schema.asked_columns(), clock.reached(table, ("time",), until)))
+        aims = tables["targets"]
+        kinds = np.asarray(table.column("kind").to_pylist(), object)[
+            aims.column("task").to_numpy().astype(np.int64)
+        ]
+        seen = clock.reached(aims, ("known",), until)
+        if "known" in aims.column_names:
+            seen &= ~absent(aims.column("known"))
+        else:
+            seen[:] = False
+        for kind, entry in schema.tasks["kinds"].items():
+            if entry["matures"] is not None:
+                found[entry["matures"]["column"]]["trained"].append(
+                    aims.column("y").to_numpy().astype(np.float32)[seen & (kinds == kind)]
+                )
     for table, columns, seen in places:
         for name in columns:
             kind = schema.kind(name)
@@ -462,7 +512,248 @@ def read(schema, observers, table, label, name):
     return result
 
 
-def parse(registry, categories, observers, tables, rows, name):
+def asked(registry, splits, observers, tables, name):
+    started = time.perf_counter()
+    schema, encoding = registry.schema, registry.encoding
+    stated, tasks, layout = schema.tasks, tables["tasks"], encoding.layout
+    count, timed = tasks.num_rows, schema.model != "none"
+    if timed and tasks.column("time").null_count:
+        raise ValueError("a task of graph %s states no time" % name)
+    moments = column(tasks, "time", np.int64) if timed else np.zeros(count, np.int64)
+    if np.any((moments <= ALWAYS) | (moments >= NEVER)):
+        raise ValueError("a task of graph %s states a time outside the range of times" % name)
+    order = np.argsort(moments, kind="stable")
+    place = np.empty(count, np.int64)
+    place[order] = np.arange(count)
+    listed = {kind: code for code, kind in enumerate(stated["kinds"])}
+    found = tasks.column("kind").to_pylist()
+    strangers = sorted({str(value) for value in found if value not in listed})
+    if strangers:
+        raise ValueError(
+            "tasks of graph %s are of kinds the schema does not state: %s" % (name, ", ".join(strangers))
+        )
+    kinds = np.asarray([listed[value] for value in found], np.int32).reshape(-1)
+    looking = np.full(count, -1, np.int32)
+    if schema.observers:
+        known = {held: code for code, held in enumerate(observers)}
+        named = tasks.column("observer").to_pylist()
+        strangers = sorted({value for value in named if value is not None and value not in known})
+        if strangers:
+            raise ValueError(
+                "tasks of graph %s name observers the bank does not hold: %s" % (name, ", ".join(strangers))
+            )
+        looking = np.asarray([-1 if value is None else known[value] for value in named], np.int32).reshape(-1)
+    known = {held: code for code, held in enumerate(splits)}
+    named = tasks.column("split").to_pylist()
+    strangers = sorted({value for value in named if value is not None and value not in known})
+    if strangers:
+        raise ValueError(
+            "tasks of graph %s name splits the bank does not hold: %s" % (name, ", ".join(strangers))
+        )
+    split = np.asarray([-1 if value is None else known[value] for value in named], np.int32).reshape(-1)
+    weight = np.asarray(tasks.column("weight").to_numpy(zero_copy_only=False), np.float32)
+    keys = column(tasks, "key", np.int64)
+    if len(np.unique(keys)) != len(keys):
+        raise ValueError("two tasks of graph %s state one key" % name)
+    columns = schema.asked_columns()
+    values = codes(registry, tasks, columns, encoding.positions(columns), len(layout))
+    for kind, entry in stated["kinds"].items():
+        members = kinds == listed[kind]
+        weighted = ~np.isnan(weight[members])
+        if entry["weight"] and not (weighted.all() and np.all(weight[members][weighted] > 0)):
+            raise ValueError(
+                "a task of graph %s of the kind %s states no weight above zero, which its kind states"
+                % (name, kind)
+            )
+        if not entry["weight"] and weighted.any():
+            raise ValueError(
+                "a task of graph %s of the kind %s states a weight, which its kind does not" % (name, kind)
+            )
+        for other in columns:
+            if (
+                other not in entry["columns"]
+                and not np.isnan(values[members][:, encoding.positions([other])]).all()
+            ):
+                raise ValueError(
+                    "a task of graph %s of the kind %s states the column %s, which its kind does not"
+                    % (name, kind, other)
+                )
+    result = dict(
+        task_time=moments[order],
+        task_observer=looking[order],
+        task_grouping=column(tasks, "period", np.int32)[order]
+        if stated["grouping"] is not None
+        else np.zeros(count, np.int32),
+        task_key=keys[order],
+        task_kind=kinds[order],
+        task_split=split[order],
+        task_weight=weight[order],
+        task_values=values[order],
+        task_x=encoded(registry, values[order]),
+        task_signals=np.stack(
+            (matrix(tasks, "signal", np.float32), matrix(tasks, "signal_observed", np.float32)), 2
+        )[order]
+        if stated["signals"]
+        else np.zeros((count, 0, 2), np.float32),
+    )
+    LOG.debug("asked exit graph=%s tasks=%d seconds=%.4f", name, count, time.perf_counter() - started)
+    return result, place
+
+
+def referred(registry, tables, tasks, place, local, kinds, name):
+    started = time.perf_counter()
+    stated = registry.schema.tasks
+    listed = list(stated["kinds"])
+    parts = dict(task=[], name=[], place=[], source=[], target=[], code=[])
+    for number, (reference, entry) in enumerate(stated["references"].items()):
+        sort = SORTS.named(entry["sort"])
+        holders = np.asarray(
+            [reference in stated["kinds"][listed[kind]]["references"] for kind in tasks["task_kind"]], bool
+        ).reshape(-1)
+        where = "the reference %s of graph %s" % (reference, name)
+        if sort.columns() is None:
+            continue
+        table = tables["references"][reference]
+        owner = place[column(table, "task", np.int64)]
+        source = local(column(table, "source", np.int64))
+        allowed = [registry.kind(kind) for kind in entry["kinds"]]
+        target, code = np.full(len(owner), -1, np.int64), np.full(len(owner), -1, np.int64)
+        if "relation" in table.column_names:
+            relations = table.column("relation").to_pylist()
+            edge = np.asarray([value is not None for value in relations], bool).reshape(-1)
+            strangers = sorted({value for value in relations if value is not None} - set(registry.tables))
+            if strangers:
+                raise ValueError(
+                    "%s names relations the schema does not state: %s" % (where, ", ".join(strangers))
+                )
+            ended = np.asarray(table.column("target").is_valid().to_numpy(zero_copy_only=False), bool)
+            if not np.array_equal(edge, ended):
+                raise ValueError("%s states both ends and the relation of every edge it names" % where)
+            target[edge] = local(
+                np.asarray(table.column("target").fill_null(0).to_numpy(zero_copy_only=False), np.int64)[edge]
+            )
+            code[edge] = [registry.code(value) for value in relations if value is not None]
+            swap = np.zeros(len(owner), bool)
+            for row in np.flatnonzero(edge).tolist():
+                relation = registry.by_code[int(code[row])]
+                pair = (registry.nodes[kinds[source[row]]], registry.nodes[kinds[target[row]]])
+                pairs = [tuple(held) for held in relation.pairs]
+                if pair not in pairs and not (relation.symmetric and pair[::-1] in pairs):
+                    raise ValueError(
+                        "%s names an edge of %s between kinds of node the relation does not join"
+                        % (where, relation.name)
+                    )
+                swap[row] = relation.symmetric and pair[0] == pair[1] and source[row] > target[row]
+            source, target = np.where(swap, target, source), np.where(swap, source, target)
+        if len(owner) and not np.isin(kinds[source[code < 0]], allowed).all():
+            raise ValueError("%s names nodes of kinds the reference does not state" % where)
+        if np.any(~holders[owner]):
+            raise ValueError("%s is stated by a task whose kind does not state it" % where)
+        position = (
+            column(table, "place", np.int64)
+            if "place" in table.column_names
+            else np.zeros(len(owner), np.int64)
+        )
+        order = np.lexsort((target, code, source, position, owner))
+        owner, source, target, code, position = (
+            values[order] for values in (owner, source, target, code, position)
+        )
+        if not sort.ordered:
+            same = np.r_[False, owner[1:] == owner[:-1]]
+            same[1:] &= ((source[1:] == source[:-1]) & (target[1:] == target[:-1]) & (code[1:] == code[:-1]))[
+                : len(same) - 1
+            ]
+            if same.any():
+                raise ValueError("%s names a member twice for one task" % where)
+            start = np.maximum.accumulate(
+                np.where(np.r_[True, owner[1:] != owner[:-1]][: len(owner)], np.arange(len(owner)), 0)
+            )
+            position = np.arange(len(owner)) - start
+        sort.check(
+            where,
+            np.bincount(owner, minlength=len(holders))[holders],
+            owner,
+            source,
+            target,
+            code,
+            position,
+        )
+        parts["task"].append(owner)
+        parts["name"].append(np.full(len(owner), number, np.int64))
+        parts["place"].append(position)
+        parts["source"].append(source)
+        parts["target"].append(target)
+        parts["code"].append(code)
+    held = {key: np.concatenate(values + [np.zeros(0, np.int64)]) for key, values in parts.items()}
+    rank = np.zeros(len(held["task"]), np.int64)
+    for kind, entry in stated["kinds"].items():
+        order = {list(stated["references"]).index(found): at for at, found in enumerate(entry["references"])}
+        members = np.flatnonzero(tasks["task_kind"][held["task"]] == listed.index(kind))
+        rank[members] = [order[value] for value in held["name"][members].tolist()]
+    order = np.lexsort((held["place"], rank, held["task"]))
+    result = dict(
+        member_task=held["task"][order].astype(np.int32),
+        member_name=held["name"][order].astype(np.int16),
+        member_place=held["place"][order].astype(np.int32),
+        member_source=held["source"][order].astype(np.int32),
+        member_target=held["target"][order].astype(np.int32),
+        member_code=held["code"][order].astype(np.int16),
+    )
+    LOG.debug(
+        "referred exit graph=%s members=%d seconds=%.4f", name, len(order), time.perf_counter() - started
+    )
+    return result
+
+
+def aimed(registry, tables, tasks, place, rows, name):
+    started = time.perf_counter()
+    stated = registry.schema.tasks
+    listed = list(stated["kinds"])
+    found = tables["targets"]
+    owner = place[column(found, "task", np.int64)]
+    rows = np.asarray(rows, np.int64)
+    if len(rows) != len(owner):
+        raise ValueError("graph %s reads different targets than its supervision" % name)
+    known = np.full(len(owner), NEVER, np.int64)
+    if "known" in found.column_names:
+        given = found.column("known")
+        held = np.asarray(given.fill_null(0).to_numpy(zero_copy_only=False), np.int64)
+        if np.any((held <= ALWAYS) | (held >= NEVER)):
+            raise ValueError("a target of graph %s is known from a time outside the range of times" % name)
+        known = np.where(absent(given), NEVER, held)
+    if np.any(known <= tasks["task_time"][owner]):
+        raise ValueError(
+            "a target of graph %s is known no later than the time of its task, whose view it would enter"
+            % name
+        )
+    counts = np.bincount(owner, minlength=len(tasks["task_key"]))
+    for kind, entry in stated["kinds"].items():
+        members = tasks["task_kind"] == listed.index(kind)
+        if entry["target"] is None and counts[members].any():
+            raise ValueError(
+                "a task of graph %s of the kind %s holds a target, which its kind does not state"
+                % (name, kind)
+            )
+        if (
+            entry["target"] is not None
+            and entry["target"]["kind"] == "number"
+            and counts[members].max(initial=0) > 1
+        ):
+            raise ValueError("a task of graph %s of the kind %s holds more than one target" % (name, kind))
+    if np.any(tasks["task_split"][owner] < 0):
+        raise ValueError("a task of graph %s holds a target and states no split" % name)
+    order = np.lexsort((rows, owner))
+    result = dict(
+        target_task=owner[order].astype(np.int32),
+        target_row=rows[order],
+        target_known=known[order],
+        target_y=column(found, "y", np.float64)[order],
+    )
+    LOG.debug("aimed exit graph=%s targets=%d seconds=%.4f", name, len(order), time.perf_counter() - started)
+    return result
+
+
+def parse(registry, splits, observers, tables, rows, name):
     started = time.perf_counter()
     schema, encoding = registry.schema, registry.encoding
     unit = None
@@ -559,90 +850,9 @@ def parse(registry, categories, observers, tables, rows, name):
             )
     if len(facts["code"]) and (facts["code"].min() < 0 or facts["code"].max() > np.iinfo(np.int16).max):
         raise ValueError("fact codes must fit 0..%d" % np.iinfo(np.int16).max)
-    level = registry.extras["level"]
-    timed = schema.model != "none"
-    if registry.extras["queries"]:
-        queries = tables["queries"]
-        count = queries.num_rows
-        if timed and queries.column("time").null_count:
-            raise ValueError("a task of graph %s states no time" % name)
-        query_time = column(queries, "time", np.int64) if timed else np.zeros(count, np.int64)
-        if np.any(np.diff(query_time) < 0):
-            raise ValueError("the tasks of graph %s are not read in order of their time" % name)
-        if np.any((query_time <= ALWAYS) | (query_time >= NEVER)):
-            raise ValueError("a task of graph %s states a time outside the range of times" % name)
-        query_observer = np.full(count, -1, np.int32)
-        if schema.observers:
-            known = {found: code for code, found in enumerate(observers)}
-            looking = queries.column("observer").to_pylist()
-            strangers = sorted({value for value in looking if value is not None and value not in known})
-            if strangers:
-                raise ValueError(
-                    "tasks of graph %s name observers the bank does not hold: %s"
-                    % (name, ", ".join(strangers))
-                )
-            query_observer = np.asarray(
-                [-1 if value is None else known[value] for value in looking], np.int32
-            ).reshape(-1)
-        position = {category: index for index, category in enumerate(categories)}
-        asked = schema.queries["columns"]
-        query_values = codes(registry, queries, asked, encoding.positions(asked), len(layout))
-        query = dict(
-            query_time=query_time,
-            query_observer=query_observer,
-            query_grouping=column(queries, "period", np.int32)
-            if schema.queries["grouping"] is not None
-            else np.zeros(count, np.int32),
-            query_key=column(queries, "key", np.int64),
-            query_category=np.asarray(
-                [position[value] for value in queries.column("category").to_pylist()], np.int64
-            ),
-            query_references=local(matrix(queries, "references", np.int64).reshape(-1)).reshape(
-                count, REFERENCES
-            ),
-            query_x=encoded(registry, query_values),
-            query_signals=np.stack(
-                (matrix(queries, "signal", np.float32), matrix(queries, "signal_observed", np.float32)), 2
-            )
-            if registry.extras["signals"]
-            else np.zeros((count, 0, 2), np.float32),
-        )
-    else:
-        query_values = np.zeros((0, len(layout)), np.float32)
-        query = dict(
-            query_time=np.zeros(0, np.int64),
-            query_observer=np.zeros(0, np.int32),
-            query_grouping=np.zeros(0, np.int32),
-            query_key=np.zeros(0, np.int64),
-            query_category=np.zeros(0, np.int64),
-            query_references=np.zeros((0, REFERENCES), np.int32),
-            query_x=np.zeros((0, registry.features), np.float16),
-            query_signals=np.zeros((0, 0, 2), np.float32),
-        )
-    if level == "node":
-        targets = tables["targets"]
-        entity = local(column(targets, "entity", np.int64))
-        if timed and targets.column("time").null_count:
-            raise ValueError("a label of graph %s states no time" % name)
-        moments = column(targets, "time", np.int64) if timed else np.zeros(len(entity), np.int64)
-        order = np.lexsort((entity, moments))
-        label_entity, label_time = entity[order], moments[order]
-        if np.any((np.diff(label_time) == 0) & (np.diff(label_entity) == 0)):
-            raise ValueError("two labels of graph %s sit on one node at one time" % name)
-        label_row, label_id = np.asarray(rows, np.int64)[order], column(targets, "id", np.int64)[order]
-        label_query = np.full(len(label_entity), -1, np.int32)
-    else:
-        if level == "path":
-            label_query, label_row = (np.asarray(values, np.int64) for values in rows)
-            if np.any(np.diff(label_query) < 0):
-                raise ValueError("points of graph %s are not ordered by their task" % name)
-        else:
-            rows = np.asarray(rows, np.int64)
-            label_query = np.flatnonzero(rows >= 0)
-            label_row = rows[label_query]
-        label_id, label_time = query["query_key"][label_query], query["query_time"][label_query]
-        label_query = label_query.astype(np.int32)
-        label_entity = np.full(len(label_query), -1, np.int32)
+    tasks, place = asked(registry, splits, observers, tables, name)
+    members = referred(registry, tables, tasks, place, local, kinds, name)
+    targets = aimed(registry, tables, tasks, place, rows, name)
     graph = Facts(
         name,
         keys,
@@ -665,26 +875,22 @@ def parse(registry, categories, observers, tables, rows, name):
         fact_seq=facts["seq"].astype(np.int32),
         fact_values=facts["values"],
         **sparse("fact", facts, facts["watched"], facts["watchers"]),
-        label_entity=label_entity,
-        label_query=label_query,
-        label_time=label_time.astype(np.int64),
-        label_row=label_row,
-        label_id=label_id,
-        query_values=query_values,
         graph_values=codes(
             registry, tables["graph"], schema.graph, range(len(schema.graph)), len(schema.graph)
         )[0],
-        **query,
+        **tasks,
+        **members,
+        **targets,
     )
-    check(graph, registry, observers)
+    check(graph, registry, splits, observers)
     LOG.info(
         "truth exit graph=%s seconds=%.3f observations=%d facts=%d tasks=%d labels=%d",
         name,
         time.perf_counter() - started,
         len(graph.obs_since),
         len(graph.fact_since),
-        len(graph.query_time),
-        len(graph.label_time),
+        len(graph.task_time),
+        len(graph.target_task),
     )
     return graph
 
@@ -697,24 +903,25 @@ def ranks(keys):
     return result
 
 
-def check(graph, registry, observers):
+def check(graph, registry, splits, observers):
     started = time.perf_counter()
     name, entities, schema = graph.name, len(graph.kinds), registry.schema
     lengths = dict(
         obs=len(graph.obs_since),
         fact=len(graph.fact_since),
-        query=len(graph.query_key),
-        label=len(graph.label_time),
+        task=len(graph.task_key),
+        member=len(graph.member_task),
+        target=len(graph.target_task),
     )
     dimensions = dict(
         obs_x=2,
         obs_values=2,
         fact_values=2,
-        query_x=2,
-        query_values=2,
-        query_signals=3,
-        query_references=2,
+        task_x=2,
+        task_values=2,
+        task_signals=3,
     )
+    real = ("fact_present", "graph_values", "task_weight", "target_y")
     loose = tuple(group + "_" + part for group in GROUPS for part in SPARSE)
     for key, values in graph.arrays.items():
         if not isinstance(values, np.ndarray) or values.ndim != dimensions.get(key, 1):
@@ -722,11 +929,7 @@ def check(graph, registry, observers):
         group = key.split("_", 1)[0]
         if group in lengths and key not in loose and len(values) != lengths[group]:
             raise ValueError("graph %s has inconsistent %s row counts" % (name, group))
-        if (
-            key not in dimensions
-            and key not in ("fact_present", "graph_values")
-            and values.dtype.kind not in "iu"
-        ):
+        if key not in dimensions and key not in real and values.dtype.kind not in "iu":
             raise ValueError("graph %s requires whole numbers in %s" % (name, key))
     if (schema.model in clock.UNITED) != (graph.unit is not None):
         raise ValueError("graph %s states a unit of time exactly when its schema has a clock" % name)
@@ -734,21 +937,19 @@ def check(graph, registry, observers):
         raise ValueError(
             "graph %s states the unit of time %r, which its schema does not" % (name, graph.unit)
         )
-    if graph.query_references.shape[1] != REFERENCES:
-        raise ValueError("graph %s requires %d references for every query" % (name, REFERENCES))
     if len(graph.keys) != entities or len(graph.entity_token) != entities:
         raise ValueError("graph %s requires one key and token per entity" % name)
     if not np.array_equal(graph.entity_token, tokens(registry, graph.kinds, graph.keys)):
         raise ValueError("entity tokens of graph %s do not match its keys" % name)
     if np.any(graph.kinds < 0) or np.any(graph.kinds >= len(registry.nodes)):
         raise ValueError("graph %s names undeclared node types" % name)
-    if graph.obs_x.shape[1] != registry.features or graph.query_x.shape[1] != registry.features:
+    if graph.obs_x.shape[1] != registry.features or graph.task_x.shape[1] != registry.features:
         raise ValueError("graph %s feature width does not match its registry" % name)
-    if graph.query_signals.shape[1:] != (registry.extras["signals"], 2):
+    if graph.task_signals.shape[1:] != (registry.extras["signals"], 2):
         raise ValueError("graph %s signal shape does not match its registry" % name)
-    if not finite(graph.obs_x) or not finite(graph.query_x):
-        raise ValueError("graph %s observation and query features must be finite" % name)
-    for given, values in ((graph.obs_x, graph.obs_values), (graph.query_x, graph.query_values)):
+    if not finite(graph.obs_x) or not finite(graph.task_x):
+        raise ValueError("graph %s observation and task features must be finite" % name)
+    for given, values in ((graph.obs_x, graph.obs_values), (graph.task_x, graph.task_values)):
         if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values))):
             raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
     if graph.graph_values.shape != (len(schema.graph),):
@@ -757,22 +958,30 @@ def check(graph, registry, observers):
         ("fact about a node", graph.obs_entity),
         ("fact source", graph.fact_source),
         ("fact target", graph.fact_target),
-    ) + tuple(zip(referenced(registry), np.asarray(graph.query_references).T)):
+        ("reference", graph.member_source),
+        ("reference", np.maximum(graph.member_target, 0)),
+    ):
         if np.any(values < 0) or np.any(values >= entities):
             raise ValueError("a %s of graph %s names an entity outside 0..%d" % (label, name, entities - 1))
-    if registry.extras["level"] == "node" and (
-        np.any(graph.label_entity < 0) or np.any(graph.label_entity >= entities)
-    ):
-        raise ValueError("a label of graph %s names an entity outside 0..%d" % (name, entities - 1))
     found = np.asarray(graph.fact_code)
     if np.any(found < 0) or np.any(found >= len(registry.canonical)) or not registry.canonical[found].all():
         raise ValueError("facts of graph %s carry codes that are not canonical relation codes" % name)
-    if np.any(graph.label_query >= len(graph.query_key)):
-        raise ValueError("a label of graph %s names a task outside the graph" % name)
-    if np.any(graph.query_observer < -1) or np.any(graph.query_observer >= len(observers)):
+    tasks = len(graph.task_key)
+    if np.any(graph.task_kind < 0) or np.any(graph.task_kind >= len(schema.tasks["kinds"])):
+        raise ValueError("a task of graph %s is of a kind the schema does not state" % name)
+    for label, values in (("reference", graph.member_task), ("target", graph.target_task)):
+        if np.any(values < 0) or np.any(values >= tasks):
+            raise ValueError("a %s of graph %s names a task outside the graph" % (label, name))
+    if np.any(graph.task_observer < -1) or np.any(graph.task_observer >= len(observers)):
         raise ValueError("a task of graph %s names an observer the bank does not hold" % name)
-    if np.any(np.diff(graph.query_time) < 0) or np.any(np.diff(graph.label_time) < 0):
-        raise ValueError("tasks and labels of graph %s are not ordered by their time" % name)
+    if np.any(graph.task_split < -1) or np.any(graph.task_split >= len(splits)):
+        raise ValueError("a task of graph %s names a split the bank does not hold" % name)
+    if np.any(np.diff(graph.task_time) < 0) or np.any(np.diff(graph.target_task) < 0):
+        raise ValueError("tasks and targets of graph %s are not ordered by their time" % name)
+    if np.any(np.diff(graph.member_task) < 0):
+        raise ValueError("references of graph %s are not ordered by their task" % name)
+    if np.any(graph.target_known <= graph.task_time[graph.target_task]):
+        raise ValueError("a target of graph %s is known no later than the time of its task" % name)
     place = ranks(graph.keys)
     for group, label in (("obs", "facts about one node"), ("fact", "facts about edges")):
         stamps = graph.stamps(group)
@@ -838,15 +1047,78 @@ def conforms(graph, registry, changed):
     )
 
 
+@timed("truth.unobserved")
+def unobserved(entities, obs_entity, obs_step, who, moments):
+    held = np.asarray(obs_step, np.int64) * entities + np.asarray(obs_entity, np.int64)
+    return ~np.isin(np.asarray(moments, np.int64) * entities + np.asarray(who, np.int64), held)
+
+
+def referring(graph, registry):
+    started = time.perf_counter()
+    member, entity = ends(graph.member_source, graph.member_target)
+    task = np.asarray(graph.member_task, np.int64)[member]
+    stops = registry.stops[np.asarray(graph.task_kind, np.int64)[task]]
+    result = (
+        member,
+        entity,
+        np.asarray(graph.task_step, np.int64)[task],
+        stops,
+    )
+    LOG.debug(
+        "referring exit graph=%s ends=%d seconds=%.4f", graph.name, len(member), time.perf_counter() - started
+    )
+    return result
+
+
+@timed("truth.unresolved")
+def unresolved(graph, registry, member):
+    task = int(graph.member_task[member])
+    return "the reference %s of the task %d of the kind %s of graph %s" % (
+        list(registry.schema.tasks["references"])[int(graph.member_name[member])],
+        int(graph.task_key[task]),
+        list(registry.schema.tasks["kinds"])[int(graph.task_kind[task])],
+        graph.name,
+    )
+
+
+def placed(graph, registry, steps, entities):
+    started = time.perf_counter()
+    name, tasks = graph.name, len(graph.task_key)
+    if (
+        np.any(graph.task_step < 0)
+        or np.any(graph.task_step >= steps)
+        or np.any(np.diff(graph.task_step) < 0)
+    ):
+        raise ValueError("tasks of graph %s sit at steps outside 0..%d or out of order" % (name, steps - 1))
+    if np.any(graph.task_kind < 0) or np.any(graph.task_kind >= len(registry.schema.tasks["kinds"])):
+        raise ValueError("a task of graph %s is of a kind the schema does not state" % name)
+    for label, values in (("reference", graph.member_task), ("label", graph.label_task)):
+        if np.any(values < 0) or np.any(values >= tasks) or np.any(np.diff(values) < 0):
+            raise ValueError(
+                "a %s of graph %s names a task outside the graph or out of order" % (label, name)
+            )
+    if (
+        np.any(graph.member_source < 0)
+        or np.any(graph.member_source >= entities)
+        or np.any(graph.member_target < -1)
+        or np.any(graph.member_target >= entities)
+    ):
+        raise ValueError("a reference of graph %s names an entity outside 0..%d" % (name, entities - 1))
+    if not registry.aimed[np.asarray(graph.task_kind, np.int64)[graph.label_task]].all():
+        raise ValueError("a label of graph %s sits on a task whose kind states no target" % name)
+    LOG.debug("placed exit graph=%s tasks=%d seconds=%.4f", name, tasks, time.perf_counter() - started)
+
+
 def verify_dense(graph, registry, known=None):
     name, steps, entities = graph.name, graph.steps, len(graph.kinds)
     lengths = dict(
         obs=len(graph.obs_step),
         fact=len(graph.fact_step),
-        query=len(graph.query_key),
-        label=len(graph.label_step),
+        task=len(graph.task_key),
+        member=len(graph.member_task),
+        label=len(graph.label_task),
     )
-    dimensions = dict(x_table=2, value_table=2, query_x=2, query_signals=3, query_references=2)
+    dimensions = dict(x_table=2, value_table=2, task_x=2, task_signals=3)
     for key, values in graph.arrays.items():
         if not isinstance(values, np.ndarray) or values.ndim != dimensions.get(key, 1):
             raise ValueError("graph %s has an invalid array shape for %s" % (name, key))
@@ -868,20 +1140,19 @@ def verify_dense(graph, registry, known=None):
         or np.any(graph.fact_ref >= len(graph.value_table))
     ):
         raise ValueError("graph %s references rows outside its feature or value tables" % name)
-    if graph.query_references.dtype.kind not in "iu" or graph.query_references.shape[1] != REFERENCES:
-        raise ValueError("graph %s requires %d integer references for every query" % (name, REFERENCES))
     if len(graph.entity_token) != entities or len(graph.entity_connected) != entities or steps < 1:
         raise ValueError("graph %s requires one token and flag per entity and at least one step" % name)
     if len(graph.step_graph) != steps or np.any(np.diff(graph.step_graph) < 0):
         raise ValueError("graph %s needs one joined graph per step, never decreasing" % name)
     if np.any(graph.kinds < 0) or np.any(graph.kinds >= len(registry.nodes)):
         raise ValueError("graph %s names undeclared node types" % name)
-    if graph.x_table.shape[1] != registry.features or graph.query_x.shape[1] != registry.features:
+    if graph.x_table.shape[1] != registry.features or graph.task_x.shape[1] != registry.features:
         raise ValueError("graph %s feature width does not match its registry" % name)
-    if graph.query_signals.shape[1:] != (registry.extras["signals"], 2):
+    if graph.task_signals.shape[1:] != (registry.extras["signals"], 2):
         raise ValueError("graph %s signal shape does not match its registry" % name)
-    if not finite(graph.x_table) or not finite(graph.query_x):
-        raise ValueError("graph %s observation and query features must be finite" % name)
+    if not finite(graph.x_table) or not finite(graph.task_x):
+        raise ValueError("graph %s observation and task features must be finite" % name)
+    placed(graph, registry, steps, entities)
     flags = kernels.audit(
         graph.obs_entity,
         graph.obs_step,
@@ -892,50 +1163,40 @@ def verify_dense(graph, registry, known=None):
         graph.fact_present,
         graph.fact_code,
         registry.canonical,
-        *(np.ascontiguousarray(graph.query_references[:, place]) for place in range(REFERENCES)),
-        graph.label_entity,
-        graph.label_step,
-        registry.extras["level"] == "node",
         steps,
         entities,
         np.zeros(entities, bool) if known is None else known,
     )
-    for index, label in enumerate(("observation", "fact", "label")):
+    for index, label in enumerate(("observation", "fact")):
         if flags[index]:
             raise ValueError("a %s row of graph %s has a step outside 0..%d" % (label, name, steps - 1))
-    for index, label in enumerate(
-        ("observation", "fact source", "fact target") + referenced(registry) + ("label",), 3
-    ):
+    for index, label in enumerate(("observation", "fact source", "fact target"), 2):
         if flags[index]:
             raise ValueError("a %s of graph %s names an entity outside 0..%d" % (label, name, entities - 1))
     if len(graph.period) != steps:
         raise ValueError("graph %s does not state a period for every step" % name)
-    if flags[10]:
+    if flags[5]:
         raise ValueError("facts of graph %s carry codes that are not canonical relation codes" % name)
-    if registry.extras["queries"] and len(graph.query_key) != steps:
-        raise ValueError("graph %s needs exactly one query per step" % name)
     for index, message in (
-        (11, "observations of graph %s are not ordered by step"),
-        (12, "facts of graph %s are not ordered by step with present facts first"),
-        (13, "labels of graph %s are not ordered by step"),
-        (14, "an entity of graph %s has two observations at one step"),
+        (6, "observations of graph %s are not ordered by step"),
+        (7, "facts of graph %s are not ordered by step with present facts first"),
+        (8, "an entity of graph %s has two observations at one step"),
     ):
         if flags[index]:
             raise ValueError(message % name)
     for index, label, when in (
-        (15, "present fact", "outside query anchors at its step"),
-        (16, "absent fact", "at or before its step"),
-        (17, "query", "at its step"),
-        (18, "label", "at its step"),
+        (9, "present fact", "outside the anchors of references at its step"),
+        (10, "absent fact", "at or before its step"),
     ):
         if flags[index]:
             raise ValueError("a %s of graph %s names an entity with no observation %s" % (label, name, when))
-
-
-def referenced(registry):
-    if registry.schema.queries is None:
-        return ("query reference",) * REFERENCES
-    return tuple("query reference " + name for name in registry.schema.queries["references"])
+    member, entity, moments, stops = referring(graph, registry)
+    lost = stops & unobserved(entities, graph.obs_entity, graph.obs_step, entity, moments)
+    if lost.any():
+        raise ValueError(
+            "%s names a node not observed at the time of the task, and its kind states that this stops the work"
+            % unresolved(graph, registry, member[np.flatnonzero(lost)[0]])
+        )
 
 
 def ordered(*keys):
@@ -952,18 +1213,18 @@ def verify(graph, registry):
         obs=len(graph.obs_start),
         fact=len(graph.fact_start),
         removal=len(graph.removal_step),
-        query=len(graph.query_key),
-        label=len(graph.label_step),
+        task=len(graph.task_key),
+        member=len(graph.member_task),
+        label=len(graph.label_task),
     )
     dimensions = dict(
         obs_x=2,
         obs_values=2,
         fact_values=2,
         removal_values=2,
-        query_x=2,
-        query_values=2,
-        query_signals=3,
-        query_references=2,
+        task_x=2,
+        task_values=2,
+        task_signals=3,
         graph_values=1,
     )
     for key, values in graph.arrays.items():
@@ -974,23 +1235,21 @@ def verify(graph, registry):
             raise ValueError("graph %s has inconsistent %s row counts" % (name, group))
         if key not in dimensions and values.dtype.kind not in "iu":
             raise ValueError("graph %s requires integer indices in %s" % (name, key))
-    if graph.query_references.dtype.kind not in "iu" or graph.query_references.shape[1] != REFERENCES:
-        raise ValueError("graph %s requires %d integer references for every query" % (name, REFERENCES))
     if len(graph.keys) != entities or len(graph.entity_token) != entities or steps < 1:
         raise ValueError("graph %s requires one key and token per entity and at least one step" % name)
     if not np.array_equal(graph.entity_token, tokens(registry, graph.kinds, graph.keys)):
         raise ValueError("entity tokens of graph %s do not match its keys" % name)
     if np.any(graph.kinds < 0) or np.any(graph.kinds >= len(registry.nodes)):
         raise ValueError("graph %s names undeclared node types" % name)
-    if graph.obs_x.shape[1] != registry.features or graph.query_x.shape[1] != registry.features:
+    if graph.obs_x.shape[1] != registry.features or graph.task_x.shape[1] != registry.features:
         raise ValueError("graph %s feature width does not match its registry" % name)
-    if graph.query_signals.shape[1:] != (registry.extras["signals"], 2):
+    if graph.task_signals.shape[1:] != (registry.extras["signals"], 2):
         raise ValueError("graph %s signal shape does not match its registry" % name)
     if graph.fact_values.shape[1] != graph.removal_values.shape[1]:
         raise ValueError("graph %s fact and removal attribute widths differ" % name)
-    if not finite(graph.obs_x) or not finite(graph.query_x):
-        raise ValueError("graph %s observation and query features must be finite" % name)
-    for given, values in ((graph.obs_x, graph.obs_values), (graph.query_x, graph.query_values)):
+    if not finite(graph.obs_x) or not finite(graph.task_x):
+        raise ValueError("graph %s observation and task features must be finite" % name)
+    for given, values in ((graph.obs_x, graph.obs_values), (graph.task_x, graph.task_values)):
         if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values))):
             raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
     if graph.graph_values.shape != (len(registry.schema.graph),):
@@ -1001,21 +1260,18 @@ def verify(graph, registry):
     ):
         if np.any(start < 0) or np.any(stop <= start) or np.any(stop > steps):
             raise ValueError("a %s span of graph %s lies outside 0..%d or is empty" % (label, name, steps))
-    for label, moment in (("removal", graph.removal_step), ("label", graph.label_step)):
-        if np.any(moment < 0) or np.any(moment >= steps):
-            raise ValueError("a %s row of graph %s has a step outside 0..%d" % (label, name, steps - 1))
+    if np.any(graph.removal_step < 0) or np.any(graph.removal_step >= steps):
+        raise ValueError("a removal row of graph %s has a step outside 0..%d" % (name, steps - 1))
+    placed(graph, registry, steps, entities)
     for label, values in (
         ("observation", graph.obs_entity),
         ("fact source", graph.fact_source),
         ("fact target", graph.fact_target),
         ("removal source", graph.removal_source),
         ("removal target", graph.removal_target),
-    ) + tuple(zip(referenced(registry), np.asarray(graph.query_references).T)):
+    ):
         if np.any(values < 0) or np.any(values >= entities):
             raise ValueError("a %s of graph %s names an entity outside 0..%d" % (label, name, entities - 1))
-    labelled = registry.extras["level"] == "node"
-    if labelled and (np.any(graph.label_entity < 0) or np.any(graph.label_entity >= entities)):
-        raise ValueError("a label of graph %s names an entity outside 0..%d" % (name, entities - 1))
     for label, codes in (("facts", graph.fact_code), ("removals", graph.removal_code)):
         if (
             np.any(codes < 0)
@@ -1052,8 +1308,6 @@ def verify(graph, registry):
         or len(np.unique(moments.astype(np.int64) * (1 << 32) + moved)) != len(moments)
     ):
         raise ValueError("fact order patches of graph %s are malformed" % name)
-    if np.any(np.diff(graph.label_step) < 0):
-        raise ValueError("labels of graph %s are not ordered by step" % name)
     order = np.lexsort((graph.obs_start, graph.obs_entity))
     entity, start, stop = graph.obs_entity[order], graph.obs_start[order], graph.obs_stop[order]
     same = entity[1:] == entity[:-1]
@@ -1078,16 +1332,21 @@ def verify(graph, registry):
         raise ValueError(
             "an absent fact of graph %s names an entity with no observation at or before its step" % name
         )
-    moments = np.arange(len(graph.query_key))
-    for who in np.asarray(graph.query_references).T:
-        if spans.all_covered(offsets, lows, highs, np.ascontiguousarray(who), moments, moments + 1) >= 0:
-            raise ValueError("a query of graph %s names an entity with no observation at its step" % name)
-    if labelled:
-        moments = np.asarray(graph.label_step)
-        if spans.all_covered(offsets, lows, highs, np.asarray(graph.label_entity), moments, moments + 1) >= 0:
-            raise ValueError("a label of graph %s names an entity with no observation at its step" % name)
+    member, entity, moments, stops = referring(graph, registry)
+    chosen = np.flatnonzero(stops)
+    lost = spans.all_covered(
+        offsets,
+        lows,
+        highs,
+        np.ascontiguousarray(entity[chosen]),
+        np.ascontiguousarray(moments[chosen]),
+        np.ascontiguousarray(moments[chosen] + 1),
+    )
+    if lost >= 0:
+        raise ValueError(
+            "%s names a node not observed at the time of the task, and its kind states that this stops the work"
+            % unresolved(graph, registry, member[chosen[lost]])
+        )
     if len(graph.period) != steps:
         raise ValueError("graph %s does not state a period for every step" % name)
-    if registry.extras["queries"] and len(graph.query_key) != steps:
-        raise ValueError("graph %s needs exactly one query per step" % name)
     LOG.debug("verify exit graph=%s seconds=%.4f", name, time.perf_counter() - started)

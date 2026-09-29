@@ -7,11 +7,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from graphspec.infra.files import read_json
+from graphspec.references import SORTS
 from graphspec.registry import Registry
-from graphspec.schema import DECLARED, EDGE, OBSERVED, QUERY, VALUE, VERSION, Encoding, Schema
+from graphspec.schema import DECLARED, EDGE, LINK, OBSERVED, TARGET, TASK, VALUE, VERSION, Encoding, Schema
 
 LOG = logging.getLogger(__name__)
 KEYS = ("id", "from", "to", "since", "seq", "present")
+VALUES = dict(value=dict(type="number", encoder="value"))
 STAMPS = ("since", "until", "known", "replaced", "observers")
 
 
@@ -70,7 +72,7 @@ def written(folder, schema):
     graphs = tables[("graph", None, None)]
     units = graphs.column("unit").to_pylist() if "unit" in graphs.column_names else [None] * graphs.num_rows
     result = {
-        name: dict(graph=dict(unit=unit), nodes={}, observations={}, edges={}, queries=None)
+        name: dict(graph=dict(unit=unit), nodes={}, observations={}, edges={}, tasks=None, targets=None)
         for name, unit in zip(graphs.column("name").to_pylist(), units)
     }
     names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
@@ -135,44 +137,130 @@ def written(folder, schema):
                     parts[graph][column] += more
         for name in result:
             result[name]["edges"][table] = parts[name]
-    if schema.queries is not None:
-        held = tables[("query", None, None)]
-        place = {number: row for row, number in enumerate(held.column("id").to_pylist())}
-        references = {}
-        for name, kinds in schema.queries["references"].items():
-            references[name] = [None] * held.num_rows
-            for kind in kinds:
-                links = tables[(QUERY + name, "query", kind)]
-                for source, target in zip(links.column("from").to_pylist(), links.column("to").to_pylist()):
-                    references[name][place[source]] = key[(kind, target)]
-        asked, count = schema.queries, held.num_rows
-        columns = dict(
-            time=held.column("time").to_pylist() if "time" in held.column_names else [None] * count,
-            observer=held.column("observer").to_pylist()
-            if "observer" in held.column_names
-            else [None] * count,
-            key=held.column(asked["key"]).to_pylist(),
-            category=held.column("category").to_pylist(),
+    asked, held = schema.tasks, tables[("task", None, None)]
+    count = held.num_rows
+    place = {number: row for row, number in enumerate(held.column("id").to_pylist())}
+    kinds = held.column("kind").to_pylist()
+    references = {}
+    for name, entry in asked["references"].items():
+        sort = SORTS.named(entry["sort"])
+        references[name] = [[] if name in asked["kinds"][kind]["references"] else None for kind in kinds]
+        if sort.columns() is None:
+            continue
+        for kind in entry["kinds"]:
+            links = tables[(TASK + name, "task", kind)]
+            stored = {
+                column: links.column(column).to_pylist()
+                if column in links.column_names
+                else [None] * links.num_rows
+                for column in ("relation", "to_kind", "to_key", "place")
+            }
+            for row, (source, target) in enumerate(
+                zip(links.column("from").to_pylist(), links.column("to").to_pylist())
+            ):
+                first, relation = (kind, target), stored["relation"][row]
+                second = None
+                if relation is not None:
+                    number = {
+                        label: found
+                        for (other, found), label in key.items()
+                        if other == stored["to_kind"][row] and owner[(other, found)] == owner[first]
+                    }[stored["to_key"][row]]
+                    second = (stored["to_kind"][row], number)
+                    table = [
+                        held_table
+                        for held_table, entry_of in schema.edges.items()
+                        if relation == held_table or entry_of["column"] is not None
+                    ][0]
+                    if not schema.edges[table]["directed"] and first[0] == second[0]:
+                        first, second = sorted((first, second), key=lambda end: entity[end])
+                references[name][place[source]].append(
+                    (
+                        stored["place"][row],
+                        key[first],
+                        relation,
+                        None if second is None else key[second],
+                    )
+                )
+    for name, entry in asked["references"].items():
+        ordered = SORTS.named(entry["sort"]).ordered
+        references[name] = [
+            None
+            if members is None
+            else [member[1:] for member in sorted(members, key=lambda member: member[0])]
+            if ordered
+            else sorted((member[1:] for member in members), key=repr)
+            for members in references[name]
+        ]
+    columns = dict(
+        time=held.column("time").to_pylist() if "time" in held.column_names else [None] * count,
+        observer=held.column("observer").to_pylist() if "observer" in held.column_names else [None] * count,
+        key=held.column(asked["key"]).to_pylist(),
+        kind=kinds,
+        split=held.column("split").to_pylist(),
+        weight=held.column("weight").to_pylist(),
+    )
+    columns.update(values(held, schema.asked_columns()))
+    if asked["grouping"] is not None:
+        columns["grouping"] = held.column(asked["grouping"]).to_pylist()
+    owners = [names[graph] for graph in held.column("graph").to_pylist()]
+    found, named = split(owners, columns), split(owners, references)
+    aimed, link = tables[(TARGET, None, None)], tables[(LINK, TARGET, "task")]
+    belongs = dict(zip(link.column("from").to_pylist(), link.column("to").to_pylist()))
+    known = aimed.column("known").to_pylist() if "known" in aimed.column_names else [None] * aimed.num_rows
+    first = {}
+    for row, graph in enumerate(owners):
+        first.setdefault(graph, row)
+    for graph in found:
+        moments = [0 if value is None else value for value in found[graph]["time"]]
+        order = np.argsort(moments, kind="stable").tolist()
+        result[graph]["tasks"] = dict(
+            {name: [held[row] for row in order] for name, held in found[graph].items()},
+            references={name: [held[row] for row in order] for name, held in named[graph].items()},
         )
-        columns.update(values(held, schema.queries["columns"]))
-        if asked["grouping"] is not None:
-            columns["grouping"] = held.column(asked["grouping"]).to_pylist()
-        owners = [names[graph] for graph in held.column("graph").to_pylist()]
-        found, named = split(owners, columns), split(owners, references)
-        for graph in found:
-            moments = [0 if value is None else value for value in found[graph]["time"]]
-            order = np.argsort(moments, kind="stable").tolist()
-            result[graph]["queries"] = dict(
-                {name: [held[row] for row in order] for name, held in found[graph].items()},
-                references={name: [held[row] for row in order] for name, held in named[graph].items()},
+        position = {first[graph] + row: at for at, row in enumerate(order)}
+        rows = sorted(
+            (position[place[belongs[number]]], row, y, moment)
+            for row, (number, y, moment) in enumerate(
+                zip(aimed.column("id").to_pylist(), aimed.column("y").to_pylist(), known)
             )
+            if owners[place[belongs[number]]] == graph
+        )
+        result[graph]["targets"] = dict(
+            task=[row[0] for row in rows],
+            row=[row[1] for row in rows],
+            y=[row[2] for row in rows],
+            known=[row[3] for row in rows],
+        )
     LOG.debug("written exit graphs=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
-def stated(nodes, edges, columns=None, queries=None):
+def asked(nodes):
     started = time.perf_counter()
-    columns = dict(value=dict(type="number", encoder="value")) if columns is None else columns
+    result = dict(
+        key="key",
+        grouping=None,
+        signals=0,
+        references=dict(holder=dict(sort="node", kinds=list(nodes))),
+        kinds=dict(
+            outcome=dict(
+                references=["holder"],
+                columns=[],
+                target=dict(kind="number", series="outcome"),
+                weight=False,
+                absent="stop",
+                event=None,
+                matures=None,
+            )
+        ),
+    )
+    LOG.debug("asked exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
+def stated(nodes, edges, columns, tasks):
+    started = time.perf_counter()
     result = Schema(
         dict(
             version=VERSION,
@@ -190,14 +278,14 @@ def stated(nodes, edges, columns=None, queries=None):
                 )
                 for table, entry in edges.items()
             },
-            queries=queries,
+            tasks=tasks,
         )
     )
     LOG.debug("stated exit seconds=%.4f", time.perf_counter() - started)
     return result
 
 
-def registry(name, nodes, edges, extras):
+def registry(name, nodes, edges):
     started = time.perf_counter()
     base = [edge for edge in edges if edge.origin[0] == "base"]
     schema = stated(
@@ -206,19 +294,45 @@ def registry(name, nodes, edges, extras):
             edge.name: dict(endpoints=edge.pairs, directed=not edge.symmetric, columns=list(edge.attributes))
             for edge in base
         },
+        VALUES,
+        asked(nodes),
     )
     encoding = Encoding(schema, {}, dict(value={}), {edge.name: [edge.name] for edge in base})
+    extras = dict(
+        target="number",
+        series=["outcome"],
+        signals=0,
+        base=[edge.name for edge in base],
+        events=False,
+        single=False,
+    )
     result = Registry(name, encoding, edges, [], extras)
     LOG.debug("registry exit seconds=%.4f", time.perf_counter() - started)
     return result
 
 
+def normal(tasks, schema):
+    started = time.perf_counter()
+    references = {
+        name: [
+            members
+            if members is None or SORTS.named(schema.tasks["references"][name]["sort"]).ordered
+            else sorted(members, key=repr)
+            for members in held
+        ]
+        for name, held in tasks["references"].items()
+    }
+    LOG.debug("normal exit references=%d seconds=%.4f", len(references), time.perf_counter() - started)
+    return dict(tasks, references=references)
+
+
 def shown(opened, index):
+    from conftest import SPLITS
     from graphspec.truth import Graph
     from tuning.model_spec import configuration
 
     started = time.perf_counter()
-    cfg = configuration(opened.registry, dict(view="snapshot"), {}, 5)
+    cfg = configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS)
     result = Graph.load(opened.view(index, cfg))
     LOG.debug("shown exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
     return result

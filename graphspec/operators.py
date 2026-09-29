@@ -7,6 +7,7 @@ from graphspec.infra.workspace import allocate, concatenate, scatter, take
 
 from . import kernels
 from .carry import FOREVER, Table
+from .references import ends
 from .resources import GraphBudget, GraphCapacityError
 from .vocabulary import UNTYPED, completion, hop
 
@@ -365,8 +366,7 @@ def remember(carry, name, graph, values):
 @timed("operators.nodes")
 def nodes(graph, registry, spec, seed, carry=None):
     steps, entities = graph.steps, len(graph.kinds)
-    protected = registry.extras["protected"]
-    retained = np.asarray([kind in protected or spec["nodes/%s/keep" % kind] for kind in registry.nodes])
+    retained = np.asarray([spec["nodes/%s/keep" % kind] for kind in registry.nodes])
     filters = {
         kind: spec["nodes/%s/filter" % kind]
         for kind in registry.nodes
@@ -425,8 +425,10 @@ def nodes(graph, registry, spec, seed, carry=None):
             entities,
         )
     needed = np.zeros(len(obs_step), bool)
-    if len(graph.query_key):
-        needed = (graph.query_references[obs_step] == obs_entity[:, None]).any(1)
+    if spec["nodes/referenced"] == "keep":
+        member, entity = ends(graph.member_source, graph.member_target)
+        moments = graph.task_step[graph.member_task[member]].astype(np.int64)
+        needed = np.isin(obs_step.astype(np.int64) * entities + obs_entity, moments * entities + entity)
     first, _ = kernels.first_observed(obs_entity, obs_step, structural, entities, steps)
     if carry is not None:
         first[counters(carry, "nodes/structural", graph) > 0] = -1

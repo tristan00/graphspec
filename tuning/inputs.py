@@ -72,7 +72,7 @@ def history_inputs(graph, held, first, last, start, count, spec, stream, include
     (
         observed,
         interaction,
-        query_tick,
+        task_row,
         mask,
         gap,
         ids,
@@ -87,9 +87,9 @@ def history_inputs(graph, held, first, last, start, count, spec, stream, include
         held.numpy("neighbor_ids"),
         held.numpy("neighbor_offsets"),
         held.column("events", 2),
-        held.numpy("actor")[first:last].astype(np.int64),
-        held.numpy("subject")[first:last].astype(np.int64),
-        held.numpy("query_step")[first:last].astype(np.int64),
+        held.numpy("first")[first:last].astype(np.int64),
+        held.numpy("second")[first:last].astype(np.int64),
+        held.numpy("row_step")[first:last].astype(np.int64),
         start,
         count,
         mode,
@@ -113,7 +113,7 @@ def history_inputs(graph, held, first, last, start, count, spec, stream, include
             graph,
             observed.shape,
             ("x", observed, weight),
-            ("query", np.where(interaction, query_tick, -1), 0.5),
+            ("task", np.where(interaction, task_row, -1), 0.5),
         )
     )
     result.update(
@@ -144,22 +144,30 @@ def history_inputs(graph, held, first, last, start, count, spec, stream, include
 
 
 def chosen_points(bank, block, cfg):
+    started = time.perf_counter()
     graph, _, stop, target_start, partition, _, _ = block
-    rows, steps = bank.points(graph, cfg)
+    rows, places = bank.labels(graph, cfg)
+    steps = bank.points(graph, cfg)[1][places]
     picked = (steps >= target_start) & (steps < stop)
-    picked[picked] = bank.partitions[rows[picked]] == partition
-    return rows[picked], steps[picked].astype(np.int64)
+    picked[picked] = bank.partitions(cfg)[rows[picked]] == partition
+    LOG.debug(
+        "chosen points exit graph=%d points=%d seconds=%.4f",
+        graph,
+        int(picked.sum()),
+        time.perf_counter() - started,
+    )
+    return rows[picked], places[picked].astype(np.int64)
 
 
 def chosen_rows(bank, block, held, first, last, cfg):
     _, _, _, target_start, partition, row_lo, row_hi = block
-    moment = held.numpy("query_step")[first:last].astype(np.int64)
-    if bank.level == "path":
-        return np.isin(moment, chosen_points(bank, block, cfg)[1])
-    rows = held.numpy("row_index")[first:last]
+    moment = held.numpy("row_step")[first:last].astype(np.int64)
     ids = np.arange(first, last)
+    if bank.path:
+        return np.isin(ids, chosen_points(bank, block, cfg)[1])
+    rows = held.numpy("row_index")[first:last]
     selected = (rows >= 0) & (moment >= target_start) & (ids >= row_lo) & (ids < row_hi)
-    selected[selected] = bank.partitions[rows[selected]] == partition
+    selected[selected] = bank.partitions(cfg)[rows[selected]] == partition
     return selected
 
 
@@ -185,10 +193,10 @@ class Window:
         graph, start, stop, _, _, row_lo, row_hi = block
         held = bank.resident(graph, cfg, "cpu")
         lo, hi = (int(value) for value in held.numpy("snapshot_offsets")[[start, stop]])
-        if bank.registry.extras["level"] == "node":
-            first, last = row_lo, row_hi
+        if bank.viewed(cfg).single or bank.path:
+            first, last = between(held.numpy("row_step"), start, stop)
         else:
-            first, last = between(held.numpy("query_step"), start, stop)
+            first, last = row_lo, row_hi
         if row_local(cfg["model"]):
             chosen = np.flatnonzero(chosen_rows(bank, block, held, first, last, cfg))
             if len(chosen):
@@ -220,10 +228,7 @@ def frame_inputs(window, start, stop):
 def snapshot_inputs(b, window):
     from .model_spec import shared_frames
 
-    graph, start, stop = window.graph, window.start, window.stop
-    lo, hi = window.lo, window.hi
-    held, registry = window.held, window.registry
-    n = stop - start
+    start, lo, hi, held = window.start, window.lo, window.hi, window.held
     entity = held.numpy("entity")[lo:hi]
     step = held.numpy("step")[lo:hi] - start
     b.update(entity=array(entity, torch.long), step=array(step, torch.long))
@@ -231,22 +236,58 @@ def snapshot_inputs(b, window):
         b["window"] = window
     else:
         b.update(observed_inputs(window, lo, hi))
-    if registry.extras["queries"]:
-        left, right = between(held.column("events", 2), start * 2, stop * 2)
-        choices = held.numpy("events")[left:right]
-        choices = choices[choices[:, 3] == 2]
-        b.update(
-            decision_query=features(graph, (n,), ("query", (start, stop), None)),
-            decision_context=array(choices[:, 4:6] - lo, torch.long),
-        )
-    else:
-        b.update(decision_query=features(graph, (n,)), decision_context=np.full((n, 2), -1, np.int64))
+    if window.cfg["model"]["snapshot/temporal"] == "graph_sequence":
+        b.update(frame_inputs_of(window))
     if "window" not in b:
         spatial_inputs(b, window)
     elif window.cfg["model"]["snapshot/temporal"] in ("graph_cell", "evolving"):
         spatial_inputs(b, window)
         for key in ("relation", "attributes", "attribute_edges"):
             del b[key]
+
+
+def frame_inputs_of(window):
+    started = time.perf_counter()
+    graph, start, stop, lo, held = window.graph, window.start, window.stop, window.lo, window.held
+    n = stop - start
+    left, right = between(held.column("events", 2), start * 2, stop * 2)
+    seen = held.numpy("events")[left:right]
+    seen = seen[seen[:, 3] == 2]
+    frames = seen[:, 2] // 2 - start
+    if len(np.unique(frames)) != len(frames):
+        raise ValueError(
+            "graph %d holds several tasks seen as events at one step, and the family snapshot with a "
+            "sequence over graphs reads at most one" % graph
+        )
+    task, starts = np.full(n, -1, np.int64), np.full((n, 2), -1, np.int64)
+    task[frames] = seen[:, 7]
+    starts[frames] = seen[:, 4:6] - lo
+    result = dict(
+        frame_task=features(graph, (n,), ("task", task, 1.0)), frame_starts=array(starts, torch.long)
+    )
+    LOG.debug("frame inputs exit graph=%d frames=%d seconds=%.4f", graph, n, time.perf_counter() - started)
+    return result
+
+
+def referred_inputs(window, first, last):
+    started = time.perf_counter()
+    held, lo = window.held, window.lo
+    result = {}
+    for prefix, names in (("member", ("name", "entity", "observed")), ("whole", ("name",))):
+        rows = held.numpy(prefix + "_row")
+        left, right = between(rows, first, last)
+        result[prefix + "_row"] = array(rows[left:right] - first, torch.long)
+        for name in names:
+            result[prefix + "_" + name] = array(held.numpy(prefix + "_" + name)[left:right], torch.long)
+    observed = result.pop("member_observed")
+    result["member_index"] = np.where(observed >= 0, observed - lo, -1)
+    LOG.debug(
+        "referred inputs exit graph=%d members=%d seconds=%.4f",
+        window.graph,
+        len(observed),
+        time.perf_counter() - started,
+    )
+    return result
 
 
 def spatial_inputs(b, window):
@@ -297,7 +338,7 @@ def lifted_inputs(b, window):
     extra = held.numpy("coupling_boundaries")[low:high]
     extra = extra[extra[:, 0] >= lo]
     boundary = extra[:, :2] - lo
-    turn = held.numpy("turn")
+    period = held.numpy("obs_period")
     b.update(
         temporal_edges=array(np.concatenate((coupled, boundary)).T, torch.long),
         temporal_relation=array(
@@ -307,8 +348,8 @@ def lifted_inputs(b, window):
             np.r_[step[coupled[:, 1]] - step[coupled[:, 0]], step[boundary[:, 1]] - step[boundary[:, 0]]],
             torch.float32,
         ),
-        temporal_turn_gap=array(
-            np.r_[turn[lo + coupled[:, 1]] - turn[lo + coupled[:, 0]], extra[:, 3]], torch.float32
+        temporal_period_gap=array(
+            np.r_[period[lo + coupled[:, 1]] - period[lo + coupled[:, 0]], extra[:, 3]], torch.float32
         ),
     )
 
@@ -318,8 +359,8 @@ def mixed_inputs(b, window):
     first, last = window.first, window.last
     held, tokens = window.held, window.tokens
     m = last - first
-    actors, subjects = b["actor"], b["subject"]
-    moment = b["query_steps"] + start
+    firsts, seconds = b["first"], b["second"]
+    moment = b["row_steps"] + start
     mixed_ticks = held.numpy("mixed_tick")
     left, right = between(mixed_ticks, start * 2, stop * 2)
     mixed_edges = held.numpy("mixed_edges")[held.rows_by("mixed_edges", 1, left, right)]
@@ -327,7 +368,7 @@ def mixed_inputs(b, window):
     ticks = mixed_ticks[left:right]
     mk = np.r_[held.numpy("mixed_kind")[left:right], np.full(m, 5)].astype(np.int64)
     qi = np.arange(right - left, right - left + m)
-    roots = np.stack((actors, subjects, np.full(m, -1)), 1).astype(np.int64)
+    roots = np.stack((firsts, seconds, np.full(m, -1)), 1).astype(np.int64)
     sources, offsets = gather.reachable(
         held.numpy("mixed_entity")[left:right].astype(np.int64),
         np.arange(right - left),
@@ -342,12 +383,12 @@ def mixed_inputs(b, window):
     all_ticks = np.r_[ticks, moment * 2]
     gaps = np.log1p((all_ticks[edge[:, 1]] - all_ticks[edge[:, 0]]).clip(0) / 2).astype(np.float32)
     b["mixed"] = dict(
-        x=joined([features(graph, (right - left,), ("mixed_x", (left, right), None)), b["query"]]),
+        x=joined([features(graph, (right - left,), ("mixed_x", (left, right), None)), b["task"]]),
         kind=mk,
         edge_index=array(edge[:, :2].T, torch.long),
         edge_code=array(edge[:, 2] | (1 << 13), torch.long),
         edge_gap=array(np.stack((gaps, np.zeros_like(gaps)), 1)),
-        query=array(qi, torch.long),
+        row=array(qi, torch.long),
     )
     if tokens is not None:
         owner = held.numpy("mixed_entity")[left:right]
@@ -376,7 +417,7 @@ def events_inputs(b, window, blocks):
             (len(events),),
             ("x", endpoints[:, 0], 0.5),
             ("x", endpoints[:, 1], 0.5),
-            ("query", np.where(interaction, events[:, 2] // 2, -1), 1.0),
+            ("task", np.where(interaction, events[:, 7], -1), 1.0),
         ),
         event_groups=[
             (int(events[s, 2]), int(s), int(e)) for s, e in zip(starts, np.append(starts[1:], len(events)))
@@ -388,8 +429,8 @@ def events_inputs(b, window, blocks):
 
 def dag_inputs(b, window, left, right, position):
     held, events = window.held, b["events"]
-    actors, subjects = b["actor"], b["subject"]
-    moment = b["query_steps"] + window.start
+    firsts, seconds = b["first"], b["second"]
+    moment = b["row_steps"] + window.start
     m = window.last - window.first
     low, high = between(held.column("event_dag", 1), left, right)
     linked = held.numpy("event_dag")[low:high]
@@ -409,28 +450,28 @@ def dag_inputs(b, window, left, right, position):
         np.r_[events[:, 0], events[:, 1]].astype(np.int64),
         positions,
         events[:, 2].astype(np.int64),
-        np.stack((actors, subjects), 1).astype(np.int64),
+        np.stack((firsts, seconds), 1).astype(np.int64),
         moment * 2,
     )
-    b["dag_query_edges"] = array(np.stack((reached, np.repeat(np.arange(m), np.diff(offsets)))), torch.long)
+    b["dag_row_edges"] = array(np.stack((reached, np.repeat(np.arange(m), np.diff(offsets)))), torch.long)
 
 
 def walks_inputs(b, window, context):
-    from .turns import enabled, lookback
+    from .periods import enabled, lookback
 
     graph, start = window.graph, window.start
     first, last = window.first, window.last
     held, cfg, tokens = window.held, window.cfg, window.tokens
     m = last - first
-    actors, subjects = b["actor"], b["subject"]
-    moment = b["query_steps"] + start
+    firsts, seconds = b["first"], b["second"]
+    moment = b["row_steps"] + start
     walk_count, hops = cfg["model"]["walks/count"], cfg["model"]["walks/hops"]
     stored = held.numpy("walks")
     if walk_count > stored.shape[2] or hops > stored.shape[3]:
         raise ValueError("requested walks exceed the walks stored for this graph variant")
     walks = stored[first:last, :, :walk_count, :hops]
     if enabled(cfg):
-        extra = held.numpy("turn_walks")[first:last, :, : lookback(cfg), :walk_count, :hops]
+        extra = held.numpy("period_walks")[first:last, :, : lookback(cfg), :walk_count, :hops]
         extra = extra.reshape(m, 2, lookback(cfg) * walk_count, hops)
         walks = np.concatenate((walks, extra), 2)
         kinds = np.zeros(walks.shape, np.int64)
@@ -438,13 +479,13 @@ def walks_inputs(b, window, context):
         gaps = np.zeros(walks.shape + (3,), np.float32)
         past = context["end_token_gaps"][:, :2]
         gaps[:, :, walk_count:] = np.repeat(past, walk_count, axis=2)[:, :, :, None, :]
-        b.update(walk_turn_kind=kinds, walk_end_time=gaps)
+        b.update(walk_period_kind=kinds, walk_end_time=gaps)
     known = walks >= 0
     known &= held.column("events", 2)[np.maximum(walks, 0)] >= start * 2
     events = held.numpy("events")[np.maximum(walks, 0)]
     nodes = np.empty(walks.shape, np.int32)
     observations = np.empty_like(nodes)
-    current = np.broadcast_to(np.stack((actors, subjects), 1)[:, :, None], walks.shape[:3]).copy()
+    current = np.broadcast_to(np.stack((firsts, seconds), 1)[:, :, None], walks.shape[:3]).copy()
     for hop in range(hops):
         forward = events[:, :, :, hop, 0] == current
         nodes[:, :, :, hop] = np.where(forward, events[:, :, :, hop, 1], events[:, :, :, hop, 0])
@@ -466,23 +507,22 @@ def base_inputs(bank, block, window):
     graph, start, stop = window.graph, window.start, window.stop
     first, last, lo, hi = window.first, window.last, window.lo, window.hi
     held, tokens = window.held, window.tokens
-    node = window.registry.extras["level"] == "node"
     n = stop - start
-    query_steps = held.numpy("query_step")
+    row_steps = held.numpy("row_step")
     m = last - first
-    moment = query_steps[first:last].astype(np.int64)
+    moment = row_steps[first:last].astype(np.int64)
     selected = chosen_rows(bank, block, held, first, last, window.cfg)
-    if bank.level == "path":
-        rows, steps = chosen_points(bank, block, window.cfg)
-        if not np.isin(steps, moment).all():
+    if bank.path:
+        rows, places = chosen_points(bank, block, window.cfg)
+        if np.any(places < first) or np.any(places >= last):
             raise ValueError("a point of graph %d lies outside its window" % graph)
-        point_query = np.searchsorted(moment[selected], steps)
+        point_row = np.searchsorted(np.flatnonzero(selected) + first, places)
     else:
         rows = held.numpy("row_index")[first:last][selected]
     local = moment - start
     bounds = np.searchsorted(local, np.arange(n + 1))
-    query_context = held.numpy("query_context")[first:last]
-    actors, subjects = held.numpy("actor")[first:last], held.numpy("subject")[first:last]
+    starts = held.numpy("starts")[first:last]
+    firsts, seconds = held.numpy("first")[first:last], held.numpy("second")[first:last]
     b = dict(
         graph=graph,
         start=start,
@@ -493,29 +533,31 @@ def base_inputs(bank, block, window):
         predictions=m,
         observations=hi - lo,
         graphs=[graph],
-        query_steps=array(local, torch.long),
-        query_frames=array(local, torch.long),
-        frame_queries=[np.arange(bounds[t], bounds[t + 1], dtype=np.int64) for t in range(n)],
+        row_steps=array(local, torch.long),
+        row_frames=array(local, torch.long),
+        frame_rows=[np.arange(bounds[t], bounds[t + 1], dtype=np.int64) for t in range(n)],
         selected=array(selected),
         rows=Host(rows),
         target=array(bank.targets[rows]),
-        query=features(graph, (m,)) if node else features(graph, (m,), ("query", (first, last), None)),
-        context=features(graph, query_context.shape, ("x", query_context, None)),
-        actor=array(actors, torch.long),
-        subject=array(subjects, torch.long),
-        context_index=array(query_context - lo, torch.long),
+        weight=array(bank.weights[rows]),
+        series=array(bank.series[rows], torch.long),
+        task=features(graph, (m,), ("task", held.numpy("row_task")[first:last], 1.0)),
+        start_x=features(graph, starts.shape, ("x", starts, 1.0)),
+        first=array(firsts, torch.long),
+        second=array(seconds, torch.long),
+        start_index=array(np.where(starts >= 0, starts - lo, -1), torch.long),
         signal=array(held.numpy("signals")[first:last]),
         affinity=array(held.numpy("affinity")[first:last]),
         global_affinity=array(held.numpy("global_affinity")[first:last]),
+        **referred_inputs(window, first, last),
     )
     if tokens is not None:
-        b["root_token"] = array(tokens[np.stack((actors, subjects), 1)])
-    if bank.level == "path":
+        b["root_token"] = array(tokens[np.stack((firsts, seconds), 1)])
+    if bank.path:
         b.update(
             tau=array(bank.taus[rows]),
-            series=array(bank.series[rows], torch.long),
-            point_query=array(point_query, torch.long),
-            queries=int(selected.sum()),
+            point_row=array(point_row, torch.long),
+            tasks=int(selected.sum()),
         )
     return b
 
@@ -526,9 +568,9 @@ def tree_inputs(b, window):
     graph, start = window.graph, window.start
     held, registry, cfg, tokens = window.held, window.registry, window.cfg, window.tokens
     spec, stream = cfg["graph"], SEED
-    actors, subjects = b["actor"], b["subject"]
-    moment = b["query_steps"] + start
-    roots = np.stack((actors, subjects), 1).reshape(-1).astype(np.int64)
+    firsts, seconds = b["first"], b["second"]
+    moment = b["row_steps"] + start
+    roots = np.stack((firsts, seconds), 1).reshape(-1).astype(np.int64)
     cutoffs = np.repeat(moment * 2 + 1, 2)
     b["tree"] = tree(
         graph,
@@ -572,8 +614,8 @@ def neighbor_history_inputs(b, window, blocks):
 
 
 def prepare_context(window):
-    from .turn_inputs import add
-    from .turns import enabled
+    from .period_inputs import add
+    from .periods import enabled
 
     result = {}
     if enabled(window.cfg):
@@ -582,7 +624,7 @@ def prepare_context(window):
 
 
 def context_inputs(b, window, blocks, context):
-    from .turn_inputs import history_tokens, mixed_edges, temporal_edges
+    from .period_inputs import history_tokens, mixed_edges, temporal_edges
 
     if not context:
         return
@@ -591,7 +633,7 @@ def context_inputs(b, window, blocks, context):
         temporal_edges(b, window.graph, window.held, window.lo, window.hi, window.registry, window.tokens)
     if "mixed" in blocks:
         mixed_edges(b, window.graph)
-    if "turn_history" in blocks:
+    if "period_history" in blocks:
         history_tokens(
             b,
             window.graph,
@@ -607,7 +649,9 @@ def context_inputs(b, window, blocks, context):
 
 def entity_space(b, window, blocks):
     graph, held, start = window.graph, window.held, window.start
-    fields = [key for key in ("actor", "subject", "entity", "history_ids", "common_ids") if key in b]
+    fields = [
+        key for key in ("first", "second", "entity", "history_ids", "common_ids", "member_entity") if key in b
+    ]
     space = None
     if window.compact:
         ids = [np.asarray(b[key]).reshape(-1) for key in fields]

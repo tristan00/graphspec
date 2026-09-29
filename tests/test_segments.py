@@ -12,13 +12,19 @@ from tuning.data import Deriver, identical
 
 def shortened(graph, stop):
     arrays = dict(graph.arrays)
-    for group, step in (("obs", "obs_step"), ("fact", "fact_step"), ("label", "label_step")):
-        keep = np.asarray(graph.arrays[step]) < stop
-        for name in arrays:
-            if name.split("_", 1)[0] == group:
-                arrays[name] = np.asarray(arrays[name])[keep]
+    tasks = int((np.asarray(graph.task_step) < stop).sum())
+    kept = dict(
+        obs=np.asarray(graph.obs_step) < stop,
+        fact=np.asarray(graph.fact_step) < stop,
+        task=np.asarray(graph.task_step) < stop,
+        member=np.asarray(graph.member_task) < tasks,
+        label=np.asarray(graph.label_task) < tasks,
+    )
     for name in arrays:
-        if name.startswith("query_") or name in ("period", "step_graph"):
+        group = name.split("_", 1)[0]
+        if group in kept:
+            arrays[name] = np.asarray(arrays[name])[kept[group]]
+        elif name in ("period", "step_graph"):
             arrays[name] = np.asarray(arrays[name])[:stop]
     return type(graph)(graph.name, graph.keys, stop, **arrays)
 
@@ -36,7 +42,7 @@ def test_segment_engine_equals_the_physical_join(bank, draw):
     graphs = [shortened(graph, int(rng.integers(1, graph.steps + 1))) for graph in graphs]
     derived = transform.derive(join.joined(graphs, registry, spec), registry, spec, GraphLimits("cpu"))
     reference = representations.build(
-        derived, registry, spec, specs.GROUPS, opened.categories, transform.SEED, GraphLimits("cpu")
+        derived, registry, spec, specs.GROUPS, transform.SEED, GraphLimits("cpu")
     )
     plan = segments.Plan(graphs, registry, spec)
     outputs = segments.derived(plan, graphs, registry, spec, GraphLimits("cpu"))
@@ -45,7 +51,7 @@ def test_segment_engine_equals_the_physical_join(bank, draw):
         identical(np.asarray(derived.arrays[name]), np.asarray(stitched.arrays[name])) for name in DENSE
     )
     engine = segments.represented(
-        plan, outputs, registry, spec, specs.GROUPS, opened.categories, transform.SEED, GraphLimits("cpu")
+        plan, outputs, registry, spec, specs.GROUPS, transform.SEED, GraphLimits("cpu")
     )
     assert sorted(engine) == sorted(reference)
     assert [

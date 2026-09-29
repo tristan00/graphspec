@@ -5,19 +5,19 @@ from torch.nn import functional as F
 from graphspec.infra.timing import timed
 
 from .layers import Head, normalization
-from .turns import EndContext, enabled
+from .periods import EndContext, enabled
 
 
 class SignalNet(nn.Module):
     @timed("signal.signalnet")
-    def __init__(self, cfg, registry, categories):
+    def __init__(self, cfg, registry):
         super().__init__()
         spec = cfg["model"]
         hidden, channels = spec["hidden"], registry.extras["signals"]
         self.channels = channels
-        self.has_turns = enabled(cfg)
-        if self.has_turns:
-            self.turns = EndContext(hidden)
+        self.has_periods = enabled(cfg)
+        if self.has_periods:
+            self.periods = EndContext(hidden)
         self.topk, self.mix_hops = spec["signal/topk"], spec["signal/hops"]
         self.left, self.right = (
             nn.Parameter(torch.randn(channels, hidden)),
@@ -30,8 +30,8 @@ class SignalNet(nn.Module):
         )
         self.mix = nn.ModuleList(nn.Linear(hidden * (1 + 2 * self.mix_hops), hidden) for _ in self.convs)
         self.norms = nn.ModuleList(normalization(hidden) for _ in self.convs)
-        self.query = nn.Linear(registry.features, hidden)
-        self.reward = Head(hidden * 2, spec, registry)
+        self.task = nn.Linear(registry.features, hidden)
+        self.head = Head(hidden * 2, spec, registry)
 
     def adjacency(self):
         left, right = self.left_map(self.left).tanh(), self.right_map(self.right).tanh()
@@ -58,6 +58,6 @@ class SignalNet(nn.Module):
                     states.append(current)
             h = norm(h + mix(torch.cat(states, -1)))
         values = h.mean(2).reshape(b["frames"], -1)
-        if self.has_turns:
-            values = self.turns(values, values[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"])
-        return self.reward(torch.cat((values, self.query(b["query"])), -1)[b["selected"]], b)
+        if self.has_periods:
+            values = self.periods(values, values[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"])
+        return self.head(torch.cat((values, self.task(b["task"])), -1)[b["selected"]], b)

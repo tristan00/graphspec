@@ -25,7 +25,7 @@ def blocks(bank, original, cfg):
     for graph, start, stop, target, partition, first, last in original:
         if graph not in starts:
             arrays = bank.arrays(graph, cfg)
-            starts[graph] = arrays["turn_starts"][np.maximum(0, arrays["turn_membership"] - context)]
+            starts[graph] = arrays["period_starts"][np.maximum(0, arrays["period_membership"] - context)]
         output.append(
             (
                 graph,
@@ -37,7 +37,7 @@ def blocks(bank, original, cfg):
                 last,
             )
         )
-    LOG.info("turn blocks exit blocks=%d seconds=%.4f", len(output), time.perf_counter() - started)
+    LOG.info("period blocks exit blocks=%d seconds=%.4f", len(output), time.perf_counter() - started)
     return output
 
 

@@ -339,6 +339,7 @@ def append_trial(directory, plan, registry, stated):
         selection["model_digest"][:10],
         selection["graph_digest"][:10],
     )
+    config["splits"] = stated.splits()
     trial = directory / name
     trial.mkdir(exist_ok=True)
     if (trial / "config.json").exists() and read_json(trial / "config.json") != config:

@@ -257,9 +257,9 @@ def history(
     neighbor_ids,
     neighbor_offsets,
     ticks,
-    actor,
-    subject,
-    query_step,
+    firsts,
+    seconds,
+    row_step,
     start,
     count,
     mode,
@@ -269,10 +269,10 @@ def history(
     structure,
     selected,
 ):
-    rows = len(actor)
+    rows = len(firsts)
     observed = np.full((rows, 2, count), -1, np.int64)
     interaction = np.zeros((rows, 2, count), np.bool_)
-    query_tick = np.zeros((rows, 2, count), np.int64)
+    task_row = np.zeros((rows, 2, count), np.int64)
     mask = np.zeros((rows, 2, count), np.bool_)
     gap = np.zeros((rows, 2, count), np.float32)
     ids = np.full((rows, 2, count), -1, np.int32)
@@ -288,8 +288,8 @@ def history(
         if not selected[i]:
             continue
         memo = Dict.empty(key_type=types.int64, value_type=types.int64[:])
-        roots = (np.int64(actor[i]), np.int64(subject[i]))
-        cutoff = np.int64(query_step[i]) * 2 + 1
+        roots = (np.int64(firsts[i]), np.int64(seconds[i]))
+        cutoff = np.int64(row_step[i]) * 2 + 1
         first_events = np.empty(0, np.int32)
         for side in range(2):
             root = roots[side]
@@ -316,7 +316,7 @@ def history(
                 ids[i, side, slot] = events[event, 1] if forward else events[event, 0]
                 observed[i, side, slot] = events[event, 5] if forward else events[event, 4]
                 interaction[i, side, slot] = events[event, 3] == 2
-                query_tick[i, side, slot] = events[event, 2] // 2
+                task_row[i, side, slot] = events[event, 7]
                 mask[i, side, slot] = True
                 gap[i, side, slot] = cutoff - events[event, 2]
                 if structure:
@@ -454,7 +454,7 @@ def history(
     return (
         observed,
         interaction,
-        query_tick,
+        task_row,
         mask,
         gap,
         ids,

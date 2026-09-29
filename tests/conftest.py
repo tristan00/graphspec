@@ -14,6 +14,7 @@ WORKER = "PYTEST_XDIST_WORKER" in os.environ
 LOG = logging.getLogger(__name__)
 SUITE = {"heavy": "heavy-tests"}
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
+SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
 
 
 def suite_singleton(name, message, original=runtime.singleton):
@@ -68,15 +69,7 @@ def bank(tmp_path_factory):
     from tuning.build import build
 
     root = tmp_path_factory.mktemp("bank")
-    task = generate(
-        root,
-        "tiny",
-        4,
-        "query",
-        1,
-        uniform(4, 2),
-        **SETTINGS,
-    )
+    task = generate(root, "tiny", 4, 1, uniform(4, 2, "task"), **SETTINGS)
     build(task, root / "bank", 1, ("train",))
     return root / "bank"
 
@@ -87,7 +80,7 @@ def varied(tmp_path_factory):
     from tuning.build import build
 
     root = tmp_path_factory.mktemp("varied")
-    task = synthetic.generate(root, "varied", 4, "query", 1, synthetic.varied(), **SETTINGS)
+    task = synthetic.generate(root, "varied", 4, 1, synthetic.varied("task"), **SETTINGS)
     build(task, root / "bank", 1, ("train",))
     return root / "bank"
 
@@ -107,7 +100,7 @@ def stated(directory, view):
     from tuning.model_spec import configuration
 
     started = time.perf_counter()
-    cfg = configuration(Bank(directory).registry, dict(view=view), {"time/history": 4}, 5)
+    cfg = configuration(Bank(directory).registry, dict(view=view), {"time/history": 4}, 5, SPLITS)
     LOG.debug("stated exit view=%s seconds=%.4f", view, time.perf_counter() - started)
     return cfg
 
@@ -128,12 +121,12 @@ def running(directory, view):
 
 def warmed(held):
     from tuning.batching import batches
-    from tuning.turns import blocks as turn_blocks
+    from tuning.periods import blocks as period_blocks
 
     started = time.perf_counter()
     for cfg, packer in held:
         opened = packer.bank
-        blocks = turn_blocks(opened, opened.blocks(0, cfg["graph"]["time/history"], cfg), cfg)
+        blocks = period_blocks(opened, opened.blocks(0, cfg["graph"]["time/history"], cfg), cfg)
         list(packer.stream(batches(blocks, 2, opened.sizes(cfg), 5, frame_budget=1024)[:1]))
     LOG.debug("packers warm exit seconds=%.4f", time.perf_counter() - started)
 
@@ -175,6 +168,7 @@ def statement():
         workers=1,
         variant_cache_bytes=1 << 30,
         batch_sequences=16,
+        **SPLITS,
     )
 
 

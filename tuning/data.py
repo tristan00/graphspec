@@ -20,32 +20,39 @@ from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.resources import GraphLimits
 from graphspec.transform import SEED, SOURCE, materialize
 from graphspec.truth import Facts, Graph, admitted
-from graphspec.view import sequences, view
+from graphspec.view import STATEMENT, Looking, sequences, view
 
 LOG = logging.getLogger(__name__)
 ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 1
+VIEW = 2
 
 
-def layout(index, rows, steps, partitions, partition, history, level):
-    chosen = np.flatnonzero(rows >= 0)
-    chosen = chosen[partitions[rows[chosen]] == partition]
+def layout(index, rows, steps, labels, partitions, partition, history, single):
+    started = time.perf_counter()
+    if labels is None:
+        chosen = np.flatnonzero(rows >= 0)
+        chosen = chosen[partitions[rows[chosen]] == partition]
+        moments = steps[chosen]
+    else:
+        held, places = labels
+        moments = steps[places[partitions[held] == partition]]
     result = []
-    for moment in np.unique(steps[chosen]).tolist():
+    for moment in np.unique(moments).tolist():
         start, stop = max(0, moment - history + 1), moment + 1
-        if level == "node":
-            members = chosen[steps[chosen] == moment]
+        if labels is None and not single:
+            members = chosen[moments == moment]
             for piece in range(0, len(members), ROWS):
                 part = members[piece : piece + ROWS]
                 result.append((index, start, stop, moment, partition, int(part[0]), int(part[-1]) + 1))
-        elif level == "path":
-            result.append((index, start, stop, moment, partition, start, stop))
         else:
             first, last = between(steps, start, stop)
             result.append((index, start, stop, moment, partition, int(first), int(last)))
+    LOG.debug(
+        "layout exit graph=%d blocks=%d seconds=%.4f", index, len(result), time.perf_counter() - started
+    )
     return result
 
 
@@ -127,23 +134,29 @@ def written(folder, build):
 
 
 class Viewed:
-    def __init__(self, bank, steps, several):
+    def __init__(self, bank, steps, several, looking):
         started = time.perf_counter()
-        self.folder = bank.cache / "views" / specs.digest(dict(version=VIEW, steps=steps, several=several))
+        self.folder = (
+            bank.cache
+            / "views"
+            / specs.digest(dict(version=VIEW, steps=steps, several=several, splits=looking.mapping()))
+        )
         if not (self.folder / "index.json").exists():
-            self.build(bank, steps, several)
+            self.build(bank, steps, several, looking)
         self.graphs = read_json(self.folder / "index.json")
-        self.row_index, self.row_steps, self.entities = {}, {}, {}
+        self.row_index, self.row_steps, self.labels, self.entities = {}, {}, {}, {}
+        self.single = True
         for graph in self.graphs:
             index = graph["index"]
-            labels = load_arrays(self.path(index), ("label_row", "label_step"))
-            if bank.level in ("node", "path"):
-                self.row_index[index], self.row_steps[index] = labels["label_row"], labels["label_step"]
-            else:
-                self.row_index[index] = np.full(graph["steps"], -1, np.int64)
-                self.row_index[index][labels["label_step"]] = labels["label_row"]
-                self.row_steps[index] = np.arange(graph["steps"], dtype=np.int32)
+            held = load_arrays(self.path(index), ("task_kind", "task_step", "label_task", "label_row"))
+            aimed = bank.registry.aimed[held["task_kind"].astype(np.int64)]
+            place = np.cumsum(aimed) - 1
+            self.row_steps[index] = held["task_step"][aimed].astype(np.int32)
+            self.row_index[index] = np.full(int(aimed.sum()), -1, np.int64)
+            self.row_index[index][place[held["label_task"]]] = held["label_row"]
+            self.labels[index] = (held["label_row"], place[held["label_task"]])
             self.entities[index] = graph["entities"]
+            self.single &= np.array_equal(self.row_steps[index], np.arange(graph["steps"]))
         LOG.info(
             "viewed exit seconds=%.3f steps=%s several=%s graphs=%d",
             time.perf_counter() - started,
@@ -156,12 +169,12 @@ class Viewed:
     def path(self, index):
         return self.folder / ("graph_%04d" % index)
 
-    def build(self, bank, steps, several):
+    def build(self, bank, steps, several, looking):
         started = time.perf_counter()
         entries = []
         for stored in bank.manifest["graphs"]:
             facts = Facts.load(bank.truth(stored["index"]))
-            for held in sequences(facts, bank.registry, steps):
+            for held in sequences(facts, bank.registry, steps, looking):
                 graph = view(facts, bank.registry, held, several)
                 written(self.path(len(entries)), graph.save)
                 entries.append(
@@ -170,12 +183,13 @@ class Viewed:
                         name=graph.name,
                         source=stored["index"],
                         observer=held["observer"],
+                        split=held["split"],
                         steps=graph.steps,
                         entities=len(graph.kinds),
                         observations=int((graph.obs_stop.astype(np.int64) - graph.obs_start).sum()),
                         facts=int((graph.fact_stop.astype(np.int64) - graph.fact_start).sum())
                         + len(graph.removal_step),
-                        labels=len(graph.label_step),
+                        labels=len(graph.label_task),
                     )
                 )
         write_json(output_path(self.folder / "index.json"), entries)
@@ -191,38 +205,78 @@ class Bank:
         self.registry = Registry.from_declaration(self.manifest["spec"])
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")
-        self.level = self.registry.extras["level"]
-        self.categories = self.manifest["categories"]
+        self.path = self.registry.extras["target"] == "path"
+        self.splits = self.manifest["splits"]
         supervision = read_json(self.directory / "supervision.json")
         self.rows, self.split = supervision["rows"], supervision["split"]
         self.targets = np.asarray([row["y"] for row in self.rows], np.float32)
-        self.partitions = np.zeros(len(self.rows), np.int8)
-        self.partitions[self.split["validation_indices"]] = 1
-        if self.level == "path":
+        self.weights = np.asarray(
+            [row["weight"] if "weight" in row else 1.0 for row in self.rows], np.float32
+        )
+        self.series_names = [entry["name"] for entry in self.split["series"]]
+        if self.series_names != self.registry.extras["series"]:
+            raise ValueError("bank supervision and declaration name different series")
+        code = {name: index for index, name in enumerate(self.series_names)}
+        kinds = self.registry.schema.tasks["kinds"]
+        self.series = np.asarray(
+            [
+                code[row["series"] if self.path else kinds[row["kind"]]["target"]["series"][0]]
+                for row in self.rows
+            ],
+            np.int64,
+        )
+        owners = {graph["name"]: graph["index"] for graph in self.manifest["graphs"]}
+        asked = self.registry.schema.tasks["key"]
+        keys = np.asarray([(owners[row["graph"]], row[asked]) for row in self.rows], np.int64).reshape(-1, 2)
+        self.task_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
+        if self.path:
             self.taus = np.asarray([row["tau"] for row in self.rows], np.float32)
-            self.series_names = [entry["name"] for entry in self.split["series"]]
-            if self.series_names != self.registry.extras["series"]:
-                raise ValueError("bank supervision and declaration name different series")
-            code = {name: index for index, name in enumerate(self.series_names)}
-            self.series = np.asarray([code[row["series"]] for row in self.rows], np.int64)
-            owners = {graph["name"]: graph["index"] for graph in self.manifest["graphs"]}
-            asked = self.registry.schema.queries["key"]
-            keys = np.asarray([(owners[row["graph"]], row[asked]) for row in self.rows], np.int64)
-            self.query_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
         self.center = np.asarray([entry["mean"] for entry in self.split["series"]], np.float32)
         self.scale = np.asarray([entry["sd"] for entry in self.split["series"]], np.float32)
         self.variants = {}
         self._groups = {}
         self._viewed = {}
+        self._looking = {}
         self._shared_kinds = None
         self._tokens = WeakKeyDictionary()
         LOG.info(
-            "bank exit seconds=%.3f graphs=%d rows=%d level=%s",
+            "bank exit seconds=%.3f graphs=%d rows=%d target=%s",
             time.perf_counter() - started,
             len(self.manifest["graphs"]),
             len(self.rows),
-            self.level,
+            self.registry.extras["target"],
         )
+
+    def looking(self, cfg):
+        if "splits" not in cfg:
+            raise KeyError("the configuration states no splits to train on and to score on")
+        stated = cfg["splits"]
+        key = specs.digest(stated)
+        if key not in self._looking:
+            started = time.perf_counter()
+            lacking = [name for name in STATEMENT if name not in stated]
+            if lacking or len(stated) != len(STATEMENT):
+                raise KeyError("the splits of the configuration state exactly " + ", ".join(STATEMENT))
+            held = Looking(self.splits, stated["trained"], stated["scored"], stated["sees"])
+            if sorted(stated["trained"]) != sorted(self.manifest["trained"]):
+                raise ValueError(
+                    "the encoders of the bank were fitted on the splits %s, and the fit trains on %s"
+                    % (", ".join(self.manifest["trained"]), ", ".join(stated["trained"]))
+                )
+            partitions = np.full(len(self.rows), -1, np.int8)
+            for partition, names in enumerate((stated["trained"], stated["scored"])):
+                for name in names:
+                    partitions[self.split["indices"][name]] = partition
+            self._looking[key] = (held, partitions)
+            LOG.debug("bank looking exit seconds=%.4f", time.perf_counter() - started)
+        return self._looking[key]
+
+    def partitions(self, cfg):
+        return self.looking(cfg)[1]
+
+    @timed("bank.members")
+    def members(self, cfg, partition):
+        return np.flatnonzero(self.partitions(cfg) == partition)
 
     def truth(self, index):
         return self.directory / "truth" / ("graph_%04d" % index)
@@ -230,9 +284,9 @@ class Bank:
     @timed("bank.viewed")
     def viewed(self, cfg):
         spec = self.stated(cfg)[1]
-        key = (spec["time/steps"], spec["time/several"])
+        key = (spec["time/steps"], spec["time/several"], specs.digest(cfg["splits"]))
         if key not in self._viewed:
-            self._viewed[key] = Viewed(self, *key)
+            self._viewed[key] = Viewed(self, *key[:2], self.looking(cfg)[0])
         return self._viewed[key]
 
     @timed("bank.view")
@@ -291,13 +345,18 @@ class Bank:
 
     def groups(self, cfg):
         spec, viewed = self.stated(cfg)[1], self.viewed(cfg)
-        size = (spec["time/steps"], spec["time/several"], spec["graphs/join_size"])
+        size = (
+            spec["time/steps"],
+            spec["time/several"],
+            specs.digest(cfg["splits"]),
+            spec["graphs/join_size"],
+        )
         if size not in self._groups:
             started = time.perf_counter()
-            splits = {}
+            splits, partitions = {}, self.partitions(cfg)
             for graph in viewed.graphs:
-                rows = viewed.row_index[graph["index"]]
-                key = tuple(np.unique(self.partitions[rows[rows >= 0]]).tolist())
+                rows = viewed.labels[graph["index"]][0]
+                key = tuple(np.unique(partitions[rows]).tolist())
                 splits.setdefault(key, []).append(graph["index"])
             self._groups[size] = [
                 members[start : start + size[-1]]
@@ -326,9 +385,22 @@ class Bank:
             [
                 (steps[member], viewed.row_index[member], viewed.row_steps[member])
                 for member in self.groups(cfg)[index]
-            ],
-            self.level,
+            ]
         )
+
+    def labels(self, index, cfg):
+        started = time.perf_counter()
+        viewed = self.viewed(cfg)
+        if not self.joining(cfg):
+            return viewed.labels[index]
+        members = self.groups(cfg)[index]
+        offsets = np.r_[0, np.cumsum([len(viewed.row_steps[member]) for member in members])]
+        result = (
+            np.concatenate([viewed.labels[member][0] for member in members]),
+            np.concatenate([viewed.labels[member][1] + offset for member, offset in zip(members, offsets)]),
+        )
+        LOG.debug("bank labels exit group=%d seconds=%.4f", index, time.perf_counter() - started)
+        return result
 
     def stated(self, cfg):
         from .model_spec import groups
@@ -344,34 +416,22 @@ class Bank:
     @timed("blocks")
     def blocks(self, partition, history, cfg):
         started = time.perf_counter()
-        viewed = self.viewed(cfg)
-        if self.joining(cfg):
-            steps = {graph["index"]: graph["steps"] for graph in viewed.graphs}
-            result = []
-            for group, members in enumerate(self.groups(cfg)):
-                rows, moments = join.layout(
-                    [
-                        (steps[member], viewed.row_index[member], viewed.row_steps[member])
-                        for member in members
-                    ],
-                    self.level,
+        viewed, partitions = self.viewed(cfg), self.partitions(cfg)
+        result = []
+        for index in self.graphs(cfg):
+            rows, moments = self.points(index, cfg)
+            result.extend(
+                layout(
+                    index,
+                    rows,
+                    moments,
+                    self.labels(index, cfg) if self.path else None,
+                    partitions,
+                    partition,
+                    history,
+                    viewed.single,
                 )
-                result.extend(layout(group, rows, moments, self.partitions, partition, history, self.level))
-        else:
-            result = []
-            for graph in viewed.graphs:
-                index = graph["index"]
-                result.extend(
-                    layout(
-                        index,
-                        viewed.row_index[index],
-                        viewed.row_steps[index],
-                        self.partitions,
-                        partition,
-                        history,
-                        self.level,
-                    )
-                )
+            )
         LOG.info(
             "bank blocks exit seconds=%.3f partition=%d history=%d blocks=%d",
             time.perf_counter() - started,
@@ -410,9 +470,7 @@ class Deriver(Bank):
                 paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
                 members = [Graph.load(path, mapped=True) for path in paths]
                 jobs.append(dict(members=members, paths=paths, spill=spill, destination=temporary))
-            segments.build_parallel(
-                jobs, self.registry, spec, chosen, self.categories, SEED, workers, self.limits()
-            )
+            segments.build_parallel(jobs, self.registry, spec, chosen, SEED, workers, self.limits())
             for (temporary, final), job in zip(folders, jobs):
                 shutil.rmtree(job["spill"])
                 temporary.replace(final)
@@ -446,7 +504,13 @@ class Deriver(Bank):
     def identity(self, cfg):
         started = time.perf_counter()
         _, spec, chosen = self.stated(cfg)
-        result = dict(spec=specs.materialized(spec), groups=list(chosen), source=SOURCE, device=self.device)
+        result = dict(
+            spec=specs.materialized(spec),
+            groups=list(chosen),
+            source=SOURCE,
+            device=self.device,
+            splits=cfg["splits"],
+        )
         LOG.debug("deriver identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
         return result
 
@@ -473,10 +537,10 @@ class Deriver(Bank):
             self.stamp(cfg)
             with measure("truth_load"):
                 truth = Graph.load(self.view(index, cfg)).dense()
-            arrays = materialize(truth, self.registry, spec, chosen, self.categories, self.limits())
+            arrays = materialize(truth, self.registry, spec, chosen, self.limits())
             with measure("feature_deduplication"):
                 linked = []
-                for name, held, source in (("query", "query_x", "query_x"), ("x_table", "x_table", "obs_x")):
+                for name, held, source in (("task", "task_x", "task_x"), ("x_table", "x_table", "obs_x")):
                     if identical(arrays[name], truth.arrays[held]):
                         arrays[name] = self.view(index, cfg) / (source + ".npy")
                         linked.append(name)
@@ -505,7 +569,6 @@ class Deriver(Bank):
                             self.registry,
                             spec,
                             chosen,
-                            self.categories,
                             SEED,
                             spill,
                             self.limits(),

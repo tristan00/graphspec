@@ -4,11 +4,12 @@ import time
 import numpy as np
 
 from graphspec.infra.timing import timed
+from graphspec.references import SORTS
 
 from .data import ROWS
 from .inputs import frame_inputs, recipe
+from .periods import enabled
 from .tensors import Frames, Host, joined, length, materialise
-from .turns import enabled
 
 LOG = logging.getLogger(__name__)
 ENTITY_FRAMES = 1 << 20
@@ -145,6 +146,25 @@ def shared(parts):
     return dict(unique=unique, expand=np.concatenate(expand))
 
 
+def referred(registry, b):
+    started = time.perf_counter()
+    result = {}
+    for code, (name, entry) in enumerate(registry.schema.tasks["references"].items()):
+        if SORTS.named(entry["sort"]).whole:
+            result[name] = dict(row=b["whole_row"][b["whole_name"] == code])
+        else:
+            chosen = b["member_name"] == code
+            result[name] = dict(
+                row=b["member_row"][chosen],
+                entity=b["member_entity"][chosen],
+                index=b["member_index"][chosen],
+            )
+    for key in ("member_row", "member_name", "member_entity", "member_index", "whole_row", "whole_name"):
+        del b[key]
+    LOG.debug("referred exit references=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 @timed("recipe_batch")
 def recipe_batch(bank, blocks, cfg):
     started = time.perf_counter()
@@ -170,10 +190,10 @@ def recipe_batch(bank, blocks, cfg):
         graphs=[p["graph"] for p in parts],
         entity_sizes=[p["entities"] for p in parts],
         entity_batch=np.repeat(np.arange(size), [p["entities"] for p in parts]),
-        query_steps=np.concatenate([p["query_steps"] for p in parts]),
-        query_frames=np.concatenate([p["query_steps"] + i * t for i, p in enumerate(parts)]),
-        frame_queries=[
-            np.concatenate([p["frame_queries"][time] + int(offset) for p, offset in zip(parts, row_offsets)])
+        row_steps=np.concatenate([p["row_steps"] for p in parts]),
+        row_frames=np.concatenate([p["row_steps"] + i * t for i, p in enumerate(parts)]),
+        frame_rows=[
+            np.concatenate([p["frame_rows"][time] + int(offset) for p, offset in zip(parts, row_offsets)])
             for time in range(t)
         ],
         rows=Host(np.concatenate([p["rows"].value for p in parts])),
@@ -181,10 +201,14 @@ def recipe_batch(bank, blocks, cfg):
     direct = (
         "selected",
         "target",
+        "weight",
         "tau",
         "series",
-        "query",
-        "context",
+        "member_name",
+        "whole_name",
+        "frame_task",
+        "task",
+        "start_x",
         "entity_kind",
         "signal",
         "affinity",
@@ -214,15 +238,14 @@ def recipe_batch(bank, blocks, cfg):
         "end_raw_mask",
         "end_token_gaps",
         "temporal_relation",
-        "temporal_turn_gap",
+        "temporal_period_gap",
         "dag_relation",
-        "history_turn_kind",
+        "history_period_kind",
         "history_end_time",
         "end_affinity",
         "end_global_affinity",
-        "walk_turn_kind",
+        "walk_period_kind",
         "walk_end_time",
-        "decision_query",
         "entity_token",
         "root_token",
         "token",
@@ -232,12 +255,10 @@ def recipe_batch(bank, blocks, cfg):
     for key in direct:
         if key in parts[0]:
             b[key] = joined([p[key] for p in parts])
-    if "point_query" in parts[0]:
-        offsets = np.r_[0, np.cumsum([p["queries"] for p in parts])]
-        b["point_query"] = np.concatenate(
-            [p["point_query"] + int(offset) for p, offset in zip(parts, offsets)]
-        )
-        b["queries"] = int(offsets[-1])
+    if "point_row" in parts[0]:
+        offsets = np.r_[0, np.cumsum([p["tasks"] for p in parts])]
+        b["point_row"] = np.concatenate([p["point_row"] + int(offset) for p, offset in zip(parts, offsets)])
+        b["tasks"] = int(offsets[-1])
     if "end_steps" in parts[0]:
         b["end_steps"] = np.concatenate(
             [np.where(p["end_steps"] >= 0, p["end_steps"] + i * t, -1) for i, p in enumerate(parts)]
@@ -248,7 +269,15 @@ def recipe_batch(bank, blocks, cfg):
                 for p, offset in zip(parts, nodes)
             ]
         )
-    for key in ("actor", "subject", "entity", "history_ids", "common_ids"):
+    for key in ("member_row", "whole_row"):
+        b[key] = np.concatenate([p[key] + int(offset) for p, offset in zip(parts, row_offsets)])
+    b["member_index"] = np.concatenate(
+        [
+            np.where(p["member_index"] >= 0, p["member_index"] + int(offset), -1)
+            for p, offset in zip(parts, nodes)
+        ]
+    )
+    for key in ("first", "second", "entity", "history_ids", "common_ids", "member_entity"):
         if key in parts[0]:
             b[key] = np.concatenate(
                 [
@@ -261,15 +290,19 @@ def recipe_batch(bank, blocks, cfg):
     if "window" in parts[0]:
         b.update(shared(parts))
     if "window" in parts[0] or "x" in b:
-        b["context_index"] = np.concatenate(
-            [p["context_index"] + int(offset) for p, offset in zip(parts, nodes)]
-        )
-        b["decision_context"] = np.concatenate(
+        b["start_index"] = np.concatenate(
             [
-                np.where(p["decision_context"] >= 0, p["decision_context"] + int(offset), -1)
+                np.where(p["start_index"] >= 0, p["start_index"] + int(offset), -1)
                 for p, offset in zip(parts, nodes)
             ]
         )
+        if "frame_starts" in parts[0]:
+            b["frame_starts"] = np.concatenate(
+                [
+                    np.where(p["frame_starts"] >= 0, p["frame_starts"] + int(offset), -1)
+                    for p, offset in zip(parts, nodes)
+                ]
+            )
         b["step"] = np.concatenate([p["step"] + i * t for i, p in enumerate(parts)])
         b["align"] = np.concatenate(
             [
@@ -316,8 +349,8 @@ def recipe_batch(bank, blocks, cfg):
         b["mixed"]["edge_index"] = np.concatenate(
             [p["mixed"]["edge_index"] + int(offset) for p, offset in zip(parts, offsets)], 1
         )
-        b["mixed"]["query"] = np.concatenate(
-            [p["mixed"]["query"] + int(offset) for p, offset in zip(parts, offsets)]
+        b["mixed"]["row"] = np.concatenate(
+            [p["mixed"]["row"] + int(offset) for p, offset in zip(parts, offsets)]
         )
     if "events" in parts[0]:
         events = []
@@ -342,12 +375,12 @@ def recipe_batch(bank, blocks, cfg):
             b["dag_edges"] = inverse[
                 np.concatenate([p["dag_edges"] + int(offset) for p, offset in zip(parts, offsets)], 1)
             ]
-            b["dag_query_edges"] = np.concatenate(
+            b["dag_row_edges"] = np.concatenate(
                 [
                     np.stack(
                         (
-                            inverse[p["dag_query_edges"][0] + int(offset)],
-                            p["dag_query_edges"][1] + int(row_offset),
+                            inverse[p["dag_row_edges"][0] + int(offset)],
+                            p["dag_row_edges"][1] + int(row_offset),
                         )
                     )
                     for p, offset, row_offset in zip(parts, offsets, row_offsets)
@@ -355,9 +388,10 @@ def recipe_batch(bank, blocks, cfg):
                 1,
             )
     if enabled(cfg):
-        from .turn_inputs import capture_schedule
+        from .period_inputs import capture_schedule
 
         capture_schedule(b)
+    b["references"] = referred(bank.registry, b)
     LOG.debug(
         "recipe batch exit blocks=%d predictions=%d seconds=%.4f",
         size,

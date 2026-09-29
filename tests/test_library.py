@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from support import stated
+from support import VALUES, asked, stated
 
 from graphspec import GraphTables, Stage, write_task
 from graphspec.infra.runtime import heavy_job, output_path
@@ -20,7 +20,7 @@ def test_output_cannot_be_inside_source_tree():
 
 
 def test_missing_staging_does_not_read_database(tmp_path):
-    schema = stated(dict(client=["value"]), {}).mapping()
+    schema = stated(dict(client=["value"]), {}, VALUES, asked(["client"])).mapping()
     with pytest.raises(FileNotFoundError):
         open_source(tmp_path / "task.json", dict(staging="missing", database="other.lbug", schema=schema))
     with pytest.raises(ValueError, match="states no schema"):
@@ -33,6 +33,7 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
         dict(customer=["value", "other"], organization=["value"]),
         dict(member=dict(endpoints=[("customer", "organization")], directed=True, columns=[])),
         dict(value=dict(type="number", encoder="value"), other=dict(type="number", encoder="standard")),
+        asked(["customer"]),
     )
     graph = GraphTables(0, "different", "step", schema)
     when = dict(since=0, until=None, seq=[0, 1, 2, 3])
@@ -45,20 +46,24 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
     graph.edges(
         "member", "customer", "organization", ["a", "b", "c", "d"], ["shared"] * 4, when, present=True
     )
-    graph.labels(
-        "customer",
-        ["a", "b", "c", "d"],
-        [0, 1, 0, 1],
+    graph.tasks(
+        "outcome",
+        [10, 11, 12, 13],
+        0,
+        dict(holder=("customer", ["a", "b", "c", "d"])),
         ["train", "train", "validation", "validation"],
-        moment=0,
-        target="outcome",
+        [0, 1, 0, 1],
+        [None] * 4,
+        None,
+        None,
     )
     with Stage(tmp_path / "source") as stage:
         graph.write(stage)
     before = {p.name: p.read_bytes() for p in (tmp_path / "source").iterdir()}
-    task = write_task(tmp_path / "task.json", "different", tmp_path / "source", "outcome", schema)
+    task = write_task(tmp_path / "task.json", "different", tmp_path / "source", schema)
     manifest = build(task, tmp_path / "bank", 1, ("train",))
-    assert manifest["target"]["level"] == "node" and manifest["rows"] == 4
+    assert manifest["spec"]["extras"]["target"] == "number" and manifest["rows"] == 4
+    assert manifest["split_rows"] == dict(train=2, validation=2)
     assert manifest["spec"]["nodes"] == ["customer", "organization"]
     assert manifest["spec"]["widths"] == dict(customer=4, organization=2)
     Staged(tmp_path / "source", schema)
@@ -131,7 +136,7 @@ def test_database_export_and_staging_read_the_same_graph(bank, tmp_path):
     export(bank.parent / "tiny.staging", tmp_path / "tiny.lbug")
     task = tmp_path / "task.json"
     schema = read_json(bank.parent / "tiny.task.json")["schema"]
-    write_json(task, dict(name="tiny", database="tiny.lbug", target="outcome", schema=schema))
+    write_json(task, dict(name="tiny", database="tiny.lbug", schema=schema))
     build(task, tmp_path / "database-bank", 1, ("train",))
     for index in range(4):
         left = Facts.load(bank / "truth" / ("graph_%04d" % index))

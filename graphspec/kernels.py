@@ -468,10 +468,10 @@ def combined(ids, values, groups):
 
 
 @njit(cache=True)
-def turn_index(source, target, ticks, member, turn_of, entities):
+def period_index(source, target, ticks, member, period_of, entities):
     events = len(ticks)
     stamp = np.full(entities, -1, np.int64)
-    turn_count = np.zeros(entities, np.int64)
+    period_count = np.zeros(entities, np.int64)
     entry_count = np.zeros(entities, np.int64)
     for row in range(events):
         if not member[row]:
@@ -480,21 +480,21 @@ def turn_index(source, target, ticks, member, turn_of, entities):
             who = source[row] if side == 0 else target[row]
             if side == 1 and target[row] == source[row]:
                 continue
-            if stamp[who] != turn_of[row]:
-                stamp[who] = turn_of[row]
-                turn_count[who] += 1
+            if stamp[who] != period_of[row]:
+                stamp[who] = period_of[row]
+                period_count[who] += 1
             entry_count[who] += 1
-    turn_offset = np.zeros(entities + 1, np.int64)
+    period_offset = np.zeros(entities + 1, np.int64)
     entry_offset = np.zeros(entities + 1, np.int64)
     for who in range(entities):
-        turn_offset[who + 1] = turn_offset[who] + turn_count[who]
+        period_offset[who + 1] = period_offset[who] + period_count[who]
         entry_offset[who + 1] = entry_offset[who] + entry_count[who]
-    turn_value = np.empty(turn_offset[entities], np.int64)
-    turn_lo = np.empty(turn_offset[entities], np.int64)
-    turn_hi = np.empty(turn_offset[entities], np.int64)
+    period_value = np.empty(period_offset[entities], np.int64)
+    period_lo = np.empty(period_offset[entities], np.int64)
+    period_hi = np.empty(period_offset[entities], np.int64)
     entries = np.empty(entry_offset[entities], np.int64)
     stamp[:] = -1
-    turn_fill = turn_offset[:entities].copy()
+    period_fill = period_offset[:entities].copy()
     entry_fill = entry_offset[:entities].copy()
     for row in range(events):
         if not member[row]:
@@ -503,19 +503,19 @@ def turn_index(source, target, ticks, member, turn_of, entities):
             who = source[row] if side == 0 else target[row]
             if side == 1 and target[row] == source[row]:
                 continue
-            if stamp[who] != turn_of[row]:
-                stamp[who] = turn_of[row]
-                turn_value[turn_fill[who]] = turn_of[row]
-                turn_lo[turn_fill[who]] = entry_fill[who]
-                turn_fill[who] += 1
+            if stamp[who] != period_of[row]:
+                stamp[who] = period_of[row]
+                period_value[period_fill[who]] = period_of[row]
+                period_lo[period_fill[who]] = entry_fill[who]
+                period_fill[who] += 1
             entries[entry_fill[who]] = row
             entry_fill[who] += 1
-            turn_hi[turn_fill[who] - 1] = entry_fill[who]
-    return turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset
+            period_hi[period_fill[who] - 1] = entry_fill[who]
+    return period_offset, period_value, period_lo, period_hi, entries, entry_offset
 
 
 @njit(cache=True)
-def turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, row):
+def period_of_entry(period_offset, period_hi, entries, entry_offset, who, row):
     lo, hi = entry_offset[who], entry_offset[who + 1]
     while lo < hi:
         middle = (lo + hi) // 2
@@ -523,11 +523,11 @@ def turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, row):
             lo = middle + 1
         else:
             hi = middle
-    base, count = turn_offset[who], turn_offset[who + 1] - turn_offset[who]
+    base, count = period_offset[who], period_offset[who + 1] - period_offset[who]
     low, high = 0, count
     while low < high:
         middle = (low + high) // 2
-        if turn_hi[base + middle] <= lo:
+        if period_hi[base + middle] <= lo:
             low = middle + 1
         else:
             high = middle
@@ -536,10 +536,10 @@ def turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, row):
 
 @njit(cache=True)
 def boundary_flag(
-    turn_offset,
-    turn_value,
-    turn_lo,
-    turn_hi,
+    period_offset,
+    period_value,
+    period_lo,
+    period_hi,
     entries,
     entry_offset,
     ticks,
@@ -551,25 +551,25 @@ def boundary_flag(
 ):
     if ticks[destination] // 2 - ticks[anchor] // 2 >= window:
         return 0
-    prior = turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, anchor)
-    current = turn_of_entry(turn_offset, turn_hi, entries, entry_offset, who, destination)
-    lag = turn_value[current] - turn_value[prior]
+    prior = period_of_entry(period_offset, period_hi, entries, entry_offset, who, anchor)
+    current = period_of_entry(period_offset, period_hi, entries, entry_offset, who, destination)
+    lag = period_value[current] - period_value[prior]
     if lag < 1 or lag > lookback:
         return 0
     flag = 0
-    if ticks[anchor] == ticks[entries[turn_lo[prior]]]:
+    if ticks[anchor] == ticks[entries[period_lo[prior]]]:
         flag |= 1
-    if ticks[anchor] == ticks[entries[turn_hi[prior] - 1]]:
+    if ticks[anchor] == ticks[entries[period_hi[prior] - 1]]:
         flag |= 2
     return flag
 
 
 @njit(cache=True)
 def boundary_rows(
-    turn_offset,
-    turn_value,
-    turn_lo,
-    turn_hi,
+    period_offset,
+    period_value,
+    period_lo,
+    period_hi,
     entries,
     entry_offset,
     source,
@@ -584,22 +584,22 @@ def boundary_rows(
     start,
     write,
 ):
-    base, count = turn_offset[who], turn_offset[who + 1] - turn_offset[who]
+    base, count = period_offset[who], period_offset[who + 1] - period_offset[who]
     total = 0
     for index in range(count):
-        destination_lo, destination_hi = turn_lo[base + index], turn_hi[base + index]
+        destination_lo, destination_hi = period_lo[base + index], period_hi[base + index]
         for lag in range(1, lookback + 1):
-            wanted = turn_value[base + index] - lag
+            wanted = period_value[base + index] - lag
             low, high = 0, index
             while low < high:
                 middle = (low + high) // 2
-                if turn_value[base + middle] < wanted:
+                if period_value[base + middle] < wanted:
                     low = middle + 1
                 else:
                     high = middle
-            if low >= index or turn_value[base + low] != wanted:
+            if low >= index or period_value[base + low] != wanted:
                 continue
-            prior_lo, prior_hi = turn_lo[base + low], turn_hi[base + low]
+            prior_lo, prior_hi = period_lo[base + low], period_hi[base + low]
             first, last = ticks[entries[prior_lo]], ticks[entries[prior_hi - 1]]
             for anchor in range(prior_lo, prior_hi):
                 a = entries[anchor]
@@ -615,10 +615,10 @@ def boundary_rows(
                     merged = flag
                     if other_a == other_b and other_a != who:
                         shared = boundary_flag(
-                            turn_offset,
-                            turn_value,
-                            turn_lo,
-                            turn_hi,
+                            period_offset,
+                            period_value,
+                            period_lo,
+                            period_hi,
                             entries,
                             entry_offset,
                             ticks,
@@ -640,18 +640,18 @@ def boundary_rows(
 
 
 @njit(cache=True, parallel=True)
-def boundaries(source, target, ticks, member, turn_of, lookback, window, entities, max_pairs):
-    turn_offset, turn_value, turn_lo, turn_hi, entries, entry_offset = turn_index(
-        source, target, ticks, member, turn_of, entities
+def boundaries(source, target, ticks, member, period_of, lookback, window, entities, max_pairs):
+    period_offset, period_value, period_lo, period_hi, entries, entry_offset = period_index(
+        source, target, ticks, member, period_of, entities
     )
     counts = np.zeros(entities, np.int64)
     empty = np.empty(0, np.int32)
     for who in prange(entities):
         counts[who] = boundary_rows(
-            turn_offset,
-            turn_value,
-            turn_lo,
-            turn_hi,
+            period_offset,
+            period_value,
+            period_lo,
+            period_hi,
             entries,
             entry_offset,
             source,
@@ -676,10 +676,10 @@ def boundaries(source, target, ticks, member, turn_of, lookback, window, entitie
     out_flag = np.empty(offsets[entities], np.int32)
     for who in prange(entities):
         boundary_rows(
-            turn_offset,
-            turn_value,
-            turn_lo,
-            turn_hi,
+            period_offset,
+            period_value,
+            period_lo,
+            period_hi,
             entries,
             entry_offset,
             source,
@@ -773,10 +773,11 @@ def bundled(
     offsets,
     prior,
     altered,
-    actor,
+    first,
+    task,
+    seen,
     trace,
     bundles,
-    decided,
     limit,
     wires,
     holders,
@@ -886,13 +887,13 @@ def bundled(
                 out_target[held] = bundle + node_base
                 out_flag[held] = 512
                 held += 1
-        if decided:
+        for event in range(seen[moment], seen[moment + 1]):
             action = total
             kind[action] = 4
             tick[action] = 2 * moment + 1
-            owner[action] = actor[moment]
+            owner[action] = first[event]
             mode[action] = 3
-            fill[action] = moment
+            fill[action] = task[event]
             member_offset[action + 1] = used
             total += 1
             if bundles:
@@ -934,10 +935,12 @@ def replayed(
     absent_target,
     absent_code,
     absent_step,
-    actor,
-    subject,
-    context,
-    category,
+    first,
+    second,
+    starts,
+    kind,
+    task,
+    seen,
     steps,
     last,
     base,
@@ -947,8 +950,7 @@ def replayed(
     initial_state,
 ):
     observations, statements, removals = len(step), len(present_step), len(absent_step)
-    decided = len(actor) > 0
-    total = observations + statements + removals + (steps if decided else 0)
+    total = observations + statements + removals + len(first)
     events = np.empty((total, 9), np.int32)
     capacity = 16
     while capacity < 2 * (statements + removals + len(initial_state) + 1):
@@ -1052,15 +1054,15 @@ def replayed(
                     asserted += 1
                 else:
                     retracted += 1
-        if decided:
-            events[filled, 0] = actor[moment]
-            events[filled, 1] = subject[moment]
+        for event in range(seen[moment], seen[moment + 1]):
+            events[filled, 0] = first[event]
+            events[filled, 1] = second[event]
             events[filled, 2] = 2 * moment + 1
             events[filled, 3] = 2
-            events[filled, 4] = context[moment, 0] + base
-            events[filled, 5] = context[moment, 1] + base
-            events[filled, 6] = category[moment]
-            events[filled, 7] = -1
+            events[filled, 4] = starts[event, 0] + base
+            events[filled, 5] = starts[event, 1] + base
+            events[filled, 6] = kind[event]
+            events[filled, 7] = task[event]
             events[filled, 8] = -1
             filled += 1
     return (
@@ -1450,54 +1452,32 @@ def audit(
     fact_present,
     fact_code,
     canonical,
-    actor,
-    subject,
-    context,
-    label_entity,
-    label_step,
-    labelled,
     steps,
     entities,
     known,
 ):
-    flags = np.zeros(19, np.bool_)
-    observations, facts, labels = len(obs_step), len(fact_step), len(label_step)
+    flags = np.zeros(11, np.bool_)
+    observations, facts = len(obs_step), len(fact_step)
     for row in range(observations):
         if obs_step[row] < 0 or obs_step[row] >= steps:
             flags[0] = True
         if obs_entity[row] < 0 or obs_entity[row] >= entities:
-            flags[3] = True
+            flags[2] = True
         if row > 0 and obs_step[row] < obs_step[row - 1]:
-            flags[11] = True
+            flags[6] = True
     for row in range(facts):
         if fact_step[row] < 0 or fact_step[row] >= steps:
             flags[1] = True
         if fact_source[row] < 0 or fact_source[row] >= entities:
-            flags[4] = True
+            flags[3] = True
         if fact_target[row] < 0 or fact_target[row] >= entities:
-            flags[5] = True
+            flags[4] = True
         if fact_code[row] < 0 or fact_code[row] >= len(canonical) or not canonical[fact_code[row]]:
-            flags[10] = True
+            flags[5] = True
         if row > 0 and np.int64(fact_step[row]) * 2 + (0 if fact_present[row] else 1) < np.int64(
             fact_step[row - 1]
         ) * 2 + (0 if fact_present[row - 1] else 1):
-            flags[12] = True
-    for row in range(labels):
-        if label_step[row] < 0 or label_step[row] >= steps:
-            flags[2] = True
-        if labelled and (label_entity[row] < 0 or label_entity[row] >= entities):
-            flags[9] = True
-        if row > 0 and label_step[row] < label_step[row - 1]:
-            flags[13] = True
-    for row in range(len(actor)):
-        if actor[row] < 0 or actor[row] >= entities:
-            flags[6] = True
-    for row in range(len(subject)):
-        if subject[row] < 0 or subject[row] >= entities:
             flags[7] = True
-    for row in range(len(context)):
-        if context[row] < 0 or context[row] >= entities:
-            flags[8] = True
     if flags.any():
         return flags
     stamp = np.full(entities, -1, np.int64)
@@ -1512,7 +1492,7 @@ def audit(
         while cursor < observations and obs_step[cursor] <= moment:
             who, at = obs_entity[cursor], np.int64(obs_step[cursor])
             if stamp[who] == at:
-                flags[14] = True
+                flags[8] = True
             stamp[who] = at
             if not obs_anchor[cursor]:
                 structure[who] = at
@@ -1521,37 +1501,15 @@ def audit(
             cursor += 1
         if fact_present[row]:
             if structure[fact_source[row]] != moment or structure[fact_target[row]] != moment:
-                flags[15] = True
+                flags[9] = True
         elif first[fact_source[row]] > moment or first[fact_target[row]] > moment:
-            flags[16] = True
+            flags[10] = True
     while cursor < observations:
         who, at = obs_entity[cursor], np.int64(obs_step[cursor])
         if stamp[who] == at:
-            flags[14] = True
+            flags[8] = True
         stamp[who] = at
         cursor += 1
-    stamp[:] = -1
-    cursor = 0
-    for moment in range(len(actor)):
-        while cursor < observations and obs_step[cursor] <= moment:
-            stamp[obs_entity[cursor]] = obs_step[cursor]
-            cursor += 1
-        if (
-            stamp[actor[moment]] != moment
-            or stamp[subject[moment]] != moment
-            or stamp[context[moment]] != moment
-        ):
-            flags[17] = True
-    if labelled:
-        stamp[:] = -1
-        cursor = 0
-        for row in range(labels):
-            moment = np.int64(label_step[row])
-            while cursor < observations and obs_step[cursor] <= moment:
-                stamp[obs_entity[cursor]] = obs_step[cursor]
-                cursor += 1
-            if stamp[label_entity[row]] != moment:
-                flags[18] = True
     return flags
 
 
@@ -1656,7 +1614,7 @@ def by_target(before, after, size):
 
 
 @njit(cache=True, parallel=True)
-def check_boundaries(rows, events, member, turn, codes):
+def check_boundaries(rows, events, member, period, codes):
     problems = 0
     for index in prange(len(rows)):
         source, destination, relation, gap = rows[index, 0], rows[index, 1], rows[index, 2], rows[index, 3]
@@ -1664,7 +1622,7 @@ def check_boundaries(rows, events, member, turn, codes):
         for i in range(2):
             for j in range(2):
                 shared |= events[source, i] == events[destination, j]
-        before, after = turn[events[source, 2] // 2], turn[events[destination, 2] // 2]
+        before, after = period[events[source, 2] // 2], period[events[destination, 2] // 2]
         known = False
         for code in codes:
             known |= relation == code

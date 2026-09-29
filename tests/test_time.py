@@ -7,14 +7,14 @@ import pyarrow as pa
 import pytest
 import support
 
-from conftest import inline
-from graphspec import FORMS, SEVERAL, STEPS, TIES, clock, forms, synthetic
+from conftest import SPLITS, inline
+from graphspec import FORMS, SEES, SEVERAL, STEPS, TIES, clock, forms, synthetic
 from graphspec import spec as specs
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed as clocked
 from graphspec.schema import VERSION, Schema
-from graphspec.truth import Facts
+from graphspec.truth import Facts, Graph
 from graphspec.view import sequences, view
 from tuning.build import build
 from tuning.data import Deriver
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.xdist_group("time")
 MAKERS, SITES = ("m0", "m1", "m2"), ("s0", "s1", "s2", "s3")
 MOMENTS = (0, 2, 4, 6, 8, 10)
 STRIDE = 2
-SPLITS = ("train", "train", "train", "train", "validation", "validation")
+SPLIT = ("train", "train", "train", "train", "validation", "validation")
 SERVES = (("m0", "s0"), ("m1", "s1"), ("m2", "s2"), ("m0", "s3"))
 BESIDE = (("s0", "s1"), ("s2", "s3"))
 SHAPED = ("state", "event", "snapshot", "change", "signal")
@@ -51,12 +51,24 @@ def stated(model, units, ties, observers):
             serves=synthetic.edge("maker", "site", ["weight"]),
             beside=synthetic.edge("site", "site", [], directed=False),
         ),
-        queries=dict(
+        tasks=dict(
             key="ticket",
             grouping=None,
-            columns=["ask"],
-            references=dict(first=["maker"], second=["site"], third=["site"]),
             signals=0,
+            references=dict(
+                first=dict(sort="node", kinds=["maker"]),
+                second=dict(sort="node", kinds=["site"]),
+                third=dict(sort="node", kinds=["site"]),
+            ),
+            kinds={
+                kind: synthetic.kind(
+                    ["first", "second", "third"],
+                    ["ask"],
+                    dict(kind="number", series="outcome"),
+                    ["first", "second"],
+                )
+                for kind in ("plain", "urgent")
+            },
         ),
     )
 
@@ -133,29 +145,27 @@ def asked(name, moments, observers):
     count = len(moments)
     tasks = dict(
         key=[100 + place for place in range(count)],
-        category=["plain" if place % 2 else "urgent" for place in range(count)],
+        kind=["plain" if place % 2 else "urgent" for place in range(count)],
+        split=[SPLIT[place % len(SPLIT)] for place in range(count)],
+        weight=[None] * count,
         ask=[float(place) for place in range(count)],
         references=dict(
             first=[MAKERS[place % len(MAKERS)] for place in range(count)],
             second=[SITES[place % 3] for place in range(count)],
             third=[SITES[(place + 1) % 3] for place in range(count)],
         ),
+        target=[level(name, place % len(MAKERS), 0) + 0.1 * place for place in range(count)],
+        known=[None] * count,
     )
     if moments[0] is not None:
         tasks["time"] = list(moments)
     if observers is not None:
         tasks["observer"] = list(observers)
-    targets = dict(
-        task=list(range(count)),
-        y=[level(name, place % len(MAKERS), 0) + 0.1 * place for place in range(count)],
-        split=[SPLITS[place % len(SPLITS)] for place in range(count)],
-    )
-    return tasks, targets
+    return tasks
 
 
 @clocked("time.graph")
 def graph(name, unit, values, edges, moments, observers):
-    tasks, targets = asked(name, moments, observers)
     return dict(
         name=name,
         unit=unit,
@@ -163,8 +173,7 @@ def graph(name, unit, values, edges, moments, observers):
         nodes=dict(maker=list(MAKERS), site=list(SITES)),
         values=values,
         edges=edges,
-        tasks=tasks,
-        targets=targets,
+        tasks=asked(name, moments, observers),
     )
 
 
@@ -177,7 +186,7 @@ def shaped():
             varying(form, form, SITES, "load", "site"),
         ]
         graphs.append(graph(form, ("hour", "day")[place % 2], values, joined(form, form), MOMENTS, None))
-    return dict(schema=stated("clock", ["hour", "day"], "key", False), level="query", graphs=graphs)
+    return dict(schema=stated("clock", ["hour", "day"], "key", False), graphs=graphs)
 
 
 @clocked("time.steady")
@@ -284,7 +293,7 @@ def seen():
         )
     )
     graphs.append(graph("several", "tick", values, edges, MOMENTS, [None] * len(MOMENTS)))
-    return dict(schema=stated("clocks", ["tick"], "sequence", True), level="query", graphs=graphs)
+    return dict(schema=stated("clocks", ["tick"], "sequence", True), graphs=graphs)
 
 
 @clocked("time.timeless")
@@ -296,7 +305,7 @@ def timeless():
             del held["rows"]["since"], held["rows"]["until"]
             held["form"] = None
         graphs.append(graph(name, None, values, edges, [None] * len(MOMENTS), None))
-    return dict(schema=stated("none", [], "key", False), level="query", graphs=graphs)
+    return dict(schema=stated("none", [], "key", False), graphs=graphs)
 
 
 @clocked("time.ordered")
@@ -308,7 +317,7 @@ def ordered():
             varying("event", name, SITES, "load", "site"),
         ]
         graphs.append(graph(name, None, values, joined("event", name), MOMENTS, None))
-    return dict(schema=stated("order", [], "key", False), level="query", graphs=graphs)
+    return dict(schema=stated("order", [], "key", False), graphs=graphs)
 
 
 CASES = dict(forms=shaped, seen=seen, timeless=timeless, ordered=ordered)
@@ -339,7 +348,7 @@ def banks(cases, tmp_path_factory):
 @clocked("time.opened")
 def opened(banks, name):
     held = Deriver(banks[name], "cpu", RESIDENT)
-    return held, configuration(held.registry, dict(view="snapshot"), {}, 5)
+    return held, configuration(held.registry, dict(view="snapshot"), {}, 5, SPLITS)
 
 
 @clocked("time.truths")
@@ -378,15 +387,18 @@ def serving(held, graph, step):
 @pytest.mark.parametrize("name", ["forms", "snapshots", "seen", "timeless", "ordered"])
 def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, name):
     held, _ = opened(banks, name)
-    assert held.manifest["version"] == 8 and held.registry.schema.queries["grouping"] is None
-    written = support.written(banks[name].parent / (name + ".staging"), held.registry.schema)
+    schema = held.registry.schema
+    assert held.manifest["version"] == 8 and schema.tasks["grouping"] is None
+    written = support.written(banks[name].parent / (name + ".staging"), schema)
     found = truths(held)
     assert sorted(found) == sorted(written)
     for graph, truth in found.items():
-        read = truth.stated(held.registry, held.categories, held.manifest["observers"])
+        read = truth.stated(held.registry, held.splits, held.manifest["observers"])
         assert read["graph"] == written[graph]["graph"] and read["nodes"] == written[graph]["nodes"]
-        for part in ("observations", "edges", "queries"):
+        for part in ("observations", "edges"):
             assert support.alike(read[part], written[graph][part]), (graph, part)
+        assert support.normal(read["tasks"], schema) == written[graph]["tasks"], graph
+        assert read["targets"] == written[graph]["targets"], graph
 
 
 @pytest.mark.parametrize("place", range(len(SHAPED)))
@@ -494,7 +506,10 @@ def test_forms_rules_for_ties_and_choices_of_steps_are_registered_from_outside()
     with pytest.raises(KeyError, match="no rule for ties is registered under the name 'absent'"):
         Schema(stated("clock", ["hour"], "absent", False))
     assert set(("sequence", "key")) <= set(TIES.names()) and SEVERAL.names() == ("first", "last")
-    assert STEPS.names()[:2] == ("tasks", "changes")
+    assert STEPS.names()[:2] == ("tasks", "changes") and SEES.names()[:2] == (
+        "without_targets",
+        "without_scored",
+    )
     with pytest.raises(ValueError, match="the choice of steps tasks is registered twice"):
         STEPS.register("tasks", STEPS.named("tasks"))
 
@@ -519,9 +534,11 @@ def test_a_schema_states_the_columns_of_time_of_its_model():
     held = Schema(stated("clocks", ["day"], "sequence", True))
     assert list(held.stamps()) == ["since", "until", "known", "replaced", "seq", "observers"]
     tables = held.tables()
-    assert tables["graph"]["required"]["unit"] == "STRING" and tables["query"]["required"]["time"] == "INT64"
-    assert tables["query"]["required"]["observer"] == "STRING" and "week" not in tables["query"]["required"]
-    assert "time" not in Schema(stated("none", [], None, False)).tables()["query"]["required"]
+    assert tables["graph"]["required"]["unit"] == "STRING" and tables["task"]["required"]["time"] == "INT64"
+    assert tables["task"]["required"]["observer"] == "STRING" and "week" not in tables["task"]["required"]
+    assert tables["target"]["required"] == dict(id="INT64", y="DOUBLE", known="INT64")
+    timeless = Schema(stated("none", [], None, False)).tables()
+    assert "time" not in timeless["task"]["required"] and "known" not in timeless["target"]["required"]
     with pytest.raises(ValueError, match="name observers as true or false"):
         Schema(stated("clock", ["day"], None, "north"))
 
@@ -568,7 +585,7 @@ def test_a_fact_visible_to_one_observer_is_invisible_to_a_task_of_another_at_the
     held, cfg = opened(banks, "seen")
     assert held.manifest["observers"] == ["east", "north", "south"]
     truth = truths(held)["watched"]
-    assert truth.query_time.tolist() == [moment for moment in MOMENTS for _ in range(2)]
+    assert truth.task_time.tolist() == [moment for moment in MOMENTS for _ in range(2)]
     north, south = shown(held, cfg, "watched", "north"), shown(held, cfg, "watched", "south")
     assert north.steps == south.steps == len(MOMENTS)
     for step in range(len(MOMENTS)):
@@ -587,7 +604,7 @@ def test_three_facts_about_one_entity_at_one_time_are_kept_and_the_view_shows_th
     rows = (truth.obs_entity == truth.keys.index("s0")) & (truth.obs_since == 2)
     assert np.asarray(truth.obs_values)[rows][:, 1].tolist() == [1.0, 2.0, 3.0]
     assert shown(held, cfg, "several", None).steps == len(MOMENTS)
-    (sequence,) = sequences(truth, held.registry, "tasks")
+    (sequence,) = sequences(truth, held.registry, "tasks", held.looking(cfg)[0])
     for several, wanted in (("last", 3.0), ("first", 1.0)):
         graph = view(truth, held.registry, sequence, several)
         for step, moment in enumerate(MOMENTS):
@@ -603,10 +620,11 @@ def test_a_graph_without_time_shows_every_task_the_same_facts(banks):
     for graph in held.manifest["graphs"]:
         truth = Facts.load(held.truth(graph["index"]))
         assert truth.unit is None and set(truth.obs_since.tolist()) == {clock.ALWAYS}
-        assert set(truth.obs_until.tolist()) == {clock.NEVER} and truth.query_time.tolist() == [0] * 6
+        assert set(truth.obs_until.tolist()) == {clock.NEVER} and truth.task_time.tolist() == [0] * 6
         shown_graph = support.shown(held, graph["index"])
-        assert shown_graph.steps == len(MOMENTS) and shown_graph.period.tolist() == list(range(6))
-        assert all(serving(held, shown_graph, step) == [("m0", "s0"), ("m1", "s1")] for step in range(6))
+        assert shown_graph.steps == 1 and shown_graph.period.tolist() == [0]
+        assert shown_graph.task_step.tolist() == [0] * 6 and len(shown_graph.label_task) == 6
+        assert serving(held, shown_graph, 0) == [("m0", "s0"), ("m1", "s1")]
     spec = cfg["graph"]
     assert spec["time/periods"] == "steps" and spec["time/steps"] == "tasks"
 
@@ -706,10 +724,8 @@ def test_a_case_of_time_completes_one_fit_on_cpu(prepared, tmp_path, statement):
     LOG.info("fit of time exit bank=%s seconds=%.3f", bank.name, time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
-    assert saved["train_unique_rows"] == len(held.split["train_indices"])
-    assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(
-        held.split["validation_indices"]
-    )
+    assert saved["train_unique_rows"] == len(held.members(cfg, 0))
+    assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
 def test_a_database_gives_the_facts_of_two_clocks_and_their_observers_as_the_staging_does(banks, tmp_path):
@@ -721,9 +737,7 @@ def test_a_database_gives_the_facts_of_two_clocks_and_their_observers_as_the_sta
     root = banks["seen"].parent
     export(root / "seen.staging", tmp_path / "seen.lbug")
     schema = read_json(root / "seen.task.json")["schema"]
-    write_json(
-        tmp_path / "task.json", dict(name="seen", database="seen.lbug", target="outcome", schema=schema)
-    )
+    write_json(tmp_path / "task.json", dict(name="seen", database="seen.lbug", schema=schema))
     build(tmp_path / "task.json", tmp_path / "bank", 1, ("train",))
     assert read_json(tmp_path / "bank" / "manifest.json")["observers"] == ["east", "north", "south"]
     for index in range(4):
@@ -734,10 +748,10 @@ def test_a_database_gives_the_facts_of_two_clocks_and_their_observers_as_the_sta
             assert np.array_equal(left.arrays[name], right.arrays[name], equal_nan=True), name
 
 
-def test_without_tasks_the_steps_are_the_times_of_change(tmp_path):
+def test_the_steps_of_a_view_may_be_the_times_of_change(tmp_path):
     from graphspec import GraphTables, Stage, write_task
 
-    mapping = dict(stated("clock", ["day"], "key", False), queries=None)
+    mapping = dict(stated("clock", ["day"], "key", False), tasks=support.asked(["maker", "site"]))
     del mapping["edges"]["beside"], mapping["columns"]["ask"]
     schema = Schema(mapping)
     graph = GraphTables(0, "plain", "day", schema)
@@ -745,33 +759,42 @@ def test_without_tasks_the_steps_are_the_times_of_change(tmp_path):
     graph.observe("maker", ["a", "a"], dict(since=[3, 10], until=[10, None]), size=[1.0, 2.0])
     graph.observe("site", ["b"], dict(since=3, until=None), load=[5.0])
     graph.edges("serves", "maker", "site", ["a"], ["b"], dict(since=5, until=20), present=True, weight=[1.5])
+    key = 0
     for moment, values in ((10, [0.0, 1.0]), (20, [2.0, 3.0])):
-        graph.labels("maker", ["a"], values[:1], ["train"], moment=moment, target="outcome")
-        graph.labels("site", ["b"], values[1:], ["validation"], moment=moment, target="outcome")
+        for kind, node, value, split in (
+            ("maker", "a", values[0], "train"),
+            ("site", "b", values[1], "validation"),
+        ):
+            graph.tasks(
+                "outcome", [key], moment, dict(holder=(kind, [node])), [split], [value], [None], None, None
+            )
+            key += 1
     with Stage(tmp_path / "source") as stage:
         graph.write(stage)
-    task = write_task(tmp_path / "task.json", "plain", tmp_path / "source", "outcome", schema)
+    task = write_task(tmp_path / "task.json", "plain", tmp_path / "source", schema)
     manifest = build(task, tmp_path / "bank", 1, ("train",))
-    assert manifest["target"]["level"] == "node" and manifest["graphs"][0]["tasks"] == 0
+    assert manifest["spec"]["extras"]["target"] == "number" and manifest["graphs"][0]["tasks"] == 4
+    assert manifest["spec"]["extras"]["single"] is False
     held = Deriver(tmp_path / "bank", "cpu", RESIDENT)
-    cfg = configuration(held.registry, dict(view="snapshot"), {}, 5)
-    assert cfg["graph"]["time/steps"] == "changes" and cfg["graph"]["time/periods"] == "steps"
+    cfg = configuration(held.registry, dict(view="snapshot"), {"time/steps": "changes"}, 5, SPLITS)
+    assert cfg["graph"]["time/periods"] == "steps"
     truth = Facts.load(held.truth(0))
-    (sequence,) = sequences(truth, held.registry, "changes")
+    (sequence,) = sequences(truth, held.registry, "changes", held.looking(cfg)[0])
     assert sequence["moments"].tolist() == [3, 5, 10, 20] and sequence["observer"] == -1
-    shown_graph = support.shown(held, 0)
+    assert sequence["task_step"].tolist() == [2, 2, 3, 3]
+    shown_graph = Graph.load(held.view(0, cfg))
     dense = shown_graph.dense()
     assert shown_graph.steps == 4 and dense.fact_step.tolist() == [1, 2]
     assert dense.obs_step.tolist() == [0, 0, 1, 1, 2, 2, 3, 3]
     assert np.asarray(dense.x_table)[dense.obs_ref[dense.obs_entity == 0]][:, 0].tolist() == [1, 1, 2, 2]
-    assert shown_graph.label_step.tolist() == [2, 2, 3, 3]
+    assert shown_graph.task_step.tolist() == [2, 2, 3, 3] and shown_graph.label_task.tolist() == [0, 1, 2, 3]
     assert [row["time"] for row in held.rows] == [10, 10, 20, 20]
-    with pytest.raises(ValueError, match="the choice of steps tasks does not serve the graphs of this bank"):
-        sequences(truth, held.registry, "tasks")
+    (sequence,) = sequences(truth, held.registry, "tasks", held.looking(cfg)[0])
+    assert sequence["moments"].tolist() == [10, 20] and sequence["task_step"].tolist() == [0, 0, 1, 1]
 
 
 def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(banks):
-    from graphspec.view import offered
+    from graphspec.view import offered, unstated
 
     class Halved:
         def serves(self, registry):
@@ -780,29 +803,33 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
         def __call__(self, facts, registry):
             (whole,) = STEPS.named("tasks")(facts, registry)
             kept = np.arange(0, len(whole["moments"]), 2)
-            placed = np.isin(whole["label_step"], kept)
+            placed = np.isin(whole["task_step"], kept)
             return [
                 dict(
                     whole,
                     moments=whole["moments"][kept],
                     looking=whole["looking"][kept],
-                    queries=whole["queries"][kept],
-                    labels=whole["labels"][placed],
-                    label_step=(whole["label_step"][placed] // 2).astype(np.int32),
+                    tasks=whole["tasks"][placed],
+                    task_step=(whole["task_step"][placed] // 2).astype(np.int32),
                 )
             ]
 
     STEPS.register("halved", Halved())
     held, _ = opened(banks, "ordered")
     other, _ = opened(banks, "timeless")
-    assert offered(held.registry) == ("tasks", "halved") and offered(other.registry) == ("tasks",)
+    assert offered(held.registry) == ("tasks", "changes", "halved")
+    assert offered(other.registry) == ("tasks", "changes")
     truth = Facts.load(held.truth(0))
-    with pytest.raises(ValueError, match="the choice of steps halved does not give every label of graph"):
-        sequences(truth, held.registry, "halved")
+    with pytest.raises(
+        ValueError, match="the choice of steps halved does not give every task of graph first that holds"
+    ):
+        sequences(truth, held.registry, "halved", unstated(held.splits))
     (chosen,) = STEPS.named("halved")(truth, held.registry)
+    chosen.update(split=-1, rules=(), trained=(), scored=(), labels=np.zeros(0, np.int64))
     assert view(truth, held.registry, chosen, "last").steps == 3
     names = {parameter.name: parameter for parameter in specs.space(held.registry, ())}
-    assert names["time/steps"].options == ("tasks", "halved") and names["time/steps"].default == "tasks"
+    assert names["time/steps"].options == ("tasks", "changes", "halved")
+    assert names["time/steps"].default == "tasks"
 
 
 def test_a_case_is_not_changed_by_being_restated(cases):

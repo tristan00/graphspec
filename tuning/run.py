@@ -38,6 +38,9 @@ COPIES = dict(
     workers="workers",
     variant_bytes="variant_cache_bytes",
     batch_sequences="batch_sequences",
+    trained="trained",
+    scored="scored",
+    sees="sees",
 )
 
 
@@ -107,6 +110,35 @@ def continued(plan, stated, given):
     return plan
 
 
+def counted(manifest, names):
+    started = time.perf_counter()
+    lacking = [name for name in names if name not in manifest["split_rows"]]
+    if lacking:
+        raise ValueError(
+            "the statement names the splits %s, and the bank holds the splits %s"
+            % (", ".join(lacking), ", ".join(manifest["split_rows"]))
+        )
+    result = sum(manifest["split_rows"][name] for name in names)
+    emit("splits_counted", rows=result, seconds=time.perf_counter() - started)
+    return result
+
+
+def seen(given):
+    started = time.perf_counter()
+    result = None
+    if given is not None:
+        result = {}
+        for item in given:
+            name, stated, rules = item.partition("=")
+            if not stated or name in result:
+                raise ValueError(
+                    "what a split may see is stated once for each split as split=rule,rule; found %r" % item
+                )
+            result[name] = [rule for rule in rules.split(",") if rule]
+    emit("sees_parsed", seconds=time.perf_counter() - started)
+    return result
+
+
 def opened(stated, given, bank_path, manifest, limit):
     started = time.perf_counter()
     absent = [FLAGS[name] for name in FLAGS if given[name] is None]
@@ -128,8 +160,11 @@ def opened(stated, given, bank_path, manifest, limit):
         objective=given["objective"],
         limit=limit,
         seconds=stated.seconds,
-        train_rows=manifest["train_rows"],
-        holdout_rows=manifest["validation_rows"],
+        trained=list(stated.trained),
+        scored=list(stated.scored),
+        sees=stated.splits()["sees"],
+        train_rows=counted(manifest, stated.trained),
+        holdout_rows=counted(manifest, stated.scored),
         supervision_sha256=manifest["supervision_sha256"],
         spec_sha256=manifest["spec_sha256"],
         created=datetime.now(timezone.utc).isoformat(),
@@ -216,6 +251,9 @@ def flags(args):
         workers=args.workers,
         variant_cache_bytes=None if args.variant_gb is None else args.variant_gb << 30,
         batch_sequences=args.batch_sequences,
+        trained=args.trained,
+        scored=args.scored,
+        sees=seen(args.sees),
     )
     result = {name: value for name, value in given.items() if value is not None}
     emit("statement_flags", fields=sorted(result), seconds=time.perf_counter() - started)
@@ -256,7 +294,7 @@ def training_layout(directory, plan, config, stated):
             "training_layout_created",
             history=history,
             blocks=len(blocks),
-            rows=len(bank.split["train_indices"]),
+            rows=len(bank.members(config, 0)),
             seconds=time.perf_counter() - started,
         )
     return path, max(1, stated.batch_sequences * REFERENCE_HISTORY // history)
@@ -497,6 +535,14 @@ def main():
     run_parser.add_argument("--bounds")
     run_parser.add_argument("--workers", type=int, required=True)
     run_parser.add_argument("--variant-gb", type=int, required=True)
+    run_parser.add_argument("--trained", nargs="+", required=True, help="the splits trained on")
+    run_parser.add_argument("--scored", nargs="+", required=True, help="the splits scored on")
+    run_parser.add_argument(
+        "--sees",
+        nargs="+",
+        required=True,
+        help="for every split trained on or scored on, split=rule,rule: the rules of what its tasks may see",
+    )
     worker_parser = subparsers.add_parser("worker")
     worker_parser.add_argument("--bank", required=True)
     worker_parser.add_argument("--output", required=True)
