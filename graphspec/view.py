@@ -105,7 +105,10 @@ class Tasks:
         started = time.perf_counter()
         looking = np.asarray(facts.task_observer)
         if not len(looking):
-            raise ValueError("graph %s holds no task, and the steps of the view are its tasks" % facts.name)
+            raise ValueError(
+                "graph %s holds no task, and the choice of steps %s shows the times of the tasks of a graph; "
+                "a graph without tasks is shown by another choice, such as %s" % (facts.name, TASKS, CHANGES)
+            )
         times = np.asarray(facts.task_time)
         result = []
         for observer in np.unique(looking).tolist():
@@ -138,11 +141,14 @@ class Changes:
             ]
         looking, held = np.asarray(facts.task_observer), np.asarray(facts.task_time, np.int64)
         result = []
-        for observer in np.unique(looking).tolist():
+        for observer in np.unique(looking).tolist() if len(looking) else [-1]:
             chosen = np.flatnonzero(looking == observer)
             found = np.concatenate(times + [held[chosen]])
             moments = np.unique(found[(found > ALWAYS) & (found < NEVER)])
-            result.append(sequence(observer, moments, moments, chosen, at(facts.name, moments, held[chosen])))
+            if len(moments):
+                result.append(
+                    sequence(observer, moments, moments, chosen, at(facts.name, moments, held[chosen]))
+                )
         LOG.debug(
             "steps of changes exit graph=%s sequences=%d seconds=%.4f",
             facts.name,
@@ -719,8 +725,15 @@ def validate(facts, registry, splits):
     started = time.perf_counter()
     facts = stored(facts, registry, {kind: NODE for kind in registry.schema.sets})
     several = VALIDATED if registry.extras["several"] else None
-    result = [view(facts, registry, held, several) for held in sequences(facts, registry, TASKS, unstated(splits))]
+    steps = TASKS if len(facts.task_key) else CHANGES
+    result = [
+        view(facts, registry, held, several) for held in sequences(facts, registry, steps, unstated(splits))
+    ]
     LOG.debug(
-        "validate exit graph=%s views=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started
+        "validate exit graph=%s steps=%s views=%d seconds=%.4f",
+        facts.name,
+        steps,
+        len(result),
+        time.perf_counter() - started,
     )
     return result

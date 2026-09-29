@@ -163,7 +163,7 @@ def banks(tmp_path_factory):
     started = time.perf_counter()
     root, result = tmp_path_factory.mktemp("leakage"), {}
     for name, hidden in (("seen", 1), ("hidden", 10)):
-        case = dict(schema=stated(), graphs=[graph("g0", ASKED, hidden)])
+        case = dict(schema=stated(), graphs=[graph("g0", ASKED, hidden), graph("g1", (), hidden)])
         build(synthetic.stage(root, name, case), root / name, 1, ("alpha",))
         result[name] = root / name
     LOG.info("banks of leakage exit seconds=%.3f", time.perf_counter() - started)
@@ -251,3 +251,13 @@ def test_without_targets_keeps_the_edges_a_target_is_about_from_the_time_of_its_
     del mapping["tasks"]["kinds"]["flow"]["target"]["about"]
     with pytest.raises(ValueError, match="the target of the kind of task flow lacks about"):
         Schema(mapping)
+
+
+def test_a_graph_without_tasks_builds_and_a_choice_of_steps_that_cannot_show_it_stops_naming_both(banks):
+    held, cfg = opened(banks["seen"])
+    assert [graph["name"] for graph in held.manifest["graphs"]] == ["g0", "g1"]
+    (context,) = [entry for entry in held.viewed(cfg).graphs if entry["source"] == 1]
+    assert context["observer"] == -1 and context["labels"] == 0 and context["steps"] == 2
+    _, tasks = opened(banks["seen"], **{"time/steps": "tasks"})
+    with pytest.raises(ValueError, match="graph g1 holds no task, and the choice of steps tasks shows"):
+        held.viewed(tasks)
