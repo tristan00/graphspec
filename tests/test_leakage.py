@@ -32,6 +32,7 @@ ASKED = (
     (6, "flow", "omega", "w1", "m3", 60.0, 6.0, None),
 )
 STAMPED = ("since", "until", "known", "replaced", "observers")
+HOLDS = dict(nodes=dict(part=dict(columns=["grain"])), edges={}, encoder="pooled")
 
 
 @timed("leakage.stated")
@@ -60,10 +61,12 @@ def stated():
             load=standard,
             weight=standard,
             ask=standard,
+            grain=standard,
+            era=dict(type="category", encoder="onehot"),
         ),
-        graph=dict(columns=[]),
+        graph=dict(columns=["era"]),
         nodes=dict(
-            maker=dict(columns=["size", "shade", "mark"], holds=None), site=dict(columns=["load"], holds=None)
+            maker=dict(columns=["size", "shade", "mark"], holds=HOLDS), site=dict(columns=["load"], holds=None)
         ),
         sets={},
         edges=dict(
@@ -147,13 +150,21 @@ def graph(name, asked, hidden):
         target=[entry[6] * (hidden if far else 1) for entry, far in zip(asked, scored)],
         known=[entry[7] for entry in asked],
     )
+    parts = dict(owner=[], kind=[], key=[], grain=[])
+    for number, maker in enumerate(MAKERS):
+        for at in range(2):
+            parts["owner"].append(maker)
+            parts["kind"].append("part")
+            parts["key"].append("p%d" % at)
+            parts["grain"].append((1.0 + number + at) * (hidden if maker == MAKERS[-1] else 1))
     return dict(
         name=name,
         unit="tick",
-        columns={},
+        columns=dict(era="late" if asked == () and hidden > 1 else "early"),
         nodes=dict(maker=list(MAKERS), site=list(SITES)),
         values=values,
         edges=edges,
+        held=dict(maker=dict(nodes=parts, edges=dict(owner=[], source=[], target=[], relation=[]))),
         tasks=tasks,
     )
 
@@ -222,6 +233,24 @@ def test_encoders_are_fitted_on_what_the_views_of_the_splits_trained_on_show_and
     far = [key for key in seen[2] if key[2] < 0 and key[0] == 0]
     assert far and any(not np.array_equal(seen[2][key].obs_x, hidden[2][key].obs_x) for key in far)
     assert seen[0].fitted(seen[1]).features == hidden[0].fitted(hidden[1]).features
+
+
+def test_held_graphs_and_graph_attributes_are_fitted_on_what_the_trained_views_show_and_on_no_other(banks):
+    found = {}
+    for name, bank in banks.items():
+        held, cfg = opened(bank)
+        found[name] = (held, views(held, cfg), read_json(held.viewed(cfg).folder / "encoders.json")["states"])
+    seen, hidden = found["seen"], found["hidden"]
+    assert hidden[0].registry.encoding.dictionaries["era"] == ["early", "late"]
+    assert seen[2]["era"] == hidden[2]["era"] == dict(values=["early"])
+    assert seen[2]["grain"] == hidden[2]["grain"] and seen[2]["grain"]["mean"] == pytest.approx(3.25)
+    alpha = seen[0].splits.index("alpha")
+    for key in (key for key in seen[1] if key[2] == alpha):
+        for part in ("obs_x", "entity_held", "graph_values"):
+            assert np.array_equal(seen[1][key].arrays[part], hidden[1][key].arrays[part]), (key, part)
+    far = seen[1][(0, 1, -1)].keys.index("m5")
+    assert not np.array_equal(seen[1][(0, 1, -1)].entity_held[far], hidden[1][(0, 1, -1)].entity_held[far])
+    assert seen[1][(1, -1, -1)].graph_values.tolist() != hidden[1][(1, -1, -1)].graph_values.tolist()
 
 
 def test_a_matured_target_is_shown_to_its_observer_and_never_from_a_split_scored_on_to_one_trained_on(banks):

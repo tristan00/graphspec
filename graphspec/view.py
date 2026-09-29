@@ -648,12 +648,14 @@ def finished(shown, registry, inner):
     started = time.perf_counter()
     entity, kinds = np.asarray(shown.obs_entity, np.int64), np.asarray(shown.kinds)
     tasks = list(registry.schema.tasks["kinds"])
+    held = np.zeros_like(inner)
+    held[entity] = inner[entity]
     graph = Graph(
         shown.name,
         shown.keys,
         shown.steps,
         **shown.arrays,
-        entity_held=inner,
+        entity_held=held,
         obs_x=encoded(
             registry,
             shown.obs_values,
