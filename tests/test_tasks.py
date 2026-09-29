@@ -574,6 +574,32 @@ def test_a_family_asked_to_read_a_reference_it_cannot_stops_naming_it_and_is_not
         readable(held.registry, context)
 
 
+def test_a_search_offers_a_family_only_under_the_contexts_it_reads_every_kind_of_task_under(bank):
+    from tuning.model_spec import configured
+    from tuning.selector import check_bounds, graph_space, random_suggest
+    from tuning.space import Space
+
+    held, _ = opened(bank)
+    registry, strict = held.registry, support.registry("strict", ["maker"], [])
+    ranges = {}
+    for name, given in (("bank", registry), ("strict", strict)):
+        found = {p.name: p for p in graph_space(given, configured(given, dict(view="snapshot")), {})}
+        ranges[name] = (found["time/context"].low, found["time/context"].high)
+    assert ranges == dict(bank=(0, 0), strict=(0, 3))
+    for seed in range(6):
+        config, _ = random_suggest(registry, seed, seed, {}, 600)
+        assert config["model"]["view"] == "snapshot" and config["graph"]["time/context"] == 0
+        readable(registry, config)
+    space, rng = Space(registry, {}, 600, []), np.random.default_rng(5)
+    assert {space.draw(rng, 0, {})["graph"]["time/context"] for _ in range(12)} == {0}
+    with pytest.raises(
+        ValueError,
+        match="the family snapshot reads the tasks of the bank %s under no time/context from 1 to 3: the family "
+        "snapshot reads references of the sorts node and cannot read the reference whole" % registry.name,
+    ):
+        check_bounds(registry, {"time/context": {"low": 1, "high": 3}})
+
+
 @pytest.fixture
 def packed(bank, monkeypatch):
     return inline(bank, ("snapshot",), monkeypatch)

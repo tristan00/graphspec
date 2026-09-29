@@ -108,6 +108,9 @@ def choice(name, options, default, condition=None):
     return Parameter(name, "choice", default, options=options, condition=condition)
 
 
+CONTEXT = number("time/context", 0, 3, 0)
+
+
 def subsets(kinds):
     return tuple(
         "+".join(members)
@@ -224,7 +227,7 @@ def space(registry, groups):
             lambda spec: spec["time/scheme"] == "window" and spec.get("time/unit", "step") == "step",
         ),
         number("time/past_periods", 0, 3, 0, equals("time/unit", "period")),
-        number("time/context", 0, 3, 0),
+        CONTEXT,
     ]
     parameters += [choice("graphs/join", ("separate", "single"), "separate")]
     parameters += [number("graphs/join_size", 2, 4096, 8, equals("graphs/join", "single"))]

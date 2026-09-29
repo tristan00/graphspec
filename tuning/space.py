@@ -15,7 +15,7 @@ from graphspec.infra.processes import guarded, spawned
 
 from .model_spec import TRAINING, groups
 from .model_spec import space as model_space
-from .selector import check_bounds, metadata, narrow_group, runtime_parameter, spaces
+from .selector import check_bounds, graph_space, metadata, narrow_group, runtime_parameter, spaces
 
 CANDIDATES = 10000
 RANKED = 25
@@ -121,13 +121,13 @@ class Space:
             return parameter.uniform(rng)
 
         model = specs.draw(self.models, lambda p: choose("model/", p))
-        active_groups = groups(model)
-        if active_groups not in self.graphs:
-            self.graphs[active_groups] = narrow_group(specs.space(self.registry, active_groups), self.bounds)
+        key = (groups(model), model["view"])
+        if key not in self.graphs:
+            self.graphs[key] = graph_space(self.registry, model, self.bounds)
         return dict(
             seed=training_seed,
             model=model,
-            graph=specs.draw(self.graphs[active_groups], lambda p: choose("graph/", p)),
+            graph=specs.draw(self.graphs[key], lambda p: choose("graph/", p)),
             **specs.draw(self.training, lambda p: choose("", p)),
             max_seconds=choose("", self.runtime),
         )

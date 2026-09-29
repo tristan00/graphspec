@@ -58,13 +58,62 @@ def views(registry):
         excluded.add("signal")
     if not extras["single"] or not extras["events"]:
         excluded.add("affinity")
-    refusals = {view: refusal(registry, view, reading(view, 0)) for view in VIEWS if view not in excluded}
-    result = tuple(view for view, refused in refusals.items() if refused is None)
+    candidates = [view for view in VIEWS if view not in excluded]
+    result = tuple(view for view in candidates if contexts(registry, view, specs.CONTEXT))
     if not result:
         raise ValueError(
-            "no family reads the tasks of the bank %s: %s" % (registry.name, "; ".join(refusals.values()))
+            "no family reads the tasks of the bank %s: %s"
+            % (
+                registry.name,
+                "; ".join(refusal(registry, view, reading(view, specs.CONTEXT.low)) for view in candidates),
+            )
         )
     LOG.debug("views exit offered=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def contexts(registry, family, held):
+    started = time.perf_counter()
+    result = tuple(
+        context
+        for context in range(held.low, held.high + 1)
+        if refusal(registry, family, reading(family, context)) is None
+    )
+    LOG.debug(
+        "contexts exit family=%s contexts=%d seconds=%.4f", family, len(result), time.perf_counter() - started
+    )
+    return result
+
+
+def contextual(registry, family, parameters):
+    started = time.perf_counter()
+    (held,) = [parameter for parameter in parameters if parameter.name == specs.CONTEXT.name]
+    accepted = contexts(registry, family, held)
+    if not accepted:
+        raise ValueError(
+            "the family %s reads the tasks of the bank %s under no %s from %d to %d: %s"
+            % (
+                family,
+                registry.name,
+                held.name,
+                held.low,
+                held.high,
+                refusal(registry, family, reading(family, held.low)),
+            )
+        )
+    if accepted != tuple(range(accepted[0], accepted[-1] + 1)):
+        raise ValueError(
+            "the family %s reads the tasks of the bank %s under the values %s of %s, which are not one range"
+            % (family, registry.name, ", ".join(map(str, accepted)), held.name)
+        )
+    result = specs.narrow(parameters, {held.name: dict(low=accepted[0], high=accepted[-1])})
+    LOG.debug(
+        "contextual exit family=%s low=%d high=%d seconds=%.4f",
+        family,
+        accepted[0],
+        accepted[-1],
+        time.perf_counter() - started,
+    )
     return result
 
 
