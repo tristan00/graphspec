@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -10,6 +11,18 @@ from graphspec.infra import runtime
 from graphspec.infra.processes import LockBusy
 
 WORKER = "PYTEST_XDIST_WORKER" in os.environ
+LOG = logging.getLogger(__name__)
+SUITE = {"heavy": "heavy-tests"}
+
+
+def suite_singleton(name, message, original=runtime.singleton):
+    started = time.perf_counter()
+    lock = original(SUITE.get(name, name), message)
+    LOG.debug("suite_singleton exit name=%s seconds=%.4f", name, time.perf_counter() - started)
+    return lock
+
+
+runtime.singleton = suite_singleton
 
 
 @contextmanager

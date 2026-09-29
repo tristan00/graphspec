@@ -3,9 +3,6 @@ import sys
 
 def main():
     commands = {
-        "churn": ("churn.build", "main"),
-        "totalwar": ("totalwar.build", "main"),
-        "vic3": ("vic3.build", "main"),
         "synthetic": ("graphspec.synthetic", "main"),
         "build": ("tuning.build", "main"),
         "search": ("tuning.run", "main"),

@@ -9,7 +9,7 @@ requires-python = ">=3.11"
 dependencies = ["numpy>=2.1", "numba>=0.60", "torch>=2.4", "pyarrow>=25", "optuna>=4.0", "botorch==0.18.1", "scikit-learn>=1.6", "scipy>=1.14", "psutil>=6.0"]
 
 [tool.setuptools]
-packages = ["graphspec", "graphspec.infra", "tuning", "churn", "totalwar", "vic3"]
+packages = ["graphspec", "graphspec.infra", "tuning"]
 
 [tool.setuptools.package-data]
 tuning = ["web/*.html", "web/*.css", "web/*.js"]
@@ -21,7 +21,6 @@ graphspec = "graphspec.__main__:main"
 test = ["pytest>=8"]
 dev = ["pytest>=8", "ruff==0.16.7", "pytest-xdist>=3.8"]
 ladybug = ["ladybug==0.20.4"]
-totalwar = ["psycopg[binary]>=3.2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

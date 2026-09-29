@@ -1,6 +1,6 @@
 **Building a graph without a database**
 
-`graphspec.Stage` is the public Parquet writer. It writes the table manifest and shards; users do not need to reproduce file naming or internal identifiers. `graphspec.GraphTables` constructs contract tables from named nodes, observations, edges, and node labels. The existing Total War adapter writes its temporal query tables through the same `Stage` interface.
+`graphspec.Stage` is the public Parquet writer. It writes the table manifest and shards; users do not need to reproduce file naming or internal identifiers. `graphspec.GraphTables` constructs contract tables from named nodes, observations, edges, and node labels. Temporal query tables are written through the same `Stage` interface.
 
 Set an absolute `GRAPHSPEC_HOME` before launching the Python process. For example, an external Windows environment can run a saved loader with:
 
@@ -47,7 +47,7 @@ result = fit(bank, config, runtime / "runs" / "example-fit", workers=1)
 
 Put multiprocessing workflows inside a `main` function called under `if __name__ == "__main__":` when saving them as Python scripts. `fit` requires CUDA and scores every validation label after full training epochs. The same bank can also be passed to the search CLI; [tuning/README.md](../tuning/README.md) describes the model and graph parameter names.
 
-For multiple graphs, use consecutive graph indices from zero. Each graph writes its own tables into the same Stage, in graph order. Query-oriented adapters can use `Stage.write` directly with Arrow tables keyed by `(table, source_type, target_type)`, as `totalwar.build.extract` does. `Stage.merge` combines manifests from shards below the staging directory without copying their Parquet data.
+For multiple graphs, use consecutive graph indices from zero. Each graph writes its own tables into the same Stage, in graph order. A source that produces its tables by query can call `Stage.write` directly with Arrow tables keyed by `(table, source_type, target_type)`. `Stage.merge` combines manifests from shards below the staging directory without copying their Parquet data.
 
 Sources declare `staging` or `database` in a task file. A staging-only task needs `name`, `staging`, and `target`; it does not need a fictional database filename. For older task files naming both, staging is explicitly preferred and must exist. Missing staging never falls back to another source.
 

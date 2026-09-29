@@ -6,7 +6,7 @@ Build a static or temporal truth graph, derive graph variants, and tune graph tr
 
 Set `GRAPHSPEC_HOME` to an explicit absolute directory before starting Python. There is no default home or profile settings file. Runtime output must stay outside the checkout and installed package tree; on Windows, every output must resolve to the same volume as `GRAPHSPEC_HOME`. Inputs may be read from other volumes. Inputs and completed banks are read-only; derived caches and temporary files live under the runtime home.
 
-Create a virtual environment outside the checkout using the [environment setup](docs/loader.md#environment-setup). From an external build copy of the source, install with `python -B -m pip install .`, or install a built wheel. This keeps packaging metadata and build directories outside the working checkout too. Dependencies and extras are declared in `pyproject.toml`. Use `.[totalwar]` for the PostgreSQL adapter, `.[ladybug]` for database inspection/export, and `.[dev]` for development. Infrastructure ships in `graphspec.infra`; no sibling repository is required. The console command is `graphspec`, also available as `python -B -m graphspec`.
+Create a virtual environment outside the checkout using the [environment setup](docs/loader.md#environment-setup). From an external build copy of the source, install with `python -B -m pip install .`, or install a built wheel. This keeps packaging metadata and build directories outside the working checkout too. Dependencies and extras are declared in `pyproject.toml`. Use `.[ladybug]` for database inspection/export, and `.[dev]` for development. Infrastructure ships in `graphspec.infra`; no sibling repository is required. The console command is `graphspec`, also available as `python -B -m graphspec`.
 
 The examples use `D:/graphspec-runtime` and its external virtual environment at `environment/Scripts/python.exe`. From the checkout, `scripts/graphspec.ps1 -Home ABSOLUTE_PATH` configures the environment before starting Python and forwards the remaining graphspec arguments. Choose your own runtime directory; the library does not assume a drive or machine path. For direct Python use, set `GRAPHSPEC_HOME` in the launching environment and use `-B` or `PYTHONDONTWRITEBYTECODE=1`. See [storage and loader details](docs/loader.md).
 
@@ -27,19 +27,7 @@ Replace the Windows paths with your external workspace. The API also exposes `bu
 
 On Windows, user-SID named mutexes enforce one resource-intensive build, check, fit, or search across runtime homes. These singleton guards create no lock files.
 
-**Source adapters**
-
-Total War loads campaign histories from the existing PostgreSQL corpus. Churn predicts whether a client active at T remains active at T plus one calendar year. Victoria 3 reads finished recorder runs and writes decision moments with a GDP path label table; see [VIC3.md](VIC3.md). All write the same graph contract and use the same bank builder, packing, models, and search.
-
-```powershell
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime totalwar --output D:/graphspec-runtime/datasets/totalwar --campaigns 100 --port 55433 --workers 1
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime vic3 --output D:/graphspec-runtime/datasets/vic3 --runs 2 --workers 1
-./scripts/graphspec.ps1 -Home D:/graphspec-runtime churn --source C:/Users/trist/Downloads/TX.csv.zip --output D:/graphspec-runtime/datasets/churn --prediction 2025-08-31 --data-through 2026-09-08 --features 64
-```
-
-Churn includes descriptive client and policy attributes by default. Cancellation history contributes features only when the policy ended before T; later cancellation outcomes and future policies never become features. The example evaluates retention on 2026-08-31. Full cutoff rules, node/edge mappings, and the extract-coverage assumption are in [CHURN.md](CHURN.md). The Total War source and reward rules are in [TOTALWAR.md](TOTALWAR.md).
-
-To inspect either graph in LadybugDB, install the extra and run:
+To inspect a graph in LadybugDB, install the extra and run:
 
 ```powershell
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime database --staging D:/graphspec-runtime/datasets/demo/demo.staging --output D:/graphspec-runtime/datasets/demo/demo.lbug

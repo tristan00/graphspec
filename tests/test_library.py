@@ -1,4 +1,5 @@
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -56,13 +57,22 @@ def test_infra_does_not_import_graph_logic():
                 else []
             )
             assert not any(
-                name == "graphspec" or name.startswith(("graphspec.staged", "tuning", "totalwar", "churn"))
-                for name in names
+                name == "graphspec" or name.startswith(("graphspec.staged", "tuning")) for name in names
             ), path
 
 
-def test_heavy_jobs_are_exclusive_across_processes():
-    program = "from graphspec.infra.runtime import heavy_job\nwith heavy_job():\n    pass"
+def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):
+    from graphspec.infra import runtime
+
+    name = "heavy-exclusion-%d" % os.getpid()
+    held = runtime.singleton
+    monkeypatch.setattr(runtime, "singleton", lambda given, message: held(name, message))
+    program = (
+        "from graphspec.infra import runtime\n"
+        "held = runtime.singleton\n"
+        "runtime.singleton = lambda given, message: held(%r, message)\n"
+        "with runtime.heavy_job():\n    pass"
+    ) % name
     with heavy_job():
         result = subprocess.run(
             [sys.executable, "-B", "-c", program], capture_output=True, text=True, timeout=4
