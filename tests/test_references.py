@@ -17,6 +17,7 @@ from graphspec.truth import Graph
 from tuning.batching import batches, pack_batch
 from tuning.build import build
 from tuning.data import Deriver
+from tuning.events import KINDS
 from tuning.inputs import couples
 from tuning.model_spec import VIEWS, configuration, views
 from tuning.models import build as network
@@ -267,6 +268,25 @@ def test_the_value_of_a_relation_taken_from_a_column_reaches_every_family_that_r
     assert stated[:THIRD] == changed[:THIRD] and stated[VALUE] != changed[VALUE]
 
 
+@pytest.mark.xdist_group("references-event_graph")
+def test_the_kinds_of_event_and_the_relations_never_share_a_slot(banks):
+    held = opened(banks, "stated")
+    registry = held.registry
+    stated = {"time/history": 2, "time/context": 1}
+    cfg = configuration(registry, dict(view="event_graph"), stated, 5, copy.deepcopy(SPLITS))
+    torch.manual_seed(5)
+    net, found = network(cfg, held.fitted(cfg)).eval(), []
+    net.layers[0].register_forward_pre_hook(lambda module, args: found.append(args[2]))
+    blocks = [block for partition in (0, 1) for block in held.blocks(partition, 2, cfg)]
+    with torch.inference_mode():
+        for group in batches(blocks, len(blocks), held.sizes(cfg), frame_budget=1024):
+            net(pack_batch(held, group, cfg, "cpu"))
+    slots = set(torch.cat(found).tolist())
+    assert registry.relations > 4 and registry.marker("period_context") in slots
+    kinds = slots - {registry.marker("period_context")}
+    assert kinds and min(kinds) >= registry.relation_slots and max(kinds) < registry.relation_slots + KINDS
+
+
 @timed("references.sizes")
 def sizes(banks, name):
     held = opened(banks, name)
@@ -282,7 +302,10 @@ def sizes(banks, name):
         weights[family] = sum(
             parameter.numel()
             for module in network(chosen, registry).modules()
-            if not (isinstance(module, torch.nn.Embedding) and module.num_embeddings == registry.relation_slots)
+            if not (
+                isinstance(module, torch.nn.Embedding)
+                and module.num_embeddings in (registry.relation_slots, registry.relation_slots + KINDS)
+            )
             for parameter in module.parameters(recurse=False)
         )
     return dict(values=len(registry.groups["links"]), parameters=len(space), arrays=sorted(arrays), weights=weights)

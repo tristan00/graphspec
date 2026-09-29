@@ -496,9 +496,10 @@ def dag_inputs(b, window, left, right, position):
     extra = extra[extra[:, 0] >= left]
     boundary = position[extra[:, :2] - left]
     dag = np.concatenate((linked, boundary)).T.astype(np.int64)
+    kinds = events[dag[1, : len(linked)], 3] + window.registry.relation_slots
     b.update(
         dag_edges=array(dag),
-        dag_relation=array(np.concatenate((events[dag[1, : len(linked)], 3], extra[:, 2])), torch.long),
+        dag_relation=array(np.concatenate((kinds, extra[:, 2])), torch.long),
         dag_gap=array(events[dag[1], 2] - events[dag[0], 2], torch.float32),
     )
     positions = np.r_[np.arange(len(events)), np.arange(len(events))]
