@@ -309,7 +309,7 @@ def asked(nodes):
             outcome=dict(
                 references=["holder"],
                 columns=[],
-                target=dict(kind="number", series="outcome"),
+                target=dict(kind="number", series="outcome", about="holder"),
                 weight=False,
                 absent="stop",
                 event=None,
@@ -407,4 +407,15 @@ def shown(opened, index):
     cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)
     result = Graph.load(opened.view(index, cfg))
     LOG.debug("shown exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
+    return result
+
+
+def fitted(opened):
+    from conftest import SPLITS
+    from tuning.model_spec import configuration
+
+    started = time.perf_counter()
+    cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)
+    result = opened.fitted(cfg)
+    LOG.debug("fitted exit features=%d seconds=%.4f", result.features, time.perf_counter() - started)
     return result

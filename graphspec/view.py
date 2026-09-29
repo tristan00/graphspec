@@ -11,7 +11,7 @@ from .clock import ABOUT, ALWAYS, NEVER, SEVERAL
 from .names import Names
 from .references import MEMBERS, ends
 from .sets import NODE, stored
-from .truth import GROUPS, Graph, encoded, ranks, verify
+from .truth import GROUPS, Graph, Shown, encoded, ranks, unheld, verify
 
 LOG = logging.getLogger(__name__)
 STEPS = Names("choice of steps")
@@ -153,30 +153,75 @@ class Changes:
 
 
 TASKS = "tasks"
+CHANGES = "changes"
 VALIDATED = "first"
 STEPS.register(TASKS, Tasks())
-STEPS.register("changes", Changes())
+STEPS.register(CHANGES, Changes())
+
+
+@timed("view.withheld")
+def withheld(keys, named, moments):
+    keys, named, moments = (np.asarray(values, np.int64) for values in (keys, named, moments))
+    result = np.full(len(keys), NEVER, np.int64)
+    if len(named):
+        order = np.lexsort((moments, named))
+        named, moments = named[order], moments[order]
+        first = np.r_[True, named[1:] != named[:-1]]
+        named, moments = named[first], moments[first]
+        position = np.minimum(np.searchsorted(named, keys), len(named) - 1)
+        found = named[position] == keys
+        result[found] = moments[position[found]]
+    return result
 
 
 def without_targets(facts, registry, held):
     started = time.perf_counter()
+    schema, names = registry.schema, list(registry.schema.tasks["references"])
+    about = np.asarray(
+        [
+            -1
+            if entry["target"] is None or entry["target"]["about"] is None
+            else names.index(entry["target"]["about"])
+            for entry in schema.tasks["kinds"].values()
+        ],
+        np.int64,
+    )
     aimed = np.zeros(len(facts.task_key), bool)
     aimed[np.asarray(facts.target_task)] = True
     aimed &= np.asarray(facts.task_split) == held["split"]
-    chosen = aimed[np.asarray(facts.member_task)] & (np.asarray(facts.member_code) >= 0)
-    entities = len(facts.kinds)
-    hidden = encode(
-        np.asarray(facts.member_code)[chosen],
-        np.asarray(facts.member_source)[chosen],
-        np.asarray(facts.member_target)[chosen],
-        entities,
+    task = np.asarray(facts.member_task, np.int64)
+    chosen = aimed[task] & (
+        np.asarray(facts.member_name) == about[np.asarray(facts.task_kind, np.int64)[task]]
     )
+    moment = np.asarray(facts.task_time, np.int64)[task[chosen]]
+    code, source, target = (
+        np.asarray(facts.arrays[name], np.int64)[chosen]
+        for name in ("member_code", "member_source", "member_target")
+    )
+    joined = np.asarray([kind in schema.sets for kind in registry.nodes], bool)
+    edge = np.flatnonzero(code >= 0)
+    whole = (code < 0) & joined[np.asarray(facts.kinds, np.int64)[source]]
+    either = edge[registry.flipped[code[edge]] == code[edge]]
+    entities = len(facts.kinds)
+    named = np.r_[
+        encode(code[edge], source[edge], target[edge], entities),
+        encode(code[either], target[either], source[either], entities),
+    ]
     stated = encode(facts.fact_code, facts.fact_source, facts.fact_target, entities)
-    result = np.ones(len(facts.obs_entity), bool), ~np.isin(stated, hidden)
+    result = (
+        withheld(facts.obs_entity, source[whole], moment[whole]),
+        np.minimum.reduce(
+            (
+                withheld(stated, named, np.r_[moment[edge], moment[either]]),
+                withheld(facts.fact_source, source[whole], moment[whole]),
+                withheld(facts.fact_target, source[whole], moment[whole]),
+            )
+        ),
+    )
     LOG.debug(
-        "without targets exit graph=%s hidden=%d seconds=%.4f",
+        "without targets exit graph=%s withheld=%d seconds=%.4f",
         facts.name,
-        int((~result[1]).sum()),
+        int((result[1] < NEVER).sum() + (result[0] < NEVER).sum()),
         time.perf_counter() - started,
     )
     return result
@@ -193,8 +238,8 @@ def without_scored(facts, registry, held):
     scored = np.isin(np.asarray(facts.task_split)[np.asarray(facts.member_task)[member]], held["scored"])
     hidden = np.setdiff1d(entity[scored], entity[~scored])
     result = (
-        ~np.isin(facts.obs_entity, hidden),
-        ~(np.isin(facts.fact_source, hidden) | np.isin(facts.fact_target, hidden)),
+        np.where(np.isin(facts.obs_entity, hidden), ALWAYS, NEVER),
+        np.where(np.isin(facts.fact_source, hidden) | np.isin(facts.fact_target, hidden), ALWAYS, NEVER),
     )
     LOG.debug(
         "without scored exit graph=%s hidden=%d seconds=%.4f",
@@ -228,6 +273,8 @@ def sequences(facts, registry, steps, looking):
             % (steps, facts.name)
         )
     ruled = [code for code, rules in looking.rules.items() if rules]
+    unruled = tuple(code for code in range(len(looking.splits)) if code not in ruled)
+    shared = looking.trained if set(unruled) & set(looking.trained) else unruled + looking.trained
     result = []
     for held in found:
         own = split[held["tasks"]]
@@ -247,6 +294,7 @@ def sequences(facts, registry, steps, looking):
                     trained=looking.trained,
                     scored=looking.scored,
                     labels=np.flatnonzero(rest),
+                    matures=shared,
                 )
             )
         for code in ruled:
@@ -263,6 +311,7 @@ def sequences(facts, registry, steps, looking):
                     trained=looking.trained,
                     scored=looking.scored,
                     labels=np.flatnonzero(labelled & (split[owner] == code)),
+                    matures=looking.trained if code in looking.trained else (code,) + looking.trained,
                 )
             )
     LOG.debug(
@@ -278,13 +327,19 @@ def sequences(facts, registry, steps, looking):
 def permitted(facts, registry, held):
     started = time.perf_counter()
     result = dict(
-        obs=np.ones(len(facts.obs_entity), bool),
-        fact=np.ones(len(facts.fact_source), bool),
+        obs=np.full(len(facts.obs_entity), NEVER, np.int64),
+        fact=np.full(len(facts.fact_source), NEVER, np.int64),
     )
     for name in held["rules"]:
-        observed, stated = SEES.named(name)(facts, registry, held)
-        result["obs"] &= observed
-        result["fact"] &= stated
+        for group, found in zip(GROUPS, SEES.named(name)(facts, registry, held)):
+            found = np.asarray(found)
+            if found.shape != result[group].shape or found.dtype.kind not in "iu":
+                raise ValueError(
+                    "the rule %s of what a split may see gives for every fact of graph %s the time from which it "
+                    "is kept from the split, as whole numbers, and gave %s of the shape %s"
+                    % (name, facts.name, found.dtype, found.shape)
+                )
+            result[group] = np.minimum(result[group], found)
     LOG.debug(
         "permitted exit graph=%s rules=%d seconds=%.4f",
         facts.name,
@@ -294,10 +349,10 @@ def permitted(facts, registry, held):
     return result
 
 
-def shown(facts, group, held, observer, seen):
+def shown(facts, group, held, observer, kept):
     started = time.perf_counter()
     stamps = facts.stamps(group)
-    allowed = seen & clock.allowed(
+    allowed = clock.allowed(
         len(stamps["since"]),
         facts.arrays[group + "_seen_row"],
         facts.arrays[group + "_seen_observer"],
@@ -307,7 +362,7 @@ def shown(facts, group, held, observer, seen):
         stamps["since"],
         stamps["until"],
         stamps["known"],
-        stamps["replaced"],
+        np.minimum(stamps["replaced"], kept),
         allowed,
         held["moments"],
         held["looking"],
@@ -331,11 +386,15 @@ def matured(facts, registry, held, entity, step, values):
     schema, steps = registry.schema, len(held["moments"])
     owner = np.asarray(facts.target_task, np.int64)
     kinds, names = np.asarray(facts.task_kind)[owner], list(schema.tasks["references"])
+    looking = np.asarray(facts.task_observer, np.int64)[owner]
+    seen = ((looking == held["observer"]) | (looking < 0)) & np.isin(
+        np.asarray(facts.task_split)[owner], held["matures"]
+    )
     layout = registry.encoding.layout
     parts = []
     for code, entry in enumerate(schema.tasks["kinds"].values()):
         ripe = entry["matures"]
-        chosen = np.flatnonzero(kinds == code)
+        chosen = np.flatnonzero((kinds == code) & seen)
         if ripe is None or not len(chosen):
             continue
         members = np.flatnonzero(np.asarray(facts.member_name) == names.index(ripe["reference"]))
@@ -526,30 +585,15 @@ def view(facts, registry, held, several):
     name = facts.name
     if observer >= 0:
         name = "%s seen by the observer %s" % (facts.name, facts.observers[observer])
-    inner = np.asarray(facts.entity_held)
-    graph = Graph(
+    graph = Shown(
         name if held["split"] < 0 else "%s for split %d" % (name, held["split"]),
         facts.keys,
         steps,
         kinds=np.asarray(facts.kinds),
         entity_token=np.asarray(facts.entity_token),
-        entity_held=inner,
         period=grouped(facts, held, steps)
         if schema.tasks["grouping"] is not None
         else np.arange(steps, dtype=np.int32),
-        obs_x=encoded(
-            registry,
-            observed["obs_values"],
-            inner[observed["obs_entity"]],
-            lambda row: (
-                "the node %s of the kind %s in the view of graph %s"
-                % (
-                    facts.keys[observed["obs_entity"][row]],
-                    registry.nodes[facts.kinds[observed["obs_entity"][row]]],
-                    name,
-                )
-            ),
-        ),
         **observed,
         **spans.fact_spans(
             step[order].astype(np.int32),
@@ -563,7 +607,6 @@ def view(facts, registry, held, several):
         task_key=np.asarray(facts.task_key)[tasks],
         task_kind=np.asarray(facts.task_kind)[tasks],
         task_values=np.asarray(facts.task_values)[tasks],
-        task_x=np.asarray(facts.task_x)[tasks],
         task_signals=np.asarray(facts.task_signals)[tasks],
         graph_values=np.asarray(facts.graph_values),
         **referred(facts, held),
@@ -580,6 +623,96 @@ def view(facts, registry, held, several):
         time.perf_counter() - started,
     )
     return graph
+
+
+def finished(shown, registry, inner):
+    started = time.perf_counter()
+    entity, kinds = np.asarray(shown.obs_entity, np.int64), np.asarray(shown.kinds)
+    tasks = list(registry.schema.tasks["kinds"])
+    graph = Graph(
+        shown.name,
+        shown.keys,
+        shown.steps,
+        **shown.arrays,
+        entity_held=inner,
+        obs_x=encoded(
+            registry,
+            shown.obs_values,
+            inner[entity],
+            lambda row: (
+                "the node %s of the kind %s in the view of graph %s"
+                % (shown.keys[entity[row]], registry.nodes[kinds[entity[row]]], shown.name)
+            ),
+        ),
+        task_x=encoded(
+            registry,
+            shown.task_values,
+            unheld(registry, len(shown.task_key)),
+            lambda row: (
+                "the task %d of the kind %s in the view of graph %s"
+                % (shown.task_key[row], tasks[shown.task_kind[row]], shown.name)
+            ),
+        ),
+    )
+    LOG.debug(
+        "finished exit graph=%s observations=%d seconds=%.4f",
+        shown.name,
+        len(entity),
+        time.perf_counter() - started,
+    )
+    return graph
+
+
+def sampled(facts, shown, held, registry):
+    started = time.perf_counter()
+    schema, layout = registry.schema, registry.encoding.layout
+    result = {name: [] for name in schema.columns}
+    split = np.asarray(facts.task_split)
+    trained = np.isin(split[np.asarray(facts.target_task, np.int64)[held["labels"]]], held["trained"])
+    steps = np.asarray(shown.task_step, np.int64)
+    if trained.any():
+        bound = int(steps[np.asarray(shown.label_task, np.int64)[trained]].max())
+        tasks = (steps <= bound) & (
+            np.isin(split[held["tasks"]], held["trained"]) | (split[held["tasks"]] < 0)
+        )
+        observed = np.maximum(
+            np.minimum(np.asarray(shown.obs_stop, np.int64), bound + 1) - shown.obs_start, 0
+        )
+        stated = np.maximum(
+            np.minimum(np.asarray(shown.fact_stop, np.int64), bound + 1) - shown.fact_start, 0
+        )
+        removed = np.flatnonzero(np.asarray(shown.removal_step) <= bound)
+        owners = np.unique(np.asarray(shown.obs_entity, np.int64)[observed > 0])
+        inner = np.isin(np.asarray(facts.inner_owner, np.int64), owners)
+        within = inner[np.asarray(facts.within_source, np.int64)]
+        codes = np.r_[
+            np.repeat(np.asarray(shown.fact_code, np.int64), stated),
+            np.asarray(shown.removal_code, np.int64)[removed],
+        ]
+        values = np.concatenate(
+            (np.repeat(np.asarray(shown.fact_values), stated, 0), np.asarray(shown.removal_values)[removed])
+        )
+        parts = [
+            (layout, np.repeat(np.asarray(shown.obs_values), observed, 0)),
+            (layout, np.asarray(shown.task_values)[tasks]),
+            (schema.graph, np.asarray(facts.graph_values)[None, :]),
+            (schema.inner_columns(), np.asarray(facts.inner_values)[inner]),
+            (schema.within_columns(), np.asarray(facts.within_values)[within]),
+        ]
+        parts += [
+            (registry.by_code[code].attributes, values[codes == code]) for code in np.unique(codes).tolist()
+        ]
+        for columns, found in parts:
+            for position, name in enumerate(columns):
+                column = found[:, position]
+                result[name].append(column[~np.isnan(column)])
+    LOG.debug(
+        "sampled exit graph=%s trained=%s seconds=%.4f",
+        facts.name,
+        bool(trained.any()),
+        time.perf_counter() - started,
+    )
+    return result
 
 
 def validate(facts, registry, splits):

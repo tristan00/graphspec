@@ -6,7 +6,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 
 | File | Role |
 |---|---|
-| `schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types and encoders; `Encoding`, the fitted encoders of a bank. |
+| `schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types and encoders; `Encoding`, the dictionaries of a bank and, once fitted by `fitted` on what the views of the splits trained on show, the states of its encoders. |
 | `inspect.py` | `inspect` prints the schema of a task file or of a bank. |
 | `graphdb.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. Both go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `graphspec.infra.staging`. |
 | `references.py` | The sorts of reference, registered: what a task may refer to, how it is stored and how it resolves at the time of the task. |
@@ -25,7 +25,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `segments.py`, `carry.py` | The segment engine that builds a joined group graph by graph, described below. |
 | `kernels.py` | The numba kernels behind the stages, the representations and `verify`. |
 
-**Truth graph and views.** A bank of version 8 stores one graph as `truth.Facts`, facts with the interval in which each holds; [the contract](../docs/contract.md) lists its arrays. Steps are a view the pipeline chooses by `time/steps` and `time/several`. A view is a `truth.Graph`, spans over the steps of the view, so an unchanged observation or fact costs one row however long it is shown:
+**Truth graph and views.** A bank of version 8 stores one graph as `truth.Facts`, facts with the interval in which each holds; [the contract](../docs/contract.md) lists its arrays. Steps are a view the pipeline chooses by `time/steps` and `time/several`. A view is first shown as stated, a `truth.Shown`, and then encoded, with the encoders fitted for its statement, into a `truth.Graph`, spans over the steps of the view, so an unchanged observation or fact costs one row however long it is shown:
 
 - `kinds` and `entity_token` (the 64-bit hash of `type:key`) per entity, and `period` per step
 - observation spans `obs_entity`, `obs_start`, `obs_stop` (exclusive), `obs_values` and `obs_x`: an entity's maximal run of consecutive steps with identical stated values, the values as stated and as encoded; within a step observations are ordered by entity
@@ -33,7 +33,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 - removals `removal_source`, `removal_target`, `removal_code`, `removal_step`, `removal_values`: the absent facts, in their `seq` order
 - tasks `task_step`, `task_key`, `task_kind`, `task_values`, `task_x`, `task_signals`, the members of their references `member_task`, `member_name`, `member_place`, `member_source`, `member_target`, `member_code`, targets `label_task`, `label_row`, and `graph_values`, the attributes of the graph
 
-`verify` checks a view, in time linear in the spans: steps in range, a period for every step, canonical relation codes, tasks in the order of their steps, observation spans of one entity that neither overlap nor could merge, present facts observed at every step of their span, the nodes that the references of a task name observed at its step where its kind states that an absent node stops the work, absent facts observed at or before theirs, and tokens that match the keys. It also checks that the encoders reproduce the encoded values from the stated ones. A bank build refuses two keys of one type that share a token.
+`verify` checks a view, in time linear in the spans: steps in range, a period for every step, canonical relation codes, tasks in the order of their steps, observation spans of one entity that neither overlap nor could merge, present facts observed at every step of their span, the nodes that the references of a task name observed at its step where its kind states that an absent node stops the work, absent facts observed at or before theirs, and tokens that match the keys. The encoded values are checked where they are made, against the limit of 16 bits. A bank build refuses two keys of one type that share a token.
 
 The stages work on `truth.Dense`, the per-step expansion: rows reference their features and attributes (`obs_ref`, `fact_ref`) in `x_table` and `value_table` instead of copying them, so a stage that copies or filters rows moves integers. `step_graph` and `entity_connected` carry the joined timeline (all zeros for a single graph).
 

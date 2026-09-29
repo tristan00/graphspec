@@ -52,20 +52,21 @@ GROUPS = ("obs", "fact")
 SPARSE = ("known_row", "known_time", "replaced_row", "replaced_time", "seen_row", "seen_observer")
 STORED = (
     ("kinds", "entity_token")
-    + ("obs_entity", "obs_since", "obs_until", "obs_seq", "obs_values", "obs_x")
+    + ("obs_entity", "obs_since", "obs_until", "obs_seq", "obs_values")
     + ("fact_source", "fact_target", "fact_code", "fact_present")
     + ("fact_since", "fact_until", "fact_seq", "fact_values")
     + tuple(group + "_" + name for group in GROUPS for name in SPARSE)
     + ("task_time", "task_observer", "task_grouping", "task_key", "task_kind", "task_split")
-    + ("task_weight", "task_values", "task_x", "task_signals")
+    + ("task_weight", "task_values", "task_signals")
     + MEMBERS
     + ("target_task", "target_row", "target_known", "target_y")
     + ("graph_values",)
     + JOINED
     + HELD
     + WITHIN
-    + ("entity_held",)
 )
+ENCODED = ("obs_x", "task_x", "entity_held")
+SHOWN = tuple(name for name in ARRAYS if name not in ENCODED)
 
 
 def admitted(directory, manifest):
@@ -122,8 +123,12 @@ class Arrays:
         return graph
 
 
-class Graph(Arrays):
-    NAMES = ARRAYS
+class Shown(Arrays):
+    NAMES = SHOWN
+
+    @timed("truth.shown.tables")
+    def tables(self):
+        return self.obs_values, self.task_values
 
     def dense(self):
         started = time.perf_counter()
@@ -152,10 +157,11 @@ class Graph(Arrays):
             obs_step=step,
             obs_ref=reference,
             obs_anchor=np.zeros(len(step), bool),
-            x_table=self.obs_x,
+            x_table=self.tables()[0],
             value_table=np.concatenate((self.fact_values, self.removal_values)),
             **facts,
-            **{name: np.asarray(self.arrays[name]) for name in TASKS + MEMBERS + LABELS},
+            task_x=np.asarray(self.tables()[1]),
+            **{name: np.asarray(self.arrays[name]) for name in TASKS + MEMBERS + LABELS if name != "task_x"},
         )
         LOG.debug(
             "dense exit graph=%s observations=%d facts=%d seconds=%.4f",
@@ -165,6 +171,14 @@ class Graph(Arrays):
             time.perf_counter() - started,
         )
         return result
+
+
+class Graph(Shown):
+    NAMES = ARRAYS
+
+    @timed("truth.graph.tables")
+    def tables(self):
+        return self.obs_x, self.task_x
 
 
 class Dense(Arrays):
@@ -508,57 +522,26 @@ def stated(registry, names, values):
     return result
 
 
-def gather(schema, tables, until):
+def distinct(schema, tables):
     started = time.perf_counter()
-    facts = ("since", "known")
-    places = [(tables["graph"], schema.graph, clock.reached(tables["graph"], (), until))]
-    for kind, columns in schema.entities().items():
-        table = tables["observations"][kind]
-        places.append((table, columns, clock.reached(table, facts, until)))
-    for held, entry in schema.edges.items():
-        table = tables["edges"][held]
-        places.append((table, entry["columns"], clock.reached(table, facts, until)))
-    for kind, entry in schema.sets.items():
-        table = tables["sets"][kind]
-        places.append((table, entry["members"], clock.reached(table, (), until)))
+    places = [(tables["graph"], schema.graph)]
+    places += [(tables["observations"][kind], columns) for kind, columns in schema.entities().items()]
+    places += [(tables["edges"][held], entry["columns"]) for held, entry in schema.edges.items()]
+    places += [(tables["sets"][kind], entry["members"]) for kind, entry in schema.sets.items()]
     for kind, held in schema.holds.items():
-        for part, columns in (("nodes", inward(held)), ("edges", outward(held))):
-            table = tables["held"][kind][part]
-            places.append((table, columns, clock.reached(table, (), until)))
-    found = {name: dict(trained=[], distinct=[]) for name in schema.columns}
-    if "tasks" in tables:
-        table = tables["tasks"]
-        places.append((table, schema.asked_columns(), clock.reached(table, ("time",), until)))
-        aims = tables["targets"]
-        kinds = np.asarray(table.column("kind").to_pylist(), object)[
-            aims.column("task").to_numpy().astype(np.int64)
+        places += [
+            (tables["held"][kind]["nodes"], inward(held)),
+            (tables["held"][kind]["edges"], outward(held)),
         ]
-        seen = clock.reached(aims, ("known",), until)
-        if "known" in aims.column_names:
-            seen &= ~absent(aims.column("known"))
-        else:
-            seen[:] = False
-        for kind, entry in schema.tasks["kinds"].items():
-            if entry["matures"] is not None:
-                found[entry["matures"]["column"]]["trained"].append(
-                    aims.column("y").to_numpy().astype(np.float32)[seen & (kinds == kind)]
-                )
-    for table, columns, seen in places:
+    if "tasks" in tables:
+        places.append((tables["tasks"], schema.asked_columns()))
+    result = {name: set() for name in schema.symbolic()}
+    for table, columns in places:
         for name in columns:
-            kind = schema.kind(name)
-            values = kind.read(table.column(VALUE + name))
-            known = ~kind.missing(values)
-            found[name]["trained"].append(values[known & seen])
-            if kind.symbols:
-                found[name]["distinct"].append(np.unique(values[known]))
-    result = {
-        name: {
-            part: np.concatenate(values) if values else np.zeros(0, np.float32)
-            for part, values in parts.items()
-        }
-        for name, parts in found.items()
-    }
-    LOG.debug("gather exit columns=%d seconds=%.4f", len(result), time.perf_counter() - started)
+            if name in result:
+                values = schema.kind(name).read(table.column(VALUE + name))
+                result[name].update(values[~schema.kind(name).missing(values)].tolist())
+    LOG.debug("distinct exit columns=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
@@ -758,15 +741,6 @@ def asked(registry, splits, observers, tables, name):
         task_split=split[order],
         task_weight=weight[order],
         task_values=values[order],
-        task_x=encoded(
-            registry,
-            values[order],
-            unheld(registry, count),
-            lambda row: (
-                "the task %d of the kind %s of graph %s"
-                % (keys[order][row], list(stated["kinds"])[kinds[order][row]], name)
-            ),
-        ),
         task_signals=np.stack(
             (matrix(tasks, "signal", np.float32), matrix(tasks, "signal_observed", np.float32)), 2
         )[order]
@@ -1048,7 +1022,6 @@ def parse(registry, splits, observers, tables, rows, name):
     targets = aimed(registry, tables, tasks, place, rows, name)
     joined = belonging(registry, tables, kinds, local, name)
     inner, held = holding(registry, tables, kinds, local, name)
-    entity_held = inputs(registry, kinds, held)
     graph = Facts(
         name,
         keys,
@@ -1057,7 +1030,6 @@ def parse(registry, splits, observers, tables, rows, name):
         observers,
         kinds=kinds,
         entity_token=tokens(registry, kinds, keys),
-        entity_held=entity_held,
         **joined,
         **held,
         obs_entity=seen["entity"].astype(np.int32),
@@ -1065,15 +1037,6 @@ def parse(registry, splits, observers, tables, rows, name):
         obs_until=seen["until"],
         obs_seq=seen["seq"].astype(np.int32),
         obs_values=seen["values"],
-        obs_x=encoded(
-            registry,
-            seen["values"],
-            entity_held[seen["entity"]],
-            lambda row: (
-                "the node %s of the kind %s of graph %s"
-                % (keys[seen["entity"][row]], registry.nodes[kinds[seen["entity"][row]]], name)
-            ),
-        ),
         **sparse("obs", seen, seen["watched"], seen["watchers"]),
         fact_source=facts["source"].astype(np.int32),
         fact_target=facts["target"].astype(np.int32),
@@ -1255,16 +1218,13 @@ def check(graph, registry, splits, observers):
         within=len(graph.within_source),
     )
     dimensions = dict(
-        obs_x=2,
         obs_values=2,
         fact_values=2,
-        task_x=2,
         task_values=2,
         task_signals=3,
         set_values=2,
         inner_values=2,
         within_values=2,
-        entity_held=2,
     )
     real = ("fact_present", "graph_values", "task_weight", "target_y")
     loose = tuple(group + "_" + part for group in GROUPS for part in SPARSE)
@@ -1288,12 +1248,18 @@ def check(graph, registry, splits, observers):
         raise ValueError("entity tokens of graph %s do not match its keys" % name)
     if np.any(graph.kinds < 0) or np.any(graph.kinds >= len(registry.nodes)):
         raise ValueError("graph %s names undeclared node types" % name)
-    if graph.obs_x.shape[1] != registry.features or graph.task_x.shape[1] != registry.features:
-        raise ValueError("graph %s feature width does not match its registry" % name)
+    layout = registry.encoding.layout
+    if graph.obs_values.shape[1] != len(layout) or graph.task_values.shape[1] != len(layout):
+        raise ValueError("graph %s holds values of a width its schema does not state" % name)
     if graph.task_signals.shape[1:] != (registry.extras["signals"], 2):
         raise ValueError("graph %s signal shape does not match its registry" % name)
-    if not finite(graph.obs_x) or not finite(graph.task_x):
-        raise ValueError("graph %s observation and task features must be finite" % name)
+    for label, values in (("a node", graph.obs_values), ("a task", graph.task_values)):
+        infinite = np.argwhere(np.isinf(np.asarray(values)))
+        if len(infinite):
+            raise ValueError(
+                "graph %s states an infinite value of the column %s of %s"
+                % (name, layout[int(infinite[0][1])], label)
+            )
     for label, values in (
         ("fact about a node", graph.obs_entity),
         ("fact source", graph.fact_source),
@@ -1311,16 +1277,8 @@ def check(graph, registry, splits, observers):
         or min(graph.within_source.min(), graph.within_target.min()) < 0
     ):
         raise ValueError("an edge of a graph held in graph %s names a held node outside it" % name)
-    held = inputs(registry, graph.kinds, graph.arrays)
-    if len(graph.inner) != len(graph.inner_owner) or not np.array_equal(graph.entity_held, held):
-        raise ValueError("graph %s holds encoded graphs that its held graphs do not reproduce" % name)
-    for given, values, inner in (
-        (graph.obs_x, graph.obs_values, held[np.asarray(graph.obs_entity, np.int64)]),
-        (graph.task_x, graph.task_values, unheld(registry, len(graph.task_key))),
-    ):
-        again = encoded(registry, np.asarray(values), inner, lambda row: "a row of graph %s" % name)
-        if not np.array_equal(np.asarray(given), again):
-            raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
+    if len(graph.inner) != len(graph.inner_owner):
+        raise ValueError("graph %s names its held nodes other than it holds them" % name)
     if graph.graph_values.shape != (len(schema.graph),):
         raise ValueError("graph %s does not hold the attributes its schema states" % name)
     joined = np.asarray([kind in schema.sets for kind in registry.nodes], bool)
@@ -1621,27 +1579,13 @@ def verify(graph, registry):
         raise ValueError("entity tokens of graph %s do not match its keys" % name)
     if np.any(graph.kinds < 0) or np.any(graph.kinds >= len(registry.nodes)):
         raise ValueError("graph %s names undeclared node types" % name)
-    if graph.obs_x.shape[1] != registry.features or graph.task_x.shape[1] != registry.features:
-        raise ValueError("graph %s feature width does not match its registry" % name)
+    layout = len(registry.encoding.layout)
+    if graph.obs_values.shape[1] != layout or graph.task_values.shape[1] != layout:
+        raise ValueError("graph %s holds values of a width its schema does not state" % name)
     if graph.task_signals.shape[1:] != (registry.extras["signals"], 2):
         raise ValueError("graph %s signal shape does not match its registry" % name)
     if graph.fact_values.shape[1] != graph.removal_values.shape[1]:
         raise ValueError("graph %s fact and removal attribute widths differ" % name)
-    if not finite(graph.obs_x) or not finite(graph.task_x):
-        raise ValueError("graph %s observation and task features must be finite" % name)
-    if graph.entity_held.shape != (entities, registry.encoding.inner):
-        raise ValueError("graph %s does not hold one encoding of held graphs per entity" % name)
-    for given, values, held in (
-        (
-            graph.obs_x,
-            graph.obs_values,
-            np.asarray(graph.entity_held)[np.asarray(graph.obs_entity, np.int64)],
-        ),
-        (graph.task_x, graph.task_values, unheld(registry, len(graph.task_key))),
-    ):
-        again = encoded(registry, np.asarray(values), held, lambda row: "a row of graph %s" % name)
-        if not np.array_equal(np.asarray(given), again):
-            raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
     if graph.graph_values.shape != (len(registry.schema.graph),):
         raise ValueError("graph %s does not hold the attributes its schema states" % name)
     for label, start, stop in (

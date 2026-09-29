@@ -281,7 +281,7 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     assert cfg["model"]["time/encoding"] == "log_cosine"
     full = [block for block in opened.blocks(0, 2, cfg) if block[2] - block[1] == 2]
     batch = pack_batch(opened, period_blocks(opened, full[:2], cfg), cfg, "cpu")
-    net = build(cfg, opened.registry)
+    net = build(cfg, opened.fitted(cfg))
     prediction = net(batch)
     assert prediction.shape == batch["target"].shape == batch["tau"].shape
     assert len(prediction) > batch["tasks"] == 2

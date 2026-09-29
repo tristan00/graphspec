@@ -14,7 +14,7 @@ from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
 from graphspec.resources import GraphLimits
 from graphspec.schema import VERSION, Encoding, Schema
-from graphspec.truth import Facts
+from graphspec.truth import Facts, Graph
 from graphspec.view import sequences, unstated, view
 from tuning.build import build
 from tuning.data import Deriver
@@ -57,7 +57,7 @@ def stated():
         kind: dict(
             references=[name],
             columns=[],
-            target=dict(kind="number", series=kind),
+            target=dict(kind="number", series=kind, about=None),
             weight=False,
             absent="keep",
             event=None,
@@ -419,8 +419,12 @@ def test_a_set_edge_is_one_edge_per_pair_of_members_under_the_pairs_form(bank):
 def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, monkeypatch):
     monkeypatch.setattr(HELD, "held", dict(HELD.held))
     held = Deriver(bank, "cpu", RESIDENT)
-    registry, encoding = held.registry, held.registry.encoding
+    cfg = configuration(held.registry, dict(view="snapshot"), STORED["node"], 5, SPLITS)
+    registry = held.fitted(cfg)
+    encoding = registry.encoding
     facts = Facts.load(held.truth(0))
+    (index,) = [entry["index"] for entry in held.viewed(cfg).graphs if entry["source"] == 0]
+    view = Graph.load(held.view(index, cfg))
     inner, columns = np.asarray(facts.inner_values), registry.schema.inner_columns()
     owner = np.asarray(facts.inner_owner)
     source, target = np.asarray(facts.within_source), np.asarray(facts.within_target)
@@ -442,13 +446,13 @@ def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, 
                         degree[[local[first], local[second]]] += 1
                 mean = summed / np.maximum(degree, 1)[:, None]
                 wanted = np.r_[own.sum(0), mean.sum(0), 5.0]
-            assert np.asarray(facts.entity_held)[entity, start : start + width] == pytest.approx(
+            assert np.asarray(view.entity_held)[entity, start : start + width] == pytest.approx(
                 wanted, abs=1e-5
             )
-    rows = np.asarray(facts.kinds)[np.asarray(facts.obs_entity)] == registry.kind("box")
-    assert np.asarray(facts.obs_x)[rows][:, encoding.features - encoding.inner :].any()
+    rows = np.asarray(view.kinds)[np.asarray(view.obs_entity)] == registry.kind("box")
+    assert np.asarray(view.obs_x)[rows][:, encoding.features - encoding.inner :].any()
     assert registry.widths["box"] == encoding.width(("level",)) + encoding.held["box"][1]
-    assert "holds graphs encoded by propagated, width %d" % encoding.held["box"][1] in inspect(bank)
+    assert "holds graphs encoded by propagated: " in inspect(bank)
 
     class Counted:
         def width(self, encoding, held):
@@ -469,8 +473,10 @@ def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, 
 
 def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edges(bank, monkeypatch):
     held = Deriver(bank, "cpu", RESIDENT)
-    registry = held.registry
-    dense = shown(held, Facts.load(held.truth(0)), "node").dense()
+    cfg = configuration(held.registry, dict(view="snapshot"), STORED["node"], 5, SPLITS)
+    registry = held.fitted(cfg)
+    (index,) = [entry["index"] for entry in held.viewed(cfg).graphs if entry["source"] == 0]
+    dense = Graph.load(held.view(index, cfg)).dense()
     values = {"nodes/point/filter": "degree", "nodes/point/min_degree": 2, **STORED["node"]}
     spec = specs.configured(specs.space(registry, ()), values)
     derived = transform.derive(dense, registry, spec, GraphLimits("cpu"))

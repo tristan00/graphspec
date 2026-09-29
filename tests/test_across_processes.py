@@ -94,7 +94,7 @@ def stated():
                 ask=dict(
                     references=["unit", "trio"],
                     columns=[],
-                    target=dict(kind="number", series="out"),
+                    target=dict(kind="number", series="out", about="unit"),
                     weight=False,
                     absent="stop",
                     event=None,
@@ -205,10 +205,11 @@ def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_an
     bank, pools = spread
     assert [pool["max_workers"] for pool in pools] == [2]
     held = Deriver(bank, "cpu", RESIDENT)
-    assert held.manifest["spec"]["encoding"]["states"]["size"] == dict(most=9.0)
+    assert held.manifest["spec"]["encoding"]["states"] is None
     splits = copy.deepcopy(SPLITS)
     cfg = dict(configuration(held.registry, dict(view="snapshot"), GRAPH, 5, splits), epochs=1)
     prepare(bank, cfg, 1, "cpu")
+    assert held.fitted(cfg).encoding.states["size"] == dict(most=5.0)
     blocks = held.blocks(0, 4, cfg)
     given = state(dict(statement, workers=2, **splits))
     started = time.perf_counter()

@@ -155,7 +155,7 @@ class TrainingSession:
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
         with measure("model_build"):
-            self.net: nn.Module = build(config, self.bank.registry).to(self.device)
+            self.net: nn.Module = build(config, self.bank.fitted(config)).to(self.device)
         with measure("optimizer_setup"):
             self.optimizer: Optimizer = torch.optim.AdamW(
                 self.net.parameters(),
@@ -324,7 +324,7 @@ class TrainingSession:
             loaded = torch.load(
                 self.directory / "checkpoint.pt", map_location=self.device, weights_only=False
             )
-        clone = build(loaded["config"], self.bank.registry).to(self.device).eval()
+        clone = build(loaded["config"], self.bank.fitted(loaded["config"])).to(self.device).eval()
         clone.load_state_dict(loaded["state_dict"], strict=True)
         torch.testing.assert_close(predictions, clone(batch), atol=2e-5, rtol=2e-5)
 

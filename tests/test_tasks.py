@@ -9,6 +9,7 @@ import support
 from conftest import inline
 from graphspec import SEES, SORTS, synthetic, transform
 from graphspec import spec as specs
+from graphspec.clock import ALWAYS, NEVER
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
@@ -59,8 +60,8 @@ ASKED = (
 def without_beside(facts, registry, held):
     started = time.perf_counter()
     result = (
-        np.ones(len(facts.obs_entity), bool),
-        np.asarray(facts.fact_code) != registry.code("beside"),
+        np.full(len(facts.obs_entity), NEVER, np.int64),
+        np.where(np.asarray(facts.fact_code) == registry.code("beside"), ALWAYS, NEVER),
     )
     LOG.debug("without beside exit graph=%s seconds=%.4f", facts.name, time.perf_counter() - started)
     return result
@@ -78,11 +79,12 @@ def registered():
 def stated(absent):
     target = dict(total="total", mark="mark", wide="wide")
     references = dict(total=["whole"], mark=["unit"], wide=["unit", "link", "group", "route", "part"])
+    about = dict(total=None, mark="unit", wide="link")
     kinds = {
         kind: dict(
             references=references[kind],
             columns=["ask"] if kind == "wide" else [],
-            target=dict(kind="number", series=target[kind]),
+            target=dict(kind="number", series=target[kind], about=about[kind]),
             weight=kind == "wide",
             absent=absent,
             event=None,
@@ -436,7 +438,8 @@ def test_a_task_reads_the_matured_target_of_an_earlier_one(bank):
     assert observed(held, view, 2, "m0", "mark") == [pytest.approx(rows[5]["y"])]
     assert observed(held, view, 1, "m1", "mark") == [pytest.approx(rows[2]["y"])]
     assert np.isnan(observed(held, view, 1, "m3", "mark")).all()
-    assert observed(held, view, 2, "m3", "mark") == [pytest.approx(rows[6]["y"])]
+    assert np.isnan(observed(held, view, 2, "m3", "mark")).all()
+    assert observed(held, shown(held, cfg, "one", "east"), 2, "m3", "mark") == [pytest.approx(rows[6]["y"])]
     held, cfg = opened(bank, **{"time/steps": "changes"})
     view = shown(held, cfg, "one", None)
     found = [observed(held, view, step, "m0", "mark")[0] for step in range(len(STEPS))]
@@ -454,8 +457,9 @@ def test_the_statement_says_what_the_tasks_of_each_split_may_see(bank):
     views = {split: shown(held, cfg, "one", split) for split in ("north", "south", "east", None)}
     everything = sorted(SERVES[:2] + SERVES[3:] + SERVES[2:3])
     assert serving(held, views[None], 1, "serves") == everything
-    assert serving(held, views["north"], 1, "serves") == [("m2", "s2"), ("m3", "s3")]
-    assert serving(held, views["north"], 1, "beside") == [("s2", "s3")]
+    assert serving(held, views["north"], 0, "serves") == everything
+    assert serving(held, views["north"], 1, "serves") == sorted(set(SERVES) - {SERVES[0]})
+    assert serving(held, views["north"], 1, "beside") == list(BESIDE)
     assert serving(held, views["south"], 1, "serves") == [("m0", "s0"), ("m0", "s1"), ("m1", "s1")]
     assert observed(held, views["south"], 1, "m3", "size") == [] and observed(
         held, views["north"], 1, "m3", "size"
@@ -488,7 +492,9 @@ def test_the_statement_says_what_the_tasks_of_each_split_may_see(bank):
     with pytest.raises(ValueError, match="the rule is stated for a split scored on"):
         held.viewed(other)
     wrong = dict(trained=["north"], scored=["east"], sees=dict(north=[], east=[]))
-    with pytest.raises(ValueError, match="the encoders of the bank were fitted on the splits north, south"):
+    with pytest.raises(
+        ValueError, match="the scaling of the targets of the bank was fitted on the splits north, south"
+    ):
         held.blocks(0, 4, configuration(held.registry, dict(view="snapshot"), {}, 5, wrong))
 
 
@@ -536,7 +542,7 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
         spec = specs.configured(
             specs.space(held.registry, ()), {"nodes/site/keep": False, "nodes/referenced": choice}
         )
-        derived = transform.derive(dense, held.registry, spec, GraphLimits("cpu"))
+        derived = transform.derive(dense, held.fitted(cfg), spec, GraphLimits("cpu"))
         kept = derived.obs_entity[np.isin(derived.obs_entity, sites)]
         found[choice] = sorted({dense.keys[entity] for entity in kept.tolist()})
         assert not np.isin(derived.fact_source, sites).any() and not np.isin(derived.fact_target, sites).any()
@@ -548,7 +554,7 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
         match="the stage nodes removes the node of the reference (link|group|route|part|couple) of the task "
         r"\d+ of the kind (wide|joint) of graph one and does not state that it may remove a referenced node",
     ):
-        transform.derive(dense, held.registry, spec, GraphLimits("cpu"))
+        transform.derive(dense, held.fitted(cfg), spec, GraphLimits("cpu"))
     strict = support.registry("strict", ["maker"], [])
     assert strict.stops.all()
     names = {parameter.name: parameter for parameter in specs.space(strict, ())}

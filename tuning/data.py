@@ -27,9 +27,10 @@ from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.resources import GraphLimits
+from graphspec.schema import Encoding, fitted
 from graphspec.transform import SEED, materialize
-from graphspec.truth import Facts, Graph, admitted
-from graphspec.view import STATEMENT, Looking, sequences, view
+from graphspec.truth import HELD, WITHIN, Facts, Graph, Shown, admitted, inputs
+from graphspec.view import STATEMENT, Looking, finished, sampled, sequences, view
 
 from .training import PACKAGES
 
@@ -39,7 +40,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 2
+VIEW = 3
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, single):
@@ -158,6 +159,15 @@ class Viewed:
         if not (self.folder / "index.json").exists():
             self.build(bank, steps, several, storage, looking)
         self.graphs = read_json(self.folder / "index.json")
+        stated = bank.registry.encoding
+        self.registry = bank.registry.fitted(
+            Encoding(
+                stated.schema,
+                stated.dictionaries,
+                read_json(self.folder / "encoders.json")["states"],
+                stated.relations,
+            )
+        )
         self.row_index, self.row_steps, self.labels, self.entities = {}, {}, {}, {}
         self.single = True
         for graph in self.graphs:
@@ -185,27 +195,43 @@ class Viewed:
 
     def build(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
-        entries = []
-        for stored in bank.manifest["graphs"]:
-            facts = sets.stored(Facts.load(bank.truth(stored["index"])), bank.registry, storage)
-            for held in sequences(facts, bank.registry, steps, looking):
-                graph = view(facts, bank.registry, held, several)
-                written(self.path(len(entries)), graph.save)
-                entries.append(
-                    dict(
-                        index=len(entries),
-                        name=graph.name,
-                        source=stored["index"],
-                        observer=held["observer"],
-                        split=held["split"],
-                        steps=graph.steps,
-                        entities=len(graph.kinds),
-                        observations=int((graph.obs_stop.astype(np.int64) - graph.obs_start).sum()),
-                        facts=int((graph.fact_stop.astype(np.int64) - graph.fact_start).sum())
-                        + len(graph.removal_step),
-                        labels=len(graph.label_task),
+        registry, entries = bank.registry, []
+        samples = {name: [] for name in registry.schema.columns}
+        self.folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="stated.", dir=self.folder) as scratch:
+            for stored in bank.manifest["graphs"]:
+                facts = sets.stored(Facts.load(bank.truth(stored["index"])), registry, storage)
+                for held in sequences(facts, registry, steps, looking):
+                    graph = view(facts, registry, held, several)
+                    for name, found in sampled(facts, graph, held, registry).items():
+                        samples[name] += found
+                    graph.save(Path(scratch) / ("graph_%04d" % len(entries)))
+                    entries.append(
+                        dict(
+                            index=len(entries),
+                            name=graph.name,
+                            source=stored["index"],
+                            observer=held["observer"],
+                            split=held["split"],
+                            steps=graph.steps,
+                            entities=len(graph.kinds),
+                            observations=int((graph.obs_stop.astype(np.int64) - graph.obs_start).sum()),
+                            facts=int((graph.fact_stop.astype(np.int64) - graph.fact_start).sum())
+                            + len(graph.removal_step),
+                            labels=len(graph.label_task),
+                        )
                     )
+            encoding = fitted(registry.encoding, samples)
+            write_json(self.folder / "encoders.json", dict(states=encoding.states))
+            chosen, inner = registry.fitted(encoding), {}
+            for entry in entries:
+                if entry["source"] not in inner:
+                    held = load_arrays(bank.truth(entry["source"]), ("kinds",) + HELD + WITHIN)
+                    inner = {entry["source"]: inputs(chosen, held["kinds"], held)}
+                graph = finished(
+                    Shown.load(Path(scratch) / ("graph_%04d" % entry["index"])), chosen, inner[entry["source"]]
                 )
+                written(self.path(entry["index"]), graph.save)
         write_json(output_path(self.folder / "index.json"), entries)
         LOG.info("views built exit seconds=%.3f graphs=%d", time.perf_counter() - started, len(entries))
 
@@ -276,7 +302,7 @@ class Bank:
             held = Looking(self.splits, stated["trained"], stated["scored"], stated["sees"])
             if sorted(stated["trained"]) != sorted(self.manifest["trained"]):
                 raise ValueError(
-                    "the encoders of the bank were fitted on the splits %s, and the fit trains on %s"
+                    "the scaling of the targets of the bank was fitted on the splits %s, and the fit trains on %s"
                     % (", ".join(self.manifest["trained"]), ", ".join(stated["trained"]))
                 )
             partitions = np.full(len(self.rows), -1, np.int8)
@@ -305,6 +331,10 @@ class Bank:
         if key not in self._viewed:
             self._viewed[key] = Viewed(self, *key[:2], storage, self.looking(cfg)[0])
         return self._viewed[key]
+
+    @timed("bank.fitted")
+    def fitted(self, cfg):
+        return self.viewed(cfg).registry
 
     @timed("bank.several")
     def several(self, spec):
@@ -492,7 +522,7 @@ class Deriver(Bank):
                 paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
                 members = [Graph.load(path, mapped=True) for path in paths]
                 jobs.append(dict(members=members, paths=paths, spill=spill, destination=temporary))
-            segments.build_parallel(jobs, self.registry, spec, chosen, SEED, workers, self.limits())
+            segments.build_parallel(jobs, self.fitted(cfg), spec, chosen, SEED, workers, self.limits())
             for (temporary, final), job in zip(folders, jobs):
                 shutil.rmtree(job["spill"])
                 temporary.replace(final)
@@ -558,7 +588,7 @@ class Deriver(Bank):
             self.stamp(cfg)
             with measure("truth_load"):
                 truth = Graph.load(self.view(index, cfg)).dense()
-            arrays = materialize(truth, self.registry, spec, chosen, self.limits())
+            arrays = materialize(truth, self.fitted(cfg), spec, chosen, self.limits())
             with measure("feature_deduplication"):
                 linked = []
                 for name, held, source in (("task", "task_x", "task_x"), ("x_table", "x_table", "obs_x")):
@@ -587,7 +617,7 @@ class Deriver(Bank):
                         members = [Graph.load(path, mapped=True) for path in paths]
                         segments.build(
                             members,
-                            self.registry,
+                            self.fitted(cfg),
                             spec,
                             chosen,
                             SEED,

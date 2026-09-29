@@ -24,7 +24,7 @@ def probe(bank, block, cfg, device):
     started = time.perf_counter()
     b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, device)
     packed = time.perf_counter()
-    net = build(cfg, bank.registry).to(device)
+    net = build(cfg, bank.fitted(cfg)).to(device)
     if torch.device(device).type == "cuda":
         torch.cuda.reset_peak_memory_stats()
     values = net(b)
@@ -39,7 +39,7 @@ def probe(bank, block, cfg, device):
     net.eval()
     with torch.no_grad():
         before = net(b)
-        clone = build(cfg, bank.registry).to(device).eval()
+        clone = build(cfg, bank.fitted(cfg)).to(device).eval()
         clone.load_state_dict(net.state_dict(), strict=True)
         torch.testing.assert_close(before, clone(b))
     return dict(

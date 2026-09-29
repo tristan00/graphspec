@@ -261,7 +261,7 @@ class Resolver:
                 values = values.reshape((rows,) + trailing + (values.shape[-1],))
                 out = values if out is None else out + values
             return (
-                torch.zeros((rows,) + trailing + (self.bank.registry.features,), device=self.device)
+                torch.zeros((rows,) + trailing + (self.bank.fitted(self.cfg).features,), device=self.device)
                 if out is None
                 else out
             )

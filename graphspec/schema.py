@@ -13,7 +13,7 @@ from .names import Names
 from .references import ABSENT, SORTS
 
 LOG = logging.getLogger(__name__)
-VERSION = 4
+VERSION = 5
 EDGE = "edge_"
 OBSERVED = "observed_"
 TASK = "task_"
@@ -41,11 +41,12 @@ DECLARED = "declared"
 ASKED = ("key", "grouping", "signals", "references", "kinds")
 REFERRED = ("sort", "kinds")
 KIND = ("references", "columns", "target", "weight", "absent", "event", "matures")
-AIMED = ("kind", "series")
+AIMED = ("kind", "series", "about")
 MATURED = ("reference", "column")
 GIVEN = ("id", "graph", "time", "observer", "kind", "split", "weight", "signal", "signal_observed")
 VALUE = "column:"
 ENDS = ("from", "to")
+FITTED = ("sizes", "values", "held", "inner", "features")
 
 
 TYPES = Names("column type")
@@ -136,7 +137,7 @@ class Value:
     def widths(self, state):
         return 1, 1
 
-    def encode(self, codes, state):
+    def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
         return np.where(known, codes, 0)[:, None].astype(np.float32), known[:, None].astype(np.float32)
 
@@ -150,7 +151,7 @@ class Logarithm:
     def widths(self, state):
         return 1, 1
 
-    def encode(self, codes, state):
+    def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
         held = np.where(known, codes, 0)
         return (np.sign(held) * np.log1p(np.abs(held)))[:, None].astype(np.float32), known[:, None].astype(
@@ -165,15 +166,15 @@ class Standard:
         values = np.asarray(codes, np.float64)
         if len(values) < 2 or np.ptp(values) == 0:
             raise ValueError(
-                "the column %s has fewer than two differing values in the rows trained on and cannot be standardised"
-                % column
+                "the column %s has fewer than two differing values in what the views of the splits trained on "
+                "show, and cannot be standardised" % column
             )
         return dict(mean=float(values.mean()), sd=float(values.std(ddof=1)))
 
     def widths(self, state):
         return 1, 1
 
-    def encode(self, codes, state):
+    def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
         scaled = (np.where(known, codes, state["mean"]).astype(np.float64) - state["mean"]) / state["sd"]
         return scaled[:, None].astype(np.float32), known[:, None].astype(np.float32)
@@ -194,25 +195,26 @@ class OneHot:
         LOG.debug("onehot exit unseen=%s seconds=%.4f", unseen, time.perf_counter() - started)
 
     def fit(self, codes, dictionary, column):
-        found = np.unique(np.asarray(codes, np.int64))
-        if not len(found):
-            raise ValueError("the column %s has no value in the rows trained on" % column)
-        return dict(codes=found.tolist(), values=[dictionary[code] for code in found.tolist()])
+        return dict(values=[dictionary[code] for code in np.unique(np.asarray(codes, np.int64)).tolist()])
 
     def widths(self, state):
-        return len(state["codes"]) + 1, 1
+        return len(state["values"]) + 1, 1
 
-    def encode(self, codes, state):
+    def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
-        seen = np.asarray(state["codes"], np.int64)
+        place = {value: code for code, value in enumerate(dictionary)}
+        seen = np.asarray([place[value] for value in state["values"]], np.int64)
         held = np.where(known, codes, -1).astype(np.int64)
-        position = np.minimum(np.searchsorted(seen, held), len(seen) - 1)
-        position = np.where(seen[position] == held, position, len(seen))
-        strangers = known & (position == len(seen))
+        position = np.searchsorted(seen, held)
+        inside = np.flatnonzero(position < len(seen))
+        found = np.zeros(len(held), bool)
+        found[inside] = seen[position[inside]] == held[inside]
+        position = np.where(found, position, len(seen))
+        strangers = known & ~found
         if self.unseen == "stop" and strangers.any():
             raise ValueError(
-                "the encoder stops on a value unseen in training and met the codes "
-                + ", ".join(map(str, np.unique(held[strangers]).tolist()))
+                "the encoder stops on a value unseen in training and met the values "
+                + ", ".join(dictionary[code] for code in np.unique(held[strangers]).tolist())
             )
         values = np.zeros((len(codes), len(seen) + 1), np.float32)
         rows = np.flatnonzero(known)
@@ -618,7 +620,7 @@ class Schema:
                     "%s states what a reference to a node not observed resolves to as one of %s, found %r"
                     % (where, ", ".join(ABSENT), found["absent"])
                 )
-            target = self.aimed(found["target"], where)
+            target = self.aimed(found["target"], names, where)
             kinds[kind] = dict(
                 references=tuple(names),
                 columns=listed(found["columns"], self.columns, where),
@@ -650,10 +652,15 @@ class Schema:
         return result
 
     @timed("schema.aimed")
-    def aimed(self, stated, where):
+    def aimed(self, stated, names, where):
         if stated is None:
             return None
         stated = fields(stated, AIMED, "the target of " + where)
+        if stated["about"] is not None and stated["about"] not in names:
+            raise ValueError(
+                "the target of %s is about one of its references, %s, or about none of them, found %r"
+                % (where, ", ".join(names) or "none", stated["about"])
+            )
         if stated["kind"] not in TARGETS:
             raise ValueError(
                 "the target of %s is one of %s, found %r" % (where, ", ".join(TARGETS), stated["kind"])
@@ -673,7 +680,7 @@ class Schema:
                     stated["series"],
                 )
             )
-        return dict(kind=stated["kind"], series=tuple(series))
+        return dict(kind=stated["kind"], series=tuple(series), about=stated["about"])
 
     @timed("schema.seen")
     def seen(self, stated, names, references, absent, where):
@@ -783,6 +790,7 @@ class Schema:
                             series=entry["target"]["series"][0]
                             if entry["target"]["kind"] == "number"
                             else list(entry["target"]["series"]),
+                            about=entry["target"]["about"],
                         ),
                         weight=entry["weight"],
                         absent=entry["absent"],
@@ -845,6 +853,16 @@ class Schema:
     @timed("schema.aimed_kinds")
     def aimed_kinds(self):
         return tuple(kind for kind, entry in self.tasks["kinds"].items() if entry["target"] is not None)
+
+    @timed("schema.revealing")
+    def revealing(self):
+        return tuple(
+            dict.fromkeys(
+                entry["target"]["about"]
+                for entry in self.tasks["kinds"].values()
+                if entry["target"] is not None and entry["target"]["about"] is not None
+            )
+        )
 
     def kind(self, name):
         return TYPES.named(self.columns[name]["type"])
@@ -984,8 +1002,10 @@ class Schema:
                 for name in columns
             )
 
+        fitted = encoding is not None and encoding.states is not None
+
         def wide(columns):
-            return "" if encoding is None else ", width %d" % encoding.width(columns)
+            return ", width %d" % encoding.width(columns) if fitted else ""
 
         lines = ["schema version %d" % self.version]
         lines.append(
@@ -1009,7 +1029,7 @@ class Schema:
                     "    holds graphs encoded by %s%s: %s; %s"
                     % (
                         held["encoder"],
-                        "" if encoding is None else ", width %d" % encoding.held[kind][1],
+                        ", width %d" % encoding.held[kind][1] if fitted else "",
                         "; ".join(
                             "%s of %s" % (inner, described(owned)) for inner, owned in held["nodes"].items()
                         ),
@@ -1077,7 +1097,12 @@ class Schema:
                     wide(entry["columns"]),
                     "none"
                     if entry["target"] is None
-                    else "%s of %s" % (entry["target"]["kind"], ", ".join(entry["target"]["series"])),
+                    else "%s of %s%s"
+                    % (
+                        entry["target"]["kind"],
+                        ", ".join(entry["target"]["series"]),
+                        "" if entry["target"]["about"] is None else " about " + entry["target"]["about"],
+                    ),
                     "weighted" if entry["weight"] else "not weighted",
                     entry["absent"],
                     "not seen as an event"
@@ -1107,28 +1132,36 @@ class Encoding:
         for name in schema.symbolic():
             if name not in dictionaries:
                 raise ValueError("the column %s has no dictionary of its values" % name)
-        lacking = [name for name in schema.columns if name not in states]
-        if lacking:
-            raise ValueError("the columns %s have no fitted encoder" % ", ".join(lacking))
         lacking = [table for table in schema.edges if table not in self.relations]
         if lacking:
             raise ValueError("the edge tables %s have no relations" % ", ".join(lacking))
         self.layout = schema.layout()
-        self.sizes = {name: schema.encoder(name).widths(states[name]) for name in schema.columns}
-        self.values = sum(self.sizes[name][0] for name in self.layout)
-        self.held, self.inner = {}, 0
-        for kind, held in schema.holds.items():
-            width = HELD.named(held["encoder"]).width(self, held)
-            self.held[kind] = (self.inner, width)
-            self.inner += width
-        self.features = self.values + sum(self.sizes[name][1] for name in self.layout) + self.inner
+        if states is not None:
+            lacking = [name for name in schema.columns if name not in states]
+            if lacking:
+                raise ValueError("the columns %s have no fitted encoder" % ", ".join(lacking))
+            self.sizes = {name: schema.encoder(name).widths(states[name]) for name in schema.columns}
+            self.values = sum(self.sizes[name][0] for name in self.layout)
+            self.held, self.inner = {}, 0
+            for kind, held in schema.holds.items():
+                width = HELD.named(held["encoder"]).width(self, held)
+                self.held[kind] = (self.inner, width)
+                self.inner += width
+            self.features = self.values + sum(self.sizes[name][1] for name in self.layout) + self.inner
         LOG.debug(
-            "encoding exit columns=%d features=%d held=%d seconds=%.4f",
+            "encoding exit columns=%d fitted=%s seconds=%.4f",
             len(self.layout),
-            self.features,
-            self.inner,
+            states is not None,
             time.perf_counter() - started,
         )
+
+    def __getattr__(self, key):
+        if key in FITTED:
+            raise ValueError(
+                "the encoders of the columns are fitted when the views of a statement of splits are built, and "
+                "this encoding holds the dictionaries of a bank only; %s needs the fitted encoders" % key
+            )
+        raise AttributeError(key)
 
     def declaration(self):
         return dict(
@@ -1145,7 +1178,11 @@ class Encoding:
 
     def encoded(self, columns, codes):
         parts = [
-            self.schema.encoder(name).encode(codes[:, position], self.states[name])
+            self.schema.encoder(name).encode(
+                codes[:, position],
+                self.states[name],
+                self.dictionaries[name] if self.schema.kind(name).symbols else None,
+            )
             for position, name in enumerate(columns)
         ]
         return [values for values, _ in parts], [flags for _, flags in parts]
@@ -1219,19 +1256,14 @@ class Encoding:
         return result
 
 
-def fitted(schema, gathered, relations):
+def fitted(encoding, samples):
     started = time.perf_counter()
-    dictionaries, states = {}, {}
+    schema, states = encoding.schema, {}
     for name in schema.columns:
-        kind, found = schema.kind(name), gathered[name]
-        trained = found["trained"]
-        dictionary = sorted(set(found["distinct"])) if kind.symbols else None
-        if kind.symbols:
-            dictionaries[name] = dictionary
-        if not len(trained):
-            raise ValueError("the column %s has no value in the rows trained on" % name)
-        states[name] = schema.encoder(name).fit(kind.codes(trained, dictionary), dictionary, name)
-    result = Encoding(schema, dictionaries, states, relations)
+        codes = np.concatenate(samples[name] + [np.zeros(0, np.float32)])
+        dictionary = encoding.dictionaries[name] if schema.kind(name).symbols else None
+        states[name] = schema.encoder(name).fit(codes, dictionary, name)
+    result = Encoding(schema, encoding.dictionaries, states, encoding.relations)
     LOG.info(
         "encoders fitted exit columns=%d features=%d seconds=%.3f",
         len(states),

@@ -58,8 +58,8 @@ def test_unconnected_entities_end_with_their_graph(bank):
     unlinked = {"graphs/connect/%s" % kind: False for kind in opened.registry.nodes}
     spec = joined_spec(opened, **{"time/scheme": "state"}, **unlinked)
     graphs = [support.shown(opened, index).dense() for index in range(4)]
-    combined = join.joined(graphs, opened.registry, spec)
-    derived = transform.derive(combined, opened.registry, spec, GraphLimits("cpu"))
+    combined = join.joined(graphs, support.fitted(opened), spec)
+    derived = transform.derive(combined, support.fitted(opened), spec, GraphLimits("cpu"))
     home = np.full(len(derived.kinds), -1)
     home[combined.obs_entity] = combined.step_graph[combined.obs_step]
     assert not derived.entity_connected.any()
@@ -72,7 +72,8 @@ def test_every_periods_restart_at_each_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
     graphs = [support.shown(opened, index).dense() for index in range(4)]
-    combined = operators.periods(join.joined(graphs, opened.registry, spec), opened.registry, spec, 0)
+    registry = support.fitted(opened)
+    combined = operators.periods(join.joined(graphs, registry, spec), registry, spec, 0)
     starts = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     for first, last in zip(starts[:-1], starts[1:]):
         local = combined.period[first:last] - combined.period[first]
@@ -84,10 +85,10 @@ def test_a_join_of_one_graph_equals_the_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     values = {"graphs/join": "single", "graphs/join_size": 4, "time/scheme": "state"}
     _, spec, chosen = opened.variant(configuration(opened.registry, dict(view="mixed"), values, 5, SPLITS))
-    graph = support.shown(opened, 2).dense()
-    alone = transform.materialize(graph, opened.registry, spec, chosen, GraphLimits("cpu"))
+    graph, registry = support.shown(opened, 2).dense(), support.fitted(opened)
+    alone = transform.materialize(graph, registry, spec, chosen, GraphLimits("cpu"))
     together = transform.materialize(
-        join.joined([graph], opened.registry, spec), opened.registry, spec, chosen, GraphLimits("cpu")
+        join.joined([graph], registry, spec), registry, spec, chosen, GraphLimits("cpu")
     )
     assert sorted(alone) == sorted(together)
     assert all(identical(np.asarray(alone[name]), np.asarray(together[name])) for name in alone)

@@ -8,6 +8,7 @@ from .schema import TARGETS, Encoding, Schema
 
 EXTRAS = ("target", "series", "signals", "base", "events", "single", "several")
 STORED = ("member", "pairs")
+FITTED = ("features", "values", "widths")
 
 
 class Registry:
@@ -15,11 +16,12 @@ class Registry:
     def __init__(self, name, encoding, edges, markers, extras):
         self.name, self.encoding, self.schema = name, encoding, encoding.schema
         self.nodes, self.edges = tuple(self.schema.entities()), tuple(edges)
-        self.features, self.values = encoding.features, encoding.values
-        self.widths = {
-            kind: encoding.width(columns) + (encoding.held[kind][1] if kind in encoding.held else 0)
-            for kind, columns in self.schema.entities().items()
-        }
+        if encoding.states is not None:
+            self.features, self.values = encoding.features, encoding.values
+            self.widths = {
+                kind: encoding.width(columns) + (encoding.held[kind][1] if kind in encoding.held else 0)
+                for kind, columns in self.schema.entities().items()
+            }
         self.node_index = {node: i for i, node in enumerate(self.nodes)}
         self.relations = self._allocate()
         self.by_name = {edge.name: edge for edge in self.edges}
@@ -114,6 +116,20 @@ class Registry:
                 code += 1
         return code
 
+    def __getattr__(self, key):
+        if key in FITTED:
+            raise ValueError(
+                "the encoders of the columns are fitted when the views of a statement of splits are built, and "
+                "the registry %s holds the dictionaries of its bank only; %s needs the fitted encoders"
+                % (self.__dict__.get("name"), key)
+            )
+        raise AttributeError(key)
+
+    @timed("registry.registry.fitted")
+    def fitted(self, encoding):
+        edges = [EdgeType(e.name, e.origin, e.pairs, e.attributes, symmetric=e.symmetric) for e in self.edges]
+        return Registry(self.name, encoding, edges, self.markers, self.extras)
+
     def code(self, name):
         return self.by_name[name].code
 
@@ -138,9 +154,6 @@ class Registry:
             name=self.name,
             schema=self.schema.mapping(),
             encoding=self.encoding.declaration(),
-            features=self.features,
-            values=self.values,
-            widths=self.widths,
             nodes=list(self.nodes),
             relations=self.relations,
             markers=list(self.markers),

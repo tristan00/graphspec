@@ -65,7 +65,7 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
     assert manifest["spec"]["extras"]["target"] == "number" and manifest["rows"] == 4
     assert manifest["split_rows"] == dict(train=2, validation=2)
     assert manifest["spec"]["nodes"] == ["customer", "organization"]
-    assert manifest["spec"]["widths"] == dict(customer=4, organization=2)
+    assert "widths" not in manifest["spec"] and manifest["spec"]["encoding"]["states"] is None
     Staged(tmp_path / "source", schema)
     assert before == {p.name: p.read_bytes() for p in (tmp_path / "source").iterdir()}
 

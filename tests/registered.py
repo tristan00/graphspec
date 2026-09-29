@@ -1,6 +1,7 @@
 import numpy as np
 import pyarrow as pa
 
+from graphspec.clock import NEVER
 from graphspec.infra.timing import timed
 from graphspec.references import Sort
 from graphspec.sets import Form, node
@@ -37,7 +38,7 @@ class Halved:
     def widths(self, state):
         return 1, 1
 
-    def encode(self, codes, state):
+    def encode(self, codes, state, dictionary):
         known = ~np.isnan(np.asarray(codes, np.float32))
         held = np.where(known, codes, 0.0).astype(np.float32)
         return (held / (2 * state["most"]))[:, None], known[:, None].astype(np.float32)
@@ -80,7 +81,7 @@ def middle(starts, stops):
 
 @timed("registered.everything")
 def everything(facts, registry, held):
-    return np.ones(len(facts.obs_entity), bool), np.ones(len(facts.fact_source), bool)
+    return np.full(len(facts.obs_entity), NEVER, np.int64), np.full(len(facts.fact_source), NEVER, np.int64)
 
 
 @timed("registered.spanned")

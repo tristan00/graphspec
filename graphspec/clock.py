@@ -169,21 +169,6 @@ def visible(since, until, known, replaced, permitted, moments, looking):
     return begun.astype(np.int64), ended.astype(np.int64)
 
 
-def reached(table, names, until):
-    started = time.perf_counter()
-    count = table.num_rows
-    if until is None:
-        result = np.zeros(count, bool)
-    else:
-        result = np.ones(count, bool)
-        for name in names:
-            if name in table.column_names:
-                column = table.column(name).fill_null(ALWAYS)
-                result &= np.asarray(column.to_numpy(zero_copy_only=False), np.int64) <= until
-    LOG.debug("reached exit rows=%d seconds=%.4f", count, time.perf_counter() - started)
-    return result
-
-
 def stamped(table, model, label, graph):
     started = time.perf_counter()
     count = table.num_rows

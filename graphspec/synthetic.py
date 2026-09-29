@@ -72,9 +72,9 @@ def asked(key, grouping, columns, signals, level):
     started = time.perf_counter()
     if level not in LEVELS:
         raise ValueError("a synthetic shape states what holds its targets as one of " + ", ".join(LEVELS))
-    target = dict(kind="number", series=OUTCOME)
+    target = dict(kind="number", series=OUTCOME, about=None)
     if level == "path":
-        target = dict(kind="path", series=list(SERIES))
+        target = dict(kind="path", series=list(SERIES), about=None)
     references = dict(REFERENCES)
     kinds = {
         name: kind(REFERENCES, columns, None if level == "node" else target, ["person", "place"])

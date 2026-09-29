@@ -132,7 +132,7 @@ def test_each_model_produces_finite_predictions_for_its_labels(opened, model, hi
     )
     blocks = opened.blocks(0, 2, cfg)
     batch = pack_batch(opened, period_blocks(opened, [blocks[-1]], cfg), cfg, "cpu")
-    net = build(cfg, opened.registry).eval()
+    net = build(cfg, opened.fitted(cfg)).eval()
     with torch.inference_mode():
         prediction = net(batch)
     assert prediction.shape == batch["target"].shape

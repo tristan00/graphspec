@@ -21,7 +21,7 @@ from tuning.training import fit
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("small")
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
-TIMES = (1, 1, 2, 2, 3, 3, 4, 4)
+TIMES = (1, 1, 1, 1, 2, 3, 3, 4)
 SPLIT = ("train", "train", "train", "train", "train", "validation", "validation", "validation")
 HIDDEN = dict(trained=["train"], scored=["validation"], sees=dict(train=["without_targets"], validation=[]))
 VALUE = dict(type="number", encoder="value")
@@ -50,7 +50,7 @@ def stated(edged):
                 ask=dict(
                     references=["unit", "link"] if edged else ["unit"],
                     columns=[],
-                    target=dict(kind="number", series="outcome"),
+                    target=dict(kind="number", series="outcome", about="link" if edged else "unit"),
                     weight=True,
                     absent="stop",
                     event=None,
@@ -168,17 +168,19 @@ def test_a_view_without_any_edge_completes_one_fit_on_cpu(banks, packed, tmp_pat
     assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
-def test_a_value_beyond_sixteen_bits_stops_the_build_naming_the_node_the_column_and_the_encoder(tmp_path):
-    def large(held):
-        held["graphs"][1]["values"][0]["rows"]["size"][2] = 1e6
-
+def test_a_value_beyond_sixteen_bits_stops_the_view_naming_the_node_the_column_and_the_encoder(tmp_path):
+    held = case(True)
+    held["graphs"][1]["values"][0]["rows"]["size"][2] = 1e6
+    build(synthetic.stage(tmp_path, "large", held), tmp_path / "large.bank", 1, ("train",))
+    opened = Deriver(tmp_path / "large.bank", "cpu", RESIDENT)
+    cfg = configuration(opened.registry, dict(view="snapshot"), {}, 5, copy.deepcopy(HIDDEN))
     with pytest.raises(
         ValueError,
-        match=r"the node m2 of the kind maker of graph g1 holds the value 1000000\.0 of the column size, "
-        r"encoded by value, which gives 1000000\.0; model inputs are stored at 16 bits, which hold magnitudes "
-        r"up to 65504",
+        match=r"the node m2 of the kind maker in the view of graph g1 holds the value 1000000\.0 of the column "
+        r"size, encoded by value, which gives 1000000\.0; model inputs are stored at 16 bits, which hold "
+        r"magnitudes up to 65504",
     ):
-        refused(tmp_path, "large", large)
+        opened.viewed(cfg)
 
 
 @pytest.mark.parametrize("weight", [float("inf"), float("nan"), 1e39, 0.0])

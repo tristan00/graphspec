@@ -20,7 +20,7 @@ workspace = runtime / "datasets" / "example"
 staging = workspace / "example.staging"
 schema = Schema(
     dict(
-        version=3,
+        version=5,
         time=dict(model="clock", units=["day"], ties="key"),
         observers=False,
         columns=dict(
@@ -42,7 +42,7 @@ schema = Schema(
                 outcome=dict(
                     references=["holder"],
                     columns=[],
-                    target=dict(kind="number", series="outcome"),
+                    target=dict(kind="number", series="outcome", about="holder"),
                     weight=False,
                     absent="stop",
                     event=None,

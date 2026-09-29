@@ -96,7 +96,6 @@ def dropped(facts, keep):
         obs_until=stamps["until"],
         obs_seq=np.asarray(facts.obs_seq)[rows],
         obs_values=np.asarray(facts.obs_values)[rows],
-        obs_x=np.asarray(facts.obs_x)[rows],
         **sparse("obs", stamps, place[watched[chosen]], np.asarray(facts.obs_seen_observer)[chosen]),
     )
     LOG.debug(
@@ -190,7 +189,10 @@ def offered(registry, kind):
         and any(kind in schema.tasks["references"][name]["kinds"] for name in entry["references"])
         for entry in schema.tasks["kinds"].values()
     )
-    result = tuple(name for name in STORAGE.names() if STORAGE.named(name).nodes or not (about or stops))
+    revealed = any(kind in schema.tasks["references"][name]["kinds"] for name in schema.revealing())
+    result = tuple(
+        name for name in STORAGE.names() if STORAGE.named(name).nodes or not (about or stops or revealed)
+    )
     LOG.debug("offered exit kind=%s forms=%d seconds=%.4f", kind, len(result), time.perf_counter() - started)
     return result
 

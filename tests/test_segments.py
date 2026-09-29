@@ -32,7 +32,7 @@ def shortened(graph, stop):
 @pytest.mark.parametrize("draw", range(6))
 def test_segment_engine_equals_the_physical_join(bank, draw):
     opened = Deriver(bank, "cpu", RESIDENT)
-    registry = opened.registry
+    registry = support.fitted(opened)
     rng = np.random.default_rng(draw)
     spec = specs.draw(
         specs.space(registry, specs.GROUPS),

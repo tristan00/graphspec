@@ -16,8 +16,8 @@ from graphspec.infra.files import read_json, sha256_file, write_json
 from graphspec.infra.log import configure
 from graphspec.infra.processes import pooled
 from graphspec.infra.runtime import exclusive, output_path
-from graphspec.schema import Schema, fitted
-from graphspec.truth import VERSION, gather, parse
+from graphspec.schema import Encoding, Schema
+from graphspec.truth import VERSION, distinct, parse
 from graphspec.view import validate
 
 LOG = logging.getLogger(__name__)
@@ -38,24 +38,6 @@ def open_source(task_path, task):
     else:
         raise ValueError("task must name a staging directory or a database")
     LOG.debug("open_source exit seconds=%.4f", time.perf_counter() - started)
-    return result
-
-
-def seen_until(rows, groups, trained, names):
-    started = time.perf_counter()
-    chosen = np.zeros(len(rows["rows"]), bool)
-    for split in trained:
-        chosen[rows["split"]["indices"][split]] = True
-    result = {index: None for index in names}
-    for index, _, members, times in groups:
-        if chosen[members].any():
-            result[index] = int(np.asarray(times)[chosen[members]].max())
-    LOG.info(
-        "seen_until exit seconds=%.3f graphs=%d trained=%d",
-        time.perf_counter() - started,
-        len(result),
-        sum(value is not None for value in result.values()),
-    )
     return result
 
 
@@ -112,13 +94,12 @@ def several(stated, tables):
     return result
 
 
-def scanned(job):
-    index, until = job
+def scanned(index):
     started = time.perf_counter()
     stated = WORKER["reader"].source.stated
     tables = WORKER["reader"].graph(index)
     result = (
-        gather(stated, tables, until),
+        distinct(stated, tables),
         {
             table: sorted(set(tables["edges"][table].column("relation").to_pylist()), key=str)
             for table, entry in stated.edges.items()
@@ -133,12 +114,7 @@ def scanned(job):
 
 def merged(stated, found):
     started = time.perf_counter()
-    result = {
-        name: {
-            part: np.concatenate([entry[name][part] for entry in found]) for part in ("trained", "distinct")
-        }
-        for name in stated.columns
-    }
+    result = {name: sorted(set().union(*(entry[name] for entry in found))) for name in stated.symbolic()}
     LOG.info("merged exit seconds=%.3f columns=%d", time.perf_counter() - started, len(result))
     return result
 
@@ -426,13 +402,14 @@ def build(task_path, output, workers, trained):
             raise ValueError("graph names must be unique")
         rows, groups, splits, alone = supervision(source, trained, names)
         location = source.location
-    until = seen_until(rows, groups, trained, names)
     attached = (str(task_path), str(output), LOG.getEffectiveLevel())
     try:
         with pooled(workers, len(groups), attach, attached) as mapped:
-            found = mapped(scanned, [(index, until[index]) for index, _, _, _ in groups])
+            found = mapped(scanned, [index for index, _, _, _ in groups])
             stated = Schema(task["schema"])
-            encoding = fitted(stated, merged(stated, [entry[0] for entry in found]), related(stated, found))
+            encoding = Encoding(
+                stated, merged(stated, [entry[0] for entry in found]), None, related(stated, found)
+            )
             observers = sorted({name for entry in found for name in entry[2]})
             registry = vocabulary.registry(task, encoding, alone, any(entry[3] for entry in found))
             (output / "truth").mkdir(parents=True)
@@ -476,7 +453,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--trained", required=True, nargs="+", help="the splits the encoders are fitted on")
+    parser.add_argument("--trained", required=True, nargs="+", help="the splits the scaling of the targets is fitted on")
     parser.add_argument("--workers", type=int, required=True)
     args = parser.parse_args()
     configure()

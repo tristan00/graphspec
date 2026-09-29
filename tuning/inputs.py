@@ -203,7 +203,7 @@ class Window:
                 first, last = first + int(chosen[0]), first + int(chosen[-1]) + 1
         tokens = bank.tokens(held) if cfg["model"].get("keys/embedding") else None
         return cls(
-            graph, start, stop, first, last, lo, hi, held, bank.registry, cfg, tokens, bank.joining(cfg)
+            graph, start, stop, first, last, lo, hi, held, bank.fitted(cfg), cfg, tokens, bank.joining(cfg)
         )
 
 

@@ -65,7 +65,7 @@ def stated(model, units, ties, observers):
                 kind: synthetic.kind(
                     ["first", "second", "third"],
                     ["ask"],
-                    dict(kind="number", series="outcome"),
+                    dict(kind="number", series="outcome", about="first"),
                     ["first", "second"],
                 )
                 for kind in ("plain", "urgent")
@@ -841,7 +841,7 @@ def test_periods_are_a_view_and_need_not_increase(banks):
     every = specs.configured(
         specs.space(held.registry, ()), {"time/periods": "every", "time/period_length": 4}
     )
-    derived = transform.derive(dense, held.registry, every, GraphLimits("cpu"))
+    derived = transform.derive(dense, support.fitted(held), every, GraphLimits("cpu"))
     assert derived.period.tolist() == [0, 0, 0, 0, 1, 1]
     kept = specs.configured(specs.space(held.registry, ()), {})
     assert transform.derive(dense, held.registry, kept, GraphLimits("cpu")).period.tolist() == [
@@ -975,7 +975,7 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
     ):
         sequences(truth, held.registry, "halved", unstated(held.splits))
     (chosen,) = STEPS.named("halved")(truth, held.registry)
-    chosen.update(split=-1, rules=(), trained=(), scored=(), labels=np.zeros(0, np.int64))
+    chosen.update(split=-1, rules=(), trained=(), scored=(), labels=np.zeros(0, np.int64), matures=())
     assert view(truth, held.registry, chosen, "last").steps == 3
     assert held.registry.extras["several"] is False
     with pytest.raises(
