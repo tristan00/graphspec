@@ -34,6 +34,7 @@ def fixture(root, name="search-alpha", count=32):
         train_rows=10,
         holdout_rows=4,
         objective=None,
+        spread=None,
         supervision_sha256="fixture",
         workers=2,
         random_trials=10,

@@ -34,7 +34,7 @@ from .domain import (
     WAIT,
     field,
 )
-from .tables import chunk_tables, label_tables, node_tables, removal_values
+from .tables import Counter, chunk_tables, label_tables, node_tables, removal_values
 
 LOG = logging.getLogger(__name__)
 CHUNK = 8
@@ -122,16 +122,8 @@ class Run:
             features, facts = {}, {}
             self.world(state, features, facts)
             self.layers(state, features, facts)
-            block = self.actions_at(step, seq, features, facts)
-            for relation, items in facts.items():
-                for source, target in items:
-                    for node in (source, target):
-                        if node not in features:
-                            if node not in self.static:
-                                raise ValueError(
-                                    "%s fact names an unobserved node %s" % (relation, self.keys[node])
-                                )
-                            features[node] = self.static[node]
+            block = self.actions_at(step, seq, self.actions[seq], features, facts)
+            self.named_nodes(features, facts)
             for position, node in enumerate(sorted(features)):
                 observations.append((node, step, position, self.vector(self.kinds[node], features[node])))
             present = {relation: set(items) for relation, items in facts.items()}
@@ -149,7 +141,7 @@ class Run:
                     counted += 1
             previous = present
             values = self.measures(state)
-            queries.append(self.query(step, seq, block, values))
+            queries.append(self.query(step, seq, self.actions[seq], block, values))
             dates.append(self.snapshots[seq]["game_date"])
             measured.append(values)
             if len(queries) == CHUNK:
@@ -162,7 +154,7 @@ class Run:
             dates.append(self.snapshots[seq]["game_date"])
         labels = self.labels(dates, measured)
         stage.write(node_tables(index, name, self.kinds, self.keys))
-        stage.write(label_tables(index, counter, labels, held_out))
+        stage.write(label_tables(index, counter, labels, "validation" if held_out else "train"))
         LOG.info(
             "run build exit run=%d seconds=%.2f steps=%d entities=%d labels=%d absent=%s",
             self.run["run_id"],
@@ -172,7 +164,108 @@ class Run:
             len(labels),
             self.absent,
         )
-        return dict(steps=len(self.steps), entities=len(self.kinds), labels=len(labels), absent=self.absent)
+        return dict(
+            steps=len(self.steps),
+            entities=len(self.kinds),
+            labels=len(labels),
+            absent=self.absent,
+            labelled=sorted({row[0] for row in labels}),
+        )
+
+    def named_nodes(self, features, facts):
+        for relation, items in facts.items():
+            for source, target in items:
+                for node in (source, target):
+                    if node not in features:
+                        if node not in self.static:
+                            raise ValueError(
+                                "%s fact names an unobserved node %s" % (relation, self.keys[node])
+                            )
+                        features[node] = self.static[node]
+
+    def offered(self, stage, first, name, offers, advisor):
+        started = time.perf_counter()
+        number = max((row["n"] for rows in self.actions.values() for row in rows), default=0)
+        blocks, dates, measured = {}, [], []
+        for step, seq in enumerate(self.steps):
+            state = self.current(seq)
+            measured.append(self.measures(state))
+            dates.append(self.snapshots[seq]["game_date"])
+            if step not in offers:
+                continue
+            features, facts = {}, {}
+            self.world(state, features, facts)
+            self.layers(state, features, facts)
+            known = {node: self.vector(self.kinds[node], data) for node, data in features.items()}
+            found = [self.actions[seq]]
+            for drawn in offers[step]:
+                rows = []
+                for action, params in drawn:
+                    number += 1
+                    rows.append(dict(n=number, name=action, advisor=advisor, params=params))
+                found.append(rows)
+            for rows in found:
+                held = dict(features)
+                stated = {relation: dict(items) for relation, items in facts.items()}
+                block = self.actions_at(step, seq, rows, held, stated)
+                self.named_nodes(held, stated)
+                vectors = {
+                    node: known[node] if node in known else self.vector(self.kinds[node], data)
+                    for node, data in held.items()
+                }
+                blocks.setdefault(step, []).append(
+                    dict(
+                        vectors=vectors,
+                        facts=stated,
+                        query=self.query(step, seq, rows, block, measured[-1]),
+                    )
+                )
+        for seq in self.moments[len(self.steps) :]:
+            measured.append(self.measures(self.current(seq)))
+            dates.append(self.snapshots[seq]["game_date"])
+        labels = self.labels(dates, measured)
+        summary = []
+        for chosen in sorted(offers):
+            points = [row for row in labels if row[0] == chosen]
+            if not points:
+                raise ValueError("decision %d of %s has no future points" % (chosen, name))
+            for position, frame in enumerate(blocks[chosen]):
+                index = first + len(summary)
+                title = "%s@%d#%d" % (name, self.steps[chosen], position)
+                self.single(stage, index, title, frame, points)
+                summary.append(dict(index=index, name=title, steps=1, labels=len(points)))
+        LOG.info(
+            "offered exit run=%d seconds=%.2f decisions=%d graphs=%d",
+            self.run["run_id"],
+            time.perf_counter() - started,
+            len(offers),
+            len(summary),
+        )
+        return summary
+
+    def single(self, stage, index, name, frame, points):
+        nodes = sorted(frame["vectors"])
+        local = {node: position for position, node in enumerate(nodes)}
+        observations = [
+            (local[node], 0, position, frame["vectors"][node]) for position, node in enumerate(nodes)
+        ]
+        fact_rows, counted = {}, 0
+        for relation in RELATIONS:
+            for (source, target), values in frame["facts"].get(relation, {}).items():
+                fact_rows.setdefault(relation, []).append(
+                    (local[source], local[target], counted, 0, True) + values
+                )
+                counted += 1
+        query = dict(frame["query"], step=0, subject=local[frame["query"]["subject"]])
+        counter = Counter(index)
+        kinds = [self.kinds[node] for node in nodes]
+        stage.write(
+            chunk_tables(
+                index, counter, kinds, self.features, observations, fact_rows, [query], local[self.player]
+            )
+        )
+        stage.write(node_tables(index, name, kinds, [self.keys[node] for node in nodes]))
+        stage.write(label_tables(index, counter, [(0,) + tuple(row[1:]) for row in points], "spread"))
 
     def chunk(self, index, counter, observations, fact_rows, queries):
         return chunk_tables(
@@ -190,8 +283,8 @@ class Run:
             finite(None if living is None else living["average_standard_of_living_by_population"]),
         )
 
-    def query(self, step, seq, block, values):
-        names = [row["name"] for row in self.actions[seq]]
+    def query(self, step, seq, actions, block, values):
+        names = [row["name"] for row in actions]
         rest = [name for name in names if name not in (EVENT, WAIT)]
         category = GROUP[rest[0]] if rest else "events" if EVENT in names else "empty"
         return dict(
@@ -669,9 +762,8 @@ class Run:
             raise ValueError("%s %r is referenced but not present at this snapshot" % (kind, ident))
         return self.entity(kind, ident)
 
-    def actions_at(self, step, seq, features, facts):
+    def actions_at(self, step, seq, actions, features, facts):
         state = {table: versions.current for table, versions in self.tables.items()}
-        actions = self.actions[seq]
         block = self.entity("block", seq)
         features[block] = dict(
             turn=step + 1,

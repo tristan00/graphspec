@@ -217,17 +217,28 @@ def test_objective_blends_series_losses_by_their_weights(path_bank):
     assert objective.weights(opened, None) == {"level": 1.0, "trend": 1.0}
     assert objective.weights(opened, ["trend=2"]) == {"level": 0.0, "trend": 2.0}
     chosen = objective.weights(opened, ["trend=3", "level=1"])
-    result = dict(series=dict(level=dict(val_loss=2.0), trend=dict(val_loss=6.0)))
+    from tuning.catalog import TRACKED
+
+    tracked = {"elastic/dtw": 0.5}
+    result = dict(
+        series=dict(level=dict(val_loss=2.0, measures=tracked), trend=dict(val_loss=6.0, measures=tracked))
+    )
     assert objective.value(result, dict(objective=chosen)) == pytest.approx(5.0)
     assert objective.value(dict(raw_val_mse=0.5), dict(objective=None)) == 0.5
     plan = dict(objective=chosen)
-    assert [entry["key"] for entry in objective.measures(plan)] == [
-        "mse",
-        "series/level/loss",
-        "series/trend/loss",
+    declared = objective.measures(plan)
+    assert [entry["key"] for entry in declared[:3]] == ["mse", "series/level/loss", "series/trend/loss"]
+    assert [entry["key"] for entry in declared[3:]] == [
+        "series/%s/%s" % (name, key) for name in ("level", "trend") for key in TRACKED
     ]
+    assert all(not entry["shown"] and entry["better"] in ("lower", "higher") for entry in declared[3:])
     assert objective.columns(plan) == ["series/level/loss", "series/trend/loss"]
-    assert objective.scores(result, plan) == {"series/level/loss": 2.0, "series/trend/loss": 6.0}
+    assert objective.scores(result, plan) == {
+        "series/level/loss": 2.0,
+        "series/trend/loss": 6.0,
+        "series/level/elastic/dtw": 0.5,
+        "series/trend/elastic/dtw": 0.5,
+    }
     assert objective.scores(dict(error="x"), plan) == {} and objective.columns(dict(objective=None)) == []
     for given in (["other=1"], ["level=1", "level=2"], ["level=0"], ["level=-1", "trend=2"]):
         with pytest.raises(ValueError, match="objective"):
@@ -275,3 +286,82 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     value.backward()
     assert torch.isfinite(value) and net.reward.time.frequency.grad is not None
     assert net.reward.series.weight.grad is not None and set(batch["series"].tolist()) == {0, 1}
+
+
+def test_spread_points_leave_training_and_validation_untouched(tmp_path):
+    tables = graph_rows(np.random.default_rng(3), 0, "graph_000", SETTINGS, Counter(), "path")
+    owner = tables[(TARGET + "_of", TARGET, "query")].column("to").to_pylist()
+
+    def offered(table):
+        names = {0: "spread", **dict.fromkeys(range(6, 12), "validation")}
+        return table.set_column(
+            table.schema.get_field_index("split"),
+            "split",
+            pa.array([names.get(query, "train") for query in owner]),
+        )
+
+    build(staged_points(tmp_path, "offered", offered), tmp_path / "bank", 1)
+    opened = Bank(tmp_path / "bank")
+    drawn = opened.split["spread_indices"]
+    assert len(drawn) == 8 and np.flatnonzero(opened.partitions == 2).tolist() == drawn
+    assert {opened.rows[index]["step"] for index in drawn} == {0}
+    kept = set(opened.split["train_indices"]) | set(opened.split["validation_indices"])
+    assert not kept & set(drawn) and len(kept) == 44
+    assert {opened.rows[index]["step"] for index in opened.split["validation_indices"]} <= set(range(6, 12))
+    for code, entry in enumerate(opened.split["series"]):
+        train = [i for i in opened.split["train_indices"] if opened.series[i] == code]
+        assert entry["mean"] == pytest.approx(opened.targets[train].astype(np.float64).mean())
+    from tuning.model_spec import configuration
+
+    cfg = configuration(opened.registry, dict(view="snapshot"), {"time/history": 4}, 5)
+    assert [block[3] for block in opened.blocks(2, 4, cfg)] == [0]
+    assert 0 not in [block[3] for block in opened.blocks(0, 4, cfg)]
+
+
+def test_spread_is_the_range_over_blocks_and_enters_the_score():
+    from types import SimpleNamespace
+
+    from tuning import objective
+    from tuning.offers import spread
+
+    bank = SimpleNamespace(
+        series_names=["level", "trend"], scale=np.array([1.0, 2.0]), series=np.array([0, 0, 1, 1])
+    )
+    rows = [np.tile(np.arange(4), (3, 1))]
+    paths = [np.array([[0, 0, 0, 0], [1, 3, 2, 2], [4, 1, 0, 6]], np.float64)]
+    found, gap = spread(bank, rows, paths, np.arange(4), np.zeros(4))
+    assert found == {"level": 3.5, "trend": 2.0} and gap == 0
+    with pytest.raises(ValueError, match="does not reproduce its validation prediction"):
+        spread(bank, rows, paths, np.arange(4), np.array([0, 0, 0, 0.01]))
+    with pytest.raises(ValueError, match="different points"):
+        spread(bank, [np.array([[0, 1, 2, 3], [0, 1, 2, 2], [0, 1, 2, 3]])], paths, np.arange(4), np.zeros(4))
+    result = dict(
+        series=dict(
+            level=dict(val_loss=2.0, spread=3.5, measures={}),
+            trend=dict(val_loss=6.0, spread=0.5, measures={}),
+        )
+    )
+    plan = dict(objective=dict(level=1.0, trend=1.0), spread=0.05)
+    assert objective.value(result, plan) == pytest.approx(4.0 - 0.05)
+    assert objective.value(result, dict(plan, spread=None)) == pytest.approx(4.0)
+    still = dict(series=dict(level=dict(val_loss=2.0, spread=0.0), trend=dict(val_loss=6.0, spread=0.0)))
+    assert objective.value(still, plan) == pytest.approx(4.0 - 0.05 * np.log2(objective.FLOOR))
+    assert [entry["key"] for entry in objective.measures(plan)[:5]] == [
+        "mse",
+        "loss",
+        "spread",
+        "series/level/spread",
+        "series/trend/spread",
+    ]
+    assert objective.scores(result, plan)["spread"] == 2.0
+
+
+def test_drawn_block_shares_follow_cost_and_keep_order():
+    from tuning.offers import shared
+
+    chosen = [(0, 0, key) for key in range(6)] + [(1, 0, key) for key in range(6)]
+    reach = [10, 20, 30, 40, 50, 60, 100, 200, 300, 400, 500, 600]
+    shares = shared(chosen, reach, 4)
+    assert [item for share in shares for item in share] == chosen and len(shares) <= 4
+    assert len(shares[0]) > len(shares[-1])
+    assert shared(chosen, reach, 1) == [chosen]

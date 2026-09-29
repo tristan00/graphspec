@@ -39,7 +39,7 @@ function readLocation() {
   state.proposal = params.get('proposal') || '';
   state.query = params.get('q') || '';
   state.status = ['all','complete','running','pending','failed','timeout','interrupted'].includes(params.get('status')) ? params.get('status') : 'all';
-  state.sort = Object.hasOwn(RESULTS,params.get('sort')) || /^(config|result|series)\//.test(params.get('sort') || '') || ['mse','r2'].includes(params.get('sort')) ? params.get('sort') : 'number';
+  state.sort = Object.hasOwn(RESULTS,params.get('sort')) || /^(config|result|series)\//.test(params.get('sort') || '') || ['mse','r2','loss','spread'].includes(params.get('sort')) ? params.get('sort') : 'number';
   state.direction = params.get('dir') === 'asc' ? 'asc' : 'desc';
   state.page = Math.max(1, Math.min(1000000, Number.parseInt(params.get('page'), 10) || 1));
   state.metric = Object.hasOwn(RESULTS,params.get('metric')) || /^(config|result|series)\//.test(params.get('metric') || '') || params.get('metric') === 'r2' ? params.get('metric') : 'mse';
@@ -185,7 +185,7 @@ function switchRun(identity, push = true) {
   state.status = 'all';
   state.conditions = [];
   state.columns = [];
-  if (!['number','mse','r2'].includes(state.sort)) state.sort = 'number';
+  if (!['number','mse','r2','loss','spread'].includes(state.sort)) state.sort = 'number';
   if (!['mse','r2'].includes(state.metric)) state.metric = 'mse';
   filterDraft = {field:'',op:'eq',value:''};
   resetPickers();
@@ -276,7 +276,7 @@ function trialResults() {
 }
 
 function trialTable(rows, sortable) {
-  const columns = ['number','status','selector',...state.columns,...MEASURES.filter(measure => measure.shown && !state.columns.includes(measure.key)).map(measure => measure.key),'seconds','parameters'];
+  const columns = ['number','status','selector',...MEASURES.filter(measure => measure.shown).map(measure => measure.key),...state.columns.filter(key => !MEASURES.some(measure => measure.shown && measure.key === key)),'seconds','parameters'];
   const heading = key => `<th scope="col" aria-sort="${state.sort === key ? state.direction === 'asc' ? 'ascending' : 'descending' : 'none'}"><button class="sort-button${state.sort === key ? ' active' : ''}" data-sort="${esc(key)}">${esc(fieldName(key))}${state.sort === key ? state.direction === 'asc' ? ' ↑' : ' ↓' : ' ↕'}</button></th>`;
   const cell = (trial,key) => key === 'number' ? trialButton(trial) : key === 'status' ? badge(trial.status) : key === 'selector' ? esc(SELECTORS[trial.selector] || label(trial.selector)) : key === 'seconds' ? duration(trial.seconds) : key === 'parameters' ? number(trial.parameters) : isMeasure(key) ? score(valueOf(trial,key)) : esc(displayValue(valueOf(trial,key)));
   return `<div class="table-wrap"><table aria-label="All matching trials"><thead><tr><th scope="col">Compare</th>${columns.map(heading).join('')}</tr></thead><tbody>${rows.map(trial => `<tr><td><input type="checkbox" data-select="${esc(trial.id)}" aria-label="Compare trial ${trial.number}"${state.selected.includes(trial.id) ? ' checked' : ''}></td>${columns.map(key => `<td class="${key.startsWith('config/') ? 'parameter-value' : 'numeric'}" data-column="${esc(key)}">${cell(trial,key)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;

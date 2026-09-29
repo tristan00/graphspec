@@ -107,6 +107,7 @@ def run(args):
         plan["bank"] = str(Path(args.bank).resolve())
         plan.update(workers=args.workers, variant_bytes=args.variant_gb << 30, limit=args.trials)
         plan.setdefault("random_params", [])
+        plan.setdefault("spread", None)
         plan.setdefault("mix", {plan["selector"]: 100})
         for name, value in (
             ("selector", args.selector),
@@ -116,6 +117,7 @@ def run(args):
             ("seconds", args.seconds),
             ("bounds", bounds if args.bounds else None),
             ("objective", chosen if args.objective else None),
+            ("spread", args.spread),
         ):
             if value is not None and value != plan[name]:
                 emit(name + "_replaced", previous=plan[name], **{name: value})
@@ -135,6 +137,9 @@ def run(args):
             mix=mix or ({args.selector: 100} if args.selector else dict(MIX)),
             bounds=bounds,
             objective=chosen,
+            spread=(0.05 if args.spread is None else args.spread)
+            if bank.split.get("spread_indices")
+            else None,
             limit=args.trials,
             seconds=600 if args.seconds is None else args.seconds,
             train_rows=bank.manifest["train_rows"],
@@ -427,6 +432,11 @@ def main():
         "--objective",
         nargs="*",
         help="series=weight pairs that blend per-series validation losses into the trial score; every series weighs 1 when omitted on a new run",
+    )
+    run_parser.add_argument(
+        "--spread",
+        type=float,
+        help="weight of log2 spread in the trial score; 0.05 when omitted on a new run whose bank holds drawn blocks",
     )
     run_parser.add_argument("--bounds")
     run_parser.add_argument("--workers", type=int, default=WORKERS)

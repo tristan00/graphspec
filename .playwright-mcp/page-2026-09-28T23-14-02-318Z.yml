@@ -1,0 +1,69 @@
+- generic [active] [ref=f3e1]:
+  - link "Skip to dashboard" [ref=f3e2] [cursor=pointer]:
+    - /url: "#main"
+  - complementary [ref=f3e3]:
+    - link "graphspec EXPERIMENT WORKSPACE" [ref=f3e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [aria-hidden] [ref=f3e5]: g.
+      - generic [ref=f3e6]:
+        - text: graphspec
+        - generic [ref=f3e7]: EXPERIMENT WORKSPACE
+    - generic [ref=f3e8]: TUNING
+    - navigation "Dashboard" [ref=f3e9]:
+      - button "Current run" [ref=f3e10] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e11]: ◷
+        - text: Current run
+      - button "SMAC" [ref=f3e12] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e13]: ⁂
+        - text: SMAC
+      - button "BoTorch" [ref=f3e14] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e15]: ◎
+        - text: BoTorch
+      - button "TPE" [ref=f3e16] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e17]: ◍
+        - text: TPE
+      - button "Analyze" [ref=f3e18] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e19]: ◫
+        - text: Analyze
+      - button "Discover" [ref=f3e20] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e21]: ↗
+        - text: Discover
+      - button "Trials 0" [ref=f3e22] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e23]: ≡
+        - text: Trials
+        - generic [ref=f3e24]: "0"
+      - button "Compare 0" [ref=f3e25] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f3e26]: ⇄
+        - text: Compare
+        - generic [ref=f3e27]: "0"
+    - generic [ref=f3e28]:
+      - text: Local tuning records
+      - paragraph [ref=f3e30]: Connecting…
+      - generic [ref=f3e31]: Observation workspace
+  - generic [ref=f3e32]:
+    - banner [ref=f3e33]:
+      - generic [ref=f3e34]: Workspace / Tuning
+      - generic [ref=f3e35]:
+        - status [ref=f3e36]: Updating…
+        - generic [ref=f3e37]:
+          - checkbox "Auto-refresh" [checked] [ref=f3e38] [cursor=pointer]
+          - text: Auto-refresh
+        - button "↻ Refresh" [disabled] [ref=f3e39]:
+          - text: ↻
+          - generic [ref=f3e40]: Refresh
+    - main [ref=f3e41]:
+      - generic [ref=f3e42]:
+        - generic [ref=f3e43]:
+          - generic [ref=f3e44]: SEARCH OBSERVATORY
+          - heading "Analyze the search" [level=1] [ref=f3e45]
+          - paragraph [ref=f3e46]: Choose the parameters. Ask your own questions.
+        - generic [ref=f3e47]:
+          - generic [ref=f3e48]: TUNING RUN
+          - combobox "TUNING RUN" [disabled] [ref=f3e49]:
+            - option "Loading runs…" [selected]
+      - generic [ref=f3e51]:
+        - heading "Connecting to your runs" [level=2] [ref=f3e53]
+        - paragraph [ref=f3e54]: Reading the saved tuning records.
+    - contentinfo [ref=f3e55]:
+      - text: GRAPHSPEC
+      - generic [ref=f3e56]: Every result has a configuration. Every trial tells a story.

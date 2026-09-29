@@ -12,6 +12,8 @@ def main():
         "check": ("tuning.check_models", "main"),
         "database": ("graphspec.database", "main"),
         "dashboard": ("tuning.dashboard", "main"),
+        "panel": ("tuning.panel", "main"),
+        "track": ("tuning.tracking", "main"),
     }
     if len(sys.argv) < 2 or sys.argv[1] not in commands:
         raise SystemExit("usage: graphspec {" + ",".join(commands) + "} [arguments]")

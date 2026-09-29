@@ -121,7 +121,7 @@ CREATE REL TABLE renewal_of(FROM renewal TO customer);
 
 For every level:
 
-- `split` is `train` or `validation`, set per label.
+- `split` is `train`, `validation` or `spread`, set per label. `spread` points are never trained on and never scored against their `y`. They mark one-step graphs named `<graph>@<query key>#<block>`, each the state of `<graph>` at that query with another block of actions. Scoring puts each of them in place of that step of `<graph>` and predicts the query's validation points, so the range of predictions over the blocks of one decision can enter the trial score. Such graphs are left out of training, validation and variant preparation.
 - A node carries at most one label per step, a query or graph at most one label, every graph at least one, and
   every `y` is finite at float32 precision.
 - Building needs at least two training labels and two validation labels that differ at float32 precision.

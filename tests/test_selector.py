@@ -94,6 +94,7 @@ def arguments(bank, output, **overrides):
         random_params=None,
         mix=None,
         objective=None,
+        spread=None,
         bounds=None,
         workers=1,
         variant_gb=1,
@@ -264,6 +265,7 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path):
         train_rows=1,
         holdout_rows=1,
         objective=None,
+        spread=None,
         limit=None,
     )
     write_json(tmp_path / "plan.json", plan)

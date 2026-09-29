@@ -145,3 +145,34 @@ def test_bank_build_closes_source_when_validation_fails(tmp_path, monkeypatch):
 def test_fit_rejects_invalid_resource_inputs_before_opening_bank(tmp_path, options):
     with pytest.raises(ValueError, match="fit "):
         api.fit.__wrapped__(tmp_path / "missing-bank", {}, tmp_path / "fit", **options)
+
+
+def test_dense_algebra_gives_the_same_bits_at_any_thread_count():
+    import numpy as np
+    import torch
+
+    from graphspec.infra import compute
+
+    random = np.random.default_rng(0)
+    links = random.random((300, 300)) < 0.05
+    links = links | links.T
+    np.fill_diagonal(links, False)
+    scale = 1 / np.sqrt(links.sum(1) + 1.0)
+    transition = scale[:, None] * links * scale[None, :]
+    found = []
+    before = torch.get_num_threads()
+    for threads in (1, 6, 24):
+        torch.set_num_threads(threads)
+        values, vectors = compute.eigh(transition)
+        found.append(
+            (
+                compute.inverse(np.eye(300) - 0.6 * transition),
+                values,
+                vectors,
+                compute.compose(vectors, np.exp(-values)),
+            )
+        )
+        assert torch.get_num_threads() == threads
+    torch.set_num_threads(before)
+    for other in found[1:]:
+        assert all(np.array_equal(first, second) for first, second in zip(found[0], other))

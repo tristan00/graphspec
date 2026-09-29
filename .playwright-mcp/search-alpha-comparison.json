@@ -1,0 +1,73 @@
+[
+  {
+    "trial": "trial_000000",
+    "config": {
+      "model": {
+        "view": "snapshot",
+        "hidden": 8,
+        "dropout": 0.1
+      },
+      "graph": {
+        "time/history": 4,
+        "derive/hops": 0,
+        "derive/enabled": true
+      },
+      "epochs": 3,
+      "seed": 0,
+      "lr": 0.001
+    }
+  },
+  {
+    "trial": "trial_000001",
+    "config": {
+      "model": {
+        "view": "sequence",
+        "hidden": 9,
+        "dropout": 0.1
+      },
+      "graph": {
+        "time/history": 5,
+        "derive/hops": 2,
+        "derive/enabled": false
+      },
+      "epochs": 3,
+      "seed": 1,
+      "lr": 0.001
+    }
+  },
+  {
+    "trial": "trial_000002",
+    "config": {
+      "model": {
+        "view": "event_graph",
+        "hidden": 10,
+        "dropout": 0.1
+      },
+      "graph": {
+        "time/history": 6,
+        "derive/hops": 10,
+        "derive/enabled": true
+      },
+      "epochs": 3,
+      "seed": 2,
+      "lr": 0.001
+    }
+  },
+  {
+    "trial": "trial_000004",
+    "config": {
+      "model": {
+        "view": "sequence",
+        "hidden": 12,
+        "dropout": 0.1
+      },
+      "graph": {
+        "time/history": 4,
+        "derive/enabled": true
+      },
+      "epochs": 3,
+      "seed": 4,
+      "lr": 0.001
+    }
+  }
+]

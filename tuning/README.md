@@ -140,6 +140,26 @@ The runner owns one trial at a time. Windows Job Objects and Linux process group
 
 `--trials N` ends a continuous run once N trials are recorded; a continued run takes the limit it is given. A file named `STOP` in the run directory stops the run after the current fit, and stops a continued run before its first trial. The runner refuses to continue while the worker named in `running.json` is still alive.
 
+**Spread over drawn blocks**
+
+When a bank holds `spread` graphs, every fit scores them after validation (`tuning/offers.py`). For each held-out graph or joined group it derives the graph again in segments, as `graphspec.segments` does for joined runs, and stops at the start of the turn that holds a sampled decision. There it copies the carried state once per block and derives only the remaining steps, with the block's one-step graph in place of the decision's step: entities are matched by kind and key, and new action nodes are appended. History is derived once and shared by the blocks. Each block is packed in memory and predicted at the decision's validation points.
+
+The spread of a decision and series is the highest minus the lowest prediction over its blocks, averaged over its future points, in units of the series' training standard deviation; it is averaged over decisions and recorded per series in `result.json`, with the predictions in `offered.npz`. The fit fails if the recorded block predicted this way differs from its validation prediction by more than `offers.TOLERANCE`; `recorded_block_gap` records the largest difference. The trial score is the validation loss minus `spread` times the base-two logarithm of the spread blended with the `--objective` weights, with the spread floored at `objective.FLOOR`. `--spread` sets the weight, 0.05 on a new run. The dashboard shows the score, the validation loss and the spread.
+
+**Sequence metric panel**
+
+`graphspec panel --run RUN --output NEW_DIRECTORY --top N --workers W [--ratio SERIES ...] [--draws 2000]` scores the stored validation sequences of the N best completed trials of a path run. It refits nothing, reads each trial's `predictions.npz`, and uses the run's fixed split.
+
+| File | Contents |
+|---|---|
+| `sequences.npz`, `sequences.json` | Every bank point ordered by graph, step, series and tau, with its split; one row of predictions per model over the held-out points; model descriptions, series names and scales. |
+| `panel.json` | Every measure for every forecast and series, with intervals from resampling held-out runs, model confidence set p-values, Friedman tests and ranks; error relative to each reference forecast; ensemble scores; rank agreement between measures; the measure catalogue with definitions and sources; the measures that stored predictions cannot give. |
+| `panel.html` | The same as one page. |
+
+Every path fit also records 19 of these measures per series in `result.json` under `series/<name>/measures`: four from dynamics, four elastic, three shape, two each from signatures, spectral, geometry and transport, listed in `catalog.TRACKED`. The dashboard offers them as hidden measures named `series/<name>/<measure>`; they do not enter the ranked score. `graphspec track --run RUN` writes them into completed trials that lack them, from their stored predictions.
+
+Rows are the models, the pointwise mean and median of the models, and six reference forecasts: no change, the training mean and median by horizon, the run's own drift over 365 days and since its start, and a damped drift whose window and damping are chosen on the training runs. Values are in units of each series' training standard deviation and time is a share of the horizon. `--ratio` names the series stored as log changes, which adds the percentage error of the level. `tuning/measures.py` holds the measures of one path, `tuning/pathwise.py` their compiled kernels, `tuning/pooled.py` the pooled and ranking measures, and `tuning/catalog.py` the definitions, settings and sources.
+
 **Verification**
 
 `python -m tuning.check_models BANK --output checks.json [--graph N] [--spec spec.json] [--device cuda]` runs forward, backward and checkpoint reload for one model spec per setting of every structural switch the bank offers, and records any parameter that received no gradient. Each uses its default graph spec, with any of its active parameters taken from `spec.json`; a key that no view's space declares is refused. It runs on the last window of graph `N`, or of the graph with the most observations. A model that runs out of GPU memory is recorded and the check continues; the command then exits with the list of those models. Any other error stops it.

@@ -1,6 +1,12 @@
 import math
 
+from . import catalog
+from .catalog import TRACKED
+
 SERIES = "series/%s/loss"
+SPREAD = "series/%s/spread"
+FLOOR = 1e-6
+MEASURE = "series/%s/%s"
 
 
 def weights(bank, given):
@@ -30,8 +36,40 @@ def value(result, plan):
     chosen = plan["objective"]
     if chosen is None:
         return result["raw_val_mse"]
+    found = blend(result, chosen, "val_loss")
+    if plan.get("spread") is None:
+        return found
+    return found - plan["spread"] * math.log2(max(blend(result, chosen, "spread"), FLOOR))
+
+
+def blend(result, chosen, key):
     series = result["series"]
-    return sum(share * series[name]["val_loss"] for name, share in chosen.items()) / sum(chosen.values())
+    return sum(share * series[name][key] for name, share in chosen.items()) / sum(chosen.values())
+
+
+def ranked(plan):
+    if plan.get("spread") is None:
+        return [dict(key="mse", label="Validation loss", short="Loss", better="lower", shown=True)]
+    return [
+        dict(
+            key="mse",
+            label="Score: validation loss − %s · log2 spread" % plan["spread"],
+            short="Score",
+            better="lower",
+            shown=True,
+        ),
+        dict(key="loss", label="Validation loss", short="Loss", better="lower", shown=True),
+        dict(
+            key="spread",
+            label="Spread of predictions over the blocks drawn at one pause",
+            short="Spread",
+            better="higher",
+            shown=True,
+        ),
+    ] + [
+        dict(key=SPREAD % name, label=name + " spread", short=name + " spread", better="higher", shown=False)
+        for name in plan["objective"]
+    ]
 
 
 def measures(plan):
@@ -40,16 +78,30 @@ def measures(plan):
             dict(key="mse", label="Validation MSE", short="MSE", better="lower", shown=True),
             dict(key="r2", label="Validation R²", short="R²", better="higher", shown=True),
         ]
-    return [dict(key="mse", label="Validation loss", short="Loss", better="lower", shown=True)] + [
-        dict(
-            key=SERIES % name,
-            label=name + " validation loss",
-            short=name + " loss",
-            better="lower",
-            shown=False,
-        )
-        for name in plan["objective"]
-    ]
+    return (
+        ranked(plan)
+        + [
+            dict(
+                key=SERIES % name,
+                label=name + " validation loss",
+                short=name + " loss",
+                better="lower",
+                shown=False,
+            )
+            for name in plan["objective"]
+        ]
+        + [
+            dict(
+                key=MEASURE % (name, key),
+                label="%s %s" % (name, catalog.entry(key)["label"]),
+                short="%s %s" % (name, key.split("/")[1]),
+                better=catalog.entry(key)["better"],
+                shown=False,
+            )
+            for name in plan["objective"]
+            for key in TRACKED
+        ]
+    )
 
 
 def columns(plan):
@@ -59,4 +111,14 @@ def columns(plan):
 def scores(result, plan):
     if plan["objective"] is None or "series" not in result:
         return {}
-    return {SERIES % name: result["series"][name]["val_loss"] for name in plan["objective"]}
+    found = {SERIES % name: result["series"][name]["val_loss"] for name in plan["objective"]}
+    for name in plan["objective"]:
+        for key, value in result["series"][name]["measures"].items():
+            found[MEASURE % (name, key)] = value
+    if plan.get("spread") is not None:
+        found.update(
+            loss=blend(result, plan["objective"], "val_loss"),
+            spread=blend(result, plan["objective"], "spread"),
+            **{SPREAD % name: result["series"][name]["spread"] for name in plan["objective"]},
+        )
+    return found

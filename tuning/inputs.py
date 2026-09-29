@@ -350,7 +350,10 @@ def mixed_inputs(b, window):
         query=array(qi, torch.long),
     )
     if tokens is not None:
-        b["mixed"]["token"] = np.r_[tokens[held.numpy("mixed_entity")[left:right]], np.full(m, -1, np.int64)]
+        owner = held.numpy("mixed_entity")[left:right]
+        b["mixed"]["token"] = np.r_[
+            np.where(owner >= 0, tokens[np.maximum(owner, 0)], -1), np.full(m, -1, np.int64)
+        ]
 
 
 def events_inputs(b, window, blocks):

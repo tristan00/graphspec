@@ -1,0 +1,2091 @@
+- generic [active] [ref=f1e1]:
+  - link "Skip to dashboard" [ref=f1e2] [cursor=pointer]:
+    - /url: "#main"
+  - complementary [ref=f1e3]:
+    - link "graphspec EXPERIMENT WORKSPACE" [ref=f1e4] [cursor=pointer]:
+      - /url: "#"
+      - generic [aria-hidden] [ref=f1e5]: g.
+      - generic [ref=f1e6]:
+        - text: graphspec
+        - generic [ref=f1e7]: EXPERIMENT WORKSPACE
+    - generic [ref=f1e8]: TUNING
+    - navigation "Dashboard" [ref=f1e9]:
+      - button "Current run" [ref=f1e10] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f1e11]: ◷
+        - text: Current run
+      - button "BoTorch" [ref=f1e12] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f1e13]: ◎
+        - text: BoTorch
+      - button "Analyze" [ref=f1e14] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f1e15]: ◫
+        - text: Analyze
+      - button "Discover" [ref=f1e16] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f1e17]: ↗
+        - text: Discover
+      - button "Trials 409" [ref=f1e2077] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f1e19]: ≡
+        - text: Trials
+        - generic [ref=f1e20]: "409"
+      - button "Compare 0" [ref=f1e21] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f1e22]: ⇄
+        - text: Compare
+        - generic [ref=f1e23]: "0"
+    - generic [ref=f1e24]:
+      - text: Local tuning records
+      - paragraph [ref=f1e26]: D:\graphspec-runtime\runs
+      - generic [ref=f1e27]: Observation workspace
+  - generic [ref=f1e28]:
+    - banner [ref=f1e29]:
+      - generic [ref=f1e30]: Workspace / Tuning
+      - generic [ref=f1e31]:
+        - status [ref=f1e32]: Updated 10:40:45 AM
+        - generic [ref=f1e33]:
+          - checkbox "Auto-refresh" [checked] [ref=f1e34] [cursor=pointer]
+          - text: Auto-refresh
+        - button "↻ Refresh" [ref=f1e35] [cursor=pointer]:
+          - text: ↻
+          - generic [ref=f1e36]: Refresh
+    - main [ref=f1e37]:
+      - generic [ref=f1e38]:
+        - generic [ref=f1e39]:
+          - generic [ref=f1e40]: SEARCH OBSERVATORY
+          - heading "Inside BoTorch" [level=1] [ref=f1e54]
+          - paragraph [ref=f1e42]: Follow the choices behind each proposal.
+        - generic [ref=f1e43]:
+          - generic [ref=f1e44]: TUNING RUN
+          - combobox "TUNING RUN" [ref=f1e45]:
+            - option "churn-tuning"
+            - option "totalwar-4000-unrestricted" [selected]
+      - generic [ref=f1e2078]:
+        - generic [ref=f1e2080]:
+          - strong [ref=f1e2081]: BoTorch active
+          - generic [ref=f1e2082]: 406 finished trials · 100 minimum
+          - generic [ref=f1e2083]: "Keep random: None"
+        - generic [ref=f1e2084]:
+          - generic [ref=f1e2085]:
+            - generic [ref=f1e2086]:
+              - heading [level=2] [ref=f1e2087]:
+                - button "Trial 409" [ref=f1e2088] [cursor=pointer]
+              - generic [ref=f1e2089]: running
+            - generic [ref=f1e2090]:
+              - generic [ref=f1e2091]: Proposal
+              - combobox "Proposal" [ref=f1e2092]:
+                - option "Latest proposal" [selected]
+                - option "Trial 409"
+                - option "Trial 408"
+                - option "Trial 407"
+                - option "Trial 406"
+                - option "Trial 405"
+                - option "Trial 404"
+                - option "Trial 403"
+                - option "Trial 402"
+                - option "Trial 401"
+                - option "Trial 400"
+                - option "Trial 399"
+                - option "Trial 398"
+                - option "Trial 397"
+                - option "Trial 396"
+                - option "Trial 395"
+                - option "Trial 394"
+                - option "Trial 393"
+                - option "Trial 392"
+                - option "Trial 391"
+                - option "Trial 390"
+                - option "Trial 389"
+                - option "Trial 388"
+                - option "Trial 387"
+                - option "Trial 386"
+                - option "Trial 385"
+                - option "Trial 384"
+                - option "Trial 383"
+                - option "Trial 382"
+                - option "Trial 381"
+                - option "Trial 380"
+                - option "Trial 379"
+                - option "Trial 378"
+                - option "Trial 377"
+                - option "Trial 376"
+                - option "Trial 375"
+                - option "Trial 374"
+                - option "Trial 373"
+                - option "Trial 372"
+                - option "Trial 371"
+                - option "Trial 370"
+                - option "Trial 369"
+                - option "Trial 368"
+                - option "Trial 367"
+                - option "Trial 366"
+                - option "Trial 365"
+                - option "Trial 364"
+                - option "Trial 363"
+                - option "Trial 362"
+                - option "Trial 361"
+                - option "Trial 360"
+                - option "Trial 359"
+                - option "Trial 358"
+                - option "Trial 357"
+                - option "Trial 356"
+                - option "Trial 355"
+                - option "Trial 354"
+                - option "Trial 353"
+                - option "Trial 352"
+                - option "Trial 351"
+                - option "Trial 350"
+                - option "Trial 349"
+                - option "Trial 348"
+                - option "Trial 347"
+                - option "Trial 346"
+                - option "Trial 345"
+                - option "Trial 344"
+                - option "Trial 343"
+                - option "Trial 342"
+                - option "Trial 341"
+                - option "Trial 340"
+                - option "Trial 339"
+                - option "Trial 338"
+                - option "Trial 337"
+                - option "Trial 336"
+                - option "Trial 335"
+                - option "Trial 334"
+                - option "Trial 333"
+                - option "Trial 332"
+                - option "Trial 331"
+                - option "Trial 330"
+                - option "Trial 329"
+                - option "Trial 328"
+                - option "Trial 327"
+                - option "Trial 326"
+                - option "Trial 325"
+                - option "Trial 324"
+                - option "Trial 323"
+                - option "Trial 322"
+                - option "Trial 321"
+                - option "Trial 320"
+                - option "Trial 319"
+                - option "Trial 318"
+                - option "Trial 317"
+                - option "Trial 316"
+                - option "Trial 315"
+                - option "Trial 314"
+                - option "Trial 313"
+                - option "Trial 312"
+                - option "Trial 311"
+                - option "Trial 310"
+                - option "Trial 309"
+                - option "Trial 308"
+                - option "Trial 307"
+                - option "Trial 306"
+                - option "Trial 305"
+                - option "Trial 304"
+                - option "Trial 303"
+                - option "Trial 302"
+                - option "Trial 301"
+                - option "Trial 300"
+                - option "Trial 299"
+                - option "Trial 298"
+                - option "Trial 297"
+                - option "Trial 296"
+                - option "Trial 295"
+                - option "Trial 294"
+                - option "Trial 293"
+                - option "Trial 292"
+                - option "Trial 291"
+                - option "Trial 290"
+                - option "Trial 289"
+                - option "Trial 288"
+                - option "Trial 287"
+                - option "Trial 286"
+                - option "Trial 285"
+                - option "Trial 284"
+                - option "Trial 283"
+                - option "Trial 282"
+                - option "Trial 281"
+                - option "Trial 280"
+                - option "Trial 279"
+                - option "Trial 278"
+                - option "Trial 277"
+                - option "Trial 276"
+                - option "Trial 275"
+                - option "Trial 274"
+                - option "Trial 273"
+                - option "Trial 272"
+                - option "Trial 271"
+                - option "Trial 270"
+                - option "Trial 269"
+                - option "Trial 268"
+                - option "Trial 267"
+                - option "Trial 266"
+                - option "Trial 265"
+                - option "Trial 264"
+                - option "Trial 263"
+                - option "Trial 262"
+                - option "Trial 261"
+                - option "Trial 260"
+                - option "Trial 259"
+                - option "Trial 258"
+                - option "Trial 257"
+                - option "Trial 256"
+                - option "Trial 255"
+                - option "Trial 254"
+                - option "Trial 253"
+                - option "Trial 252"
+                - option "Trial 251"
+                - option "Trial 250"
+                - option "Trial 249"
+                - option "Trial 248"
+                - option "Trial 247"
+                - option "Trial 246"
+                - option "Trial 245"
+                - option "Trial 244"
+                - option "Trial 243"
+                - option "Trial 242"
+                - option "Trial 241"
+                - option "Trial 240"
+                - option "Trial 239"
+                - option "Trial 238"
+                - option "Trial 237"
+                - option "Trial 236"
+                - option "Trial 235"
+                - option "Trial 234"
+                - option "Trial 233"
+                - option "Trial 232"
+                - option "Trial 231"
+                - option "Trial 230"
+                - option "Trial 229"
+                - option "Trial 228"
+                - option "Trial 227"
+                - option "Trial 226"
+                - option "Trial 225"
+                - option "Trial 224"
+                - option "Trial 223"
+                - option "Trial 222"
+                - option "Trial 221"
+                - option "Trial 220"
+                - option "Trial 219"
+                - option "Trial 218"
+                - option "Trial 217"
+                - option "Trial 216"
+                - option "Trial 215"
+                - option "Trial 214"
+                - option "Trial 213"
+                - option "Trial 212"
+                - option "Trial 211"
+                - option "Trial 210"
+                - option "Trial 209"
+                - option "Trial 208"
+                - option "Trial 207"
+                - option "Trial 206"
+                - option "Trial 205"
+                - option "Trial 204"
+                - option "Trial 203"
+                - option "Trial 202"
+                - option "Trial 201"
+                - option "Trial 200"
+                - option "Trial 199"
+                - option "Trial 198"
+                - option "Trial 197"
+                - option "Trial 196"
+                - option "Trial 195"
+                - option "Trial 194"
+                - option "Trial 193"
+                - option "Trial 192"
+                - option "Trial 191"
+                - option "Trial 190"
+                - option "Trial 189"
+                - option "Trial 188"
+                - option "Trial 187"
+          - generic [ref=f1e2093]:
+            - heading "Random choices held fixed" [level=3] [ref=f1e2094]
+            - paragraph [ref=f1e2095]: No parameters held random for this proposal.
+            - generic [ref=f1e2096]:
+              - generic [ref=f1e2097]:
+                - text: Learned from
+                - strong [ref=f1e2098]: "273"
+                - text: completed +
+                - strong [ref=f1e2099]: "133"
+                - text: failed trials
+              - generic [ref=f1e2100]: Selection took 46.6s
+            - generic [ref=f1e2101]:
+              - generic [ref=f1e2102]:
+                - term [ref=f1e2103]: Predicted MSE
+                - definition [ref=f1e2104]: "3.4971"
+              - generic [ref=f1e2105]:
+                - term [ref=f1e2106]: Uncertainty (±1σ)
+                - definition [ref=f1e2107]: "0.39914"
+              - generic [ref=f1e2108]:
+                - term [ref=f1e2109]: Predicted completion
+                - definition [ref=f1e2110]: 41.4%
+              - generic [ref=f1e2111]:
+                - term [ref=f1e2112]: MSE to beat
+                - definition [ref=f1e2113]: "1.7533"
+              - generic [ref=f1e2114]:
+                - term [ref=f1e2115]: Actual MSE
+                - definition [ref=f1e2116]: Awaiting result
+        - generic [ref=f1e2117]:
+          - generic [ref=f1e2119]:
+            - heading "Top 25 of 5,000 candidates" [level=2] [ref=f1e2120]
+            - paragraph [ref=f1e2121]: Rank score · higher is better
+          - paragraph [ref=f1e2123]:
+            - text: Every candidate is a random configuration inside the bounds. The score model predicts its MSE and how unsure that prediction is; expected improvement turns both into the chance and size of beating
+            - strong [ref=f1e2124]: "1.7533"
+            - text: ", the best MSE observed so far, so a confident-but-average candidate and an uncertain-but-promising one can both rank well. A second model predicts the chance the trial completes, and the rank score is log improvement plus log completion. The highest rank score wins."
+          - table [ref=f1e2126]:
+            - rowgroup [ref=f1e2127]:
+              - row [ref=f1e2128]:
+                - columnheader "Rank" [ref=f1e2129]
+                - columnheader "Rank score" [ref=f1e2130]
+                - columnheader "Log improvement" [ref=f1e2131]
+                - columnheader "Completion" [ref=f1e2132]
+                - columnheader "Predicted MSE" [ref=f1e2133]
+                - columnheader "Uncertainty (±1σ)" [ref=f1e2134]
+            - rowgroup [ref=f1e2135]:
+              - row [ref=f1e2136]:
+                - cell "Chosen" [ref=f1e2137]
+                - cell "-15.348" [ref=f1e2138]
+                - cell "-14.465" [ref=f1e2139]
+                - cell "41.4%" [ref=f1e2140]
+                - cell "3.4971" [ref=f1e2141]
+                - cell "0.39914" [ref=f1e2142]
+              - row [ref=f1e2143]:
+                - cell "2" [ref=f1e2144]
+                - cell "-15.443" [ref=f1e2145]
+                - cell "-14.465" [ref=f1e2146]
+                - cell "37.6%" [ref=f1e2147]
+                - cell "3.4971" [ref=f1e2148]
+                - cell "0.39914" [ref=f1e2149]
+              - row [ref=f1e2150]:
+                - cell "3" [ref=f1e2151]
+                - cell "-15.444" [ref=f1e2152]
+                - cell "-14.465" [ref=f1e2153]
+                - cell "37.6%" [ref=f1e2154]
+                - cell "3.4971" [ref=f1e2155]
+                - cell "0.39914" [ref=f1e2156]
+              - row [ref=f1e2157]:
+                - cell "4" [ref=f1e2158]
+                - cell "-15.444" [ref=f1e2159]
+                - cell "-14.465" [ref=f1e2160]
+                - cell "37.6%" [ref=f1e2161]
+                - cell "3.4971" [ref=f1e2162]
+                - cell "0.39914" [ref=f1e2163]
+              - row [ref=f1e2164]:
+                - cell "5" [ref=f1e2165]
+                - cell "-15.447" [ref=f1e2166]
+                - cell "-14.465" [ref=f1e2167]
+                - cell "37.4%" [ref=f1e2168]
+                - cell "3.4971" [ref=f1e2169]
+                - cell "0.39914" [ref=f1e2170]
+              - row [ref=f1e2171]:
+                - cell "6" [ref=f1e2172]
+                - cell "-15.448" [ref=f1e2173]
+                - cell "-14.465" [ref=f1e2174]
+                - cell "37.4%" [ref=f1e2175]
+                - cell "3.4971" [ref=f1e2176]
+                - cell "0.39914" [ref=f1e2177]
+              - row [ref=f1e2178]:
+                - cell "7" [ref=f1e2179]
+                - cell "-15.449" [ref=f1e2180]
+                - cell "-14.465" [ref=f1e2181]
+                - cell "37.4%" [ref=f1e2182]
+                - cell "3.4971" [ref=f1e2183]
+                - cell "0.39914" [ref=f1e2184]
+              - row [ref=f1e2185]:
+                - cell "8" [ref=f1e2186]
+                - cell "-15.449" [ref=f1e2187]
+                - cell "-14.465" [ref=f1e2188]
+                - cell "37.4%" [ref=f1e2189]
+                - cell "3.4971" [ref=f1e2190]
+                - cell "0.39914" [ref=f1e2191]
+              - row [ref=f1e2192]:
+                - cell "9" [ref=f1e2193]
+                - cell "-15.449" [ref=f1e2194]
+                - cell "-14.465" [ref=f1e2195]
+                - cell "37.4%" [ref=f1e2196]
+                - cell "3.4971" [ref=f1e2197]
+                - cell "0.39914" [ref=f1e2198]
+              - row [ref=f1e2199]:
+                - cell "10" [ref=f1e2200]
+                - cell "-15.449" [ref=f1e2201]
+                - cell "-14.465" [ref=f1e2202]
+                - cell "37.4%" [ref=f1e2203]
+                - cell "3.4971" [ref=f1e2204]
+                - cell "0.39914" [ref=f1e2205]
+              - row [ref=f1e2206]:
+                - cell "11" [ref=f1e2207]
+                - cell "-15.449" [ref=f1e2208]
+                - cell "-14.465" [ref=f1e2209]
+                - cell "37.4%" [ref=f1e2210]
+                - cell "3.4971" [ref=f1e2211]
+                - cell "0.39914" [ref=f1e2212]
+              - row [ref=f1e2213]:
+                - cell "12" [ref=f1e2214]
+                - cell "-15.449" [ref=f1e2215]
+                - cell "-14.465" [ref=f1e2216]
+                - cell "37.4%" [ref=f1e2217]
+                - cell "3.4971" [ref=f1e2218]
+                - cell "0.39914" [ref=f1e2219]
+              - row [ref=f1e2220]:
+                - cell "13" [ref=f1e2221]
+                - cell "-15.449" [ref=f1e2222]
+                - cell "-14.465" [ref=f1e2223]
+                - cell "37.4%" [ref=f1e2224]
+                - cell "3.4971" [ref=f1e2225]
+                - cell "0.39914" [ref=f1e2226]
+              - row [ref=f1e2227]:
+                - cell "14" [ref=f1e2228]
+                - cell "-15.449" [ref=f1e2229]
+                - cell "-14.465" [ref=f1e2230]
+                - cell "37.4%" [ref=f1e2231]
+                - cell "3.4971" [ref=f1e2232]
+                - cell "0.39914" [ref=f1e2233]
+              - row [ref=f1e2234]:
+                - cell "15" [ref=f1e2235]
+                - cell "-15.449" [ref=f1e2236]
+                - cell "-14.465" [ref=f1e2237]
+                - cell "37.4%" [ref=f1e2238]
+                - cell "3.4971" [ref=f1e2239]
+                - cell "0.39914" [ref=f1e2240]
+              - row [ref=f1e2241]:
+                - cell "16" [ref=f1e2242]
+                - cell "-15.449" [ref=f1e2243]
+                - cell "-14.465" [ref=f1e2244]
+                - cell "37.4%" [ref=f1e2245]
+                - cell "3.4971" [ref=f1e2246]
+                - cell "0.39914" [ref=f1e2247]
+              - row [ref=f1e2248]:
+                - cell "17" [ref=f1e2249]
+                - cell "-15.449" [ref=f1e2250]
+                - cell "-14.465" [ref=f1e2251]
+                - cell "37.4%" [ref=f1e2252]
+                - cell "3.4971" [ref=f1e2253]
+                - cell "0.39914" [ref=f1e2254]
+              - row [ref=f1e2255]:
+                - cell "18" [ref=f1e2256]
+                - cell "-15.449" [ref=f1e2257]
+                - cell "-14.465" [ref=f1e2258]
+                - cell "37.4%" [ref=f1e2259]
+                - cell "3.4971" [ref=f1e2260]
+                - cell "0.39914" [ref=f1e2261]
+              - row [ref=f1e2262]:
+                - cell "19" [ref=f1e2263]
+                - cell "-15.449" [ref=f1e2264]
+                - cell "-14.465" [ref=f1e2265]
+                - cell "37.4%" [ref=f1e2266]
+                - cell "3.4971" [ref=f1e2267]
+                - cell "0.39914" [ref=f1e2268]
+              - row [ref=f1e2269]:
+                - cell "20" [ref=f1e2270]
+                - cell "-15.449" [ref=f1e2271]
+                - cell "-14.465" [ref=f1e2272]
+                - cell "37.4%" [ref=f1e2273]
+                - cell "3.4971" [ref=f1e2274]
+                - cell "0.39914" [ref=f1e2275]
+              - row [ref=f1e2276]:
+                - cell "21" [ref=f1e2277]
+                - cell "-15.449" [ref=f1e2278]
+                - cell "-14.465" [ref=f1e2279]
+                - cell "37.4%" [ref=f1e2280]
+                - cell "3.4971" [ref=f1e2281]
+                - cell "0.39914" [ref=f1e2282]
+              - row [ref=f1e2283]:
+                - cell "22" [ref=f1e2284]
+                - cell "-15.449" [ref=f1e2285]
+                - cell "-14.465" [ref=f1e2286]
+                - cell "37.4%" [ref=f1e2287]
+                - cell "3.4971" [ref=f1e2288]
+                - cell "0.39914" [ref=f1e2289]
+              - row [ref=f1e2290]:
+                - cell "23" [ref=f1e2291]
+                - cell "-15.449" [ref=f1e2292]
+                - cell "-14.465" [ref=f1e2293]
+                - cell "37.4%" [ref=f1e2294]
+                - cell "3.4971" [ref=f1e2295]
+                - cell "0.39914" [ref=f1e2296]
+              - row [ref=f1e2297]:
+                - cell "24" [ref=f1e2298]
+                - cell "-15.449" [ref=f1e2299]
+                - cell "-14.465" [ref=f1e2300]
+                - cell "37.4%" [ref=f1e2301]
+                - cell "3.4971" [ref=f1e2302]
+                - cell "0.39914" [ref=f1e2303]
+              - row [ref=f1e2304]:
+                - cell "25" [ref=f1e2305]
+                - cell "-15.449" [ref=f1e2306]
+                - cell "-14.465" [ref=f1e2307]
+                - cell "37.4%" [ref=f1e2308]
+                - cell "3.4971" [ref=f1e2309]
+                - cell "0.39914" [ref=f1e2310]
+        - generic [ref=f1e2311]:
+          - heading "Proposal outcomes" [level=2] [ref=f1e2313]
+          - table [ref=f1e2315]:
+            - rowgroup [ref=f1e2316]:
+              - row [ref=f1e2317]:
+                - columnheader "Trial" [ref=f1e2318]
+                - columnheader "Random choices" [ref=f1e2319]
+                - columnheader "Predicted MSE" [ref=f1e2320]
+                - columnheader "Actual MSE" [ref=f1e2321]
+                - columnheader "Status" [ref=f1e2322]
+            - rowgroup [ref=f1e2323]:
+              - row [ref=f1e2324]:
+                - cell [ref=f1e2325]:
+                  - button "Trial 409" [ref=f1e2326] [cursor=pointer]
+                - cell "None" [ref=f1e2327]
+                - cell "3.4971" [ref=f1e2328]
+                - cell "—" [ref=f1e2329]
+                - cell "running" [ref=f1e2330]
+              - row [ref=f1e2332]:
+                - cell [ref=f1e2333]:
+                  - button "Trial 408" [ref=f1e2334] [cursor=pointer]
+                - cell "None" [ref=f1e2335]
+                - cell "3.4971" [ref=f1e2336]
+                - cell "—" [ref=f1e2337]
+                - cell "failed" [ref=f1e2338]
+              - row [ref=f1e2340]:
+                - cell [ref=f1e2341]:
+                  - button "Trial 407" [ref=f1e2342] [cursor=pointer]
+                - cell "None" [ref=f1e2343]
+                - cell "3.4897" [ref=f1e2344]
+                - cell "3.2873" [ref=f1e2345]
+                - cell "complete" [ref=f1e2346]
+              - row [ref=f1e2348]:
+                - cell [ref=f1e2349]:
+                  - button "Trial 406" [ref=f1e2350] [cursor=pointer]
+                - cell "None" [ref=f1e2351]
+                - cell "1.8244" [ref=f1e2352]
+                - cell "2.6761" [ref=f1e2353]
+                - cell "complete" [ref=f1e2354]
+              - row [ref=f1e2356]:
+                - cell [ref=f1e2357]:
+                  - button "Trial 405" [ref=f1e2358] [cursor=pointer]
+                - cell "None" [ref=f1e2359]
+                - cell "2.029" [ref=f1e2360]
+                - cell "2.7315" [ref=f1e2361]
+                - cell "complete" [ref=f1e2362]
+              - row [ref=f1e2364]:
+                - cell [ref=f1e2365]:
+                  - button "Trial 404" [ref=f1e2366] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 993" [ref=f1e2367]: model/view = event_graphepochs = 1max_seconds = 993
+                - cell "3.3255" [ref=f1e2368]
+                - cell "3.474" [ref=f1e2369]
+                - cell "complete" [ref=f1e2370]
+              - row [ref=f1e2372]:
+                - cell [ref=f1e2373]:
+                  - button "Trial 403" [ref=f1e2374] [cursor=pointer]
+                - cell "model/view = walks epochs = 2 max_seconds = 920" [ref=f1e2375]: model/view = walksepochs = 2max_seconds = 920
+                - cell "3.4183" [ref=f1e2376]
+                - cell "3.2259" [ref=f1e2377]
+                - cell "complete" [ref=f1e2378]
+              - row [ref=f1e2380]:
+                - cell [ref=f1e2381]:
+                  - button "Trial 402" [ref=f1e2382] [cursor=pointer]
+                - cell "model/view = projection epochs = 2 max_seconds = 739" [ref=f1e2383]: model/view = projectionepochs = 2max_seconds = 739
+                - cell "3.4803" [ref=f1e2384]
+                - cell "—" [ref=f1e2385]
+                - cell "timeout" [ref=f1e2386]
+              - row [ref=f1e2388]:
+                - cell [ref=f1e2389]:
+                  - button "Trial 401" [ref=f1e2390] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 1130" [ref=f1e2391]: model/view = event_graphepochs = 1max_seconds = 1130
+                - cell "3.41" [ref=f1e2392]
+                - cell "3.3052" [ref=f1e2393]
+                - cell "complete" [ref=f1e2394]
+              - row [ref=f1e2396]:
+                - cell [ref=f1e2397]:
+                  - button "Trial 400" [ref=f1e2398] [cursor=pointer]
+                - cell "model/view = walks epochs = 4 max_seconds = 875" [ref=f1e2399]: model/view = walksepochs = 4max_seconds = 875
+                - cell "3.4661" [ref=f1e2400]
+                - cell "3.4482" [ref=f1e2401]
+                - cell "complete" [ref=f1e2402]
+              - row [ref=f1e2404]:
+                - cell [ref=f1e2405]:
+                  - button "Trial 399" [ref=f1e2406] [cursor=pointer]
+                - cell "model/view = signal epochs = 3 max_seconds = 678" [ref=f1e2407]: model/view = signalepochs = 3max_seconds = 678
+                - cell "3.4538" [ref=f1e2408]
+                - cell "3.8243" [ref=f1e2409]
+                - cell "complete" [ref=f1e2410]
+              - row [ref=f1e2412]:
+                - cell [ref=f1e2413]:
+                  - button "Trial 398" [ref=f1e2414] [cursor=pointer]
+                - cell "model/view = walks epochs = 1 max_seconds = 1025" [ref=f1e2415]: model/view = walksepochs = 1max_seconds = 1025
+                - cell "3.4406" [ref=f1e2416]
+                - cell "4.2523" [ref=f1e2417]
+                - cell "complete" [ref=f1e2418]
+              - row [ref=f1e2420]:
+                - cell [ref=f1e2421]:
+                  - button "Trial 397" [ref=f1e2422] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 1102" [ref=f1e2423]: model/view = event_graphepochs = 1max_seconds = 1102
+                - cell "3.3354" [ref=f1e2424]
+                - cell "3.4774" [ref=f1e2425]
+                - cell "complete" [ref=f1e2426]
+              - row [ref=f1e2428]:
+                - cell [ref=f1e2429]:
+                  - button "Trial 396" [ref=f1e2430] [cursor=pointer]
+                - cell "model/view = tree epochs = 3 max_seconds = 653" [ref=f1e2431]: model/view = treeepochs = 3max_seconds = 653
+                - cell "3.3748" [ref=f1e2432]
+                - cell "3.2387" [ref=f1e2433]
+                - cell "complete" [ref=f1e2434]
+              - row [ref=f1e2436]:
+                - cell [ref=f1e2437]:
+                  - button "Trial 395" [ref=f1e2438] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 1058" [ref=f1e2439]: model/view = event_graphepochs = 1max_seconds = 1058
+                - cell "3.3309" [ref=f1e2440]
+                - cell "3.4466" [ref=f1e2441]
+                - cell "complete" [ref=f1e2442]
+              - row [ref=f1e2444]:
+                - cell [ref=f1e2445]:
+                  - button "Trial 394" [ref=f1e2446] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 5 max_seconds = 627" [ref=f1e2447]: model/view = snapshotepochs = 5max_seconds = 627
+                - cell "2.273" [ref=f1e2448]
+                - cell "—" [ref=f1e2449]
+                - cell "timeout" [ref=f1e2450]
+              - row [ref=f1e2452]:
+                - cell [ref=f1e2453]:
+                  - button "Trial 393" [ref=f1e2454] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 5 max_seconds = 909" [ref=f1e2455]: model/view = snapshotepochs = 5max_seconds = 909
+                - cell "2.2189" [ref=f1e2456]
+                - cell "—" [ref=f1e2457]
+                - cell "timeout" [ref=f1e2458]
+              - row [ref=f1e2460]:
+                - cell [ref=f1e2461]:
+                  - button "Trial 392" [ref=f1e2462] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 3 max_seconds = 607" [ref=f1e2463]: model/view = snapshotepochs = 3max_seconds = 607
+                - cell "2.1085" [ref=f1e2464]
+                - cell "—" [ref=f1e2465]
+                - cell "timeout" [ref=f1e2466]
+              - row [ref=f1e2468]:
+                - cell [ref=f1e2469]:
+                  - button "Trial 391" [ref=f1e2470] [cursor=pointer]
+                - cell "model/view = memory epochs = 1 max_seconds = 815" [ref=f1e2471]: model/view = memoryepochs = 1max_seconds = 815
+                - cell "3.3562" [ref=f1e2472]
+                - cell "3.3188" [ref=f1e2473]
+                - cell "complete" [ref=f1e2474]
+              - row [ref=f1e2476]:
+                - cell [ref=f1e2477]:
+                  - button "Trial 390" [ref=f1e2478] [cursor=pointer]
+                - cell "model/view = mixed epochs = 2 max_seconds = 718" [ref=f1e2479]: model/view = mixedepochs = 2max_seconds = 718
+                - cell "2.1998" [ref=f1e2480]
+                - cell "3.3657" [ref=f1e2481]
+                - cell "complete" [ref=f1e2482]
+              - row [ref=f1e2484]:
+                - cell [ref=f1e2485]:
+                  - button "Trial 389" [ref=f1e2486] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 4 max_seconds = 1094" [ref=f1e2487]: model/view = snapshotepochs = 4max_seconds = 1094
+                - cell "1.7868" [ref=f1e2488]
+                - cell "2.02" [ref=f1e2489]
+                - cell "complete" [ref=f1e2490]
+              - row [ref=f1e2492]:
+                - cell [ref=f1e2493]:
+                  - button "Trial 388" [ref=f1e2494] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 2 max_seconds = 676" [ref=f1e2495]: model/view = snapshotepochs = 2max_seconds = 676
+                - cell "2.1773" [ref=f1e2496]
+                - cell "2.2135" [ref=f1e2497]
+                - cell "complete" [ref=f1e2498]
+              - row [ref=f1e2500]:
+                - cell [ref=f1e2501]:
+                  - button "Trial 387" [ref=f1e2502] [cursor=pointer]
+                - cell "model/view = projection epochs = 1 max_seconds = 1105" [ref=f1e2503]: model/view = projectionepochs = 1max_seconds = 1105
+                - cell "3.4801" [ref=f1e2504]
+                - cell "3.3917" [ref=f1e2505]
+                - cell "complete" [ref=f1e2506]
+              - row [ref=f1e2508]:
+                - cell [ref=f1e2509]:
+                  - button "Trial 386" [ref=f1e2510] [cursor=pointer]
+                - cell "model/view = tree epochs = 3 max_seconds = 908" [ref=f1e2511]: model/view = treeepochs = 3max_seconds = 908
+                - cell "3.4539" [ref=f1e2512]
+                - cell "3.1138" [ref=f1e2513]
+                - cell "complete" [ref=f1e2514]
+              - row [ref=f1e2516]:
+                - cell [ref=f1e2517]:
+                  - button "Trial 385" [ref=f1e2518] [cursor=pointer]
+                - cell "model/view = mixed epochs = 4 max_seconds = 1014" [ref=f1e2519]: model/view = mixedepochs = 4max_seconds = 1014
+                - cell "2.1918" [ref=f1e2520]
+                - cell "2.2445" [ref=f1e2521]
+                - cell "complete" [ref=f1e2522]
+              - row [ref=f1e2524]:
+                - cell [ref=f1e2525]:
+                  - button "Trial 384" [ref=f1e2526] [cursor=pointer]
+                - cell "model/view = projection epochs = 5 max_seconds = 996" [ref=f1e2527]: model/view = projectionepochs = 5max_seconds = 996
+                - cell "3.4467" [ref=f1e2528]
+                - cell "3.0948" [ref=f1e2529]
+                - cell "complete" [ref=f1e2530]
+              - row [ref=f1e2532]:
+                - cell [ref=f1e2533]:
+                  - button "Trial 383" [ref=f1e2534] [cursor=pointer]
+                - cell "model/view = tree epochs = 1 max_seconds = 890" [ref=f1e2535]: model/view = treeepochs = 1max_seconds = 890
+                - cell "3.4459" [ref=f1e2536]
+                - cell "3.3157" [ref=f1e2537]
+                - cell "complete" [ref=f1e2538]
+              - row [ref=f1e2540]:
+                - cell [ref=f1e2541]:
+                  - button "Trial 382" [ref=f1e2542] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 4 max_seconds = 1178" [ref=f1e2543]: model/view = event_graphepochs = 4max_seconds = 1178
+                - cell "3.2479" [ref=f1e2544]
+                - cell "3.2183" [ref=f1e2545]
+                - cell "complete" [ref=f1e2546]
+              - row [ref=f1e2548]:
+                - cell [ref=f1e2549]:
+                  - button "Trial 381" [ref=f1e2550] [cursor=pointer]
+                - cell "model/view = sequence epochs = 5 max_seconds = 674" [ref=f1e2551]: model/view = sequenceepochs = 5max_seconds = 674
+                - cell "3.3671" [ref=f1e2552]
+                - cell "—" [ref=f1e2553]
+                - cell "timeout" [ref=f1e2554]
+              - row [ref=f1e2556]:
+                - cell [ref=f1e2557]:
+                  - button "Trial 380" [ref=f1e2558] [cursor=pointer]
+                - cell "model/view = memory epochs = 2 max_seconds = 1004" [ref=f1e2559]: model/view = memoryepochs = 2max_seconds = 1004
+                - cell "3.362" [ref=f1e2560]
+                - cell "3.1124" [ref=f1e2561]
+                - cell "complete" [ref=f1e2562]
+              - row [ref=f1e2564]:
+                - cell [ref=f1e2565]:
+                  - button "Trial 379" [ref=f1e2566] [cursor=pointer]
+                - cell "model/view = walks epochs = 2 max_seconds = 841" [ref=f1e2567]: model/view = walksepochs = 2max_seconds = 841
+                - cell "3.4975" [ref=f1e2568]
+                - cell "3.5736" [ref=f1e2569]
+                - cell "complete" [ref=f1e2570]
+              - row [ref=f1e2572]:
+                - cell [ref=f1e2573]:
+                  - button "Trial 378" [ref=f1e2574] [cursor=pointer]
+                - cell "model/view = signal epochs = 2 max_seconds = 1103" [ref=f1e2575]: model/view = signalepochs = 2max_seconds = 1103
+                - cell "3.4862" [ref=f1e2576]
+                - cell "3.7149" [ref=f1e2577]
+                - cell "complete" [ref=f1e2578]
+              - row [ref=f1e2580]:
+                - cell [ref=f1e2581]:
+                  - button "Trial 377" [ref=f1e2582] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 749" [ref=f1e2583]: model/view = event_graphepochs = 1max_seconds = 749
+                - cell "3.2629" [ref=f1e2584]
+                - cell "3.3688" [ref=f1e2585]
+                - cell "complete" [ref=f1e2586]
+              - row [ref=f1e2588]:
+                - cell [ref=f1e2589]:
+                  - button "Trial 376" [ref=f1e2590] [cursor=pointer]
+                - cell "model/view = walks epochs = 3 max_seconds = 1183" [ref=f1e2591]: model/view = walksepochs = 3max_seconds = 1183
+                - cell "3.4658" [ref=f1e2592]
+                - cell "3.3453" [ref=f1e2593]
+                - cell "complete" [ref=f1e2594]
+              - row [ref=f1e2596]:
+                - cell [ref=f1e2597]:
+                  - button "Trial 375" [ref=f1e2598] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 2 max_seconds = 1026" [ref=f1e2599]: model/view = event_graphepochs = 2max_seconds = 1026
+                - cell "3.1876" [ref=f1e2600]
+                - cell "3.3961" [ref=f1e2601]
+                - cell "complete" [ref=f1e2602]
+              - row [ref=f1e2604]:
+                - cell [ref=f1e2605]:
+                  - button "Trial 374" [ref=f1e2606] [cursor=pointer]
+                - cell "model/view = projection epochs = 1 max_seconds = 678" [ref=f1e2607]: model/view = projectionepochs = 1max_seconds = 678
+                - cell "3.393" [ref=f1e2608]
+                - cell "3.233" [ref=f1e2609]
+                - cell "complete" [ref=f1e2610]
+              - row [ref=f1e2612]:
+                - cell [ref=f1e2613]:
+                  - button "Trial 373" [ref=f1e2614] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 5 max_seconds = 720" [ref=f1e2615]: model/view = event_graphepochs = 5max_seconds = 720
+                - cell "3.0699" [ref=f1e2616]
+                - cell "3.0653" [ref=f1e2617]
+                - cell "complete" [ref=f1e2618]
+              - row [ref=f1e2620]:
+                - cell [ref=f1e2621]:
+                  - button "Trial 372" [ref=f1e2622] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 4 max_seconds = 1165" [ref=f1e2623]: model/view = event_graphepochs = 4max_seconds = 1165
+                - cell "3.3828" [ref=f1e2624]
+                - cell "3.0362" [ref=f1e2625]
+                - cell "complete" [ref=f1e2626]
+              - row [ref=f1e2628]:
+                - cell [ref=f1e2629]:
+                  - button "Trial 371" [ref=f1e2630] [cursor=pointer]
+                - cell "model/view = memory epochs = 2 max_seconds = 937" [ref=f1e2631]: model/view = memoryepochs = 2max_seconds = 937
+                - cell "3.4253" [ref=f1e2632]
+                - cell "3.202" [ref=f1e2633]
+                - cell "complete" [ref=f1e2634]
+              - row [ref=f1e2636]:
+                - cell [ref=f1e2637]:
+                  - button "Trial 370" [ref=f1e2638] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 1 max_seconds = 681" [ref=f1e2639]: model/view = snapshotepochs = 1max_seconds = 681
+                - cell "2.3328" [ref=f1e2640]
+                - cell "3.0657" [ref=f1e2641]
+                - cell "complete" [ref=f1e2642]
+              - row [ref=f1e2644]:
+                - cell [ref=f1e2645]:
+                  - button "Trial 369" [ref=f1e2646] [cursor=pointer]
+                - cell "model/view = affinity epochs = 4 max_seconds = 957" [ref=f1e2647]: model/view = affinityepochs = 4max_seconds = 957
+                - cell "3.463" [ref=f1e2648]
+                - cell "3.61" [ref=f1e2649]
+                - cell "complete" [ref=f1e2650]
+              - row [ref=f1e2652]:
+                - cell [ref=f1e2653]:
+                  - button "Trial 368" [ref=f1e2654] [cursor=pointer]
+                - cell "model/view = tree epochs = 1 max_seconds = 1129" [ref=f1e2655]: model/view = treeepochs = 1max_seconds = 1129
+                - cell "3.4357" [ref=f1e2656]
+                - cell "3.6662" [ref=f1e2657]
+                - cell "complete" [ref=f1e2658]
+              - row [ref=f1e2660]:
+                - cell [ref=f1e2661]:
+                  - button "Trial 367" [ref=f1e2662] [cursor=pointer]
+                - cell "model/view = mixed epochs = 2 max_seconds = 732" [ref=f1e2663]: model/view = mixedepochs = 2max_seconds = 732
+                - cell "2.1099" [ref=f1e2664]
+                - cell "—" [ref=f1e2665]
+                - cell "timeout" [ref=f1e2666]
+              - row [ref=f1e2668]:
+                - cell [ref=f1e2669]:
+                  - button "Trial 366" [ref=f1e2670] [cursor=pointer]
+                - cell "model/view = memory epochs = 4 max_seconds = 944" [ref=f1e2671]: model/view = memoryepochs = 4max_seconds = 944
+                - cell "3.3873" [ref=f1e2672]
+                - cell "—" [ref=f1e2673]
+                - cell "timeout" [ref=f1e2674]
+              - row [ref=f1e2676]:
+                - cell [ref=f1e2677]:
+                  - button "Trial 365" [ref=f1e2678] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 3 max_seconds = 1031" [ref=f1e2679]: model/view = event_graphepochs = 3max_seconds = 1031
+                - cell "3.3481" [ref=f1e2680]
+                - cell "3.229" [ref=f1e2681]
+                - cell "complete" [ref=f1e2682]
+              - row [ref=f1e2684]:
+                - cell [ref=f1e2685]:
+                  - button "Trial 364" [ref=f1e2686] [cursor=pointer]
+                - cell "model/view = signal epochs = 3 max_seconds = 884" [ref=f1e2687]: model/view = signalepochs = 3max_seconds = 884
+                - cell "3.4696" [ref=f1e2688]
+                - cell "3.6864" [ref=f1e2689]
+                - cell "complete" [ref=f1e2690]
+              - row [ref=f1e2692]:
+                - cell [ref=f1e2693]:
+                  - button "Trial 363" [ref=f1e2694] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 2 max_seconds = 931" [ref=f1e2695]: model/view = snapshotepochs = 2max_seconds = 931
+                - cell "2.1334" [ref=f1e2696]
+                - cell "2.9079" [ref=f1e2697]
+                - cell "complete" [ref=f1e2698]
+              - row [ref=f1e2700]:
+                - cell [ref=f1e2701]:
+                  - button "Trial 362" [ref=f1e2702] [cursor=pointer]
+                - cell "model/view = memory epochs = 2 max_seconds = 775" [ref=f1e2703]: model/view = memoryepochs = 2max_seconds = 775
+                - cell "3.4415" [ref=f1e2704]
+                - cell "3.0998" [ref=f1e2705]
+                - cell "complete" [ref=f1e2706]
+              - row [ref=f1e2708]:
+                - cell [ref=f1e2709]:
+                  - button "Trial 361" [ref=f1e2710] [cursor=pointer]
+                - cell "model/view = sequence epochs = 3 max_seconds = 1076" [ref=f1e2711]: model/view = sequenceepochs = 3max_seconds = 1076
+                - cell "3.4475" [ref=f1e2712]
+                - cell "3.4438" [ref=f1e2713]
+                - cell "complete" [ref=f1e2714]
+              - row [ref=f1e2716]:
+                - cell [ref=f1e2717]:
+                  - button "Trial 360" [ref=f1e2718] [cursor=pointer]
+                - cell "model/view = mixed epochs = 5 max_seconds = 799" [ref=f1e2719]: model/view = mixedepochs = 5max_seconds = 799
+                - cell "2.4022" [ref=f1e2720]
+                - cell "—" [ref=f1e2721]
+                - cell "timeout" [ref=f1e2722]
+              - row [ref=f1e2724]:
+                - cell [ref=f1e2725]:
+                  - button "Trial 359" [ref=f1e2726] [cursor=pointer]
+                - cell "model/view = projection epochs = 3 max_seconds = 792" [ref=f1e2727]: model/view = projectionepochs = 3max_seconds = 792
+                - cell "3.481" [ref=f1e2728]
+                - cell "3.4257" [ref=f1e2729]
+                - cell "complete" [ref=f1e2730]
+              - row [ref=f1e2732]:
+                - cell [ref=f1e2733]:
+                  - button "Trial 358" [ref=f1e2734] [cursor=pointer]
+                - cell "model/view = affinity epochs = 5 max_seconds = 1107" [ref=f1e2735]: model/view = affinityepochs = 5max_seconds = 1107
+                - cell "3.4815" [ref=f1e2736]
+                - cell "—" [ref=f1e2737]
+                - cell "timeout" [ref=f1e2738]
+              - row [ref=f1e2740]:
+                - cell [ref=f1e2741]:
+                  - button "Trial 357" [ref=f1e2742] [cursor=pointer]
+                - cell "model/view = affinity epochs = 3 max_seconds = 842" [ref=f1e2743]: model/view = affinityepochs = 3max_seconds = 842
+                - cell "3.4688" [ref=f1e2744]
+                - cell "3.623" [ref=f1e2745]
+                - cell "complete" [ref=f1e2746]
+              - row [ref=f1e2748]:
+                - cell [ref=f1e2749]:
+                  - button "Trial 356" [ref=f1e2750] [cursor=pointer]
+                - cell "model/view = memory epochs = 3 max_seconds = 863" [ref=f1e2751]: model/view = memoryepochs = 3max_seconds = 863
+                - cell "3.4688" [ref=f1e2752]
+                - cell "—" [ref=f1e2753]
+                - cell "timeout" [ref=f1e2754]
+              - row [ref=f1e2756]:
+                - cell [ref=f1e2757]:
+                  - button "Trial 355" [ref=f1e2758] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 5 max_seconds = 995" [ref=f1e2759]: model/view = event_graphepochs = 5max_seconds = 995
+                - cell "3.3689" [ref=f1e2760]
+                - cell "3.2432" [ref=f1e2761]
+                - cell "complete" [ref=f1e2762]
+              - row [ref=f1e2764]:
+                - cell [ref=f1e2765]:
+                  - button "Trial 354" [ref=f1e2766] [cursor=pointer]
+                - cell "model/view = walks epochs = 4 max_seconds = 868" [ref=f1e2767]: model/view = walksepochs = 4max_seconds = 868
+                - cell "3.4759" [ref=f1e2768]
+                - cell "—" [ref=f1e2769]
+                - cell "timeout" [ref=f1e2770]
+              - row [ref=f1e2772]:
+                - cell [ref=f1e2773]:
+                  - button "Trial 353" [ref=f1e2774] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 1 max_seconds = 805" [ref=f1e2775]: model/view = snapshotepochs = 1max_seconds = 805
+                - cell "2.4411" [ref=f1e2776]
+                - cell "2.5036" [ref=f1e2777]
+                - cell "complete" [ref=f1e2778]
+              - row [ref=f1e2780]:
+                - cell [ref=f1e2781]:
+                  - button "Trial 352" [ref=f1e2782] [cursor=pointer]
+                - cell "model/view = walks epochs = 5 max_seconds = 1102" [ref=f1e2783]: model/view = walksepochs = 5max_seconds = 1102
+                - cell "3.4611" [ref=f1e2784]
+                - cell "3.4689" [ref=f1e2785]
+                - cell "complete" [ref=f1e2786]
+              - row [ref=f1e2788]:
+                - cell [ref=f1e2789]:
+                  - button "Trial 351" [ref=f1e2790] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 1 max_seconds = 921" [ref=f1e2791]: model/view = snapshotepochs = 1max_seconds = 921
+                - cell "2.2465" [ref=f1e2792]
+                - cell "2.2108" [ref=f1e2793]
+                - cell "complete" [ref=f1e2794]
+              - row [ref=f1e2796]:
+                - cell [ref=f1e2797]:
+                  - button "Trial 350" [ref=f1e2798] [cursor=pointer]
+                - cell "model/view = projection epochs = 2 max_seconds = 857" [ref=f1e2799]: model/view = projectionepochs = 2max_seconds = 857
+                - cell "3.4711" [ref=f1e2800]
+                - cell "3.3196" [ref=f1e2801]
+                - cell "complete" [ref=f1e2802]
+              - row [ref=f1e2804]:
+                - cell [ref=f1e2805]:
+                  - button "Trial 349" [ref=f1e2806] [cursor=pointer]
+                - cell "model/view = mixed epochs = 3 max_seconds = 678" [ref=f1e2807]: model/view = mixedepochs = 3max_seconds = 678
+                - cell "2.4779" [ref=f1e2808]
+                - cell "2.0227" [ref=f1e2809]
+                - cell "complete" [ref=f1e2810]
+              - row [ref=f1e2812]:
+                - cell [ref=f1e2813]:
+                  - button "Trial 348" [ref=f1e2814] [cursor=pointer]
+                - cell "model/view = projection epochs = 2 max_seconds = 884" [ref=f1e2815]: model/view = projectionepochs = 2max_seconds = 884
+                - cell "3.507" [ref=f1e2816]
+                - cell "3.4789" [ref=f1e2817]
+                - cell "complete" [ref=f1e2818]
+              - row [ref=f1e2820]:
+                - cell [ref=f1e2821]:
+                  - button "Trial 347" [ref=f1e2822] [cursor=pointer]
+                - cell "model/view = mixed epochs = 3 max_seconds = 1092" [ref=f1e2823]: model/view = mixedepochs = 3max_seconds = 1092
+                - cell "2.9454" [ref=f1e2824]
+                - cell "2.0202" [ref=f1e2825]
+                - cell "complete" [ref=f1e2826]
+              - row [ref=f1e2828]:
+                - cell [ref=f1e2829]:
+                  - button "Trial 346" [ref=f1e2830] [cursor=pointer]
+                - cell "model/view = mixed epochs = 4 max_seconds = 1003" [ref=f1e2831]: model/view = mixedepochs = 4max_seconds = 1003
+                - cell "2.9621" [ref=f1e2832]
+                - cell "2.6824" [ref=f1e2833]
+                - cell "complete" [ref=f1e2834]
+              - row [ref=f1e2836]:
+                - cell [ref=f1e2837]:
+                  - button "Trial 345" [ref=f1e2838] [cursor=pointer]
+                - cell "model/view = affinity epochs = 5 max_seconds = 1008" [ref=f1e2839]: model/view = affinityepochs = 5max_seconds = 1008
+                - cell "3.464" [ref=f1e2840]
+                - cell "—" [ref=f1e2841]
+                - cell "timeout" [ref=f1e2842]
+              - row [ref=f1e2844]:
+                - cell [ref=f1e2845]:
+                  - button "Trial 344" [ref=f1e2846] [cursor=pointer]
+                - cell "model/view = walks epochs = 1 max_seconds = 600" [ref=f1e2847]: model/view = walksepochs = 1max_seconds = 600
+                - cell "3.4636" [ref=f1e2848]
+                - cell "3.4311" [ref=f1e2849]
+                - cell "complete" [ref=f1e2850]
+              - row [ref=f1e2852]:
+                - cell [ref=f1e2853]:
+                  - button "Trial 343" [ref=f1e2854] [cursor=pointer]
+                - cell "model/view = tree epochs = 5 max_seconds = 966" [ref=f1e2855]: model/view = treeepochs = 5max_seconds = 966
+                - cell "3.3607" [ref=f1e2856]
+                - cell "3.0916" [ref=f1e2857]
+                - cell "complete" [ref=f1e2858]
+              - row [ref=f1e2860]:
+                - cell [ref=f1e2861]:
+                  - button "Trial 342" [ref=f1e2862] [cursor=pointer]
+                - cell "model/view = signal epochs = 4 max_seconds = 1075" [ref=f1e2863]: model/view = signalepochs = 4max_seconds = 1075
+                - cell "3.4554" [ref=f1e2864]
+                - cell "3.8173" [ref=f1e2865]
+                - cell "complete" [ref=f1e2866]
+              - row [ref=f1e2868]:
+                - cell [ref=f1e2869]:
+                  - button "Trial 341" [ref=f1e2870] [cursor=pointer]
+                - cell "model/view = projection epochs = 5 max_seconds = 686" [ref=f1e2871]: model/view = projectionepochs = 5max_seconds = 686
+                - cell "3.4025" [ref=f1e2872]
+                - cell "—" [ref=f1e2873]
+                - cell "timeout" [ref=f1e2874]
+              - row [ref=f1e2876]:
+                - cell [ref=f1e2877]:
+                  - button "Trial 340" [ref=f1e2878] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 4 max_seconds = 982" [ref=f1e2879]: model/view = event_graphepochs = 4max_seconds = 982
+                - cell "3.4273" [ref=f1e2880]
+                - cell "3.3485" [ref=f1e2881]
+                - cell "complete" [ref=f1e2882]
+              - row [ref=f1e2884]:
+                - cell [ref=f1e2885]:
+                  - button "Trial 339" [ref=f1e2886] [cursor=pointer]
+                - cell "model/view = projection epochs = 4 max_seconds = 936" [ref=f1e2887]: model/view = projectionepochs = 4max_seconds = 936
+                - cell "3.4813" [ref=f1e2888]
+                - cell "—" [ref=f1e2889]
+                - cell "timeout" [ref=f1e2890]
+              - row [ref=f1e2892]:
+                - cell [ref=f1e2893]:
+                  - button "Trial 338" [ref=f1e2894] [cursor=pointer]
+                - cell "model/view = signal epochs = 1 max_seconds = 767" [ref=f1e2895]: model/view = signalepochs = 1max_seconds = 767
+                - cell "3.4468" [ref=f1e2896]
+                - cell "4.231" [ref=f1e2897]
+                - cell "complete" [ref=f1e2898]
+              - row [ref=f1e2900]:
+                - cell [ref=f1e2901]:
+                  - button "Trial 337" [ref=f1e2902] [cursor=pointer]
+                - cell "model/view = projection epochs = 5 max_seconds = 1144" [ref=f1e2903]: model/view = projectionepochs = 5max_seconds = 1144
+                - cell "3.4468" [ref=f1e2904]
+                - cell "—" [ref=f1e2905]
+                - cell "timeout" [ref=f1e2906]
+              - row [ref=f1e2908]:
+                - cell [ref=f1e2909]:
+                  - button "Trial 336" [ref=f1e2910] [cursor=pointer]
+                - cell "model/view = sequence epochs = 5 max_seconds = 1019" [ref=f1e2911]: model/view = sequenceepochs = 5max_seconds = 1019
+                - cell "3.4025" [ref=f1e2912]
+                - cell "3.2403" [ref=f1e2913]
+                - cell "complete" [ref=f1e2914]
+              - row [ref=f1e2916]:
+                - cell [ref=f1e2917]:
+                  - button "Trial 335" [ref=f1e2918] [cursor=pointer]
+                - cell "model/view = signal epochs = 3 max_seconds = 1110" [ref=f1e2919]: model/view = signalepochs = 3max_seconds = 1110
+                - cell "3.4862" [ref=f1e2920]
+                - cell "3.9703" [ref=f1e2921]
+                - cell "complete" [ref=f1e2922]
+              - row [ref=f1e2924]:
+                - cell [ref=f1e2925]:
+                  - button "Trial 334" [ref=f1e2926] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 5 max_seconds = 724" [ref=f1e2927]: model/view = snapshotepochs = 5max_seconds = 724
+                - cell "1.9349" [ref=f1e2928]
+                - cell "—" [ref=f1e2929]
+                - cell "timeout" [ref=f1e2930]
+              - row [ref=f1e2932]:
+                - cell [ref=f1e2933]:
+                  - button "Trial 333" [ref=f1e2934] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 2 max_seconds = 798" [ref=f1e2935]: model/view = event_graphepochs = 2max_seconds = 798
+                - cell "3.3486" [ref=f1e2936]
+                - cell "3.8163" [ref=f1e2937]
+                - cell "complete" [ref=f1e2938]
+              - row [ref=f1e2940]:
+                - cell [ref=f1e2941]:
+                  - button "Trial 332" [ref=f1e2942] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 4 max_seconds = 806" [ref=f1e2943]: model/view = snapshotepochs = 4max_seconds = 806
+                - cell "2.0545" [ref=f1e2944]
+                - cell "—" [ref=f1e2945]
+                - cell "timeout" [ref=f1e2946]
+              - row [ref=f1e2948]:
+                - cell [ref=f1e2949]:
+                  - button "Trial 331" [ref=f1e2950] [cursor=pointer]
+                - cell "model/view = mixed epochs = 5 max_seconds = 647" [ref=f1e2951]: model/view = mixedepochs = 5max_seconds = 647
+                - cell "3.3592" [ref=f1e2952]
+                - cell "—" [ref=f1e2953]
+                - cell "timeout" [ref=f1e2954]
+              - row [ref=f1e2956]:
+                - cell [ref=f1e2957]:
+                  - button "Trial 330" [ref=f1e2958] [cursor=pointer]
+                - cell "model/view = sequence epochs = 3 max_seconds = 1094" [ref=f1e2959]: model/view = sequenceepochs = 3max_seconds = 1094
+                - cell "3.3753" [ref=f1e2960]
+                - cell "—" [ref=f1e2961]
+                - cell "timeout" [ref=f1e2962]
+              - row [ref=f1e2964]:
+                - cell [ref=f1e2965]:
+                  - button "Trial 329" [ref=f1e2966] [cursor=pointer]
+                - cell "model/view = mixed epochs = 2 max_seconds = 731" [ref=f1e2967]: model/view = mixedepochs = 2max_seconds = 731
+                - cell "3.3199" [ref=f1e2968]
+                - cell "3.3053" [ref=f1e2969]
+                - cell "complete" [ref=f1e2970]
+              - row [ref=f1e2972]:
+                - cell [ref=f1e2973]:
+                  - button "Trial 328" [ref=f1e2974] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 3 max_seconds = 741" [ref=f1e2975]: model/view = snapshotepochs = 3max_seconds = 741
+                - cell "2.2527" [ref=f1e2976]
+                - cell "—" [ref=f1e2977]
+                - cell "timeout" [ref=f1e2978]
+              - row [ref=f1e2980]:
+                - cell [ref=f1e2981]:
+                  - button "Trial 327" [ref=f1e2982] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 2 max_seconds = 621" [ref=f1e2983]: model/view = snapshotepochs = 2max_seconds = 621
+                - cell "2.2602" [ref=f1e2984]
+                - cell "—" [ref=f1e2985]
+                - cell "timeout" [ref=f1e2986]
+              - row [ref=f1e2988]:
+                - cell [ref=f1e2989]:
+                  - button "Trial 326" [ref=f1e2990] [cursor=pointer]
+                - cell "model/view = memory epochs = 1 max_seconds = 1093" [ref=f1e2991]: model/view = memoryepochs = 1max_seconds = 1093
+                - cell "3.4406" [ref=f1e2992]
+                - cell "3.8569" [ref=f1e2993]
+                - cell "complete" [ref=f1e2994]
+              - row [ref=f1e2996]:
+                - cell [ref=f1e2997]:
+                  - button "Trial 325" [ref=f1e2998] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 2 max_seconds = 897" [ref=f1e2999]: model/view = event_graphepochs = 2max_seconds = 897
+                - cell "3.3521" [ref=f1e3000]
+                - cell "3.2893" [ref=f1e3001]
+                - cell "complete" [ref=f1e3002]
+              - row [ref=f1e3004]:
+                - cell [ref=f1e3005]:
+                  - button "Trial 324" [ref=f1e3006] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 4 max_seconds = 1137" [ref=f1e3007]: model/view = event_graphepochs = 4max_seconds = 1137
+                - cell "3.3878" [ref=f1e3008]
+                - cell "3.146" [ref=f1e3009]
+                - cell "complete" [ref=f1e3010]
+              - row [ref=f1e3012]:
+                - cell [ref=f1e3013]:
+                  - button "Trial 323" [ref=f1e3014] [cursor=pointer]
+                - cell "model/view = tree epochs = 4 max_seconds = 775" [ref=f1e3015]: model/view = treeepochs = 4max_seconds = 775
+                - cell "3.4667" [ref=f1e3016]
+                - cell "3.4342" [ref=f1e3017]
+                - cell "complete" [ref=f1e3018]
+              - row [ref=f1e3020]:
+                - cell [ref=f1e3021]:
+                  - button "Trial 322" [ref=f1e3022] [cursor=pointer]
+                - cell "model/view = sequence epochs = 4 max_seconds = 658" [ref=f1e3023]: model/view = sequenceepochs = 4max_seconds = 658
+                - cell "3.3742" [ref=f1e3024]
+                - cell "3.1299" [ref=f1e3025]
+                - cell "complete" [ref=f1e3026]
+              - row [ref=f1e3028]:
+                - cell [ref=f1e3029]:
+                  - button "Trial 321" [ref=f1e3030] [cursor=pointer]
+                - cell "model/view = tree epochs = 2 max_seconds = 846" [ref=f1e3031]: model/view = treeepochs = 2max_seconds = 846
+                - cell "3.2884" [ref=f1e3032]
+                - cell "3.6856" [ref=f1e3033]
+                - cell "complete" [ref=f1e3034]
+              - row [ref=f1e3036]:
+                - cell [ref=f1e3037]:
+                  - button "Trial 320" [ref=f1e3038] [cursor=pointer]
+                - cell "model/view = projection epochs = 4 max_seconds = 1167" [ref=f1e3039]: model/view = projectionepochs = 4max_seconds = 1167
+                - cell "3.4194" [ref=f1e3040]
+                - cell "3.2263" [ref=f1e3041]
+                - cell "complete" [ref=f1e3042]
+              - row [ref=f1e3044]:
+                - cell [ref=f1e3045]:
+                  - button "Trial 319" [ref=f1e3046] [cursor=pointer]
+                - cell "model/view = affinity epochs = 5 max_seconds = 1131" [ref=f1e3047]: model/view = affinityepochs = 5max_seconds = 1131
+                - cell "3.441" [ref=f1e3048]
+                - cell "—" [ref=f1e3049]
+                - cell "timeout" [ref=f1e3050]
+              - row [ref=f1e3052]:
+                - cell [ref=f1e3053]:
+                  - button "Trial 318" [ref=f1e3054] [cursor=pointer]
+                - cell "model/view = projection epochs = 3 max_seconds = 1125" [ref=f1e3055]: model/view = projectionepochs = 3max_seconds = 1125
+                - cell "3.4271" [ref=f1e3056]
+                - cell "3.5246" [ref=f1e3057]
+                - cell "complete" [ref=f1e3058]
+              - row [ref=f1e3060]:
+                - cell [ref=f1e3061]:
+                  - button "Trial 317" [ref=f1e3062] [cursor=pointer]
+                - cell "model/view = signal epochs = 1 max_seconds = 1038" [ref=f1e3063]: model/view = signalepochs = 1max_seconds = 1038
+                - cell "3.4373" [ref=f1e3064]
+                - cell "4.0446" [ref=f1e3065]
+                - cell "complete" [ref=f1e3066]
+              - row [ref=f1e3068]:
+                - cell [ref=f1e3069]:
+                  - button "Trial 316" [ref=f1e3070] [cursor=pointer]
+                - cell "model/view = projection epochs = 3 max_seconds = 706" [ref=f1e3071]: model/view = projectionepochs = 3max_seconds = 706
+                - cell "3.38" [ref=f1e3072]
+                - cell "—" [ref=f1e3073]
+                - cell "timeout" [ref=f1e3074]
+              - row [ref=f1e3076]:
+                - cell [ref=f1e3077]:
+                  - button "Trial 315" [ref=f1e3078] [cursor=pointer]
+                - cell "model/view = memory epochs = 5 max_seconds = 1010" [ref=f1e3079]: model/view = memoryepochs = 5max_seconds = 1010
+                - cell "3.4262" [ref=f1e3080]
+                - cell "—" [ref=f1e3081]
+                - cell "timeout" [ref=f1e3082]
+              - row [ref=f1e3084]:
+                - cell [ref=f1e3085]:
+                  - button "Trial 314" [ref=f1e3086] [cursor=pointer]
+                - cell "model/view = mixed epochs = 5 max_seconds = 790" [ref=f1e3087]: model/view = mixedepochs = 5max_seconds = 790
+                - cell "3.3784" [ref=f1e3088]
+                - cell "2.6175" [ref=f1e3089]
+                - cell "complete" [ref=f1e3090]
+              - row [ref=f1e3092]:
+                - cell [ref=f1e3093]:
+                  - button "Trial 313" [ref=f1e3094] [cursor=pointer]
+                - cell "model/view = memory epochs = 1 max_seconds = 816" [ref=f1e3095]: model/view = memoryepochs = 1max_seconds = 816
+                - cell "3.4179" [ref=f1e3096]
+                - cell "3.6319" [ref=f1e3097]
+                - cell "complete" [ref=f1e3098]
+              - row [ref=f1e3100]:
+                - cell [ref=f1e3101]:
+                  - button "Trial 312" [ref=f1e3102] [cursor=pointer]
+                - cell "model/view = memory epochs = 2 max_seconds = 854" [ref=f1e3103]: model/view = memoryepochs = 2max_seconds = 854
+                - cell "3.4241" [ref=f1e3104]
+                - cell "3.2615" [ref=f1e3105]
+                - cell "complete" [ref=f1e3106]
+              - row [ref=f1e3108]:
+                - cell [ref=f1e3109]:
+                  - button "Trial 311" [ref=f1e3110] [cursor=pointer]
+                - cell "model/view = sequence epochs = 5 max_seconds = 870" [ref=f1e3111]: model/view = sequenceepochs = 5max_seconds = 870
+                - cell "3.3498" [ref=f1e3112]
+                - cell "3.0864" [ref=f1e3113]
+                - cell "complete" [ref=f1e3114]
+              - row [ref=f1e3116]:
+                - cell [ref=f1e3117]:
+                  - button "Trial 310" [ref=f1e3118] [cursor=pointer]
+                - cell "model/view = affinity epochs = 1 max_seconds = 698" [ref=f1e3119]: model/view = affinityepochs = 1max_seconds = 698
+                - cell "3.4179" [ref=f1e3120]
+                - cell "3.7223" [ref=f1e3121]
+                - cell "complete" [ref=f1e3122]
+              - row [ref=f1e3124]:
+                - cell [ref=f1e3125]:
+                  - button "Trial 309" [ref=f1e3126] [cursor=pointer]
+                - cell "model/view = sequence epochs = 3 max_seconds = 1051" [ref=f1e3127]: model/view = sequenceepochs = 3max_seconds = 1051
+                - cell "3.3544" [ref=f1e3128]
+                - cell "3.163" [ref=f1e3129]
+                - cell "complete" [ref=f1e3130]
+              - row [ref=f1e3132]:
+                - cell [ref=f1e3133]:
+                  - button "Trial 308" [ref=f1e3134] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 3 max_seconds = 634" [ref=f1e3135]: model/view = snapshotepochs = 3max_seconds = 634
+                - cell "2.7066" [ref=f1e3136]
+                - cell "—" [ref=f1e3137]
+                - cell "timeout" [ref=f1e3138]
+              - row [ref=f1e3140]:
+                - cell [ref=f1e3141]:
+                  - button "Trial 307" [ref=f1e3142] [cursor=pointer]
+                - cell "model/view = mixed epochs = 5 max_seconds = 1159" [ref=f1e3143]: model/view = mixedepochs = 5max_seconds = 1159
+                - cell "3.425" [ref=f1e3144]
+                - cell "3.5707" [ref=f1e3145]
+                - cell "complete" [ref=f1e3146]
+              - row [ref=f1e3148]:
+                - cell [ref=f1e3149]:
+                  - button "Trial 306" [ref=f1e3150] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 3 max_seconds = 715" [ref=f1e3151]: model/view = snapshotepochs = 3max_seconds = 715
+                - cell "1.8873" [ref=f1e3152]
+                - cell "—" [ref=f1e3153]
+                - cell "timeout" [ref=f1e3154]
+              - row [ref=f1e3156]:
+                - cell [ref=f1e3157]:
+                  - button "Trial 305" [ref=f1e3158] [cursor=pointer]
+                - cell "model/view = projection epochs = 1 max_seconds = 1160" [ref=f1e3159]: model/view = projectionepochs = 1max_seconds = 1160
+                - cell "3.4" [ref=f1e3160]
+                - cell "3.5301" [ref=f1e3161]
+                - cell "complete" [ref=f1e3162]
+              - row [ref=f1e3164]:
+                - cell [ref=f1e3165]:
+                  - button "Trial 304" [ref=f1e3166] [cursor=pointer]
+                - cell "model/view = tree epochs = 3 max_seconds = 846" [ref=f1e3167]: model/view = treeepochs = 3max_seconds = 846
+                - cell "3.2481" [ref=f1e3168]
+                - cell "3.2099" [ref=f1e3169]
+                - cell "complete" [ref=f1e3170]
+              - row [ref=f1e3172]:
+                - cell [ref=f1e3173]:
+                  - button "Trial 303" [ref=f1e3174] [cursor=pointer]
+                - cell "model/view = signal epochs = 2 max_seconds = 739" [ref=f1e3175]: model/view = signalepochs = 2max_seconds = 739
+                - cell "3.4228" [ref=f1e3176]
+                - cell "3.6802" [ref=f1e3177]
+                - cell "complete" [ref=f1e3178]
+              - row [ref=f1e3180]:
+                - cell [ref=f1e3181]:
+                  - button "Trial 302" [ref=f1e3182] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 2 max_seconds = 843" [ref=f1e3183]: model/view = event_graphepochs = 2max_seconds = 843
+                - cell "3.4119" [ref=f1e3184]
+                - cell "3.2455" [ref=f1e3185]
+                - cell "complete" [ref=f1e3186]
+              - row [ref=f1e3188]:
+                - cell [ref=f1e3189]:
+                  - button "Trial 301" [ref=f1e3190] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 3 max_seconds = 1147" [ref=f1e3191]: model/view = event_graphepochs = 3max_seconds = 1147
+                - cell "3.3935" [ref=f1e3192]
+                - cell "3.1176" [ref=f1e3193]
+                - cell "complete" [ref=f1e3194]
+              - row [ref=f1e3196]:
+                - cell [ref=f1e3197]:
+                  - button "Trial 300" [ref=f1e3198] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 2 max_seconds = 1129" [ref=f1e3199]: model/view = event_graphepochs = 2max_seconds = 1129
+                - cell "3.4269" [ref=f1e3200]
+                - cell "3.599" [ref=f1e3201]
+                - cell "complete" [ref=f1e3202]
+              - row [ref=f1e3204]:
+                - cell [ref=f1e3205]:
+                  - button "Trial 299" [ref=f1e3206] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 3 max_seconds = 1185" [ref=f1e3207]: model/view = event_graphepochs = 3max_seconds = 1185
+                - cell "3.4239" [ref=f1e3208]
+                - cell "3.1559" [ref=f1e3209]
+                - cell "complete" [ref=f1e3210]
+              - row [ref=f1e3212]:
+                - cell [ref=f1e3213]:
+                  - button "Trial 298" [ref=f1e3214] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 4 max_seconds = 711" [ref=f1e3215]: model/view = snapshotepochs = 4max_seconds = 711
+                - cell "1.8205" [ref=f1e3216]
+                - cell "—" [ref=f1e3217]
+                - cell "timeout" [ref=f1e3218]
+              - row [ref=f1e3220]:
+                - cell [ref=f1e3221]:
+                  - button "Trial 297" [ref=f1e3222] [cursor=pointer]
+                - cell "model/view = memory epochs = 2 max_seconds = 663" [ref=f1e3223]: model/view = memoryepochs = 2max_seconds = 663
+                - cell "3.4203" [ref=f1e3224]
+                - cell "—" [ref=f1e3225]
+                - cell "timeout" [ref=f1e3226]
+              - row [ref=f1e3228]:
+                - cell [ref=f1e3229]:
+                  - button "Trial 296" [ref=f1e3230] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 1053" [ref=f1e3231]: model/view = event_graphepochs = 1max_seconds = 1053
+                - cell "3.4219" [ref=f1e3232]
+                - cell "3.673" [ref=f1e3233]
+                - cell "complete" [ref=f1e3234]
+              - row [ref=f1e3236]:
+                - cell [ref=f1e3237]:
+                  - button "Trial 295" [ref=f1e3238] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 4 max_seconds = 1024" [ref=f1e3239]: model/view = event_graphepochs = 4max_seconds = 1024
+                - cell "3.4312" [ref=f1e3240]
+                - cell "3.12" [ref=f1e3241]
+                - cell "complete" [ref=f1e3242]
+              - row [ref=f1e3244]:
+                - cell [ref=f1e3245]:
+                  - button "Trial 294" [ref=f1e3246] [cursor=pointer]
+                - cell "model/view = walks epochs = 2 max_seconds = 981" [ref=f1e3247]: model/view = walksepochs = 2max_seconds = 981
+                - cell "3.3579" [ref=f1e3248]
+                - cell "3.4284" [ref=f1e3249]
+                - cell "complete" [ref=f1e3250]
+              - row [ref=f1e3252]:
+                - cell [ref=f1e3253]:
+                  - button "Trial 293" [ref=f1e3254] [cursor=pointer]
+                - cell "model/view = mixed epochs = 1 max_seconds = 994" [ref=f1e3255]: model/view = mixedepochs = 1max_seconds = 994
+                - cell "3.2291" [ref=f1e3256]
+                - cell "3.8208" [ref=f1e3257]
+                - cell "complete" [ref=f1e3258]
+              - row [ref=f1e3260]:
+                - cell [ref=f1e3261]:
+                  - button "Trial 292" [ref=f1e3262] [cursor=pointer]
+                - cell "model/view = tree epochs = 3 max_seconds = 982" [ref=f1e3263]: model/view = treeepochs = 3max_seconds = 982
+                - cell "3.4144" [ref=f1e3264]
+                - cell "3.1672" [ref=f1e3265]
+                - cell "complete" [ref=f1e3266]
+              - row [ref=f1e3268]:
+                - cell [ref=f1e3269]:
+                  - button "Trial 291" [ref=f1e3270] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 4 max_seconds = 1132" [ref=f1e3271]: model/view = event_graphepochs = 4max_seconds = 1132
+                - cell "3.4135" [ref=f1e3272]
+                - cell "3.5737" [ref=f1e3273]
+                - cell "complete" [ref=f1e3274]
+              - row [ref=f1e3276]:
+                - cell [ref=f1e3277]:
+                  - button "Trial 290" [ref=f1e3278] [cursor=pointer]
+                - cell "model/view = projection epochs = 1 max_seconds = 1021" [ref=f1e3279]: model/view = projectionepochs = 1max_seconds = 1021
+                - cell "3.3946" [ref=f1e3280]
+                - cell "3.3434" [ref=f1e3281]
+                - cell "complete" [ref=f1e3282]
+              - row [ref=f1e3284]:
+                - cell [ref=f1e3285]:
+                  - button "Trial 289" [ref=f1e3286] [cursor=pointer]
+                - cell "model/view = memory epochs = 1 max_seconds = 1195" [ref=f1e3287]: model/view = memoryepochs = 1max_seconds = 1195
+                - cell "3.3934" [ref=f1e3288]
+                - cell "3.4647" [ref=f1e3289]
+                - cell "complete" [ref=f1e3290]
+              - row [ref=f1e3292]:
+                - cell [ref=f1e3293]:
+                  - button "Trial 288" [ref=f1e3294] [cursor=pointer]
+                - cell "model/view = walks epochs = 1 max_seconds = 1003" [ref=f1e3295]: model/view = walksepochs = 1max_seconds = 1003
+                - cell "3.3781" [ref=f1e3296]
+                - cell "3.4995" [ref=f1e3297]
+                - cell "complete" [ref=f1e3298]
+              - row [ref=f1e3300]:
+                - cell [ref=f1e3301]:
+                  - button "Trial 287" [ref=f1e3302] [cursor=pointer]
+                - cell "model/view = memory epochs = 5 max_seconds = 1058" [ref=f1e3303]: model/view = memoryepochs = 5max_seconds = 1058
+                - cell "3.3958" [ref=f1e3304]
+                - cell "—" [ref=f1e3305]
+                - cell "timeout" [ref=f1e3306]
+              - row [ref=f1e3308]:
+                - cell [ref=f1e3309]:
+                  - button "Trial 286" [ref=f1e3310] [cursor=pointer]
+                - cell "model/view = projection epochs = 3 max_seconds = 726" [ref=f1e3311]: model/view = projectionepochs = 3max_seconds = 726
+                - cell "3.3784" [ref=f1e3312]
+                - cell "3.2395" [ref=f1e3313]
+                - cell "complete" [ref=f1e3314]
+              - row [ref=f1e3316]:
+                - cell [ref=f1e3317]:
+                  - button "Trial 285" [ref=f1e3318] [cursor=pointer]
+                - cell "model/view = signal epochs = 4 max_seconds = 1143" [ref=f1e3319]: model/view = signalepochs = 4max_seconds = 1143
+                - cell "3.4071" [ref=f1e3320]
+                - cell "3.9704" [ref=f1e3321]
+                - cell "complete" [ref=f1e3322]
+              - row [ref=f1e3324]:
+                - cell [ref=f1e3325]:
+                  - button "Trial 284" [ref=f1e3326] [cursor=pointer]
+                - cell "model/view = signal epochs = 4 max_seconds = 902" [ref=f1e3327]: model/view = signalepochs = 4max_seconds = 902
+                - cell "3.4074" [ref=f1e3328]
+                - cell "3.6496" [ref=f1e3329]
+                - cell "complete" [ref=f1e3330]
+              - row [ref=f1e3332]:
+                - cell [ref=f1e3333]:
+                  - button "Trial 283" [ref=f1e3334] [cursor=pointer]
+                - cell "model/view = sequence epochs = 3 max_seconds = 714" [ref=f1e3335]: model/view = sequenceepochs = 3max_seconds = 714
+                - cell "3.3577" [ref=f1e3336]
+                - cell "3.1932" [ref=f1e3337]
+                - cell "complete" [ref=f1e3338]
+              - row [ref=f1e3340]:
+                - cell [ref=f1e3341]:
+                  - button "Trial 282" [ref=f1e3342] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 653" [ref=f1e3343]: model/view = event_graphepochs = 1max_seconds = 653
+                - cell "3.3892" [ref=f1e3344]
+                - cell "3.5686" [ref=f1e3345]
+                - cell "complete" [ref=f1e3346]
+              - row [ref=f1e3348]:
+                - cell [ref=f1e3349]:
+                  - button "Trial 281" [ref=f1e3350] [cursor=pointer]
+                - cell "model/view = tree epochs = 4 max_seconds = 862" [ref=f1e3351]: model/view = treeepochs = 4max_seconds = 862
+                - cell "3.3461" [ref=f1e3352]
+                - cell "3.0385" [ref=f1e3353]
+                - cell "complete" [ref=f1e3354]
+              - row [ref=f1e3356]:
+                - cell [ref=f1e3357]:
+                  - button "Trial 280" [ref=f1e3358] [cursor=pointer]
+                - cell "model/view = tree epochs = 3 max_seconds = 1098" [ref=f1e3359]: model/view = treeepochs = 3max_seconds = 1098
+                - cell "3.3031" [ref=f1e3360]
+                - cell "3.4394" [ref=f1e3361]
+                - cell "complete" [ref=f1e3362]
+              - row [ref=f1e3364]:
+                - cell [ref=f1e3365]:
+                  - button "Trial 279" [ref=f1e3366] [cursor=pointer]
+                - cell "model/view = memory epochs = 4 max_seconds = 843" [ref=f1e3367]: model/view = memoryepochs = 4max_seconds = 843
+                - cell "3.3722" [ref=f1e3368]
+                - cell "—" [ref=f1e3369]
+                - cell "timeout" [ref=f1e3370]
+              - row [ref=f1e3372]:
+                - cell [ref=f1e3373]:
+                  - button "Trial 278" [ref=f1e3374] [cursor=pointer]
+                - cell "model/view = walks epochs = 3 max_seconds = 765" [ref=f1e3375]: model/view = walksepochs = 3max_seconds = 765
+                - cell "3.3669" [ref=f1e3376]
+                - cell "3.1508" [ref=f1e3377]
+                - cell "complete" [ref=f1e3378]
+              - row [ref=f1e3380]:
+                - cell [ref=f1e3381]:
+                  - button "Trial 277" [ref=f1e3382] [cursor=pointer]
+                - cell "model/view = sequence epochs = 2 max_seconds = 1038" [ref=f1e3383]: model/view = sequenceepochs = 2max_seconds = 1038
+                - cell "3.4057" [ref=f1e3384]
+                - cell "3.2377" [ref=f1e3385]
+                - cell "complete" [ref=f1e3386]
+              - row [ref=f1e3388]:
+                - cell [ref=f1e3389]:
+                  - button "Trial 276" [ref=f1e3390] [cursor=pointer]
+                - cell "model/view = walks epochs = 1 max_seconds = 740" [ref=f1e3391]: model/view = walksepochs = 1max_seconds = 740
+                - cell "3.3996" [ref=f1e3392]
+                - cell "3.3003" [ref=f1e3393]
+                - cell "complete" [ref=f1e3394]
+              - row [ref=f1e3396]:
+                - cell [ref=f1e3397]:
+                  - button "Trial 275" [ref=f1e3398] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 5 max_seconds = 824" [ref=f1e3399]: model/view = snapshotepochs = 5max_seconds = 824
+                - cell "1.7734" [ref=f1e3400]
+                - cell "—" [ref=f1e3401]
+                - cell "timeout" [ref=f1e3402]
+              - row [ref=f1e3404]:
+                - cell [ref=f1e3405]:
+                  - button "Trial 274" [ref=f1e3406] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 4 max_seconds = 945" [ref=f1e3407]: model/view = event_graphepochs = 4max_seconds = 945
+                - cell "3.3854" [ref=f1e3408]
+                - cell "3.42" [ref=f1e3409]
+                - cell "complete" [ref=f1e3410]
+              - row [ref=f1e3412]:
+                - cell [ref=f1e3413]:
+                  - button "Trial 273" [ref=f1e3414] [cursor=pointer]
+                - cell "model/view = signal epochs = 1 max_seconds = 947" [ref=f1e3415]: model/view = signalepochs = 1max_seconds = 947
+                - cell "3.4008" [ref=f1e3416]
+                - cell "3.8304" [ref=f1e3417]
+                - cell "complete" [ref=f1e3418]
+              - row [ref=f1e3420]:
+                - cell [ref=f1e3421]:
+                  - button "Trial 272" [ref=f1e3422] [cursor=pointer]
+                - cell "model/view = projection epochs = 1 max_seconds = 630" [ref=f1e3423]: model/view = projectionepochs = 1max_seconds = 630
+                - cell "3.3603" [ref=f1e3424]
+                - cell "3.4202" [ref=f1e3425]
+                - cell "complete" [ref=f1e3426]
+              - row [ref=f1e3428]:
+                - cell [ref=f1e3429]:
+                  - button "Trial 271" [ref=f1e3430] [cursor=pointer]
+                - cell "model/view = sequence epochs = 3 max_seconds = 1092" [ref=f1e3431]: model/view = sequenceepochs = 3max_seconds = 1092
+                - cell "3.3558" [ref=f1e3432]
+                - cell "3.1691" [ref=f1e3433]
+                - cell "complete" [ref=f1e3434]
+              - row [ref=f1e3436]:
+                - cell [ref=f1e3437]:
+                  - button "Trial 270" [ref=f1e3438] [cursor=pointer]
+                - cell "model/view = tree epochs = 5 max_seconds = 1074" [ref=f1e3439]: model/view = treeepochs = 5max_seconds = 1074
+                - cell "3.3215" [ref=f1e3440]
+                - cell "3.0388" [ref=f1e3441]
+                - cell "complete" [ref=f1e3442]
+              - row [ref=f1e3444]:
+                - cell [ref=f1e3445]:
+                  - button "Trial 269" [ref=f1e3446] [cursor=pointer]
+                - cell "model/view = walks epochs = 2 max_seconds = 1028" [ref=f1e3447]: model/view = walksepochs = 2max_seconds = 1028
+                - cell "3.3719" [ref=f1e3448]
+                - cell "—" [ref=f1e3449]
+                - cell "timeout" [ref=f1e3450]
+              - row [ref=f1e3452]:
+                - cell [ref=f1e3453]:
+                  - button "Trial 268" [ref=f1e3454] [cursor=pointer]
+                - cell "model/view = mixed epochs = 3 max_seconds = 892" [ref=f1e3455]: model/view = mixedepochs = 3max_seconds = 892
+                - cell "2.8049" [ref=f1e3456]
+                - cell "4.8655" [ref=f1e3457]
+                - cell "complete" [ref=f1e3458]
+              - row [ref=f1e3460]:
+                - cell [ref=f1e3461]:
+                  - button "Trial 267" [ref=f1e3462] [cursor=pointer]
+                - cell "model/view = signal epochs = 1 max_seconds = 1078" [ref=f1e3463]: model/view = signalepochs = 1max_seconds = 1078
+                - cell "3.3958" [ref=f1e3464]
+                - cell "3.8901" [ref=f1e3465]
+                - cell "complete" [ref=f1e3466]
+              - row [ref=f1e3468]:
+                - cell [ref=f1e3469]:
+                  - button "Trial 266" [ref=f1e3470] [cursor=pointer]
+                - cell "model/view = sequence epochs = 5 max_seconds = 650" [ref=f1e3471]: model/view = sequenceepochs = 5max_seconds = 650
+                - cell "3.3913" [ref=f1e3472]
+                - cell "3.1572" [ref=f1e3473]
+                - cell "complete" [ref=f1e3474]
+              - row [ref=f1e3476]:
+                - cell [ref=f1e3477]:
+                  - button "Trial 265" [ref=f1e3478] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 3 max_seconds = 1098" [ref=f1e3479]: model/view = snapshotepochs = 3max_seconds = 1098
+                - cell "1.973" [ref=f1e3480]
+                - cell "2.2365" [ref=f1e3481]
+                - cell "complete" [ref=f1e3482]
+              - row [ref=f1e3484]:
+                - cell [ref=f1e3485]:
+                  - button "Trial 264" [ref=f1e3486] [cursor=pointer]
+                - cell "model/view = affinity epochs = 3 max_seconds = 687" [ref=f1e3487]: model/view = affinityepochs = 3max_seconds = 687
+                - cell "3.4145" [ref=f1e3488]
+                - cell "—" [ref=f1e3489]
+                - cell "timeout" [ref=f1e3490]
+              - row [ref=f1e3492]:
+                - cell [ref=f1e3493]:
+                  - button "Trial 263" [ref=f1e3494] [cursor=pointer]
+                - cell "model/view = signal epochs = 4 max_seconds = 1066" [ref=f1e3495]: model/view = signalepochs = 4max_seconds = 1066
+                - cell "3.4313" [ref=f1e3496]
+                - cell "3.6635" [ref=f1e3497]
+                - cell "complete" [ref=f1e3498]
+              - row [ref=f1e3500]:
+                - cell [ref=f1e3501]:
+                  - button "Trial 262" [ref=f1e3502] [cursor=pointer]
+                - cell "model/view = walks epochs = 1 max_seconds = 1103" [ref=f1e3503]: model/view = walksepochs = 1max_seconds = 1103
+                - cell "3.3522" [ref=f1e3504]
+                - cell "3.2675" [ref=f1e3505]
+                - cell "complete" [ref=f1e3506]
+              - row [ref=f1e3508]:
+                - cell [ref=f1e3509]:
+                  - button "Trial 261" [ref=f1e3510] [cursor=pointer]
+                - cell "model/view = affinity epochs = 4 max_seconds = 1145" [ref=f1e3511]: model/view = affinityepochs = 4max_seconds = 1145
+                - cell "3.4034" [ref=f1e3512]
+                - cell "—" [ref=f1e3513]
+                - cell "timeout" [ref=f1e3514]
+              - row [ref=f1e3516]:
+                - cell [ref=f1e3517]:
+                  - button "Trial 260" [ref=f1e3518] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 1 max_seconds = 1037" [ref=f1e3519]: model/view = snapshotepochs = 1max_seconds = 1037
+                - cell "1.7751" [ref=f1e3520]
+                - cell "2.4298" [ref=f1e3521]
+                - cell "complete" [ref=f1e3522]
+              - row [ref=f1e3524]:
+                - cell [ref=f1e3525]:
+                  - button "Trial 259" [ref=f1e3526] [cursor=pointer]
+                - cell "model/view = sequence epochs = 5 max_seconds = 635" [ref=f1e3527]: model/view = sequenceepochs = 5max_seconds = 635
+                - cell "3.427" [ref=f1e3528]
+                - cell "—" [ref=f1e3529]
+                - cell "timeout" [ref=f1e3530]
+              - row [ref=f1e3532]:
+                - cell [ref=f1e3533]:
+                  - button "Trial 258" [ref=f1e3534] [cursor=pointer]
+                - cell "model/view = affinity epochs = 5 max_seconds = 1014" [ref=f1e3535]: model/view = affinityepochs = 5max_seconds = 1014
+                - cell "3.431" [ref=f1e3536]
+                - cell "—" [ref=f1e3537]
+                - cell "timeout" [ref=f1e3538]
+              - row [ref=f1e3540]:
+                - cell [ref=f1e3541]:
+                  - button "Trial 257" [ref=f1e3542] [cursor=pointer]
+                - cell "model/view = mixed epochs = 4 max_seconds = 687" [ref=f1e3543]: model/view = mixedepochs = 4max_seconds = 687
+                - cell "3.4309" [ref=f1e3544]
+                - cell "—" [ref=f1e3545]
+                - cell "timeout" [ref=f1e3546]
+              - row [ref=f1e3548]:
+                - cell [ref=f1e3549]:
+                  - button "Trial 256" [ref=f1e3550] [cursor=pointer]
+                - cell "model/view = mixed epochs = 4 max_seconds = 1132" [ref=f1e3551]: model/view = mixedepochs = 4max_seconds = 1132
+                - cell "3.2101" [ref=f1e3552]
+                - cell "2.5074" [ref=f1e3553]
+                - cell "complete" [ref=f1e3554]
+              - row [ref=f1e3556]:
+                - cell [ref=f1e3557]:
+                  - button "Trial 255" [ref=f1e3558] [cursor=pointer]
+                - cell "model/view = mixed epochs = 5 max_seconds = 1079" [ref=f1e3559]: model/view = mixedepochs = 5max_seconds = 1079
+                - cell "3.4156" [ref=f1e3560]
+                - cell "3.3143" [ref=f1e3561]
+                - cell "complete" [ref=f1e3562]
+              - row [ref=f1e3564]:
+                - cell [ref=f1e3565]:
+                  - button "Trial 254" [ref=f1e3566] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 2 max_seconds = 933" [ref=f1e3567]: model/view = snapshotepochs = 2max_seconds = 933
+                - cell "2.1054" [ref=f1e3568]
+                - cell "2.126" [ref=f1e3569]
+                - cell "complete" [ref=f1e3570]
+              - row [ref=f1e3572]:
+                - cell [ref=f1e3573]:
+                  - button "Trial 253" [ref=f1e3574] [cursor=pointer]
+                - cell "model/view = affinity epochs = 2 max_seconds = 852" [ref=f1e3575]: model/view = affinityepochs = 2max_seconds = 852
+                - cell "3.4257" [ref=f1e3576]
+                - cell "3.6497" [ref=f1e3577]
+                - cell "complete" [ref=f1e3578]
+              - row [ref=f1e3580]:
+                - cell [ref=f1e3581]:
+                  - button "Trial 252" [ref=f1e3582] [cursor=pointer]
+                - cell "model/view = projection epochs = 1 max_seconds = 1132" [ref=f1e3583]: model/view = projectionepochs = 1max_seconds = 1132
+                - cell "3.4123" [ref=f1e3584]
+                - cell "3.3083" [ref=f1e3585]
+                - cell "complete" [ref=f1e3586]
+              - row [ref=f1e3588]:
+                - cell [ref=f1e3589]:
+                  - button "Trial 251" [ref=f1e3590] [cursor=pointer]
+                - cell "model/view = sequence epochs = 5 max_seconds = 627" [ref=f1e3591]: model/view = sequenceepochs = 5max_seconds = 627
+                - cell "3.4267" [ref=f1e3592]
+                - cell "3.1982" [ref=f1e3593]
+                - cell "complete" [ref=f1e3594]
+              - row [ref=f1e3596]:
+                - cell [ref=f1e3597]:
+                  - button "Trial 250" [ref=f1e3598] [cursor=pointer]
+                - cell "model/view = signal epochs = 4 max_seconds = 1176" [ref=f1e3599]: model/view = signalepochs = 4max_seconds = 1176
+                - cell "3.4212" [ref=f1e3600]
+                - cell "3.8886" [ref=f1e3601]
+                - cell "complete" [ref=f1e3602]
+              - row [ref=f1e3604]:
+                - cell [ref=f1e3605]:
+                  - button "Trial 249" [ref=f1e3606] [cursor=pointer]
+                - cell "model/view = mixed epochs = 5 max_seconds = 715" [ref=f1e3607]: model/view = mixedepochs = 5max_seconds = 715
+                - cell "3.2737" [ref=f1e3608]
+                - cell "2.6163" [ref=f1e3609]
+                - cell "complete" [ref=f1e3610]
+              - row [ref=f1e3612]:
+                - cell [ref=f1e3613]:
+                  - button "Trial 248" [ref=f1e3614] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 5 max_seconds = 1059" [ref=f1e3615]: model/view = event_graphepochs = 5max_seconds = 1059
+                - cell "3.4128" [ref=f1e3616]
+                - cell "3.1751" [ref=f1e3617]
+                - cell "complete" [ref=f1e3618]
+              - row [ref=f1e3620]:
+                - cell [ref=f1e3621]:
+                  - button "Trial 247" [ref=f1e3622] [cursor=pointer]
+                - cell "model/view = walks epochs = 4 max_seconds = 796" [ref=f1e3623]: model/view = walksepochs = 4max_seconds = 796
+                - cell "3.3789" [ref=f1e3624]
+                - cell "3.2888" [ref=f1e3625]
+                - cell "complete" [ref=f1e3626]
+              - row [ref=f1e3628]:
+                - cell [ref=f1e3629]:
+                  - button "Trial 246" [ref=f1e3630] [cursor=pointer]
+                - cell "model/view = projection epochs = 2 max_seconds = 976" [ref=f1e3631]: model/view = projectionepochs = 2max_seconds = 976
+                - cell "3.3498" [ref=f1e3632]
+                - cell "3.5571" [ref=f1e3633]
+                - cell "complete" [ref=f1e3634]
+              - row [ref=f1e3636]:
+                - cell [ref=f1e3637]:
+                  - button "Trial 245" [ref=f1e3638] [cursor=pointer]
+                - cell "model/view = memory epochs = 4 max_seconds = 681" [ref=f1e3639]: model/view = memoryepochs = 4max_seconds = 681
+                - cell "3.3935" [ref=f1e3640]
+                - cell "—" [ref=f1e3641]
+                - cell "timeout" [ref=f1e3642]
+              - row [ref=f1e3644]:
+                - cell [ref=f1e3645]:
+                  - button "Trial 244" [ref=f1e3646] [cursor=pointer]
+                - cell "model/view = tree epochs = 4 max_seconds = 905" [ref=f1e3647]: model/view = treeepochs = 4max_seconds = 905
+                - cell "3.3467" [ref=f1e3648]
+                - cell "3.3027" [ref=f1e3649]
+                - cell "complete" [ref=f1e3650]
+              - row [ref=f1e3652]:
+                - cell [ref=f1e3653]:
+                  - button "Trial 243" [ref=f1e3654] [cursor=pointer]
+                - cell "model/view = signal epochs = 4 max_seconds = 700" [ref=f1e3655]: model/view = signalepochs = 4max_seconds = 700
+                - cell "3.4166" [ref=f1e3656]
+                - cell "3.6272" [ref=f1e3657]
+                - cell "complete" [ref=f1e3658]
+              - row [ref=f1e3660]:
+                - cell [ref=f1e3661]:
+                  - button "Trial 242" [ref=f1e3662] [cursor=pointer]
+                - cell "model/view = mixed epochs = 4 max_seconds = 1061" [ref=f1e3663]: model/view = mixedepochs = 4max_seconds = 1061
+                - cell "3.4198" [ref=f1e3664]
+                - cell "3.2442" [ref=f1e3665]
+                - cell "complete" [ref=f1e3666]
+              - row [ref=f1e3668]:
+                - cell [ref=f1e3669]:
+                  - button "Trial 241" [ref=f1e3670] [cursor=pointer]
+                - cell "model/view = affinity epochs = 5 max_seconds = 1121" [ref=f1e3671]: model/view = affinityepochs = 5max_seconds = 1121
+                - cell "3.4246" [ref=f1e3672]
+                - cell "3.5102" [ref=f1e3673]
+                - cell "complete" [ref=f1e3674]
+              - row [ref=f1e3676]:
+                - cell [ref=f1e3677]:
+                  - button "Trial 240" [ref=f1e3678] [cursor=pointer]
+                - cell "model/view = affinity epochs = 5 max_seconds = 1093" [ref=f1e3679]: model/view = affinityepochs = 5max_seconds = 1093
+                - cell "3.3972" [ref=f1e3680]
+                - cell "3.5072" [ref=f1e3681]
+                - cell "complete" [ref=f1e3682]
+              - row [ref=f1e3684]:
+                - cell [ref=f1e3685]:
+                  - button "Trial 239" [ref=f1e3686] [cursor=pointer]
+                - cell "model/view = mixed epochs = 2 max_seconds = 1127" [ref=f1e3687]: model/view = mixedepochs = 2max_seconds = 1127
+                - cell "3.4057" [ref=f1e3688]
+                - cell "2.501" [ref=f1e3689]
+                - cell "complete" [ref=f1e3690]
+              - row [ref=f1e3692]:
+                - cell [ref=f1e3693]:
+                  - button "Trial 238" [ref=f1e3694] [cursor=pointer]
+                - cell "model/view = signal epochs = 3 max_seconds = 1066" [ref=f1e3695]: model/view = signalepochs = 3max_seconds = 1066
+                - cell "3.4359" [ref=f1e3696]
+                - cell "3.8506" [ref=f1e3697]
+                - cell "complete" [ref=f1e3698]
+              - row [ref=f1e3700]:
+                - cell [ref=f1e3701]:
+                  - button "Trial 237" [ref=f1e3702] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 3 max_seconds = 772" [ref=f1e3703]: model/view = snapshotepochs = 3max_seconds = 772
+                - cell "2.5021" [ref=f1e3704]
+                - cell "2.2447" [ref=f1e3705]
+                - cell "complete" [ref=f1e3706]
+              - row [ref=f1e3708]:
+                - cell [ref=f1e3709]:
+                  - button "Trial 236" [ref=f1e3710] [cursor=pointer]
+                - cell "model/view = walks epochs = 3 max_seconds = 968" [ref=f1e3711]: model/view = walksepochs = 3max_seconds = 968
+                - cell "3.3924" [ref=f1e3712]
+                - cell "3.3741" [ref=f1e3713]
+                - cell "complete" [ref=f1e3714]
+              - row [ref=f1e3716]:
+                - cell [ref=f1e3717]:
+                  - button "Trial 235" [ref=f1e3718] [cursor=pointer]
+                - cell "model/view = signal epochs = 1 max_seconds = 823" [ref=f1e3719]: model/view = signalepochs = 1max_seconds = 823
+                - cell "3.4032" [ref=f1e3720]
+                - cell "3.688" [ref=f1e3721]
+                - cell "complete" [ref=f1e3722]
+              - row [ref=f1e3724]:
+                - cell [ref=f1e3725]:
+                  - button "Trial 234" [ref=f1e3726] [cursor=pointer]
+                - cell "model/view = signal epochs = 5 max_seconds = 823" [ref=f1e3727]: model/view = signalepochs = 5max_seconds = 823
+                - cell "3.4032" [ref=f1e3728]
+                - cell "—" [ref=f1e3729]
+                - cell "timeout" [ref=f1e3730]
+              - row [ref=f1e3732]:
+                - cell [ref=f1e3733]:
+                  - button "Trial 233" [ref=f1e3734] [cursor=pointer]
+                - cell "model/view = projection epochs = 3 max_seconds = 1192" [ref=f1e3735]: model/view = projectionepochs = 3max_seconds = 1192
+                - cell "3.3544" [ref=f1e3736]
+                - cell "3.1785" [ref=f1e3737]
+                - cell "complete" [ref=f1e3738]
+              - row [ref=f1e3740]:
+                - cell [ref=f1e3741]:
+                  - button "Trial 232" [ref=f1e3742] [cursor=pointer]
+                - cell "model/view = walks epochs = 3 max_seconds = 664" [ref=f1e3743]: model/view = walksepochs = 3max_seconds = 664
+                - cell "3.3587" [ref=f1e3744]
+                - cell "3.3137" [ref=f1e3745]
+                - cell "complete" [ref=f1e3746]
+              - row [ref=f1e3748]:
+                - cell [ref=f1e3749]:
+                  - button "Trial 231" [ref=f1e3750] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 5 max_seconds = 734" [ref=f1e3751]: model/view = snapshotepochs = 5max_seconds = 734
+                - cell "1.981" [ref=f1e3752]
+                - cell "—" [ref=f1e3753]
+                - cell "timeout" [ref=f1e3754]
+              - row [ref=f1e3756]:
+                - cell [ref=f1e3757]:
+                  - button "Trial 230" [ref=f1e3758] [cursor=pointer]
+                - cell "model/view = projection epochs = 4 max_seconds = 732" [ref=f1e3759]: model/view = projectionepochs = 4max_seconds = 732
+                - cell "3.3566" [ref=f1e3760]
+                - cell "—" [ref=f1e3761]
+                - cell "timeout" [ref=f1e3762]
+              - row [ref=f1e3764]:
+                - cell [ref=f1e3765]:
+                  - button "Trial 229" [ref=f1e3766] [cursor=pointer]
+                - cell "model/view = walks epochs = 5 max_seconds = 852" [ref=f1e3767]: model/view = walksepochs = 5max_seconds = 852
+                - cell "3.4297" [ref=f1e3768]
+                - cell "3.1342" [ref=f1e3769]
+                - cell "complete" [ref=f1e3770]
+              - row [ref=f1e3772]:
+                - cell [ref=f1e3773]:
+                  - button "Trial 228" [ref=f1e3774] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 3 max_seconds = 659" [ref=f1e3775]: model/view = event_graphepochs = 3max_seconds = 659
+                - cell "3.3954" [ref=f1e3776]
+                - cell "3.1974" [ref=f1e3777]
+                - cell "complete" [ref=f1e3778]
+              - row [ref=f1e3780]:
+                - cell [ref=f1e3781]:
+                  - button "Trial 227" [ref=f1e3782] [cursor=pointer]
+                - cell "model/view = tree epochs = 4 max_seconds = 709" [ref=f1e3783]: model/view = treeepochs = 4max_seconds = 709
+                - cell "3.3499" [ref=f1e3784]
+                - cell "—" [ref=f1e3785]
+                - cell "timeout" [ref=f1e3786]
+              - row [ref=f1e3788]:
+                - cell [ref=f1e3789]:
+                  - button "Trial 226" [ref=f1e3790] [cursor=pointer]
+                - cell "model/view = walks epochs = 5 max_seconds = 944" [ref=f1e3791]: model/view = walksepochs = 5max_seconds = 944
+                - cell "3.423" [ref=f1e3792]
+                - cell "3.375" [ref=f1e3793]
+                - cell "complete" [ref=f1e3794]
+              - row [ref=f1e3796]:
+                - cell [ref=f1e3797]:
+                  - button "Trial 225" [ref=f1e3798] [cursor=pointer]
+                - cell "model/view = mixed epochs = 3 max_seconds = 703" [ref=f1e3799]: model/view = mixedepochs = 3max_seconds = 703
+                - cell "3.4244" [ref=f1e3800]
+                - cell "—" [ref=f1e3801]
+                - cell "timeout" [ref=f1e3802]
+              - row [ref=f1e3804]:
+                - cell [ref=f1e3805]:
+                  - button "Trial 224" [ref=f1e3806] [cursor=pointer]
+                - cell "model/view = signal epochs = 4 max_seconds = 901" [ref=f1e3807]: model/view = signalepochs = 4max_seconds = 901
+                - cell "3.4234" [ref=f1e3808]
+                - cell "—" [ref=f1e3809]
+                - cell "timeout" [ref=f1e3810]
+              - row [ref=f1e3812]:
+                - cell [ref=f1e3813]:
+                  - button "Trial 223" [ref=f1e3814] [cursor=pointer]
+                - cell "model/view = walks epochs = 5 max_seconds = 950" [ref=f1e3815]: model/view = walksepochs = 5max_seconds = 950
+                - cell "3.4338" [ref=f1e3816]
+                - cell "3.3609" [ref=f1e3817]
+                - cell "complete" [ref=f1e3818]
+              - row [ref=f1e3820]:
+                - cell [ref=f1e3821]:
+                  - button "Trial 222" [ref=f1e3822] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 1 max_seconds = 949" [ref=f1e3823]: model/view = event_graphepochs = 1max_seconds = 949
+                - cell "3.4119" [ref=f1e3824]
+                - cell "3.9072" [ref=f1e3825]
+                - cell "complete" [ref=f1e3826]
+              - row [ref=f1e3828]:
+                - cell [ref=f1e3829]:
+                  - button "Trial 221" [ref=f1e3830] [cursor=pointer]
+                - cell "model/view = snapshot epochs = 1 max_seconds = 894" [ref=f1e3831]: model/view = snapshotepochs = 1max_seconds = 894
+                - cell "1.8664" [ref=f1e3832]
+                - cell "2.21" [ref=f1e3833]
+                - cell "complete" [ref=f1e3834]
+              - row [ref=f1e3836]:
+                - cell [ref=f1e3837]:
+                  - button "Trial 220" [ref=f1e3838] [cursor=pointer]
+                - cell "model/view = projection epochs = 5 max_seconds = 954" [ref=f1e3839]: model/view = projectionepochs = 5max_seconds = 954
+                - cell "3.4129" [ref=f1e3840]
+                - cell "3.1537" [ref=f1e3841]
+                - cell "complete" [ref=f1e3842]
+              - row [ref=f1e3844]:
+                - cell [ref=f1e3845]:
+                  - button "Trial 219" [ref=f1e3846] [cursor=pointer]
+                - cell "model/view = signal epochs = 2 max_seconds = 769" [ref=f1e3847]: model/view = signalepochs = 2max_seconds = 769
+                - cell "3.4093" [ref=f1e3848]
+                - cell "3.8995" [ref=f1e3849]
+                - cell "complete" [ref=f1e3850]
+              - row [ref=f1e3852]:
+                - cell [ref=f1e3853]:
+                  - button "Trial 218" [ref=f1e3854] [cursor=pointer]
+                - cell "model/view = sequence epochs = 1 max_seconds = 893" [ref=f1e3855]: model/view = sequenceepochs = 1max_seconds = 893
+                - cell "3.3982" [ref=f1e3856]
+                - cell "3.7638" [ref=f1e3857]
+                - cell "complete" [ref=f1e3858]
+              - row [ref=f1e3860]:
+                - cell [ref=f1e3861]:
+                  - button "Trial 217" [ref=f1e3862] [cursor=pointer]
+                - cell "model/view = mixed epochs = 1 max_seconds = 972" [ref=f1e3863]: model/view = mixedepochs = 1max_seconds = 972
+                - cell "3.4097" [ref=f1e3864]
+                - cell "3.7459" [ref=f1e3865]
+                - cell "complete" [ref=f1e3866]
+              - row [ref=f1e3868]:
+                - cell [ref=f1e3869]:
+                  - button "Trial 216" [ref=f1e3870] [cursor=pointer]
+                - cell "model/view = affinity epochs = 1 max_seconds = 829" [ref=f1e3871]: model/view = affinityepochs = 1max_seconds = 829
+                - cell "3.3951" [ref=f1e3872]
+                - cell "3.8339" [ref=f1e3873]
+                - cell "complete" [ref=f1e3874]
+              - row [ref=f1e3876]:
+                - cell [ref=f1e3877]:
+                  - button "Trial 215" [ref=f1e3878] [cursor=pointer]
+                - cell "model/view = event_graph epochs = 5 max_seconds = 660" [ref=f1e3879]: model/view = event_graphepochs = 5max_seconds = 660
+                - cell "3.3939" [ref=f1e3880]
+                - cell "3.1686" [ref=f1e3881]
+                - cell "complete" [ref=f1e3882]
+              - row [ref=f1e3884]:
+                - cell [ref=f1e3885]:
+                  - button "Trial 214" [ref=f1e3886] [cursor=pointer]
+                - cell "model/view = tree epochs = 5 max_seconds = 611" [ref=f1e3887]: model/view = treeepochs = 5max_seconds = 611
+                - cell "3.3991" [ref=f1e3888]
+                - cell "3.17" [ref=f1e3889]
+                - cell "complete" [ref=f1e3890]
+              - row [ref=f1e3892]:
+                - cell [ref=f1e3893]:
+                  - button "Trial 213" [ref=f1e3894] [cursor=pointer]
+                - cell "model/view = affinity epochs = 3 max_seconds = 1068" [ref=f1e3895]: model/view = affinityepochs = 3max_seconds = 1068
+                - cell "3.4131" [ref=f1e3896]
+                - cell "3.526" [ref=f1e3897]
+                - cell "complete" [ref=f1e3898]
+              - row [ref=f1e3900]:
+                - cell [ref=f1e3901]:
+                  - button "Trial 212" [ref=f1e3902] [cursor=pointer]
+                - cell "model/view = memory epochs = 3 max_seconds = 650" [ref=f1e3903]: model/view = memoryepochs = 3max_seconds = 650
+                - cell "3.3845" [ref=f1e3904]
+                - cell "—" [ref=f1e3905]
+                - cell "timeout" [ref=f1e3906]
+              - row [ref=f1e3908]:
+                - cell [ref=f1e3909]:
+                  - button "Trial 211" [ref=f1e3910] [cursor=pointer]
+                - cell "model/view = tree epochs = 2 max_seconds = 606" [ref=f1e3911]: model/view = treeepochs = 2max_seconds = 606
+                - cell "3.3523" [ref=f1e3912]
+                - cell "3.2079" [ref=f1e3913]
+                - cell "complete" [ref=f1e3914]
+              - row [ref=f1e3916]:
+                - cell [ref=f1e3917]:
+                  - button "Trial 210" [ref=f1e3918] [cursor=pointer]
+                - cell "model/view = affinity epochs = 1 max_seconds = 1089" [ref=f1e3919]: model/view = affinityepochs = 1max_seconds = 1089
+                - cell "3.4067" [ref=f1e3920]
+                - cell "3.6483" [ref=f1e3921]
+                - cell "complete" [ref=f1e3922]
+              - row [ref=f1e3924]:
+                - cell [ref=f1e3925]:
+                  - button "Trial 209" [ref=f1e3926] [cursor=pointer]
+                - cell "model/view = walks epochs = 5 max_seconds = 1195" [ref=f1e3927]: model/view = walksepochs = 5max_seconds = 1195
+                - cell "3.3667" [ref=f1e3928]
+                - cell "3.535" [ref=f1e3929]
+                - cell "complete" [ref=f1e3930]
+              - row [ref=f1e3932]:
+                - cell [ref=f1e3933]:
+                  - button "Trial 208" [ref=f1e3934] [cursor=pointer]
+                - cell "model/view = affinity epochs = 5 max_seconds = 1107" [ref=f1e3935]: model/view = affinityepochs = 5max_seconds = 1107
+                - cell "3.3948" [ref=f1e3936]
+                - cell "—" [ref=f1e3937]
+                - cell "timeout" [ref=f1e3938]
+              - row [ref=f1e3940]:
+                - cell [ref=f1e3941]:
+                  - button "Trial 207" [ref=f1e3942] [cursor=pointer]
+                - cell "model/view = walks" [ref=f1e3943]
+                - cell "3.3826" [ref=f1e3944]
+                - cell "3.5172" [ref=f1e3945]
+                - cell "complete" [ref=f1e3946]
+              - row [ref=f1e3948]:
+                - cell [ref=f1e3949]:
+                  - button "Trial 206" [ref=f1e3950] [cursor=pointer]
+                - cell "model/view = memory" [ref=f1e3951]
+                - cell "3.363" [ref=f1e3952]
+                - cell "3.3616" [ref=f1e3953]
+                - cell "complete" [ref=f1e3954]
+              - row [ref=f1e3956]:
+                - cell [ref=f1e3957]:
+                  - button "Trial 205" [ref=f1e3958] [cursor=pointer]
+                - cell "model/view = snapshot" [ref=f1e3959]
+                - cell "1.895" [ref=f1e3960]
+                - cell "1.7533" [ref=f1e3961]
+                - cell "complete" [ref=f1e3962]
+              - row [ref=f1e3964]:
+                - cell [ref=f1e3965]:
+                  - button "Trial 204" [ref=f1e3966] [cursor=pointer]
+                - cell "model/view = tree" [ref=f1e3967]
+                - cell "3.421" [ref=f1e3968]
+                - cell "3.0869" [ref=f1e3969]
+                - cell "complete" [ref=f1e3970]
+              - row [ref=f1e3972]:
+                - cell [ref=f1e3973]:
+                  - button "Trial 203" [ref=f1e3974] [cursor=pointer]
+                - cell "model/view = mixed" [ref=f1e3975]
+                - cell "3.4215" [ref=f1e3976]
+                - cell "—" [ref=f1e3977]
+                - cell "timeout" [ref=f1e3978]
+              - row [ref=f1e3980]:
+                - cell [ref=f1e3981]:
+                  - button "Trial 202" [ref=f1e3982] [cursor=pointer]
+                - cell "model/view = snapshot" [ref=f1e3983]
+                - cell "1.9714" [ref=f1e3984]
+                - cell "2.6882" [ref=f1e3985]
+                - cell "complete" [ref=f1e3986]
+              - row [ref=f1e3988]:
+                - cell [ref=f1e3989]:
+                  - button "Trial 201" [ref=f1e3990] [cursor=pointer]
+                - cell "model/view = affinity" [ref=f1e3991]
+                - cell "3.3999" [ref=f1e3992]
+                - cell "3.5221" [ref=f1e3993]
+                - cell "complete" [ref=f1e3994]
+              - row [ref=f1e3996]:
+                - cell [ref=f1e3997]:
+                  - button "Trial 200" [ref=f1e3998] [cursor=pointer]
+                - cell "model/view = sequence" [ref=f1e3999]
+                - cell "3.3932" [ref=f1e4000]
+                - cell "3.6063" [ref=f1e4001]
+                - cell "complete" [ref=f1e4002]
+              - row [ref=f1e4004]:
+                - cell [ref=f1e4005]:
+                  - button "Trial 199" [ref=f1e4006] [cursor=pointer]
+                - cell "model/view = projection" [ref=f1e4007]
+                - cell "3.362" [ref=f1e4008]
+                - cell "3.2441" [ref=f1e4009]
+                - cell "complete" [ref=f1e4010]
+              - row [ref=f1e4012]:
+                - cell [ref=f1e4013]:
+                  - button "Trial 198" [ref=f1e4014] [cursor=pointer]
+                - cell "model/view = walks" [ref=f1e4015]
+                - cell "3.3567" [ref=f1e4016]
+                - cell "3.2891" [ref=f1e4017]
+                - cell "complete" [ref=f1e4018]
+              - row [ref=f1e4020]:
+                - cell [ref=f1e4021]:
+                  - button "Trial 197" [ref=f1e4022] [cursor=pointer]
+                - cell "model/view = memory" [ref=f1e4023]
+                - cell "3.3845" [ref=f1e4024]
+                - cell "3.1801" [ref=f1e4025]
+                - cell "complete" [ref=f1e4026]
+              - row [ref=f1e4028]:
+                - cell [ref=f1e4029]:
+                  - button "Trial 196" [ref=f1e4030] [cursor=pointer]
+                - cell "model/view = walks" [ref=f1e4031]
+                - cell "3.395" [ref=f1e4032]
+                - cell "3.1641" [ref=f1e4033]
+                - cell "complete" [ref=f1e4034]
+              - row [ref=f1e4036]:
+                - cell [ref=f1e4037]:
+                  - button "Trial 195" [ref=f1e4038] [cursor=pointer]
+                - cell "model/view = snapshot" [ref=f1e4039]
+                - cell "2.0055" [ref=f1e4040]
+                - cell "2.2529" [ref=f1e4041]
+                - cell "complete" [ref=f1e4042]
+              - row [ref=f1e4044]:
+                - cell [ref=f1e4045]:
+                  - button "Trial 194" [ref=f1e4046] [cursor=pointer]
+                - cell "model/view = affinity" [ref=f1e4047]
+                - cell "3.3855" [ref=f1e4048]
+                - cell "3.5949" [ref=f1e4049]
+                - cell "complete" [ref=f1e4050]
+              - row [ref=f1e4052]:
+                - cell [ref=f1e4053]:
+                  - button "Trial 193" [ref=f1e4054] [cursor=pointer]
+                - cell "model/view = affinity" [ref=f1e4055]
+                - cell "3.4022" [ref=f1e4056]
+                - cell "3.5493" [ref=f1e4057]
+                - cell "complete" [ref=f1e4058]
+              - row [ref=f1e4060]:
+                - cell [ref=f1e4061]:
+                  - button "Trial 192" [ref=f1e4062] [cursor=pointer]
+                - cell "model/view = tree" [ref=f1e4063]
+                - cell "3.3904" [ref=f1e4064]
+                - cell "3.6342" [ref=f1e4065]
+                - cell "complete" [ref=f1e4066]
+              - row [ref=f1e4068]:
+                - cell [ref=f1e4069]:
+                  - button "Trial 191" [ref=f1e4070] [cursor=pointer]
+                - cell "model/view = projection" [ref=f1e4071]
+                - cell "3.3908" [ref=f1e4072]
+                - cell "3.2479" [ref=f1e4073]
+                - cell "complete" [ref=f1e4074]
+              - row [ref=f1e4076]:
+                - cell [ref=f1e4077]:
+                  - button "Trial 190" [ref=f1e4078] [cursor=pointer]
+                - cell "model/view = memory" [ref=f1e4079]
+                - cell "3.3754" [ref=f1e4080]
+                - cell "3.422" [ref=f1e4081]
+                - cell "complete" [ref=f1e4082]
+              - row [ref=f1e4084]:
+                - cell [ref=f1e4085]:
+                  - button "Trial 189" [ref=f1e4086] [cursor=pointer]
+                - cell "model/view = sequence" [ref=f1e4087]
+                - cell "3.3923" [ref=f1e4088]
+                - cell "3.1378" [ref=f1e4089]
+                - cell "complete" [ref=f1e4090]
+              - row [ref=f1e4092]:
+                - cell [ref=f1e4093]:
+                  - button "Trial 188" [ref=f1e4094] [cursor=pointer]
+                - cell "model/view = projection" [ref=f1e4095]
+                - cell "3.381" [ref=f1e4096]
+                - cell "3.5728" [ref=f1e4097]
+                - cell "complete" [ref=f1e4098]
+              - row [ref=f1e4100]:
+                - cell [ref=f1e4101]:
+                  - button "Trial 187" [ref=f1e4102] [cursor=pointer]
+                - cell "model/view = event_graph" [ref=f1e4103]
+                - cell "—" [ref=f1e4104]
+                - cell "3.7344" [ref=f1e4105]
+                - cell "complete" [ref=f1e4106]
+    - contentinfo [ref=f1e51]:
+      - text: GRAPHSPEC
+      - generic [ref=f1e52]: Every result has a configuration. Every trial tells a story.

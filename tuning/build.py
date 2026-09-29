@@ -17,7 +17,7 @@ from graphspec.infra.runtime import exclusive, output_path
 from graphspec.truth import ROWS, VERSION, Rows, encode, parse, verify
 
 LOG = logging.getLogger(__name__)
-SPLITS = ("train", "validation")
+SPLITS = ("train", "validation", "spread")
 WORKER = {}
 
 
@@ -30,8 +30,8 @@ def open_source(task_path, task):
     return graphdb.Database((root / task["database"]).resolve())
 
 
-def series_statistics(name, y, member, held):
-    train, validation = y[member & ~held].astype(np.float32), y[member & held].astype(np.float32)
+def series_statistics(name, y, member, learned, held):
+    train, validation = y[member & learned].astype(np.float32), y[member & held].astype(np.float32)
     if len(train) < 2 or len(validation) < 2 or np.ptp(train) == 0 or np.ptp(validation) == 0:
         raise ValueError("series %s needs at least two varying training and validation points" % name)
     return dict(
@@ -120,17 +120,21 @@ def supervision(source, level, target, names):
     split = found.column("split").to_pylist()
     unknown = sorted(set(split) - set(SPLITS))
     if unknown:
-        raise ValueError("target splits must be train or validation, found " + ", ".join(map(str, unknown)))
+        raise ValueError(
+            "target splits must be train, validation or spread, found " + ", ".join(map(str, unknown))
+        )
     unlabelled = sorted(set(names) - set(owners.tolist()))
     if unlabelled:
         raise ValueError("%d graphs have no target, for example graph %d" % (len(unlabelled), unlabelled[0]))
     held = np.asarray([value == "validation" for value in split])
+    learned = np.asarray([value == "train" for value in split])
+    part = np.asarray([SPLITS.index(value) for value in split], np.int64)
     if level == "path":
         queries = np.unique(np.stack((owners, steps), 1), axis=0)
-        if len(np.unique(np.stack((owners, steps, held), 1), axis=0)) != len(queries):
+        if len(np.unique(np.stack((owners, steps, part), 1), axis=0)) != len(queries):
             raise ValueError("every point of one query must carry the same split")
     y = found.column("y").to_numpy().astype(np.float64)
-    train, validation = np.flatnonzero(~held), np.flatnonzero(held)
+    train, validation = np.flatnonzero(learned), np.flatnonzero(held)
     stored = y.astype(np.float32)
     if not np.isfinite(stored).all():
         raise ValueError("targets must be finite at float32 precision")
@@ -140,7 +144,7 @@ def supervision(source, level, target, names):
     if level == "path":
         standard = dict(
             series=[
-                series_statistics(name, y, series_index == code, held)
+                series_statistics(name, y, series_index == code, learned, held)
                 for code, name in enumerate(names_of.tolist())
             ]
         )
@@ -148,7 +152,12 @@ def supervision(source, level, target, names):
         standard = dict(reward_mean=float(y[train].mean()), reward_sd=float(y[train].std(ddof=1)))
     result = dict(
         rows=rows,
-        split=dict(train_indices=train.tolist(), validation_indices=validation.tolist(), **standard),
+        split=dict(
+            train_indices=train.tolist(),
+            validation_indices=validation.tolist(),
+            spread_indices=np.flatnonzero(part == 2).tolist(),
+            **standard,
+        ),
     )
     ids = found.column("id").to_numpy().astype(np.int64)
     if level == "node":

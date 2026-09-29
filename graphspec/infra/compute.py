@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from contextlib import contextmanager
 
 import numpy as np
 import torch
@@ -21,26 +22,38 @@ def matrix(values):
     return torch.as_tensor(np.asarray(values), dtype=torch.float64, device=device_for(len(values)))
 
 
+@contextmanager
+def single():
+    threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        yield
+    finally:
+        torch.set_num_threads(threads)
+
+
 def inverse(values):
     started = time.perf_counter()
-    result = torch.linalg.inv(matrix(values)).cpu().numpy()
+    with single():
+        result = torch.linalg.inv(matrix(values)).cpu().numpy()
     LOG.debug("inverse exit size=%d seconds=%.4f", len(values), time.perf_counter() - started)
     return result
 
 
 def eigh(values):
     started = time.perf_counter()
-    eigenvalues, eigenvectors = torch.linalg.eigh(matrix(values))
+    with single():
+        eigenvalues, eigenvectors = torch.linalg.eigh(matrix(values))
     LOG.debug("eigh exit size=%d seconds=%.4f", len(values), time.perf_counter() - started)
     return eigenvalues.cpu().numpy(), eigenvectors.cpu().numpy()
 
 
 def compose(vectors, weights):
     started = time.perf_counter()
-    basis = matrix(vectors)
-    result = (
-        ((basis * torch.as_tensor(weights, dtype=torch.float64, device=basis.device)) @ basis.T).cpu().numpy()
-    )
+    with single():
+        basis = matrix(vectors)
+        scaled = basis * torch.as_tensor(weights, dtype=torch.float64, device=basis.device)
+        result = (scaled @ basis.T).cpu().numpy()
     LOG.debug("compose exit size=%d seconds=%.4f", len(vectors), time.perf_counter() - started)
     return result
 

@@ -1,0 +1,15 @@
+{
+  "model": {
+    "view": "snapshot",
+    "hidden": 8,
+    "dropout": 0.1
+  },
+  "graph": {
+    "time/history": 4,
+    "derive/hops": 0,
+    "derive/enabled": true
+  },
+  "epochs": 3,
+  "seed": 0,
+  "lr": 0.001
+}

@@ -163,3 +163,25 @@ def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
     sizes = {0: (Sizes(), 1.0), 1: (5, 1.0)}
     groups = batches(blocks, 4, sizes, 3, frame_budget=1024)
     assert sorted(block for group in groups for block in group) == sorted(map(tuple, blocks))
+
+
+def test_mixed_nodes_without_an_entity_carry_no_token(bank):
+    from tuning.data import Bank
+    from tuning.inputs import recipe
+    from tuning.model_spec import configuration
+
+    opened = Bank(bank)
+    cfg = configuration(opened.registry, {"view": "mixed", "keys/embedding": True}, {"time/history": 4}, 5)
+    block = opened.blocks(1, 4, cfg)[-1]
+    held = opened.resident(block[0], cfg, "cpu")
+    found = recipe(opened, block, cfg)["mixed"]
+    owner = held.numpy("mixed_entity")
+    tokens = opened.tokens(held)
+    assert (owner < 0).any() and tokens[-1] != -1
+    given = found["token"][: len(found["token"]) - len(found["query"])]
+    kinds = found["kind"][: len(given)]
+    assert len(given) and set(np.unique(given[given >= 0]).tolist()) <= set(tokens.tolist())
+    left = int(np.flatnonzero(held.numpy("mixed_tick") >= 2 * block[1])[0])
+    window = owner[left : left + len(given)]
+    assert (window < 0).any() and (given[window < 0] == -1).all()
+    assert np.array_equal(given[window >= 0], tokens[window[window >= 0]]) and len(kinds) == len(given)
