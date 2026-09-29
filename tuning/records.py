@@ -5,6 +5,7 @@ from pathlib import Path
 
 from graphspec.infra.files import JsonCache, sha256_json
 from graphspec.infra.processes import command
+from graphspec.infra.timing import timed
 
 from . import objective
 
@@ -35,6 +36,7 @@ def child(directory: Path, name: str) -> Path:
     return path
 
 
+@timed("records.worker_alive")
 def worker_alive(directory: Path, running: dict) -> bool:
     invocation = command(running["worker_pid"])
     expected = child(directory, running["trial"])
@@ -44,6 +46,7 @@ def worker_alive(directory: Path, running: dict) -> bool:
     return position < len(invocation) and Path(invocation[position]).resolve() == expected
 
 
+@timed("records.validate_result")
 def validate_result(result: dict, item: dict, config: dict, plan: dict):
     identity = (
         result["config"] == config
@@ -73,6 +76,7 @@ class Outcome:
     data: dict
 
     @classmethod
+    @timed("records.outcome.read")
     def read(cls, directory: Path, cache: JsonCache):
         found = []
         for status, name in OUTCOMES.items():
@@ -116,6 +120,7 @@ class Trial:
 
 
 class Run:
+    @timed("records.run")
     def __init__(self, directory: Path, cache: JsonCache):
         self.directory = Path(directory).resolve()
         self.cache = cache
@@ -141,12 +146,14 @@ class Run:
         for name in names:
             child(self.directory, name)
 
+    @timed("records.run.live")
     def live(self) -> dict | None:
         running = self.cache.read(self.directory / "running.json")
         if running is None or not worker_alive(self.directory, running):
             return None
         return running
 
+    @timed("records.run.runner")
     def runner(self) -> dict | None:
         state = self.cache.read(self.directory / "runner.json")
         if state is None or state["status"] != Status.RUNNING:
@@ -159,6 +166,7 @@ class Run:
                 return state
         return dict(state, status=Status.INTERRUPTED, error="Runner exited without a terminal record")
 
+    @timed("records.run.trials")
     def trials(self, *, selection=True, name=None) -> list[Trial]:
         running = self.live()
         result = []

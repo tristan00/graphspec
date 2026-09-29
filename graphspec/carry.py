@@ -1,5 +1,7 @@
 import numpy as np
 
+from graphspec.infra.timing import timed
+
 FOREVER = np.int64(1) << np.int64(62)
 
 
@@ -10,6 +12,7 @@ def encode(code, source, target, entities):
 
 
 class Table:
+    @timed("carry.table")
     def __init__(self, keys=(), **columns):
         keys = np.asarray(keys, np.int64)
         order = np.argsort(keys, kind="stable")
@@ -32,6 +35,7 @@ class Table:
             return np.full(len(found), default, np.int64)
         return np.where(found >= 0, self.columns[name][np.maximum(found, 0)], default)
 
+    @timed("carry.table.replaced")
     def replaced(self, touched, keys, **columns):
         kept = ~np.isin(self.keys, np.asarray(touched, np.int64))
         return Table(
@@ -55,6 +59,7 @@ class Segment:
     def keys(self, code, source, target):
         return encode(code, self.glob[source], self.glob[target], self.entities)
 
+    @timed("carry.segment.local")
     def local(self, entity):
         entity = np.asarray(entity, np.int64)
         position = np.searchsorted(self.glob, entity)

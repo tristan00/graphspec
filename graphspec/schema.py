@@ -1,3 +1,5 @@
+from graphspec.infra.timing import timed
+
 EDGE = "edge_"
 ROLES = ("actor", "subject", "context")
 FACTS = ("seq", "step", "present")
@@ -15,6 +17,7 @@ def feature_width(kind):
 
 
 class TableSchema:
+    @timed("schema.tableschema")
     def __init__(self, kinds):
         self.kinds = kinds
         required = (("graph", "NODE"), ("observation", "NODE"), ("observed", "REL"))
@@ -52,6 +55,7 @@ class TableSchema:
                 if feature_width(typed["signal_observed"]) != self.signals:
                     raise ValueError("query signal widths must match")
 
+    @timed("schema.tableschema.relation")
     def relation(self, name):
         pairs, typed = self.pairs(name), self.columns(name)
         missing = sorted(set(FACTS) - set(typed))
@@ -69,6 +73,7 @@ class TableSchema:
     def destinations(self, table):
         return tuple(dict.fromkeys(target for _, target in self.pairs(table)))
 
+    @timed("schema.tableschema.target")
     def target(self, name):
         if self.kinds.get(name) != "NODE" or self.kinds.get(name + "_of") != "REL":
             raise ValueError("graph source requires target table %s with a %s_of relationship" % (name, name))

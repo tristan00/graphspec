@@ -2,6 +2,7 @@ import numpy as np
 
 from graphspec.infra import compute
 from graphspec.infra.hashing import unit
+from graphspec.infra.timing import timed
 from graphspec.infra.workspace import allocate, concatenate, scatter, take
 
 from . import kernels
@@ -66,6 +67,7 @@ def identities(carry, entity):
     return entity if carry is None else carry.glob[entity]
 
 
+@timed("operators.prune")
 def prune(graph, kept, carry=None, name=None):
     if carry is None:
         if kept.all():
@@ -223,6 +225,7 @@ def held(graph, carry):
     return graph, obs, facts
 
 
+@timed("operators.window")
 def window(graph, registry, spec, seed, limits, carry=None):
     if (
         spec["time/scheme"] == "window"
@@ -330,6 +333,7 @@ def window(graph, registry, spec, seed, limits, carry=None):
     return graph
 
 
+@timed("operators.periods")
 def periods(graph, registry, spec, seed, carry=None):
     if spec["time/periods"] == "truth":
         return graph
@@ -358,6 +362,7 @@ def remember(carry, name, graph, values):
         carry.state[name] = carry.table(name).replaced(keys, keys, value=values[chosen])
 
 
+@timed("operators.nodes")
 def nodes(graph, registry, spec, seed, carry=None):
     steps, entities = graph.steps, len(graph.kinds)
     protected = registry.extras["protected"]
@@ -467,6 +472,7 @@ def recalled(memo, name, inputs, budget, compute):
     return result
 
 
+@timed("operators.project")
 def project(graph, registry, edge, source, target, code, recency, cap, budget, memo):
     relation, side, first, second = edge.origin[1:]
     use = np.flatnonzero(code == registry.code(relation))
@@ -489,6 +495,7 @@ def project(graph, registry, edge, source, target, code, recency, cap, budget, m
     return recalled(memo, edge.name, (members, owners, ages), budget, compute)
 
 
+@timed("operators.complete")
 def complete(graph, registry, selected, within, present, u, v, budget):
     members = present[np.isin(graph.kinds[present], selected)]
     if not len(within):
@@ -530,6 +537,7 @@ def widen(slots, keys_low, keys_high, count, extra, budget):
     return slots, keys_low, keys_high
 
 
+@timed("operators.closure")
 def closure(registry, u, v, limit, entities, budget):
     source, target = np.r_[u, v].astype(np.int64), np.r_[v, u].astype(np.int64)
     order = np.argsort(source, kind="stable")
@@ -601,6 +609,7 @@ def diffusion_scores(adjacency, spec, device):
     return scores
 
 
+@timed("operators.diffuse")
 def diffuse(registry, spec, present, u, v, entities, budget):
     count = len(present)
     if count < 2:
@@ -712,6 +721,7 @@ def curvature_extreme(groups, adjacencies, found, maximum=False):
     return best
 
 
+@timed("operators.rewire")
 def rewire(spec, present, u, v, entities, rng, budget):
     budget.pairs(spec["derive/rewiring_budget"], "rewiring")
     groups, adjacencies = component_adjacencies(present, u, v, budget, spec["derive/rewiring"] + " rewiring")
@@ -798,6 +808,7 @@ def derivable(graph, registry, spec):
     return stated, kept
 
 
+@timed("operators.derive_prepare")
 def derive_prepare(graph, registry, spec, carry=None):
     stated, _ = derivable(graph, registry, spec)
     recency = np.zeros(len(graph.fact_step), np.int64)
@@ -819,6 +830,7 @@ def derive_prepare(graph, registry, spec, carry=None):
     return recency
 
 
+@timed("operators.derive_steps")
 def derive_steps(graph, registry, spec, seed, recency, step0, limits):
     projected, selected, within = derivation(registry, spec)
     steps, entities = graph.steps, len(graph.kinds)
@@ -960,6 +972,7 @@ def derived_rows(graph, found, stop, budget):
     )
 
 
+@timed("operators.derive_finish")
 def derive_finish(graph, found, removed, budget, carry=None):
     graph = prune(graph, ~removed, carry, "derive")
     live = None if carry is None else carry.state.get("derive/live")
@@ -973,6 +986,7 @@ def derive_finish(graph, found, removed, budget, carry=None):
     return derived_rows(graph, found, stop, budget)
 
 
+@timed("operators.derive")
 def derive(graph, registry, spec, seed, limits, carry=None):
     if derivation(registry, spec) is None:
         return graph
@@ -983,6 +997,7 @@ def derive(graph, registry, spec, seed, limits, carry=None):
     return derive_finish(graph, found, removed, budget, carry)
 
 
+@timed("operators.untype")
 def untype(graph, registry, carry=None):
     base = np.isin(graph.fact_code, codes(registry, registry.extras["base"]))
     source, target, code, present = graph.fact_source, graph.fact_target, graph.fact_code, graph.fact_present
@@ -1027,6 +1042,7 @@ def untype(graph, registry, carry=None):
     return select(graph, FACTS, kept)
 
 
+@timed("operators.relations")
 def relations(graph, registry, spec, seed, carry=None):
     dropped = [name for name in registry.extras["base"] if not enabled(spec, "relations/%s/keep" % name)]
     if not dropped:
@@ -1034,6 +1050,7 @@ def relations(graph, registry, spec, seed, carry=None):
     return select(graph, FACTS, ~np.isin(graph.fact_code, codes(registry, dropped)))
 
 
+@timed("operators.merging")
 def merging(graph, registry, spec, seed, carry=None):
     if spec.get("relations/types") == "untyped":
         graph = untype(graph, registry, carry)
@@ -1060,6 +1077,7 @@ def filtering(spec, name):
     )
 
 
+@timed("operators.edges")
 def edges(graph, registry, spec, seed, carry=None):
     named = [edge for edge in registry.edges if filtering(spec, edge.name)]
     if not named:

@@ -1,6 +1,8 @@
 import torch
 from torch import nn
 
+from graphspec.infra.timing import timed
+
 from .layers import (
     CausalAttention,
     EvolvingLayer,
@@ -18,6 +20,7 @@ from .turns import EndContext, enabled, gather_end
 
 
 class SnapshotNet(nn.Module):
+    @timed("snapshot.snapshotnet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]

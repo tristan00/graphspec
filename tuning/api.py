@@ -1,41 +1,49 @@
 import logging
 import time
 
-from .infra.runtime import exclusive, output_path
+from graphspec.infra.runtime import exclusive, output_path
 
 LOG = logging.getLogger(__name__)
 
 
 def build_bank(task, output, workers=1):
-    from tuning.build import build
+    from .build import build
 
-    return build(task, output, workers)
+    started = time.perf_counter()
+    result = build(task, output, workers)
+    LOG.info("build_bank exit seconds=%.3f output=%s", time.perf_counter() - started, output)
+    return result
 
 
 def open_bank(path, device=None):
-    from tuning.data import Bank
+    from .data import Bank
 
-    return Bank(path, device=device)
+    started = time.perf_counter()
+    result = Bank(path, device=device)
+    LOG.info("open_bank exit seconds=%.3f path=%s", time.perf_counter() - started, path)
+    return result
 
 
 def configuration(bank, model=None, graph=None, training=None, *, seed):
-    from tuning.model_spec import TRAINING
-    from tuning.model_spec import configuration as configure
+    from graphspec.spec import configured
 
-    from .spec import configured
+    from .model_spec import TRAINING
+    from .model_spec import configuration as configure
 
+    started = time.perf_counter()
     registry = open_bank(bank).registry
     result = configure(registry, {} if model is None else model, {} if graph is None else graph, seed)
     result.update(configured(TRAINING, {} if training is None else training))
+    LOG.info("configuration exit seconds=%.3f", time.perf_counter() - started)
     return result
 
 
 @exclusive
 def fit(bank, config, output, statement, batch_sequences=64):
-    from tuning.statement import state
-    from tuning.training import fit as train
+    from graphspec.infra import compute
 
-    from .infra import compute
+    from .statement import state
+    from .training import fit as train
 
     started = time.perf_counter()
     stated = state(statement)

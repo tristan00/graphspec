@@ -3,11 +3,14 @@ from collections import deque
 import torch
 from torch import nn
 
+from graphspec.infra.timing import timed
+
 from .layers import Head
 from .turns import EndContext, enabled
 
 
 class AffinityNet(nn.Module):
+    @timed("affinity.affinitynet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]

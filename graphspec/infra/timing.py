@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 import time
@@ -119,10 +120,16 @@ def measure(name):
 
 def timed(name):
     def decorate(function):
+        log = logging.getLogger(function.__module__)
+
         @wraps(function)
         def wrapped(*args, **kwargs):
-            with measure(name):
-                return function(*args, **kwargs)
+            started = time.perf_counter()
+            try:
+                with measure(name):
+                    return function(*args, **kwargs)
+            finally:
+                log.debug("%s exit seconds=%.4f", name, time.perf_counter() - started)
 
         return wrapped
 

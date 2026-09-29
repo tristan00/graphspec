@@ -1,8 +1,11 @@
 import math
 
+from graphspec.infra.timing import timed
+
 SERIES = "series/%s/loss"
 
 
+@timed("objective.weights")
 def weights(bank, given):
     if bank.level != "path":
         if given:
@@ -26,6 +29,7 @@ def weights(bank, given):
     return parsed
 
 
+@timed("objective.value")
 def value(result, plan):
     chosen = plan["objective"]
     if chosen is None:
@@ -34,6 +38,7 @@ def value(result, plan):
     return sum(share * series[name]["val_loss"] for name, share in chosen.items()) / sum(chosen.values())
 
 
+@timed("objective.measures")
 def measures(plan):
     if plan["objective"] is None:
         return [
@@ -52,10 +57,12 @@ def measures(plan):
     ]
 
 
+@timed("objective.columns")
 def columns(plan):
     return [] if plan["objective"] is None else [SERIES % name for name in plan["objective"]]
 
 
+@timed("objective.scores")
 def scores(result, plan):
     if plan["objective"] is None or "series" not in result:
         return {}

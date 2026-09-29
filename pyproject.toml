@@ -15,7 +15,7 @@ packages = ["graphspec", "graphspec.infra", "tuning"]
 tuning = ["web/*.html", "web/*.css", "web/*.js"]
 
 [project.scripts]
-graphspec = "graphspec.__main__:main"
+graphspec = "tuning.__main__:main"
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

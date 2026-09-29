@@ -2,11 +2,14 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from graphspec.infra.timing import timed
+
 from .layers import Head, normalization
 from .turns import EndContext, enabled
 
 
 class SignalNet(nn.Module):
+    @timed("signal.signalnet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]

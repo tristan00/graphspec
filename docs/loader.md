@@ -12,7 +12,8 @@ $env:GRAPHSPEC_HOME = 'D:/graphspec-runtime'
 ```python
 import os
 from pathlib import Path
-from graphspec import GraphTables, Stage, write_task, build_bank
+from graphspec import GraphTables, Stage, write_task
+from tuning import build_bank
 import numpy as np
 
 runtime = Path(os.environ["GRAPHSPEC_HOME"])
@@ -36,7 +37,7 @@ The first half of each feature vector contains values; the second half contains 
 Use the public configuration builder for one model fit on either adapter's bank:
 
 ```python
-from graphspec import configuration, fit
+from tuning import configuration, fit
 
 bank = runtime / "banks" / "example"
 statement = dict(

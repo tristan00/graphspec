@@ -4,6 +4,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from graphspec.infra.timing import timed
+
 from .layers import (
     Head,
     Spatial,
@@ -20,6 +22,7 @@ from .turns import EndContext, enabled, lookback
 
 
 class EventGraphNet(nn.Module):
+    @timed("events.eventgraphnet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]
@@ -103,6 +106,7 @@ class Rule(nn.Module):
 
 
 class MailboxGRU(Rule):
+    @timed("events.mailboxgru")
     def __init__(self, hidden, registry):
         super().__init__()
         self.non_relation = registry.marker("non_relation")
@@ -134,6 +138,7 @@ class MailboxGRU(Rule):
 
 
 class MutualRNN(Rule):
+    @timed("events.mutualrnn")
     def __init__(self, hidden, registry):
         super().__init__()
         self.left_cell, self.right_cell = nn.RNNCell(hidden * 3, hidden), nn.RNNCell(hidden * 3, hidden)
@@ -174,6 +179,7 @@ class MutualRNN(Rule):
 
 
 class Intensity(Rule):
+    @timed("events.intensity")
     def __init__(self, hidden, registry):
         super().__init__()
         self.processes = nn.ModuleList(nn.Linear(hidden * 4, hidden) for _ in range(2))
@@ -201,6 +207,7 @@ class Intensity(Rule):
 
 
 class Antisymmetric(Rule):
+    @timed("events.antisymmetric")
     def __init__(self, hidden, registry, steps, damping):
         super().__init__()
         self.steps, self.damping = steps, damping
@@ -232,6 +239,7 @@ class Antisymmetric(Rule):
 
 
 class MemoryNet(nn.Module):
+    @timed("events.memorynet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]
@@ -374,6 +382,7 @@ class MemoryNet(nn.Module):
 
 
 class ProjectionNet(nn.Module):
+    @timed("events.projectionnet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]

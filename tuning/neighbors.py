@@ -4,6 +4,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from graphspec.infra.timing import timed
+
 from .layers import (
     CausalAttention,
     Head,
@@ -18,6 +20,7 @@ from .turns import EndContext, enabled, lookback
 
 
 class TreeNet(nn.Module):
+    @timed("neighbors.treenet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]
@@ -68,6 +71,7 @@ class TreeNet(nn.Module):
 
 
 class MixerLayer(nn.Module):
+    @timed("neighbors.mixerlayer")
     def __init__(self, hidden, tokens):
         super().__init__()
         self.norm1, self.norm2 = normalization(hidden), normalization(hidden)
@@ -82,6 +86,7 @@ class MixerLayer(nn.Module):
 
 
 class SequenceNet(nn.Module):
+    @timed("neighbors.sequencenet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]
@@ -207,6 +212,7 @@ class SequenceNet(nn.Module):
 
 
 class WalkNet(nn.Module):
+    @timed("neighbors.walknet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]

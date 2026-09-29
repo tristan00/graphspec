@@ -5,9 +5,12 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from graphspec.infra.timing import timed
+
 CHUNK = 128
 
 
+@timed("layers.normalization")
 def normalization(width):
     if type(width) is not int or width < 1:
         raise ValueError("normalization width must be a positive integer")
@@ -129,6 +132,7 @@ def aggregate(h, edges, mode="mean"):
 
 
 class TimeEncoding(nn.Module):
+    @timed("layers.timeencoding")
     def __init__(self, width, mode):
         super().__init__()
         if mode not in ("log_cosine", "cosine", "log_linear"):
@@ -150,6 +154,7 @@ class TimeEncoding(nn.Module):
 
 
 class Head(nn.Module):
+    @timed("layers.head")
     def __init__(self, width, spec, registry):
         super().__init__()
         hidden = spec["hidden"]
@@ -170,6 +175,7 @@ class Head(nn.Module):
 
 
 class KeyEmbedding(nn.Module):
+    @timed("layers.keyembedding")
     def __init__(self, hidden, table):
         super().__init__()
         self.table = table
@@ -201,6 +207,7 @@ def chebyshev(h, edges, weights):
 
 
 class Spatial(nn.Module):
+    @timed("layers.spatial")
     def __init__(self, hidden, mode, relations, attributes, dropout=0.0, order=2, slots=0):
         super().__init__()
         if mode not in ("mean", "normalised", "relational", "chebyshev", "attention", "relational_attention"):
@@ -265,6 +272,7 @@ class Spatial(nn.Module):
 
 
 class CausalAttention(nn.Module):
+    @timed("layers.causalattention")
     def __init__(self, hidden, heads=2, dropout=0.0):
         super().__init__()
         if type(hidden) is not int or hidden < 1 or type(heads) is not int or heads < 1:
@@ -299,6 +307,7 @@ class CausalAttention(nn.Module):
 
 
 class GatedTCN(nn.Module):
+    @timed("layers.gatedtcn")
     def __init__(self, hidden, depth):
         super().__init__()
         self.convs = nn.ModuleList(nn.Conv1d(hidden, hidden * 2, 3, dilation=2**i) for i in range(depth))
@@ -312,6 +321,7 @@ class GatedTCN(nn.Module):
 
 
 class GraphCell(nn.Module):
+    @timed("layers.graphcell")
     def __init__(self, hidden, hops):
         super().__init__()
         self.hops = hops
@@ -340,6 +350,7 @@ class GraphCell(nn.Module):
 
 
 class MatrixGate(nn.Module):
+    @timed("layers.matrixgate")
     def __init__(self, hidden):
         super().__init__()
         self.input, self.recurrent = (
@@ -355,6 +366,7 @@ class MatrixGate(nn.Module):
 
 
 class EvolvingLayer(nn.Module):
+    @timed("layers.evolvinglayer")
     def __init__(self, hidden):
         super().__init__()
         self.initial = nn.Parameter(torch.empty(hidden, hidden))
@@ -384,6 +396,7 @@ class EvolvingLayer(nn.Module):
 
 
 class TemporalEdges(nn.Module):
+    @timed("layers.temporaledges")
     def __init__(self, hidden, attention, relation_slots, dropout, encoding):
         super().__init__()
         self.attention, self.dropout = attention, dropout
@@ -410,6 +423,7 @@ class TemporalEdges(nn.Module):
 
 
 class SelectiveSSM(nn.Module):
+    @timed("layers.selectivessm")
     def __init__(self, hidden, state_size=4):
         super().__init__()
         self.norm = normalization(hidden)

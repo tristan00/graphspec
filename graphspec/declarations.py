@@ -1,3 +1,6 @@
+from graphspec.infra.timing import timed
+
+
 class EdgeType:
     __slots__ = (
         "name",
@@ -11,6 +14,7 @@ class EdgeType:
         "reverse",
     )
 
+    @timed("declarations.edgetype")
     def __init__(self, name, origin, pairs, attributes=(), symmetric=False):
         if not name or not origin:
             raise ValueError("edge declarations require a name and origin")
@@ -25,6 +29,7 @@ class EdgeType:
             raise ValueError("edge attribute names must be unique: " + name)
         self.code = self.reverse = -1
 
+    @timed("declarations.edgetype.declaration")
     def declaration(self):
         return dict(
             name=self.name,

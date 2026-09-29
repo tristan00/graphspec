@@ -2,6 +2,8 @@ import ctypes
 import os
 import signal
 
+from .timing import timed
+
 LIBC = ctypes.CDLL(None, use_errno=True)
 SET_CHILD_SUBREAPER = 36
 GET_CHILD_SUBREAPER = 37
@@ -17,6 +19,7 @@ def checked(result):
 class ProcessGroup:
     popen_options = {"start_new_session": True}
 
+    @timed("linux_group.processgroup")
     def __init__(self):
         self.process = None
         self.previous = ctypes.c_int()
@@ -26,6 +29,7 @@ class ProcessGroup:
     def attach(self, process):
         self.process = process
 
+    @timed("linux_group.processgroup.stop")
     def stop(self):
         if self.process is None:
             return
@@ -41,5 +45,6 @@ class ProcessGroup:
                 break
         self.process = None
 
+    @timed("linux_group.processgroup.close")
     def close(self):
         checked(LIBC.prctl(SET_CHILD_SUBREAPER, self.previous.value, 0, 0, 0))

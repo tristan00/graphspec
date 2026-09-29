@@ -3,6 +3,8 @@ from importlib.metadata import version
 
 import numpy as np
 
+from .timing import timed
+
 VERSION = version("optuna")
 
 
@@ -46,6 +48,7 @@ def draw(domain, rng):
     return float(rng.uniform(domain.low, domain.high))
 
 
+@timed("search.record")
 def record(value, params, distributions, **attrs):
     import optuna
 
@@ -54,6 +57,7 @@ def record(value, params, distributions, **attrs):
     )
 
 
+@timed("search.study")
 def study(seed, settings, records):
     import optuna
 

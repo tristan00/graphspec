@@ -1,6 +1,8 @@
 import numpy as np
 from numba import njit, prange
 
+from .timing import timed
+
 
 @njit(cache=True, inline="always")
 def mixed(value):
@@ -22,6 +24,7 @@ def units(start, columns):
     return result
 
 
+@timed("hashing.unit")
 def unit(seed, stream, *columns):
     count = len(columns[0])
     stacked = np.empty((len(columns), count), np.uint64)

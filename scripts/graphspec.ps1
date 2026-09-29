@@ -16,5 +16,5 @@ $env:TMP = $env:TEMP
 $env:TMPDIR = $env:TEMP
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $RuntimePython = Join-Path $env:GRAPHSPEC_HOME 'environment/Scripts/python.exe'
-& $RuntimePython -B -m graphspec @Command
+& $RuntimePython -B -m tuning @Command
 exit $LASTEXITCODE

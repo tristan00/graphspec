@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .log import emit
+from .timing import timed
 
 
 class HttpError(Exception):
@@ -12,6 +13,7 @@ class HttpError(Exception):
         self.status = status
 
 
+@timed("serve.server")
 def server(port, page, routes, assets=None):
     page = Path(page)
     static = {"/": (page, "text/html; charset=utf-8"), "/index.html": (page, "text/html; charset=utf-8")}
@@ -66,6 +68,7 @@ def server(port, page, routes, assets=None):
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
+@timed("serve.serve")
 def serve(port, page, routes, assets=None, **fields):
     with server(port, page, routes, assets) as instance:
         emit("serve_enter", url="http://127.0.0.1:%d" % instance.server_address[1], **fields)

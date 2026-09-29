@@ -19,7 +19,7 @@ $Temp = Join-Path $RuntimeHome 'tmp'
 $Python = Join-Path $RuntimeHome 'environment\Scripts\python.exe'
 $Arguments = ($Command | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
 $Settings = "set `"GRAPHSPEC_HOME=$RuntimeHome`" && set `"TEMP=$Temp`" && set `"TMP=$Temp`" && set `"TMPDIR=$Temp`" && set PYTHONDONTWRITEBYTECODE=1"
-$Line = "cmd.exe /d /c `"$Settings && `"$Python`" -B -m graphspec $Arguments > `"$Log`" 2>&1`""
+$Line = "cmd.exe /d /c `"$Settings && `"$Python`" -B -m tuning $Arguments > `"$Log`" 2>&1`""
 $Result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
     CommandLine = $Line
     CurrentDirectory = (Split-Path $PSScriptRoot -Parent)

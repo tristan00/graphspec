@@ -2,6 +2,7 @@ import hashlib
 from pathlib import Path
 
 from .runtime import output_path
+from .timing import timed
 
 
 def files(packages):
@@ -16,6 +17,7 @@ def relative(path, packages):
     return path.relative_to(root.parent)
 
 
+@timed("sources.entries")
 def entries(packages):
     packages = tuple(Path(package) for package in packages)
     result = [(path, relative(path, packages)) for path in files(packages)]
@@ -25,6 +27,7 @@ def entries(packages):
     return result
 
 
+@timed("sources.digest")
 def digest(packages):
     value = hashlib.sha256()
     for path, destination in entries(packages):
@@ -33,6 +36,7 @@ def digest(packages):
     return value.hexdigest()
 
 
+@timed("sources.snapshot")
 def snapshot(packages, destination):
     selected = entries(packages)
     destination = output_path(destination)

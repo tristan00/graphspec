@@ -3,12 +3,15 @@ from functools import lru_cache
 
 import numpy as np
 
+from .timing import timed
+
 
 @lru_cache(maxsize=200000)
 def token(text):
     return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "little")
 
 
+@timed("features.encoder")
 def encoder(width, numbers, categories):
     allowed = frozenset(numbers + categories)
 

@@ -2,12 +2,15 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from graphspec.infra.timing import timed
+
 from .layers import Head, keys_of, normalization, segment_softmax
 
 CODE_BITS = 14
 
 
 class MessageLayer(nn.Module):
+    @timed("message_net.messagelayer")
     def __init__(self, hidden, aggregation, update, dropout):
         super().__init__()
         self.aggregation, self.update = aggregation, update
@@ -42,6 +45,7 @@ class MessageLayer(nn.Module):
 
 
 class MixedNet(nn.Module):
+    @timed("message_net.mixednet")
     def __init__(self, cfg, registry, categories):
         super().__init__()
         spec = cfg["model"]

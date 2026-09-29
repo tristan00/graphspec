@@ -1,12 +1,14 @@
 import numpy as np
 
 from graphspec.infra.files import sha256_json
+from graphspec.infra.timing import timed
 
 from .declarations import EdgeType
 from .schema import LEVELS
 
 
 class Registry:
+    @timed("registry.registry")
     def __init__(self, name, nodes, edges, width, markers, extras):
         if type(width) is not int or width < 1:
             raise ValueError("registry feature width must be a positive integer")
@@ -54,6 +56,7 @@ class Registry:
             raise ValueError("base relation types must be declared")
 
     @classmethod
+    @timed("registry.registry.from_declaration")
     def from_declaration(cls, declared):
         edges = [
             EdgeType(e["name"], e["origin"], e["pairs"], e["attributes"], symmetric=e["symmetric"])
@@ -91,6 +94,7 @@ class Registry:
     def marker(self, name):
         return self.marker_index[name]
 
+    @timed("registry.registry.declaration")
     def declaration(self):
         return dict(
             name=self.name,
@@ -103,5 +107,6 @@ class Registry:
             extras=self.extras,
         )
 
+    @timed("registry.registry.fingerprint")
     def fingerprint(self):
         return sha256_json(self.declaration())

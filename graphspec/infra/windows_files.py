@@ -1,7 +1,11 @@
 import ctypes
+import logging
 import msvcrt
 import os
+import time
 from ctypes import wintypes
+
+LOG = logging.getLogger(__name__)
 
 KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
 GENERIC_READ = 0x80000000
@@ -44,6 +48,7 @@ class RenameInfo(ctypes.Structure):
 
 
 def replace(source, destination):
+    started = time.perf_counter()
     encoded = os.fspath(destination).encode("utf-16-le")
     size = RenameInfo.name.offset + len(encoded) + ctypes.sizeof(wintypes.WCHAR)
     buffer = ctypes.create_string_buffer(max(ctypes.sizeof(RenameInfo), size))
@@ -60,9 +65,11 @@ def replace(source, destination):
             raise ctypes.WinError(ctypes.get_last_error())
     finally:
         KERNEL.CloseHandle(handle)
+        LOG.debug("replace exit seconds=%.4f", time.perf_counter() - started)
 
 
 def open_read(path):
+    started = time.perf_counter()
     handle = KERNEL.CreateFileW(
         os.fspath(path),
         GENERIC_READ,
@@ -84,3 +91,5 @@ def open_read(path):
     except BaseException:
         os.close(descriptor)
         raise
+    finally:
+        LOG.debug("open_read exit seconds=%.4f", time.perf_counter() - started)

@@ -4,6 +4,8 @@ from ctypes import wintypes
 
 import psutil
 
+from .timing import timed
+
 KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
 SIZE_T = ctypes.c_size_t
 HANDLE = wintypes.HANDLE
@@ -107,6 +109,7 @@ def join_process(handle):
 class ProcessGroup:
     popen_options = {"creationflags": 0x08000000}
 
+    @timed("windows_job.processgroup")
     def __init__(self):
         self.job = checked(create_job(None, None))
         self.assigned = False
@@ -123,6 +126,7 @@ class ProcessGroup:
         checked(in_job(handle, self.job, ctypes.byref(value)))
         return bool(value.value)
 
+    @timed("windows_job.processgroup.attach")
     def attach(self, process):
         checked(assign(self.job, HANDLE(int(process._handle))))
         self.assigned = True
@@ -146,6 +150,7 @@ class ProcessGroup:
                 raise ctypes.WinError(ctypes.get_last_error())
             count = max(count * 2, ProcessIds.from_buffer(buffer).assigned)
 
+    @timed("windows_job.processgroup.stop")
     def stop(self):
         if not self.assigned:
             return
@@ -169,6 +174,7 @@ class ProcessGroup:
         checked(terminate(self.job, 1))
         self.assigned = False
 
+    @timed("windows_job.processgroup.close")
     def close(self):
         if self.job is not None:
             checked(close_handle(self.job))

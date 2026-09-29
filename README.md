@@ -6,7 +6,7 @@ Build a static or temporal truth graph, derive graph variants, and tune graph tr
 
 Set `GRAPHSPEC_HOME` to an explicit absolute directory before starting Python. There is no default home or profile settings file. Runtime output must stay outside the checkout and installed package tree; on Windows, every output must resolve to the same volume as `GRAPHSPEC_HOME`. Inputs may be read from other volumes. Inputs and completed banks are read-only; derived caches and temporary files live under the runtime home.
 
-Create a virtual environment outside the checkout using the [environment setup](docs/loader.md#environment-setup). From an external build copy of the source, install with `python -B -m pip install .`, or install a built wheel. This keeps packaging metadata and build directories outside the working checkout too. Dependencies and extras are declared in `pyproject.toml`. Use `.[ladybug]` for database inspection/export, and `.[dev]` for development. Infrastructure ships in `graphspec.infra`; no sibling repository is required. The console command is `graphspec`, also available as `python -B -m graphspec`.
+Create a virtual environment outside the checkout using the [environment setup](docs/loader.md#environment-setup). From an external build copy of the source, install with `python -B -m pip install .`, or install a built wheel. This keeps packaging metadata and build directories outside the working checkout too. Dependencies and extras are declared in `pyproject.toml`. Use `.[ladybug]` for database inspection/export, and `.[dev]` for development. Infrastructure ships in `graphspec.infra`; no sibling repository is required. The console command is `graphspec`, also available as `python -B -m tuning`.
 
 The examples use `D:/graphspec-runtime` and its external virtual environment at `environment/Scripts/python.exe`. From the checkout, `scripts/graphspec.ps1 -Home ABSOLUTE_PATH` configures the environment before starting Python and forwards the remaining graphspec arguments. Choose your own runtime directory; the library does not assume a drive or machine path. For direct Python use, set `GRAPHSPEC_HOME` in the launching environment and use `-B` or `PYTHONDONTWRITEBYTECODE=1`. See [storage and loader details](docs/loader.md).
 
@@ -23,7 +23,7 @@ There is no required database round trip. LadybugDB remains an optional way to q
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime search run --bank D:/graphspec-runtime/banks/demo --output D:/graphspec-runtime/runs/demo --device cuda --seed 1 --seconds 600 --preparation-seconds 300 --workers 4 --variant-gb 64 --continuous --selector botorch --startup-trials 100 --random-params model/view
 ```
 
-Replace the Windows paths with your external workspace. The API also exposes `build_bank`, `open_bank`, and `fit`. New bank and fit output directories must not already exist. Searches resume when their existing run directory is supplied. Put a STOP file in a run to stop after its current trial.
+Replace the Windows paths with your external workspace. `tuning` also exposes `build_bank`, `open_bank`, `configuration` and `fit`. New bank and fit output directories must not already exist. Searches resume when their existing run directory is supplied. Put a STOP file in a run to stop after its current trial.
 
 On Windows, user-SID named mutexes enforce one resource-intensive build, check, fit, or search across runtime homes. These singleton guards create no lock files.
 

@@ -6,9 +6,8 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from graphspec import api
 from graphspec.infra import files, runtime, sources, staging
-from tuning import build
+from tuning import api, build
 
 
 def test_json_write_failure_preserves_prior_record_and_removes_temporary(tmp_path):

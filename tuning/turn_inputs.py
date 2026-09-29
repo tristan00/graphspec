@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 
+from graphspec.infra.timing import timed
 from graphspec.transform import SEED
 
 from .inputs import tree
@@ -21,6 +22,7 @@ def prior_rows(held, turns, entities, actor=False):
     return np.where(valid, rows[safe], -1).astype(np.int32)
 
 
+@timed("turn_inputs.add")
 def add(b, graph, held, first, last, start, cfg):
     queries = held.numpy("query_step")[first:last].astype(np.int64)
     membership = held.numpy("turn_membership")[queries]
@@ -81,6 +83,7 @@ def add(b, graph, held, first, last, start, cfg):
         b.update(end_affinity=affinity, end_global_affinity=global_affinity)
 
 
+@timed("turn_inputs.temporal_edges")
 def temporal_edges(b, graph, held, lo, hi, registry, tokens):
     temporal, context = registry.code("temporal"), registry.marker("turn_context")
     nodes = np.arange(lo, hi)
@@ -125,6 +128,7 @@ def temporal_edges(b, graph, held, lo, hi, registry, tokens):
     )
 
 
+@timed("turn_inputs.mixed_edges")
 def mixed_edges(b, graph):
     mixed = b["mixed"]
     mask = b["end_raw_mask"].reshape(-1)
@@ -151,6 +155,7 @@ def mixed_edges(b, graph):
         )
 
 
+@timed("turn_inputs.history_tokens")
 def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
     n, depth = last - first, lookback(cfg)
     if cfg["model"]["view"] == "tree":
@@ -221,6 +226,7 @@ def history_tokens(b, graph, held, first, last, start, cfg, registry, tokens):
     b["history_x"] = Features([(graph, (n, 2, original + depth), pieces)])
 
 
+@timed("turn_inputs.capture_schedule")
 def capture_schedule(b):
     ends = b["end_steps"]
     result = []

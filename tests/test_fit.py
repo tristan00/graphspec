@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 import torch
 
-from graphspec import api
 from graphspec.infra import compute
 from graphspec.infra.files import read_json
+from tuning import api
 from tuning.data import Bank
 from tuning.run import flags, run
 from tuning.statement import names, state
@@ -112,7 +112,7 @@ def test_search_with_a_field_absent_stops_naming_the_field(bank, tmp_path, state
     if hasattr(args, flag):
         setattr(args, flag, None)
         with pytest.raises(KeyError, match="the statement lacks " + name):
-            run(args)
+            run.__wrapped__(args)
         assert not (tmp_path / "run").exists()
 
 
