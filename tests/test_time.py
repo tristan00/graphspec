@@ -482,7 +482,9 @@ def test_a_form_stops_where_it_cannot_state_what_it_is_given():
         forms.reduced("snapshot", "clock", turned, times=[0, 1])
 
 
-def test_forms_rules_for_ties_and_choices_of_steps_are_registered_from_outside():
+def test_forms_rules_for_ties_and_choices_of_steps_are_registered_from_outside(monkeypatch):
+    for names in (FORMS, TIES):
+        monkeypatch.setattr(names, "held", dict(names.held))
     FORMS.register("lasting", forms.Form(lambda table, length: forms.signal(table, 0, length), True))
     rows = pa.table(dict(key=["a"], index=pa.array([2], pa.int64())))
     found = forms.reduced("lasting", "clock", rows, length=3).to_pydict()
@@ -821,8 +823,10 @@ def test_the_steps_of_a_view_may_be_the_times_of_change(tmp_path):
     assert sequence["moments"].tolist() == [10, 20] and sequence["task_step"].tolist() == [0, 0, 1, 1]
 
 
-def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(banks):
+def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(banks, monkeypatch):
     from graphspec.view import offered, unstated
+
+    monkeypatch.setattr(STEPS, "held", dict(STEPS.held))
 
     class Halved:
         def serves(self, registry):

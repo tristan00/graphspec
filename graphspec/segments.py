@@ -12,7 +12,7 @@ import numba
 import numpy as np
 
 from graphspec.infra.files import Arrays
-from graphspec.infra.processes import worker_threads
+from graphspec.infra.processes import guarded, spawned, worker_threads
 from graphspec.infra.timing import measure, timed
 
 from . import join, kernels, representations, transform
@@ -1264,7 +1264,7 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
             return job, stage, arguments
         return None
 
-    executors = [ProcessPoolExecutor(1, initializer=attach, initargs=initargs) for _ in range(workers)]
+    executors = [ProcessPoolExecutor(1, **spawned(attach, initargs)) for _ in range(workers)]
     try:
         with worker_threads(initargs[-1]):
             while stitched < len(jobs):
@@ -1282,7 +1282,7 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
                         if task is not None:
                             job, stage, arguments = task
                             function = TASKS["edges" if stage.startswith("edges") else stage]
-                            running[executors[worker].submit(function, job, *arguments)] = worker
+                            running[executors[worker].submit(guarded, function, job, *arguments)] = worker
                             pending[worker] = task
                 if not running:
                     raise RuntimeError("parallel segment build stalled")

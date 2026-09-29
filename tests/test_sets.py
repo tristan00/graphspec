@@ -416,7 +416,8 @@ def test_a_set_edge_is_one_edge_per_pair_of_members_under_the_pairs_form(bank):
         configuration(registry, dict(view="snapshot"), {"sets/link/storage": "node"}, 5, SPLITS)
 
 
-def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank):
+def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, monkeypatch):
+    monkeypatch.setattr(HELD, "held", dict(HELD.held))
     held = Deriver(bank, "cpu", RESIDENT)
     registry, encoding = held.registry, held.registry.encoding
     facts = Facts.load(held.truth(0))

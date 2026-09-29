@@ -1,7 +1,9 @@
 import argparse
 import os
+import pickle
 import shutil
 import subprocess
+import sys
 import time
 import traceback
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from graphspec.infra.log import configure, emit
 from graphspec.infra.processes import Lock, WorkerProcess
 from graphspec.infra.runtime import exclusive, output_path
 from graphspec.infra.timing import Timeline, measure, timed
+from graphspec.names import carried, restored
 from graphspec.spec import digest
 
 from . import objective
@@ -59,7 +62,16 @@ def fit_timings(directory):
     )
 
 
+def registered(path):
+    started = time.perf_counter()
+    held = pickle.loads(Path(path).read_bytes())
+    sys.path.extend(place for place in held["path"] if place not in sys.path)
+    restored(held["entries"])
+    emit("registered_restored", entries=len(held["entries"]), seconds=time.perf_counter() - started)
+
+
 def worker(args):
+    registered(args.registered)
     directory = Path(args.output)
     config = read_json(directory / "config.json")
     blocks = read_json(args.training_blocks)
@@ -360,7 +372,10 @@ def execute_trial_body(directory, plan, item, index, started, phases, stated):
             str((trial / "statement.json").resolve()),
             "--deadline",
             repr(deadline),
+            "--registered",
+            str((trial / "registered.pickle").resolve()),
         ]
+        (trial / "registered.pickle").write_bytes(pickle.dumps(dict(path=list(sys.path), entries=carried())))
         emit(
             "trial_enter",
             index=index,
@@ -550,6 +565,9 @@ def main():
     worker_parser.add_argument("--batch-sequences", type=int, required=True)
     worker_parser.add_argument("--deadline", type=float, required=True)
     worker_parser.add_argument("--statement", required=True)
+    worker_parser.add_argument(
+        "--registered", required=True, help="the entries registered from outside the library, and the path"
+    )
     report_parser = subparsers.add_parser("report")
     report_parser.add_argument("directory")
     args = parser.parse_args()

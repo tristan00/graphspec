@@ -66,8 +66,12 @@ def without_beside(facts, registry, held):
     return result
 
 
-SORTS.register("pair", Sort(True, False, 2, 2, False))
-SEES.register("without_beside", without_beside)
+@pytest.fixture(scope="module", autouse=True)
+def registered():
+    SORTS.register("pair", Sort(True, False, 2, 2, False))
+    SEES.register("without_beside", without_beside)
+    yield
+    del SORTS.held["pair"], SEES.held["without_beside"]
 
 
 @timed("tasks.stated")
@@ -211,7 +215,7 @@ def case(absent):
 
 
 @pytest.fixture(scope="module")
-def bank(tmp_path_factory):
+def bank(registered, tmp_path_factory):
     started = time.perf_counter()
     root = tmp_path_factory.mktemp("tasks")
     build(synthetic.stage(root, "tasks", case("keep")), root / "bank", 1, ("north", "south"))

@@ -143,7 +143,9 @@ class Halved:
         return np.stack((held / 2, held / state["most"]), 1), np.zeros((len(held), 0), np.float32)
 
 
-def test_column_types_and_encoders_are_registered_by_name_from_outside():
+def test_column_types_and_encoders_are_registered_by_name_from_outside(monkeypatch):
+    for names in (TYPES, ENCODERS):
+        monkeypatch.setattr(names, "held", dict(names.held))
     TYPES.register("count", Count())
     ENCODERS.register("halved", Halved())
     with pytest.raises(ValueError, match="the column type count is registered twice"):

@@ -15,6 +15,7 @@ from graphspec.infra.arrays import RESIDENT, Bundle, Slot, shared, slot_bytes, v
 from graphspec.infra.log import configure
 from graphspec.infra.processes import worker_threads
 from graphspec.infra.timing import Timeline, measure, timed
+from graphspec.names import carried, restored
 
 from .batching import recipe_batch
 from .data import Deriver
@@ -23,17 +24,22 @@ from .tensors import keys, prepare, resolve
 LOG = logging.getLogger(__name__)
 
 
-def serve(bank_directory, cfg, threads, resident, device, jobs, results, timing_directory=None):
+def serve(bank_directory, cfg, threads, resident, device, jobs, results, entries, timing_directory=None):
     path = None if timing_directory is None else Path(timing_directory) / ("packing-%s.json" % os.getpid())
     with Timeline(path), measure("packing_worker"):
-        serve_batches(bank_directory, cfg, threads, resident, device, jobs, results)
+        serve_batches(bank_directory, cfg, threads, resident, device, jobs, results, entries)
 
 
-def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results):
+def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results, entries):
     configure(json_lines=True)
     numba.set_num_threads(threads)
     torch.set_num_threads(1)
-    bank = Deriver(bank_directory, device, resident)
+    failure = None
+    try:
+        restored(entries)
+        bank = Deriver(bank_directory, device, resident)
+    except Exception:
+        failure = traceback.format_exc()
     slots = {}
     while True:
         with measure("queue_wait"):
@@ -41,6 +47,9 @@ def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results)
         if job is None:
             break
         index, blocks, number, slot = job
+        if failure is not None:
+            results.send((index, number, None, 0, None, None, failure))
+            continue
         started = time.perf_counter()
         try:
             bundle = Bundle("cpu")
@@ -90,6 +99,7 @@ class Packer:
         self.results, self.processes = [], []
         threads = max(1, numba.config.NUMBA_NUM_THREADS // workers)
         resident = max(4, RESIDENT // workers)
+        entries = carried()
         try:
             for _ in range(workers):
                 reader, writer = context.Pipe(duplex=False)
@@ -103,6 +113,7 @@ class Packer:
                         bank.device,
                         self.jobs,
                         writer,
+                        entries,
                         timing_directory,
                     ),
                     daemon=True,

@@ -4,12 +4,14 @@ import math
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from itertools import repeat
 
 import numpy as np
 
 from graphspec import spec as specs
 from graphspec.infra.log import emit
+from graphspec.infra.processes import guarded, spawned
 
 from .model_spec import TRAINING, groups
 from .model_spec import space as model_space
@@ -137,7 +139,7 @@ POOL = {}
 def pool():
     if "executor" not in POOL:
         started = time.perf_counter()
-        POOL["executor"] = ProcessPoolExecutor(os.cpu_count())
+        POOL["executor"] = ProcessPoolExecutor(os.cpu_count(), **spawned(None, ()))
         atexit.register(POOL["executor"].shutdown, wait=False, cancel_futures=True)
         emit("candidate_pool_started", workers=os.cpu_count(), seconds=time.perf_counter() - started)
     return POOL["executor"]
@@ -155,7 +157,7 @@ def draw_candidates(registry, bounds, seconds, history, seed, training_seed, fix
     counts = [count // workers + (index < count % workers) for index in range(workers)]
     seeds = np.random.SeedSequence(seed).spawn(workers)
     chunks = pool().map(
-        draw_chunk,
+        partial(guarded, draw_chunk),
         repeat(registry),
         repeat(bounds),
         repeat(seconds),

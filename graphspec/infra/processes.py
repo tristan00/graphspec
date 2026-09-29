@@ -6,6 +6,7 @@ import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 
 import psutil
@@ -15,10 +16,12 @@ if os.name == "nt":
 else:
     import fcntl
 
+from ..names import carried, restored
 from .files import write_json
 from .timing import timed
 
 LOG = logging.getLogger(__name__)
+FAILED = []
 
 
 class LockBusy(OSError):
@@ -156,6 +159,27 @@ def worker_threads(threads):
                 os.environ[name] = value
 
 
+def attached(entries, initializer, initargs):
+    started = time.perf_counter()
+    try:
+        restored(entries)
+        if initializer is not None:
+            initializer(*initargs)
+    except BaseException as error:
+        FAILED.append(error)
+    LOG.debug("attached exit failed=%d seconds=%.4f", len(FAILED), time.perf_counter() - started)
+
+
+def guarded(function, *arguments):
+    if FAILED:
+        raise FAILED[0]
+    return function(*arguments)
+
+
+def spawned(initializer, initargs):
+    return dict(initializer=attached, initargs=(carried(), initializer, initargs))
+
+
 def parallel(function, jobs, workers, initializer, initargs):
     started = time.perf_counter()
     if min(workers, len(jobs)) <= 1:
@@ -164,11 +188,9 @@ def parallel(function, jobs, workers, initializer, initargs):
     else:
         with (
             worker_threads(max(1, (os.cpu_count() or 1) // workers)),
-            ProcessPoolExecutor(
-                max_workers=min(workers, len(jobs)), initializer=initializer, initargs=initargs
-            ) as pool,
+            ProcessPoolExecutor(max_workers=min(workers, len(jobs)), **spawned(initializer, initargs)) as pool,
         ):
-            results = list(pool.map(function, jobs))
+            results = list(pool.map(partial(guarded, function), jobs))
     LOG.debug(
         "parallel exit jobs=%d workers=%d seconds=%.3f", len(jobs), workers, time.perf_counter() - started
     )
