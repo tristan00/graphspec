@@ -991,7 +991,7 @@ class Schema:
             raise ValueError("the source holds tables the schema does not state: " + ", ".join(strangers))
         LOG.debug("schema conform exit tables=%d seconds=%.4f", len(expected), time.perf_counter() - started)
 
-    def text(self, encoding=None):
+    def text(self, encoding):
         started = time.perf_counter()
 
         def described(columns):

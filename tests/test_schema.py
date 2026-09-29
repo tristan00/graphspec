@@ -335,6 +335,8 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
     assert "  place: size number by standard" in stated and ", width" not in stated
     assert "  near: place to place, without direction, relation declared, no columns" in stated
     assert "relation taken from the column predicate, mode category by onehot" in stated
+    with pytest.raises(TypeError, match="encoding"):
+        Schema(read_json(varied.parent / "varied.task.json")["schema"]).text()
     monkeypatch.setattr(sys, "argv", ["graphspec", "inspect", str(varied)])
     main()
     printed = capsys.readouterr().out

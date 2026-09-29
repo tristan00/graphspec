@@ -22,7 +22,7 @@ def inspect(path):
         task = read_json(path)
         if "schema" not in task:
             raise ValueError("the task %s states no schema" % path)
-        result = Schema(task["schema"]).text()
+        result = Schema(task["schema"]).text(None)
     LOG.info("inspect exit path=%s seconds=%.3f", path, time.perf_counter() - started)
     return result
 
