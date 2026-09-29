@@ -1,9 +1,9 @@
 import numpy as np
+import support
 
 from graphspec import join, operators, transform
 from graphspec.infra.arrays import RESIDENT
 from graphspec.resources import GraphLimits
-from graphspec.truth import Graph
 from tuning.data import Bank, Deriver, distinct, identical
 from tuning.inputs import recipe
 from tuning.model_spec import configuration
@@ -39,7 +39,7 @@ def test_single_join_groups_graphs_within_their_split(bank):
     )
     opened = Deriver(bank, "cpu", RESIDENT)
     opened.partitions[:] = 0
-    held = opened.row_index[1]
+    held = opened.viewed(single).row_index[1]
     opened.partitions[held[held >= 0]] = 1
     assert opened.groups(single) == [[0, 2, 3], [1]]
 
@@ -53,7 +53,7 @@ def test_unconnected_entities_end_with_their_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     unlinked = {"graphs/connect/%s" % kind: False for kind in opened.registry.nodes}
     spec = joined_spec(opened, **{"time/scheme": "state"}, **unlinked)
-    graphs = [Graph.load(opened.truth(index)).dense() for index in range(4)]
+    graphs = [support.shown(opened, index).dense() for index in range(4)]
     combined = join.joined(graphs, opened.registry, spec)
     derived = transform.derive(combined, opened.registry, spec, GraphLimits("cpu"))
     home = np.full(len(derived.kinds), -1)
@@ -67,7 +67,7 @@ def test_unconnected_entities_end_with_their_graph(bank):
 def test_every_periods_restart_at_each_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
-    graphs = [Graph.load(opened.truth(index)).dense() for index in range(4)]
+    graphs = [support.shown(opened, index).dense() for index in range(4)]
     combined = operators.periods(join.joined(graphs, opened.registry, spec), opened.registry, spec, 0)
     starts = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     for first, last in zip(starts[:-1], starts[1:]):
@@ -80,7 +80,7 @@ def test_a_join_of_one_graph_equals_the_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     values = {"graphs/join": "single", "graphs/join_size": 4, "time/scheme": "state"}
     _, spec, chosen = opened.variant(configuration(opened.registry, dict(view="mixed"), values, 5))
-    graph = Graph.load(opened.truth(2)).dense()
+    graph = support.shown(opened, 2).dense()
     alone = transform.materialize(graph, opened.registry, spec, chosen, opened.categories, GraphLimits("cpu"))
     together = transform.materialize(
         join.joined([graph], opened.registry, spec),

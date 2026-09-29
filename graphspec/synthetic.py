@@ -9,8 +9,11 @@ from graphspec.infra.files import write_json
 from graphspec.infra.log import configure
 from graphspec.infra.runtime import exclusive, output_path
 from graphspec.infra.staging import Stage
+from graphspec.infra.timing import timed
 
-from .schema import DECLARED, EDGE, LEVELS, OBSERVED, QUERY, VERSION, Schema
+from . import forms
+from .clock import UNITED
+from .schema import DECLARED, EDGE, LEVELS, OBSERVED, QUERY, STAMP, VERSION, Schema
 
 LOG = logging.getLogger(__name__)
 CATEGORIES = ("buy", "sell", "move")
@@ -19,6 +22,9 @@ SERIES = ("level", "trend")
 SETTINGS = ("entities", "steps", "degree", "max_degree", "alive", "lifetime", "period")
 SHARES = dict(person=0.5, place=0.2, item=0.2, team=0.1)
 REFERENCES = dict(person=["person"], place=["place"], team=["team"])
+UNIT = "step"
+TIME = dict(model="clock", units=[UNIT], ties="sequence")
+WRITTEN = {STAMP: pa.int64(), "INT32": pa.int32(), "STRING[]": pa.list_(pa.string())}
 
 
 def edge(source, target, columns, directed=True, relation=DECLARED):
@@ -35,7 +41,8 @@ def uniform(columns, signals):
     result = dict(
         schema=dict(
             version=VERSION,
-            time=dict(unit="step"),
+            time=TIME,
+            observers=False,
             columns=stated,
             graph=dict(columns=[]),
             nodes={kind: dict(columns=names) for kind in SHARES},
@@ -60,7 +67,8 @@ def varied():
     result = dict(
         schema=dict(
             version=VERSION,
-            time=dict(unit="step"),
+            time=TIME,
+            observers=False,
             columns=dict(
                 size=dict(type="number", encoder="standard"),
                 speed=dict(type="number", encoder="standard"),
@@ -218,9 +226,9 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
     x[:, :width] *= x[:, width:]
     node_ids = {kind: counter.take(kind, int(counts[place])) for place, kind in enumerate(nodes)}
     entity_id = np.concatenate([node_ids[kind] for kind in nodes])
-    observation_ids = counter.take("observation", len(obs_step))
     query_ids = counter.take("query", steps)
-    described = dict(id=pa.array([index], pa.int32()), name=pa.array([name]))
+    moments = np.arange(steps)
+    described = dict(id=pa.array([index], pa.int32()), name=pa.array([name]), unit=pa.array([UNIT]))
     for column in schema.graph:
         described[column] = stated(shape, column, np.asarray([index / 1000]), np.ones(1, bool))
     tables = {("graph", None, None): pa.table(described)}
@@ -235,24 +243,22 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
             )
         )
         picked = kinds[obs_entity] == place
-        links = {"from": pa.array(entity_id[obs_entity[picked]]), "to": pa.array(observation_ids[picked])}
+        links = {
+            "from": pa.array(entity_id[obs_entity[picked]]),
+            "at": pa.array(obs_step[picked], pa.int64()),
+            "seq": pa.array(seq[picked], pa.int32()),
+        }
         for column in schema.nodes[kind]:
             position = layout.index(column)
             links[column] = stated(shape, column, x[picked, position], x[picked, width + position] > 0)
         tables[(OBSERVED + kind, kind, "observation")] = pa.table(links)
-    tables[("observation", None, None)] = pa.table(
-        dict(
-            id=pa.array(observation_ids),
-            seq=pa.array(seq, pa.int32()),
-            step=pa.array(obs_step, pa.int32()),
-        )
-    )
+    tables.update(node_facts(schema, tables, moments, counter))
     chosen = rng.integers(0, len(CATEGORIES), steps)
     asked = vectors(rng, steps, width)
     query = dict(
         id=pa.array(query_ids),
         graph=pa.array(np.full(steps, index), pa.int32()),
-        step=pa.array(np.arange(steps), pa.int32()),
+        time=pa.array(np.arange(steps), pa.int64()),
     )
     query[schema.queries["grouping"]] = pa.array(np.arange(steps) // settings["period"], pa.int32())
     query[schema.queries["key"]] = pa.array(query_ids * 7 + 3)
@@ -286,9 +292,9 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
         columns = {
             "from": pa.array(entity_id[rows[:, 0]]),
             "to": pa.array(entity_id[rows[:, 1]]),
-            "seq": pa.array(sequence, pa.int32()),
-            "step": pa.array(rows[:, 2], pa.int32()),
             "present": pa.array(flags),
+            "at": pa.array(rows[:, 2], pa.int64()),
+            "seq": pa.array(sequence, pa.int32()),
         }
         if entry["column"] is not None:
             columns[entry["column"]] = category(
@@ -297,6 +303,7 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
         for column in entry["columns"]:
             columns[column] = stated(shape, column, rng.random(len(rows)).astype(np.float32), flags)
         tables[(EDGE + table,) + entry["endpoints"][0]] = pa.table(columns)
+    tables.update(edge_facts(schema, tables, moments))
     first_x = base[first, :width]
     if level == "node":
         moments = np.arange(settings["period"] - 1, steps, settings["period"])
@@ -311,7 +318,7 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
                 id=pa.array(label_ids),
                 y=pa.array(y, pa.float64()),
                 split=pa.array(split),
-                step=pa.array(label_step, pa.int32()),
+                time=pa.array(label_step, pa.int64()),
             )
         )
         tables[(TARGET + "_of", TARGET, nodes[0])] = pa.table(
@@ -372,6 +379,48 @@ def graph_rows(rng, index, name, shape, settings, counter, level):
         sum(len(present) + len(absent) for present, absent in facts.values()),
     )
     return tables
+
+
+def node_facts(schema, tables, moments, counter):
+    started = time.perf_counter()
+    keys = [(OBSERVED + kind, kind, "observation") for kind in schema.nodes]
+    sequenced = "seq" in schema.stamps()
+    facts = forms.together([tables[key] for key in keys], moments, sequenced)
+    stamps = [name for name in schema.stamps() if name != "observers"]
+    result, parts = {}, []
+    for key, table in zip(keys, facts):
+        ids = counter.take("observation", table.num_rows)
+        parts.append(pa.table(dict(id=pa.array(ids), **{name: table.column(name) for name in stamps})))
+        result[key] = table.drop_columns(stamps).add_column(1, "to", pa.array(ids))
+    result[("observation", None, None)] = pa.concat_tables(parts)
+    LOG.debug(
+        "observed exit kinds=%d facts=%d seconds=%.4f",
+        len(keys),
+        result[("observation", None, None)].num_rows,
+        time.perf_counter() - started,
+    )
+    return result
+
+
+def edge_facts(schema, tables, moments):
+    started = time.perf_counter()
+    keys = [key for key in tables if key[0].startswith(EDGE)]
+    sequenced = "seq" in schema.stamps()
+    parts = {key: [] for key in keys}
+    for flag in (True, False):
+        chosen = [
+            tables[key].filter(pa.array(np.asarray(tables[key].column("present")) == flag)) for key in keys
+        ]
+        for key, table in zip(keys, forms.together(chosen, moments, sequenced)):
+            parts[key].append(table)
+    result = {}
+    for key in keys:
+        table = pa.concat_tables(parts[key])
+        names = [name for name in tables[key].column_names if name not in ("at", "seq")]
+        names[3:3] = [name for name in schema.stamps() if name != "observers"]
+        result[key] = table.select(names)
+    LOG.debug("held exit tables=%d seconds=%.4f", len(keys), time.perf_counter() - started)
+    return result
 
 
 def path_points(steps, period):
@@ -442,6 +491,328 @@ def generate(output, name, graphs, level, seed, shape, **settings):
         stage.directory,
         graphs,
         level,
+    )
+    return output / (name + ".task.json")
+
+
+GIVEN = dict(
+    key=pa.string(),
+    source=pa.string(),
+    target=pa.string(),
+    relation=pa.string(),
+    present=pa.bool_(),
+    at=pa.int64(),
+    index=pa.int64(),
+    since=pa.int64(),
+    until=pa.int64(),
+    known=pa.int64(),
+    replaced=pa.int64(),
+    seq=pa.int32(),
+    observers=pa.list_(pa.string()),
+)
+OPTIONAL = ("known", "replaced", "observers")
+PARTS = ("schema", "level", "graphs")
+GRAPH = ("name", "unit", "columns", "nodes", "values", "edges", "tasks", "targets")
+STATEMENT = ("form", "parameters", "rows")
+
+
+@timed("synthetic.parted")
+def parted(held, names, where):
+    lacking = [name for name in names if name not in held]
+    unknown = sorted(set(held) - set(names))
+    if lacking or unknown:
+        raise ValueError(
+            "%s states exactly %s; it lacks %s and holds %s besides"
+            % (where, ", ".join(names), ", ".join(lacking) or "nothing", ", ".join(unknown) or "nothing")
+        )
+    return held
+
+
+def table(schema, columns, where):
+    started = time.perf_counter()
+    held = {}
+    for name, values in columns.items():
+        if name in GIVEN:
+            kind = GIVEN[name]
+        elif name in schema.columns:
+            kind = schema.kind(name).written
+        else:
+            raise ValueError("%s states the column %s, which its schema does not" % (where, name))
+        held[name] = pa.array(list(values), kind)
+    result = pa.table(held)
+    LOG.debug("table exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+    return result
+
+
+def facts(schema, statement, given, values, where):
+    started = time.perf_counter()
+    parted(
+        statement, STATEMENT + tuple(name for name in ("kind", "table", "ends") if name in statement), where
+    )
+    stated_rows = table(schema, statement["rows"], where)
+    if schema.model == "none":
+        if statement["form"] is not None:
+            raise ValueError("%s names a form, and the graphs of its schema have no time" % where)
+        result = stated_rows
+    else:
+        result = forms.reduced(statement["form"], schema.model, stated_rows, **statement["parameters"])
+    stamps = schema.stamps()
+    for name, kind in stamps.items():
+        if name not in result.column_names:
+            if name not in OPTIONAL:
+                raise ValueError("%s states no column %s" % (where, name))
+            result = result.append_column(name, pa.nulls(result.num_rows, WRITTEN[kind]))
+    wanted = list(given) + list(stamps) + list(values)
+    if sorted(result.column_names) != sorted(wanted):
+        raise ValueError(
+            "%s states the columns %s and is to state %s"
+            % (where, ", ".join(result.column_names), ", ".join(wanted))
+        )
+    LOG.debug("facts exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+    return result.select(wanted)
+
+
+@timed("synthetic.none")
+def none(schema, given, values):
+    names = list(given) + list(schema.stamps()) + list(values)
+    kinds = dict(GIVEN, **{name: schema.kind(name).written for name in values})
+    kinds.update({name: WRITTEN[kind] for name, kind in schema.stamps().items()})
+    return pa.table({name: pa.array([], kinds[name]) for name in names})
+
+
+@timed("synthetic.gathered")
+def gathered(schema, statements, given, values, where):
+    found = [facts(schema, statement, given, values, where) for statement in statements]
+    return pa.concat_tables(found) if found else none(schema, given, values)
+
+
+def case_rows(schema, index, graph, counter, level):
+    started = time.perf_counter()
+    where = "the graph %s" % parted(graph, GRAPH, "a graph of a synthetic case")["name"]
+    united = schema.model in UNITED
+    if united != (graph["unit"] is not None):
+        raise ValueError("%s states a unit of time exactly when its schema has a clock" % where)
+    described = dict(id=pa.array([index], pa.int32()), name=pa.array([graph["name"]]))
+    if united:
+        described["unit"] = pa.array([graph["unit"]])
+    described.update(
+        table(schema, {name: [graph["columns"][name]] for name in schema.graph}, where).to_pydict()
+    )
+    tables = {("graph", None, None): table_of(schema, described)}
+    lookup, entity, stamps = {}, 0, list(schema.stamps())
+    for kind in schema.nodes:
+        keys = list(graph["nodes"][kind])
+        ids = counter.take(kind, len(keys))
+        lookup[kind] = dict(zip(keys, ids.tolist()))
+        if len(lookup[kind]) != len(keys):
+            raise ValueError("%s names a node of the kind %s twice" % (where, kind))
+        tables[(kind, None, None)] = pa.table(
+            dict(
+                id=pa.array(ids),
+                graph=pa.array(np.full(len(keys), index), pa.int32()),
+                entity=pa.array(np.arange(entity, entity + len(keys)), pa.int32()),
+                key=pa.array(keys, pa.string()),
+            )
+        )
+        entity += len(keys)
+
+    def found(kind, keys):
+        strangers = sorted({key for key in keys if key not in lookup[kind]})
+        if strangers:
+            raise ValueError("%s names nodes of the kind %s it does not hold: %s" % (where, kind, strangers))
+        return pa.array([lookup[kind][key] for key in keys], pa.int64())
+
+    parts = []
+    for kind, columns in schema.nodes.items():
+        held_rows = gathered(
+            schema,
+            [statement for statement in graph["values"] if statement["kind"] == kind],
+            ("key",),
+            columns,
+            "%s, values of %s" % (where, kind),
+        )
+        ids = counter.take("observation", held_rows.num_rows)
+        parts.append(pa.table(dict(id=pa.array(ids), **{name: held_rows.column(name) for name in stamps})))
+        tables[(OBSERVED + kind, kind, "observation")] = pa.table(
+            {
+                "from": found(kind, held_rows.column("key").to_pylist()),
+                "to": pa.array(ids),
+                **{name: held_rows.column(name) for name in columns},
+            }
+        )
+    tables[("observation", None, None)] = pa.concat_tables(parts)
+    for name, entry in schema.edges.items():
+        given = ("source", "target", "present") + (() if entry["column"] is None else ("relation",))
+        for ends in entry["endpoints"]:
+            held_rows = gathered(
+                schema,
+                [
+                    statement
+                    for statement in graph["edges"]
+                    if statement["table"] == name and tuple(statement["ends"]) == ends
+                ],
+                given,
+                entry["columns"],
+                "%s, edges of %s" % (where, name),
+            )
+            columns = {
+                "from": found(ends[0], held_rows.column("source").to_pylist()),
+                "to": found(ends[1], held_rows.column("target").to_pylist()),
+                "present": held_rows.column("present"),
+            }
+            columns.update({stamp: held_rows.column(stamp) for stamp in stamps})
+            if entry["column"] is not None:
+                columns[entry["column"]] = held_rows.column("relation")
+            columns.update({column: held_rows.column(column) for column in entry["columns"]})
+            tables[(EDGE + name,) + ends] = pa.table(columns)
+    tasks = graph["tasks"]
+    count = len(tasks["key"])
+    ids = counter.take("query", count)
+    asked = dict(id=pa.array(ids), graph=pa.array(np.full(count, index), pa.int32()))
+    asked["category"] = pa.array(tasks["category"], pa.string())
+    if schema.model != "none":
+        asked["time"] = pa.array(tasks["time"], pa.int64())
+    if schema.observers:
+        asked["observer"] = pa.array(tasks["observer"], pa.string())
+    if schema.queries["grouping"] is not None:
+        asked[schema.queries["grouping"]] = pa.array(tasks["grouping"], pa.int32())
+    asked[schema.queries["key"]] = pa.array(tasks["key"], pa.int64())
+    asked.update(
+        table(
+            schema, {name: tasks[name] for name in schema.queries["columns"]}, where + ", tasks"
+        ).to_pydict()
+    )
+    if schema.queries["signals"]:
+        asked.update(signal=fixed(tasks["signal"]), signal_observed=fixed(tasks["signal_observed"]))
+    tables[("query", None, None)] = table_of(schema, asked)
+    for name, kinds in schema.queries["references"].items():
+        keys = list(tasks["references"][name])
+        for kind in kinds:
+            rows = [row for row, key in enumerate(keys) if key in lookup[kind]]
+            tables[(QUERY + name, "query", kind)] = pa.table(
+                {"from": pa.array(ids[rows]), "to": found(kind, [keys[row] for row in rows])}
+            )
+    targets = graph["targets"]
+    labelled = counter.take(TARGET, len(targets["y"]))
+    labels = dict(
+        id=pa.array(labelled), y=pa.array(targets["y"], pa.float64()), split=pa.array(targets["split"])
+    )
+    if level == "query":
+        links = {"from": pa.array(labelled), "to": pa.array(ids[list(targets["task"])])}
+        tables[(TARGET + "_of", TARGET, "query")] = pa.table(links)
+    else:
+        if schema.model != "none":
+            labels["time"] = pa.array(targets["time"], pa.int64())
+        links = {"from": pa.array(labelled), "to": found(targets["kind"], targets["key"])}
+        tables[(TARGET + "_of", TARGET, targets["kind"])] = pa.table(links)
+    tables[(TARGET, None, None)] = pa.table(labels)
+    LOG.info(
+        "synthetic case graph exit graph=%s tables=%d seconds=%.3f",
+        graph["name"],
+        len(tables),
+        time.perf_counter() - started,
+    )
+    return tables
+
+
+@timed("synthetic.table_of")
+def table_of(schema, columns):
+    return pa.table(
+        {
+            name: pa.array(values, schema.kind(name).written)
+            if isinstance(values, list) and name in schema.columns
+            else values
+            for name, values in columns.items()
+        }
+    )
+
+
+def restated(schema, statement, given, values, times, where):
+    started = time.perf_counter()
+    found = facts(schema, statement, given, values, where)
+    since = np.asarray(found.column("since").to_numpy(zero_copy_only=False), np.int64)
+    until = found.column("until").to_pylist()
+    rows, moments = [], []
+    for row, (start, stop) in enumerate(zip(since.tolist(), until)):
+        chosen = [moment for moment in times if start <= moment and (stop is None or moment < stop)]
+        rows += [row] * len(chosen)
+        moments += chosen
+    taken = found.take(pa.array(rows, pa.int64())).drop_columns(["since", "until"])
+    columns = dict(taken.to_pydict(), at=moments)
+    result = dict(
+        {name: statement[name] for name in statement if name not in STATEMENT},
+        form="snapshot",
+        parameters=dict(times=list(times)),
+        rows={
+            name: held
+            for name, held in columns.items()
+            if name not in OPTIONAL or any(value is not None for value in held)
+        },
+    )
+    LOG.debug(
+        "restated exit facts=%d rows=%d seconds=%.4f",
+        found.num_rows,
+        len(rows),
+        time.perf_counter() - started,
+    )
+    return result
+
+
+def snapshots(case):
+    started = time.perf_counter()
+    schema = Schema(parted(case, PARTS, "a synthetic case")["schema"])
+    graphs = []
+    for graph in case["graphs"]:
+        where = "the graph %s" % graph["name"]
+        stated_facts = [
+            (statement, ("key",), schema.nodes[statement["kind"]], "values") for statement in graph["values"]
+        ] + [
+            (
+                statement,
+                ("source", "target", "present")
+                + (() if schema.edges[statement["table"]]["column"] is None else ("relation",)),
+                schema.edges[statement["table"]]["columns"],
+                "edges",
+            )
+            for statement in graph["edges"]
+        ]
+        times = set(graph["tasks"]["time"])
+        for statement, given, values, _ in stated_facts:
+            found = facts(schema, statement, given, values, where)
+            for name in ("since", "until"):
+                times |= {moment for moment in found.column(name).to_pylist() if moment is not None}
+        times = sorted(times)
+        held_parts = dict(values=[], edges=[])
+        for statement, given, values, part in stated_facts:
+            held_parts[part].append(restated(schema, statement, given, values, times, where))
+        graphs.append(dict(graph, **held_parts))
+    LOG.info("synthetic snapshots exit graphs=%d seconds=%.3f", len(graphs), time.perf_counter() - started)
+    return dict(case, graphs=graphs)
+
+
+@exclusive
+def stage(output, name, case):
+    started = time.perf_counter()
+    schema = Schema(parted(case, PARTS, "a synthetic case")["schema"])
+    if schema.queries is None or case["level"] not in ("query", "node"):
+        raise ValueError("a synthetic case states queries and targets on queries or on nodes")
+    output = output_path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    if output.joinpath(name + ".staging").exists():
+        raise FileExistsError("synthetic staging exists; choose another name or output")
+    counter = Counter()
+    with Stage(output / (name + ".staging")) as held_stage:
+        for index, graph in enumerate(case["graphs"]):
+            held_stage.write(case_rows(schema, index, graph, counter, case["level"]))
+    write_json(
+        output / (name + ".task.json"),
+        dict(name=name, staging=name + ".staging", target=TARGET, schema=schema.mapping()),
+    )
+    LOG.info(
+        "synthetic case exit seconds=%.3f staging=%s graphs=%d",
+        time.perf_counter() - started,
+        held_stage.directory,
+        len(case["graphs"]),
     )
     return output / (name + ".task.json")
 

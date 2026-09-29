@@ -5,7 +5,7 @@ from graphspec.infra.staging import Stage
 from graphspec.schema import Schema
 from graphspec.staged import IDS, Staged
 from graphspec.synthetic import TARGET, Counter, graph_rows, uniform
-from graphspec.truth import ARRAYS, Graph
+from graphspec.truth import STORED, Facts
 from tuning.build import build
 
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
@@ -58,11 +58,11 @@ def test_sharded_staging_with_block_ids_builds_the_same_bank(tmp_path):
     )
     for index in range(4):
         left, right = (
-            Graph.load(reference / "truth" / ("graph_%04d" % index)),
-            Graph.load(sharded / "truth" / ("graph_%04d" % index)),
+            Facts.load(reference / "truth" / ("graph_%04d" % index)),
+            Facts.load(sharded / "truth" / ("graph_%04d" % index)),
         )
-        assert left.name == right.name and left.steps == right.steps
-        for name in ARRAYS:
+        assert left.name == right.name and left.unit == right.unit
+        for name in STORED:
             if name in ("query_key", "label_id"):
                 continue
             assert np.array_equal(left.arrays[name], right.arrays[name], equal_nan=True), name

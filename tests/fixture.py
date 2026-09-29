@@ -6,7 +6,9 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from graphspec import synthetic
 from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
 from graphspec.schema import EDGE, OBSERVED, QUERY
 
 LOG = logging.getLogger(__name__)
@@ -17,6 +19,9 @@ SCALING = ("reward_mean", "reward_sd")
 UNSPLIT = "spread_indices"
 ROW_KEYS = dict(decision="key", turn="grouping")
 QUERY_COLUMNS = dict(key="key", period="grouping")
+UNIT = "step"
+VIEW = {"time/steps": "tasks", "time/several": "last"}
+MOMENT = "step"
 
 
 def configurations(place):
@@ -43,40 +48,30 @@ def columns(vectors, names, layout):
     }
 
 
-def tables(folder, schema):
+@timed("fixture.moved")
+def moved(table, old, new, kind):
+    place = table.schema.get_field_index(old)
+    return table.set_column(place, new, table.column(old).cast(kind))
+
+
+def restated(schema, found, layout):
     started = time.perf_counter()
-    folder, layout = Path(folder), list(schema.layout())
-    found = {}
-    for entry in read_json(folder / "stage.json"):
-        key = (entry["table"], entry["source"], entry["target"])
-        found[key] = pa.concat_tables([pq.read_table(folder / name) for name in entry["files"]])
     observation = found[("observation", None, None)]
     vectors = observation.column("x").combine_chunks()
     place = {number: row for row, number in enumerate(observation.column("id").to_pylist())}
     result = {}
     for (table, source, target), held in found.items():
-        if table == "observation":
-            result[(table, source, target)] = held.drop_columns(["x"])
-        elif table == "observed":
+        if table == "observed":
             rows = pa.array([place[number] for number in held.column("to").to_pylist()], pa.int64())
-            for name, values in columns(vectors.take(rows), schema.nodes[source], layout).items():
-                held = held.append_column(name, values)
-            result[(OBSERVED + source, source, target)] = held
-        elif table == "query":
-            asked = columns(held.column("x").combine_chunks(), schema.queries["columns"], layout)
-            position = held.schema.get_field_index("x")
-            held = held.remove_column(position)
-            for offset, (name, values) in enumerate(asked.items()):
-                held = held.add_column(position + offset, name, values)
-            result[(table, source, target)] = held.rename_columns(
-                [
-                    schema.queries[QUERY_COLUMNS[name]] if name in QUERY_COLUMNS else name
-                    for name in held.column_names
-                ]
+            held = pa.table(
+                {
+                    "from": held.column("from"),
+                    "at": observation.column(MOMENT).take(rows).cast(pa.int64()),
+                    "seq": observation.column("seq").take(rows),
+                    **columns(vectors.take(rows), schema.nodes[source], layout),
+                }
             )
-        elif table.startswith(QUERY) and table[len(QUERY) :] in ROLES:
-            name = list(schema.queries["references"])[ROLES.index(table[len(QUERY) :])]
-            result[(QUERY + name, source, target)] = held
+            result[(OBSERVED + source, source, target)] = held
         elif table.startswith(EDGE):
             for name in schema.edges[table[len(EDGE) :]]["columns"]:
                 values = np.asarray(held.column(name).to_numpy(), np.float32)
@@ -85,11 +80,77 @@ def tables(folder, schema):
                     name,
                     pa.array(values, pa.float32(), mask=np.isnan(values)),
                 )
-            result[(table, source, target)] = held
+            names = ["from", "to", "present", MOMENT, "seq"]
+            names += [name for name in held.column_names if name not in names]
+            result[(table, source, target)] = moved(held.select(names), MOMENT, "at", pa.int64())
+    LOG.debug("restated exit tables=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def tables(folder, schema):
+    started = time.perf_counter()
+    folder, layout = Path(folder), list(schema.layout())
+    found = {}
+    for entry in read_json(folder / "stage.json"):
+        key = (entry["table"], entry["source"], entry["target"])
+        found[key] = pa.concat_tables([pq.read_table(folder / name) for name in entry["files"]])
+    graphs = found[("graph", None, None)]
+    owner = {}
+    for kind in schema.nodes:
+        held = found[(kind, None, None)]
+        owner[kind] = dict(zip(held.column("id").to_pylist(), held.column("graph").to_pylist()))
+    asked = found[("query", None, None)]
+    snapshots, counter, parts = restated(schema, found, layout), synthetic.Counter(), {}
+    for graph in graphs.column("id").to_pylist():
+        moments = np.sort(
+            np.asarray(asked.column(MOMENT))[np.asarray(asked.column("graph")) == graph].astype(np.int64)
+        )
+        own = {
+            key: held.filter(
+                pa.array(
+                    [owner[key[1]][number] == graph for number in held.column("from").to_pylist()], pa.bool_()
+                )
+            )
+            for key, held in snapshots.items()
+        }
+        facts = synthetic.node_facts(schema, own, moments, counter)
+        facts.update(synthetic.edge_facts(schema, own, moments))
+        for key, held in facts.items():
+            parts.setdefault(key, []).append(held)
+    result = {key: pa.concat_tables(held) for key, held in parts.items()}
+    for (table, source, target), held in found.items():
+        if table in ("observation", "observed") or table.startswith(EDGE):
+            continue
+        if table == "graph":
+            result[(table, source, target)] = held.add_column(
+                2, "unit", pa.array([UNIT] * held.num_rows, pa.string())
+            )
+        elif table == "query":
+            stated = columns(held.column("x").combine_chunks(), schema.queries["columns"], layout)
+            position = held.schema.get_field_index("x")
+            held = held.remove_column(position)
+            for offset, (name, values) in enumerate(stated.items()):
+                held = held.add_column(position + offset, name, values)
+            result[(table, source, target)] = moved(held, MOMENT, "time", pa.int64()).rename_columns(
+                [
+                    schema.queries[QUERY_COLUMNS[name]] if name in QUERY_COLUMNS else name
+                    for name in moved(held, MOMENT, "time", pa.int64()).column_names
+                ]
+            )
+        elif table.startswith(QUERY) and table[len(QUERY) :] in ROLES:
+            name = list(schema.queries["references"])[ROLES.index(table[len(QUERY) :])]
+            result[(QUERY + name, source, target)] = held
+        elif MOMENT in held.column_names:
+            result[(table, source, target)] = moved(held, MOMENT, "time", pa.int64())
         else:
             result[(table, source, target)] = held
     LOG.debug("tables exit tables=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
+
+
+@timed("fixture.spec")
+def spec(held):
+    return dict(held, **VIEW)
 
 
 def renamed(arrays):
@@ -179,9 +240,9 @@ def supervision(bank, target, schema):
     if all(name in held["split"] for name in SCALING):
         mean, sd = (held["split"][name] for name in SCALING)
         split["series"] = [dict(name=target, mean=mean, sd=sd)]
+    names = dict({MOMENT: "time"}, **{name: schema.queries[part] for name, part in ROW_KEYS.items()})
     rows = [
-        {schema.queries[ROW_KEYS[name]] if name in ROW_KEYS else name: value for name, value in row.items()}
-        for row in held["rows"]
+        {names[name] if name in names else name: value for name, value in row.items()} for row in held["rows"]
     ]
     LOG.debug("supervision exit rows=%d seconds=%.4f", len(rows), time.perf_counter() - started)
     return dict(rows=rows, split=split)

@@ -34,22 +34,23 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
         dict(member=dict(endpoints=[("customer", "organization")], directed=True, columns=[])),
         dict(value=dict(type="number", encoder="value"), other=dict(type="number", encoder="standard")),
     )
-    graph = GraphTables(0, "different", schema)
+    graph = GraphTables(0, "different", "step", schema)
+    when = dict(since=0, until=None, seq=[0, 1, 2, 3])
     graph.nodes("customer", ["a", "b", "c", "d"])
     graph.nodes("organization", ["shared"])
-    graph.observe("customer", ["a", "b", "c", "d"], step=0, value=np.ones(4), other=[1, 2, None, 4])
-    graph.observe("organization", ["shared"], step=0, value=np.ones(1))
-    with pytest.raises(TypeError, match="step|present"):
+    graph.observe("customer", ["a", "b", "c", "d"], when, value=np.ones(4), other=[1, 2, None, 4])
+    graph.observe("organization", ["shared"], dict(when, seq=4), value=np.ones(1))
+    with pytest.raises(TypeError, match="when|present"):
         graph.edges("member", "customer", "organization", ["a", "b", "c", "d"], ["shared"] * 4)
     graph.edges(
-        "member", "customer", "organization", ["a", "b", "c", "d"], ["shared"] * 4, step=0, present=True
+        "member", "customer", "organization", ["a", "b", "c", "d"], ["shared"] * 4, when, present=True
     )
     graph.labels(
         "customer",
         ["a", "b", "c", "d"],
         [0, 1, 0, 1],
         ["train", "train", "validation", "validation"],
-        step=0,
+        moment=0,
         target="outcome",
     )
     with Stage(tmp_path / "source") as stage:
@@ -125,7 +126,7 @@ def test_database_export_and_staging_read_the_same_graph(bank, tmp_path):
     pytest.importorskip("ladybug")
     from graphspec.database import export
     from graphspec.infra.files import read_json, write_json
-    from graphspec.truth import ARRAYS, Graph
+    from graphspec.truth import STORED, Facts
 
     export(bank.parent / "tiny.staging", tmp_path / "tiny.lbug")
     task = tmp_path / "task.json"
@@ -133,6 +134,6 @@ def test_database_export_and_staging_read_the_same_graph(bank, tmp_path):
     write_json(task, dict(name="tiny", database="tiny.lbug", target="outcome", schema=schema))
     build(task, tmp_path / "database-bank", 1, ("train",))
     for index in range(4):
-        left = Graph.load(bank / "truth" / ("graph_%04d" % index))
-        right = Graph.load(tmp_path / "database-bank" / "truth" / ("graph_%04d" % index))
-        assert all(np.array_equal(left.arrays[name], right.arrays[name], equal_nan=True) for name in ARRAYS)
+        left = Facts.load(bank / "truth" / ("graph_%04d" % index))
+        right = Facts.load(tmp_path / "database-bank" / "truth" / ("graph_%04d" % index))
+        assert all(np.array_equal(left.arrays[name], right.arrays[name], equal_nan=True) for name in STORED)

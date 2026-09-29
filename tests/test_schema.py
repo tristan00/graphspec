@@ -14,7 +14,7 @@ from graphspec import spec as specs
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.schema import VALUE, Encoding, Schema, fitted
-from graphspec.truth import VERSION, Graph, conforms, gather
+from graphspec.truth import VERSION, Facts, conforms, gather
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.statement import state
@@ -39,7 +39,8 @@ def test_the_schema_is_built_from_a_mapping_and_written_back_to_one():
     assert schema.mapping() == mapping and Schema(schema.mapping()).fingerprint() == schema.fingerprint()
     assert schema.layout() == ("size", "speed", "colour", "open")
     assert schema.edges["near"]["directed"] is False and schema.edges["links"]["column"] == "predicate"
-    assert schema.unit == "step" and schema.graph == ("season",)
+    assert schema.model == "clock" and schema.units == ("step",) and schema.graph == ("season",)
+    assert schema.ties == "sequence" and schema.observers is False
 
 
 @pytest.mark.parametrize(
@@ -47,7 +48,10 @@ def test_the_schema_is_built_from_a_mapping_and_written_back_to_one():
     [
         (("version",), "the schema lacks version"),
         (("time",), "the schema lacks time"),
-        (("time", "unit"), "the time of the schema lacks unit"),
+        (("time", "units"), "the time of the schema lacks units"),
+        (("time", "model"), "the time of the schema lacks model"),
+        (("time", "ties"), "the time of the schema lacks ties"),
+        (("observers",), "the schema lacks observers"),
         (("columns", "size", "type"), "the column size lacks type"),
         (("columns", "size", "encoder"), "the column size lacks encoder"),
         (("columns", "mode"), "the columns of the edge table visits have no stated type: mode"),
@@ -71,7 +75,7 @@ def test_a_schema_with_a_statement_absent_stops_naming_it(path, message):
 
 def test_a_schema_of_another_version_or_with_an_unknown_name_is_refused():
     mapping = synthetic.varied()["schema"]
-    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 1"):
+    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 2"):
         Schema(dict(mapping, version=0))
     with pytest.raises(KeyError, match="no column type is registered under the name 'colourful'"):
         Schema(dict(mapping, columns=dict(mapping["columns"], size=dict(type="colourful", encoder="value"))))
@@ -134,14 +138,14 @@ def test_column_types_and_encoders_are_registered_by_name_from_outside():
     )
     table = pa.table(
         {
-            "step": pa.array([0, 1, 2], pa.int32()),
+            "since": pa.array([0, 1, 2], pa.int64()),
             VALUE + "stock": pa.array([4, None, 10], pa.int32()),
             VALUE + "value": pa.array([1.0, 2.0, 3.0], pa.float32()),
         }
     )
     tables = dict(
         graph=pa.table(dict(name=["one"])),
-        observations=dict(shelf=table, crate=table.select(["step", VALUE + "stock"])),
+        observations=dict(shelf=table, crate=table.select(["since", VALUE + "stock"])),
         edges={},
     )
     encoding = fitted(schema, gather(schema, tables, 1), {})
@@ -160,7 +164,7 @@ def test_encoders_are_fitted_on_the_rows_trained_on_and_on_no_other():
     )
     table = pa.table(
         {
-            "step": pa.array([0, 1, 2, 3, 4], pa.int32()),
+            "since": pa.array([0, 1, 2, 3, 4], pa.int64()),
             VALUE + "shade": pa.array(["dark", "light", None, "pale", "dark"], pa.string()),
             VALUE + "height": pa.array([1.0, 3.0, None, 100.0, 200.0], pa.float32()),
         }
@@ -177,7 +181,7 @@ def test_encoders_are_fitted_on_the_rows_trained_on_and_on_no_other():
     again = Encoding(schema, **copy.deepcopy(encoding.declaration()))
     assert np.array_equal(again.nodes(np.asarray([[1, 5]], np.float32)), encoding.nodes([[1, 5]]))
     with pytest.raises(ValueError, match="the column shade has no value in the rows trained on"):
-        fitted(schema, gather(schema, tables, -1), {})
+        fitted(schema, gather(schema, tables, None), {})
 
 
 @pytest.mark.parametrize("unseen", ["stop", "shared"])
@@ -221,8 +225,8 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
         == 2 + len(opened.registry.encoding.states["mode"]["codes"]) + 2
     )
     for graph in manifest["graphs"]:
-        truth = Graph.load(opened.truth(graph["index"]))
-        assert truth.obs_x.shape[1] == 11 and truth.obs_values.shape[1] == 4
+        truth = Facts.load(opened.truth(graph["index"]))
+        assert truth.obs_x.shape[1] == 11 and truth.obs_values.shape[1] == 4 and truth.unit == "step"
         place = np.asarray(truth.kinds)[truth.obs_entity] == opened.registry.kind("place")
         assert np.isnan(np.asarray(truth.obs_values)[place][:, 1:]).all()
         near = np.asarray(truth.fact_code) == opened.registry.code("near")
@@ -233,12 +237,12 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
 
 def test_the_varied_graph_reads_back_from_the_bank_equal_to_what_was_stated(varied):
     opened = Deriver(varied, "cpu", RESIDENT)
-    assert set(opened.rows[0]) == {"graph", "step", "ticket", "week", "y"}
+    assert set(opened.rows[0]) == {"graph", "time", "ticket", "week", "y"}
     assert opened.split["series"][0]["name"] == synthetic.TARGET and len(opened.split["series"]) == 1
     stated = support.written(varied.parent / "varied.staging", opened.registry.schema)
     for graph in opened.manifest["graphs"]:
-        truth = Graph.load(opened.truth(graph["index"]))
-        found = truth.stated(opened.registry, opened.categories)
+        truth = Facts.load(opened.truth(graph["index"]))
+        found = truth.stated(opened.registry, opened.categories, opened.manifest["observers"])
         wanted = stated[truth.name]
         assert found["graph"] == wanted["graph"] and found["nodes"] == wanted["nodes"]
         for part in ("observations", "edges", "queries"):
@@ -265,7 +269,7 @@ def test_the_varied_graph_completes_one_fit_on_cpu(varied, varied_packed, tmp_pa
 def test_a_schema_is_checked_after_an_operation_for_what_the_operation_changes(varied):
     opened = Deriver(varied, "cpu", RESIDENT)
     registry = opened.registry
-    dense = Graph.load(opened.truth(0)).dense()
+    dense = support.shown(opened, 0).dense()
     conforms(dense, registry, ("time", "observations", "facts"))
     moved = np.asarray(dense.fact_source).copy()
     moved[np.flatnonzero(dense.fact_code == registry.code("visits"))[0]] = dense.fact_target[
@@ -283,14 +287,15 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
     from tuning.__main__ import main
 
     stated = inspect(varied.parent / "varied.task.json")
-    assert "unit of time: step" in stated and "graph: season category by onehot" in stated
+    assert "time: one clock, units step, ties by sequence" in stated and "observers: none" in stated
+    assert "graph: season category by onehot" in stated
     assert "  place: size number by standard" in stated and ", width" not in stated
     assert "  near: place to place, without direction, relation declared, no columns" in stated
     assert "relation taken from the column predicate, mode category by onehot" in stated
     monkeypatch.setattr(sys, "argv", ["graphspec", "inspect", str(varied)])
     main()
     printed = capsys.readouterr().out
-    assert "schema version 1" in printed and "  place: size number by standard, width 2" in printed
+    assert "schema version 2" in printed and "  place: size number by standard, width 2" in printed
     assert "width 11" in printed and "  lends: from links" in printed
     assert "  reference person: person" in printed and "keyed by ticket, grouped by week" in printed
 
@@ -343,7 +348,7 @@ def test_the_inputs_of_a_configuration_of_the_fixture_are_equal_under_the_names_
     opened = Deriver(root / "bank", "cpu", RESIDENT)
     assert [graph["name"] for graph in opened.manifest["graphs"]] == entry["graphs"]
     for graph in opened.manifest["graphs"]:
-        dense = Graph.load(opened.truth(graph["index"])).dense()
+        dense = support.shown(opened, graph["index"]).dense()
         assert fixture.differing(dense.arrays, held[dense.name]) == []
     assert read_json(root / "bank" / "supervision.json") == fixture.supervision(
         ground / entry["folder"] / entry["files"]["bank"], synthetic.TARGET, schema
@@ -359,8 +364,8 @@ def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(g
     opened = Deriver(built[source["name"]] / "bank", "cpu", RESIDENT)
     started = time.perf_counter()
     spec = specs.configured(specs.space(opened.registry, tuple(entry["groups"])), entry["values"])
-    assert spec == entry["spec"]
-    members = [Graph.load(opened.truth(graph["index"])).dense() for graph in opened.manifest["graphs"]]
+    assert spec == fixture.spec(entry["spec"])
+    members = [support.shown(opened, graph["index"]).dense() for graph in opened.manifest["graphs"]]
     held = fixture.joined(ground / entry["folder"] / entry["files"]["input"])
     assert fixture.differing(join.joined(members, opened.registry, spec).arrays, held) == []
     LOG.info("fixture joined exit name=%s seconds=%.3f", entry["name"], time.perf_counter() - started)

@@ -6,6 +6,8 @@ import time
 
 from graphspec.infra.files import sha256_json
 
+from .clock import SEVERAL
+from .view import offered
 from .vocabulary import HOPS
 
 LOG = logging.getLogger(__name__)
@@ -126,10 +128,11 @@ def space(registry, groups):
     def kept(spec, kind):
         return kind in protected or spec["nodes/%s/keep" % kind]
 
+    grouped = registry.schema.queries is not None and registry.schema.queries["grouping"] is not None
+    ungrouped = "truth" if grouped else "steps"
+
     def periodic(spec):
-        return (extras["queries"] and spec["time/periods"] == "truth") or spec.get(
-            "time/period_length", 1
-        ) > 1
+        return spec["time/periods"] == "truth" or spec.get("time/period_length", 1) > 1
 
     def projectable(spec, edge):
         relation, position, first, second = (
@@ -190,7 +193,7 @@ def space(registry, groups):
     unprotected = [kind for kind in nodes if kind not in protected]
     parameters = [
         number("time/history", 1, 32, 16),
-        choice("time/periods", ("truth", "every"), "truth"),
+        choice("time/periods", (ungrouped, "every"), ungrouped),
         number("time/period_length", 1 if extras["queries"] else 2, 16, 4, equals("time/periods", "every")),
         choice("time/scheme", ("window", "state"), "window"),
         choice(
@@ -347,6 +350,13 @@ def space(registry, groups):
             number("mixed/trace", 0, 8, 4),
             flag("mixed/bundles", True),
         ]
+    steps = offered(registry)
+    if not steps:
+        raise ValueError("no choice of steps serves the graphs of the bank %s" % registry.name)
+    parameters += [
+        choice("time/steps", steps, steps[0]),
+        choice("time/several", SEVERAL.names(), SEVERAL.names()[-1]),
+    ]
     LOG.debug(
         "space exit seconds=%.4f parameters=%d groups=%s",
         time.perf_counter() - started,

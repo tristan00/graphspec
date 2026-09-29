@@ -6,9 +6,10 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 
+from .clock import UNITED
 from .infra.files import write_json
 from .infra.runtime import output_path
-from .schema import EDGE, OBSERVED, PREFIXES, TABLES
+from .schema import EDGE, OBSERVED, PREFIXES, STAMP, TABLES
 
 LOG = logging.getLogger(__name__)
 
@@ -25,20 +26,24 @@ def write_task(path, name, staging, target, schema):
     return path
 
 
-def step_index(step):
-    if not isinstance(step, Integral) or not 0 <= step < 1 << 31:
-        raise ValueError("graph steps must be nonnegative int32 values")
-    return step
+WRITTEN = {STAMP: pa.int64(), "INT32": pa.int32(), "STRING[]": pa.list_(pa.string())}
 
 
 class GraphTables:
-    def __init__(self, index, name, schema, **attributes):
+    def __init__(self, index, name, unit, schema, **attributes):
         if schema.queries is not None:
             raise ValueError("graph tables state no queries; the schema must state none")
         if not isinstance(index, Integral) or index < 0 or index >= 1 << 31:
             raise ValueError("graph index must be a nonnegative int32")
+        if (unit is not None) != (schema.model in UNITED) or (unit is not None and unit not in schema.units):
+            raise ValueError(
+                "a graph states one of the units of time of its schema, or none where the schema has no clock; "
+                "found %r" % (unit,)
+            )
         self.index, self.schema = index, schema
         described = dict(id=pa.array([index], pa.int32()), name=pa.array([name], pa.string()))
+        if unit is not None:
+            described["unit"] = pa.array([unit], pa.string())
         described.update(
             self.stated("the graph", schema.graph, {key: [value] for key, value in attributes.items()}, 1)
         )
@@ -60,6 +65,30 @@ class GraphTables:
             result[name] = values
         LOG.debug(
             "graph tables stated exit columns=%d seconds=%.4f", len(names), time.perf_counter() - started
+        )
+        return result
+
+    def timed(self, where, when, count):
+        started = time.perf_counter()
+        stamps = self.schema.stamps()
+        if not isinstance(when, dict) or sorted(when) != sorted(stamps):
+            raise ValueError(
+                "%s states when it holds as exactly %s, found %r"
+                % (where, ", ".join(stamps) or "nothing", when)
+            )
+        result = {}
+        for name, kind in stamps.items():
+            values = when[name] if isinstance(when[name], list) else [when[name]] * count
+            if len(values) != count:
+                raise ValueError("the column %s of %s needs %d values" % (name, where, count))
+            result[name] = pa.array(
+                [None if value is None else list(value) for value in values]
+                if name == "observers"
+                else values,
+                WRITTEN[kind],
+            )
+        LOG.debug(
+            "graph tables timed exit columns=%d seconds=%.4f", len(stamps), time.perf_counter() - started
         )
         return result
 
@@ -103,26 +132,18 @@ class GraphTables:
         except KeyError as error:
             raise ValueError("undeclared node in " + kind + ": " + str(error)) from error
 
-    def observe(self, kind, keys, step, **columns):
-        step = step_index(step)
+    def observe(self, kind, keys, when, **columns):
         owners = self.resolve(kind, keys)
         values = self.stated("the kind of node " + kind, self.schema.nodes[kind], columns, len(owners))
         ids = self.ids("observation", len(owners))
         self.put(
             ("observation", None, None),
-            pa.table(
-                dict(
-                    id=ids,
-                    seq=pa.array(ids - (self.index << 32), pa.int32()),
-                    step=pa.array(np.full(len(ids), step), pa.int32()),
-                )
-            ),
+            pa.table(dict(id=ids, **self.timed("the kind of node " + kind, when, len(owners)))),
         )
         self.put((OBSERVED + kind, kind, "observation"), pa.table({"from": owners, "to": ids, **values}))
         return self
 
-    def edges(self, table, source, target, sources, targets, step, present, relation=None, **columns):
-        step = step_index(step)
+    def edges(self, table, source, target, sources, targets, when, present, relation=None, **columns):
         if table not in self.schema.edges or type(present) is not bool:
             raise ValueError("edges name a stated edge table and a boolean presence value: " + str(table))
         entry = self.schema.edges[table]
@@ -135,10 +156,9 @@ class GraphTables:
         held = {
             "from": left,
             "to": right,
-            "seq": pa.array(np.arange(self.sequence, self.sequence + count), pa.int32()),
-            "step": pa.array(np.full(count, step), pa.int32()),
             "present": pa.array(np.full(count, present), pa.bool_()),
         }
+        held.update(self.timed("the edge table " + table, when, count))
         if (entry["column"] is None) != (relation is None):
             raise ValueError(
                 "the edge table %s takes its relations from %s"
@@ -153,8 +173,13 @@ class GraphTables:
         self.put((EDGE + table, source, target), pa.table(held))
         return self
 
-    def labels(self, kind, keys, values, splits, step, target):
-        step = step_index(step)
+    def labels(self, kind, keys, values, splits, moment, target):
+        timed = self.schema.model != "none"
+        if timed != isinstance(moment, Integral):
+            raise ValueError(
+                "labels state their time as a whole number, or none where the schema has no time; found %r"
+                % (moment,)
+            )
         owners = self.resolve(kind, keys)
         values, splits = list(values), list(splits)
         if target in self.lookup or target in TABLES or target.startswith(PREFIXES):
@@ -164,17 +189,10 @@ class GraphTables:
         if len(values) != len(owners) or len(splits) != len(owners) or not np.isfinite(values).all():
             raise ValueError("labels need one finite value and one split per node")
         ids = self.ids(target, len(owners))
-        self.put(
-            (target, None, None),
-            pa.table(
-                dict(
-                    id=ids,
-                    y=pa.array(values, pa.float64()),
-                    split=pa.array(splits, pa.string()),
-                    step=pa.array(np.full(len(ids), step), pa.int32()),
-                )
-            ),
-        )
+        held = dict(id=ids, y=pa.array(values, pa.float64()), split=pa.array(splits, pa.string()))
+        if timed:
+            held["time"] = pa.array(np.full(len(ids), moment), pa.int64())
+        self.put((target, None, None), pa.table(held))
         self.put((target + "_of", target, kind), pa.table({"from": ids, "to": owners}))
         return self
 

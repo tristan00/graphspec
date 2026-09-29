@@ -6,48 +6,31 @@ import numpy as np
 import pyarrow as pa
 
 from graphspec.infra.files import sha256_json
+from graphspec.infra.timing import timed
+
+from .clock import MODELS, STAMPS, TIES, UNITED
+from .names import Names
 
 LOG = logging.getLogger(__name__)
-VERSION = 1
+VERSION = 2
 EDGE = "edge_"
 OBSERVED = "observed_"
 QUERY = "query_"
-FACTS = ("seq", "step", "present")
+FACTS = ("present",)
+STAMP = "INT64"
+SEQUENCE = dict(seq="INT32")
+WATCHERS = "STRING[]"
 TABLES = ("graph", "observation", "query")
 PREFIXES = (EDGE, OBSERVED, QUERY)
 LEVELS = ("node", "query", "graph", "path")
-FIELDS = ("version", "time", "columns", "graph", "nodes", "edges", "queries")
+FIELDS = ("version", "time", "observers", "columns", "graph", "nodes", "edges", "queries")
+TIMED = ("model", "units", "ties")
 DECLARED = "declared"
 ASKED = ("key", "grouping", "columns", "references", "signals")
-GIVEN = ("id", "graph", "step", "category", "signal", "signal_observed", "y", "tau", "series")
+GIVEN = ("id", "graph", "time", "observer", "category", "signal", "signal_observed", "y", "tau", "series")
 VALUE = "column:"
 ENDS = ("from", "to")
 REFERENCES = 3
-
-
-class Names:
-    def __init__(self, label):
-        self.label, self.held = label, {}
-
-    def register(self, name, entry):
-        started = time.perf_counter()
-        if type(name) is not str or not name:
-            raise ValueError("a %s is registered under a name, found %r" % (self.label, name))
-        if name in self.held:
-            raise ValueError("the %s %s is registered twice" % (self.label, name))
-        self.held[name] = entry
-        LOG.debug(
-            "register exit label=%s name=%s seconds=%.4f", self.label, name, time.perf_counter() - started
-        )
-        return entry
-
-    def named(self, name):
-        if type(name) is not str or name not in self.held:
-            raise KeyError("no %s is registered under the name %r" % (self.label, name))
-        return self.held[name]
-
-    def names(self):
-        return tuple(self.held)
 
 
 TYPES = Names("column type")
@@ -266,10 +249,37 @@ class Schema:
             raise ValueError(
                 "the schema has version %r; this code reads version %d" % (held["version"], VERSION)
             )
-        unit = fields(held["time"], ("unit",), "the time of the schema")["unit"]
-        if type(unit) is not str or not unit:
-            raise ValueError("the unit of time of the schema is a name, found %r" % (unit,))
-        self.version, self.unit = held["version"], unit
+        stated = fields(held["time"], TIMED, "the time of the schema")
+        if stated["model"] not in MODELS:
+            raise ValueError(
+                "the time of the schema states its model as one of %s, found %r"
+                % (", ".join(MODELS), stated["model"])
+            )
+        units = stated["units"]
+        if (
+            not isinstance(units, list)
+            or len(set(units)) != len(units)
+            or any(type(unit) is not str or not unit for unit in units)
+        ):
+            raise ValueError(
+                "the units of time of the schema are a list of distinct names, found %r" % (units,)
+            )
+        if bool(units) != (stated["model"] in UNITED):
+            raise ValueError(
+                "a schema states units of time when its graphs have a clock and none when they have not; "
+                "the model is %s and the units are %r" % (stated["model"], units)
+            )
+        if stated["ties"] is not None:
+            read = TIES.named(stated["ties"]).columns
+            if not set(read.items()) <= set(SEQUENCE.items()):
+                raise ValueError(
+                    "the rule %s for ties reads the columns %s; a bank keeps %s for a rule to read"
+                    % (stated["ties"], ", ".join(read), ", ".join(SEQUENCE))
+                )
+        if type(held["observers"]) is not bool:
+            raise ValueError("the schema states whether facts and tasks name observers as true or false")
+        self.version, self.model, self.units = held["version"], stated["model"], tuple(units)
+        self.ties, self.observers = stated["ties"], held["observers"]
         if not isinstance(held["columns"], dict):
             raise ValueError("the columns of the schema are a mapping from name to type and encoder")
         self.columns = {}
@@ -318,7 +328,7 @@ class Schema:
             relation = entry["relation"]
             if relation != DECLARED:
                 relation = fields(relation, ("column",), "the relation of " + where)["column"]
-                if named(relation, "the relation column of " + where) in FACTS + ENDS:
+                if named(relation, "the relation column of " + where) in FACTS + ENDS + tuple(self.stamps()):
                     raise ValueError("the relation column of %s collides with a column of facts" % where)
             columns = listed(entry["columns"], self.columns, where)
             if relation in columns:
@@ -345,6 +355,8 @@ class Schema:
             if type(entry["signals"]) is not int or entry["signals"] < 0:
                 raise ValueError("the queries state the width of their signals as a whole number")
             for part in ("key", "grouping"):
+                if part == "grouping" and entry[part] is None:
+                    continue
                 if named(entry[part], "the %s of the queries" % part) in GIVEN:
                     raise ValueError(
                         "the %s of the queries collides with a column of the contract: %s"
@@ -371,7 +383,8 @@ class Schema:
         started = time.perf_counter()
         result = dict(
             version=self.version,
-            time=dict(unit=self.unit),
+            time=dict(model=self.model, units=list(self.units), ties=self.ties),
+            observers=self.observers,
             columns={name: dict(entry) for name, entry in self.columns.items()},
             graph=dict(columns=list(self.graph)),
             nodes={kind: dict(columns=list(columns)) for kind, columns in self.nodes.items()},
@@ -400,6 +413,15 @@ class Schema:
     def fingerprint(self):
         return sha256_json(self.mapping())
 
+    @timed("schema.stamps")
+    def stamps(self):
+        held = {name: STAMP for name in STAMPS[self.model]}
+        if self.ties is not None:
+            held.update(TIES.named(self.ties).columns)
+        if self.observers:
+            held["observers"] = WATCHERS
+        return held
+
     def layout(self):
         groups = list(self.nodes.values()) + ([] if self.queries is None else [self.queries["columns"]])
         return tuple(dict.fromkeys(name for columns in groups for name in columns))
@@ -416,25 +438,32 @@ class Schema:
     def tables(self):
         started = time.perf_counter()
         keys = dict(id="INT64", graph="INT32")
-        result = {"graph": dict(kind="NODE", required=dict(id="INT32", name="STRING"), columns=self.graph)}
-        result["observation"] = dict(
-            kind="NODE", required=dict(id="INT64", seq="INT32", step="INT32"), columns=()
-        )
+        described = dict(id="INT32", name="STRING")
+        if self.model in UNITED:
+            described["unit"] = "STRING"
+        result = {"graph": dict(kind="NODE", required=described, columns=self.graph)}
+        result["observation"] = dict(kind="NODE", required=dict(id="INT64", **self.stamps()), columns=())
         for kind, columns in self.nodes.items():
             result[kind] = dict(kind="NODE", required=dict(keys, entity="INT32", key="STRING"), columns=())
             result[OBSERVED + kind] = dict(
                 kind="REL", required={}, columns=columns, pairs=((kind, "observation"),)
             )
         for table, entry in self.edges.items():
-            required = dict(seq="INT32", step="INT32", present=("BOOL", "BOOLEAN"))
+            required = dict(present=("BOOL", "BOOLEAN"), **self.stamps())
             if entry["column"] is not None:
                 required[entry["column"]] = "STRING"
             result[EDGE + table] = dict(
                 kind="REL", required=required, columns=entry["columns"], pairs=entry["endpoints"]
             )
         if self.queries is not None:
-            required = dict(keys, step="INT32", category="STRING")
-            required.update({self.queries["grouping"]: "INT32", self.queries["key"]: "INT64"})
+            required = dict(keys, category="STRING")
+            if self.model != "none":
+                required["time"] = STAMP
+            if self.observers:
+                required["observer"] = "STRING"
+            if self.queries["grouping"] is not None:
+                required[self.queries["grouping"]] = "INT32"
+            required[self.queries["key"]] = "INT64"
             if self.queries["signals"]:
                 vector = "FLOAT[%d]" % self.queries["signals"]
                 required.update(signal=vector, signal_observed=vector)
@@ -510,7 +539,18 @@ class Schema:
         def wide(columns):
             return "" if encoding is None else ", width %d" % encoding.width(columns)
 
-        lines = ["schema version %d" % self.version, "unit of time: %s" % self.unit]
+        lines = ["schema version %d" % self.version]
+        lines.append(
+            "time: %s, %s, %s"
+            % (
+                dict(none="none", order="order without a clock", clock="one clock", clocks="two clocks")[
+                    self.model
+                ],
+                "units " + ", ".join(self.units) if self.units else "no unit",
+                "no rule for ties" if self.ties is None else "ties by " + self.ties,
+            )
+        )
+        lines.append("observers: %s" % ("named by facts and tasks" if self.observers else "none"))
         lines.append("graph: %s" % described(self.graph))
         lines.append("kinds of node:")
         lines += [
@@ -533,10 +573,12 @@ class Schema:
             lines.append("queries: none")
         else:
             lines.append(
-                "queries: keyed by %s, grouped by %s, %s%s, signals of width %d"
+                "queries: keyed by %s, %s, %s%s, signals of width %d"
                 % (
                     self.queries["key"],
-                    self.queries["grouping"],
+                    "not grouped"
+                    if self.queries["grouping"] is None
+                    else "grouped by " + self.queries["grouping"],
                     described(self.queries["columns"]),
                     wide(self.queries["columns"]),
                     self.queries["signals"],
@@ -666,6 +708,9 @@ class Tables:
             return "graph"
         if not destinations or not destinations <= set(self.nodes):
             raise ValueError("%s_of must point to query, graph, or observed node types" % name)
-        if "step" not in typed or typed["step"] != "INT32":
-            raise ValueError("%s labels node types and requires a step INT32 column" % name)
+        timed = self.stated.model != "none"
+        if timed and typed.get("time") != STAMP:
+            raise ValueError("%s labels node types and requires a time %s column" % (name, STAMP))
+        if not timed and "time" in typed:
+            raise ValueError("%s states a time and the graphs of the schema have none" % name)
         return "node"

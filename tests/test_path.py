@@ -8,6 +8,7 @@ from graphspec.infra.staging import Stage
 from graphspec.synthetic import TARGET, Counter, generate, graph_rows, uniform
 from tuning.build import build
 from tuning.data import Deriver
+from tuning.model_spec import configuration
 
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SHAPE = uniform(4, 2)
@@ -49,12 +50,13 @@ def test_path_bank_records_one_row_per_point_and_splits_by_query(path_bank):
         assert entry["mean"] == pytest.approx(train.mean()) and entry["sd"] == pytest.approx(
             train.std(ddof=1)
         )
+    shown = opened.viewed(configuration(opened.registry, dict(view="snapshot"), {}, 5))
     for index in range(4):
-        steps, points = opened.row_steps[index], opened.row_index[index]
+        steps, points = shown.row_steps[index], shown.row_index[index]
         keys = np.stack((steps, opened.series[points], opened.taus[points]), 1)
         assert all(tuple(a) < tuple(b) for a, b in zip(keys[:-1], keys[1:]))
         assert len(set(opened.partitions[points].tolist())) == 1
-    queries = {(row["graph"], row["step"]) for row in rows}
+    queries = {(row["graph"], row["key"]) for row in rows}
     assert len(set(opened.query_of.tolist())) == len(queries)
 
 
@@ -94,7 +96,8 @@ def test_targets_without_tau_stay_scalar(bank):
 
 def expected_points(opened, block):
     graph, _, stop, moment, partition, _, _ = block
-    rows, steps = opened.row_index[graph], opened.row_steps[graph]
+    shown = opened.viewed(configuration(opened.registry, dict(view="snapshot"), {}, 5))
+    rows, steps = shown.row_index[graph], shown.row_steps[graph]
     chosen = rows[(steps >= moment) & (steps < stop)]
     return sorted(chosen[opened.partitions[chosen] == partition].tolist())
 
@@ -152,7 +155,7 @@ def test_path_windows_join_like_query_windows(path_bank):
             covered.extend(rows.tolist())
             group, _, stop, moment, _, _, _ = block
             members = opened.groups(single)[group]
-            offsets = np.r_[0, np.cumsum([opened.manifest["graphs"][m]["steps"] for m in members])]
+            offsets = np.r_[0, np.cumsum([opened.viewed(single).graphs[m]["steps"] for m in members])]
             member = int(np.searchsorted(offsets, moment, "right") - 1)
             local = (members[member], 0, stop - offsets[member], moment - offsets[member], partition, 0, 0)
             assert sorted(rows.tolist()) == expected_points(opened, local)

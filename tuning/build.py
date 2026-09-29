@@ -15,6 +15,7 @@ from graphspec.infra.processes import parallel
 from graphspec.infra.runtime import exclusive, output_path
 from graphspec.schema import Schema, fitted
 from graphspec.truth import VERSION, gather, parse
+from graphspec.view import validate
 
 LOG = logging.getLogger(__name__)
 SPLITS = ("train", "validation")
@@ -42,16 +43,31 @@ def seen_until(rows, groups, trained, names):
     chosen = np.zeros(len(rows["rows"]), bool)
     for split in trained:
         chosen[rows["split"][split + "_indices"]] = True
-    result = {index: -1 for index in names}
-    for index, steps, _, members in groups:
-        result[index] = int(np.asarray(steps)[chosen[members]].max(initial=-1))
+    result = {index: None for index in names}
+    for index, _, _, members, times in groups:
+        if chosen[members].any():
+            result[index] = int(np.asarray(times)[chosen[members]].max())
     LOG.info(
         "seen_until exit seconds=%.3f graphs=%d trained=%d",
         time.perf_counter() - started,
         len(result),
-        sum(value >= 0 for value in result.values()),
+        sum(value is not None for value in result.values()),
     )
     return result
+
+
+def observing(tables):
+    started = time.perf_counter()
+    found = set()
+    for table in list(tables["observations"].values()) + list(tables["edges"].values()):
+        if "observers" in table.column_names:
+            for names in table.column("observers").to_pylist():
+                found.update(names or ())
+    if "queries" in tables and "observer" in tables["queries"].column_names:
+        found.update(tables["queries"].column("observer").to_pylist())
+    found.discard(None)
+    LOG.debug("observing exit observers=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return sorted(found)
 
 
 def scanned(job):
@@ -66,6 +82,7 @@ def scanned(job):
             for table, entry in stated.edges.items()
             if entry["column"] is not None
         },
+        observing(tables),
     )
     LOG.info("bank scan exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
     return result
@@ -90,7 +107,7 @@ def related(stated, found):
         if entry["column"] is None:
             result[table] = [table]
             continue
-        names = {name for _, relations in found for name in relations[table]}
+        names = {name for _, relations, _ in found for name in relations[table]}
         if None in names:
             raise ValueError(
                 "rows of the edge table %s name no relation in the column %s" % (table, entry["column"])
@@ -113,61 +130,79 @@ def series_statistics(name, y, member, held):
     )
 
 
+def asked(source, names):
+    started = time.perf_counter()
+    queries = source.query_index()
+    owners = queries.column("graph").to_numpy().astype(np.int64)
+    timed = "time" in queries.column_names
+    if timed and queries.column("time").null_count:
+        raise ValueError("a task of the source states no time")
+    moments = queries.column("time").to_numpy().astype(np.int64) if timed else np.zeros(len(owners), np.int64)
+    ids = queries.column("id").to_numpy().astype(np.int64)
+    order = np.lexsort((ids, moments, owners))
+    first = np.searchsorted(owners[order], owners[order])
+    place = np.empty(len(order), np.int64)
+    place[order] = np.arange(len(order)) - first
+    counts = dict(zip(*(values.tolist() for values in np.unique(owners, return_counts=True))))
+    empty = sorted(set(names) - set(counts))
+    if empty:
+        raise ValueError("%d graphs have no queries, for example graph %d" % (len(empty), empty[0]))
+    result = dict(
+        counts=counts,
+        row={number: row for row, number in enumerate(ids.tolist())},
+        last={int(owners[row]): row for row in order.tolist()},
+        place=place,
+        time=moments,
+        timed=timed,
+        key=queries.column("key").to_numpy().astype(np.int64),
+        period=queries.column("period").to_numpy().astype(np.int64)
+        if "period" in queries.column_names
+        else None,
+    )
+    LOG.info("asked exit seconds=%.3f tasks=%d", time.perf_counter() - started, len(ids))
+    return result
+
+
 def supervision(source, level, target, names):
     started = time.perf_counter()
     if level == "node":
         found = source.targets(level, target)
-        owners, steps = (
-            found.column("graph").to_numpy().astype(np.int64),
-            found.column("step").to_numpy().astype(np.int64),
-        )
-        if np.any(steps < 0):
-            raise ValueError("target steps must not be negative")
+        owners = found.column("graph").to_numpy().astype(np.int64)
+        timed = "time" in found.column_names
+        if timed and found.column("time").null_count:
+            raise ValueError("a target of the source states no time")
+        times = found.column("time").to_numpy().astype(np.int64) if timed else np.zeros(len(owners), np.int64)
+        places = times
         if len(
             np.unique(
-                np.stack((owners, found.column("entity").to_numpy().astype(np.int64), steps), 1), axis=0
+                np.stack((owners, found.column("entity").to_numpy().astype(np.int64), times), 1), axis=0
             )
         ) != len(owners):
-            raise ValueError("a node carries more than one target at one step")
+            raise ValueError("a node carries more than one target at one time")
         described = [
-            dict(graph=names[owner], step=step, node=node)
-            for owner, step, node in zip(owners.tolist(), steps.tolist(), found.column("node").to_pylist())
+            dict(graph=names[owner], node=node, **(dict(time=moment) if timed else {}))
+            for owner, moment, node in zip(owners.tolist(), times.tolist(), found.column("node").to_pylist())
         ]
     else:
-        queries = source.query_index()
-        counts = dict(
-            zip(
-                *(
-                    values.tolist()
-                    for values in np.unique(queries.column("graph").to_numpy(), return_counts=True)
-                )
-            )
-        )
-        empty = sorted(set(names) - set(counts))
-        if empty:
-            raise ValueError("%d graphs have no queries, for example graph %d" % (len(empty), empty[0]))
-        lookup = {
-            (g, s): (p, k)
-            for g, s, p, k in zip(
-                *(queries.column(name).to_pylist() for name in ("graph", "step", "period", "key"))
-            )
-        }
+        queries = asked(source, names)
         found = source.targets(level, target)
         owners = found.column("graph").to_numpy().astype(np.int64)
         if level == "graph":
-            steps = np.asarray([counts[owner] - 1 for owner in owners.tolist()], np.int64)
+            rows = np.asarray([queries["last"][owner] for owner in owners.tolist()], np.int64)
         else:
-            steps = found.column("step").to_numpy().astype(np.int64)
-        asked = source.stated.queries
-        described = [
-            {
-                "graph": names[owner],
-                asked["key"]: lookup[(owner, step)][1],
-                "step": step,
-                asked["grouping"]: lookup[(owner, step)][0],
-            }
-            for owner, step in zip(owners.tolist(), steps.tolist())
-        ]
+            rows = np.asarray(
+                [queries["row"][number] for number in found.column("query").to_pylist()], np.int64
+            )
+        places, times = queries["place"][rows], queries["time"][rows]
+        stated = source.stated.queries
+        described = []
+        for owner, row in zip(owners.tolist(), rows.tolist()):
+            entry = {"graph": names[owner], stated["key"]: int(queries["key"][row])}
+            if queries["timed"]:
+                entry["time"] = int(queries["time"][row])
+            if queries["period"] is not None:
+                entry[stated["grouping"]] = int(queries["period"][row])
+            described.append(entry)
         if level == "path":
             tau = found.column("tau").to_numpy().astype(np.float64)
             if not np.isfinite(tau).all() or np.any(tau <= 0):
@@ -176,8 +211,8 @@ def supervision(source, level, target, names):
             if None in series or "" in series:
                 raise ValueError("every path point needs a series name")
             names_of, series_index = np.unique(np.asarray(series, object), return_inverse=True)
-            order = np.lexsort((tau, series_index, steps, owners))
-            keys = np.stack((owners, steps, series_index), 1)[order]
+            order = np.lexsort((tau, series_index, places, owners))
+            keys = np.stack((owners, places, series_index), 1)[order]
             same = (np.diff(keys, axis=0) == 0).all(1) & (np.diff(tau[order]) == 0)
             if same.any():
                 raise ValueError(
@@ -190,7 +225,7 @@ def supervision(source, level, target, names):
             ]
         else:
             order = np.argsort(owners, kind="stable")
-            if len(np.unique(np.stack((owners, steps), 1), axis=0)) != len(owners):
+            if len(np.unique(np.stack((owners, places), 1), axis=0)) != len(owners):
                 raise ValueError("a query or graph carries more than one target")
     split = found.column("split").to_pylist()
     unknown = sorted(set(split) - set(SPLITS))
@@ -201,8 +236,8 @@ def supervision(source, level, target, names):
         raise ValueError("%d graphs have no target, for example graph %d" % (len(unlabelled), unlabelled[0]))
     held = np.asarray([value == "validation" for value in split])
     if level == "path":
-        queries = np.unique(np.stack((owners, steps), 1), axis=0)
-        if len(np.unique(np.stack((owners, steps, held), 1), axis=0)) != len(queries):
+        queries = np.unique(np.stack((owners, places), 1), axis=0)
+        if len(np.unique(np.stack((owners, places, held), 1), axis=0)) != len(queries):
             raise ValueError("every point of one query must carry the same split")
     y = found.column("y").to_numpy().astype(np.float64)
     train, validation = np.flatnonzero(~held), np.flatnonzero(held)
@@ -232,7 +267,13 @@ def supervision(source, level, target, names):
         order = np.argsort(owners, kind="stable")
     boundaries = np.r_[0, np.flatnonzero(np.diff(owners[order])) + 1, len(order)]
     groups = [
-        (int(owners[order[lo]]), steps[order[lo:hi]], ids[order[lo:hi]], order[lo:hi].astype(np.int64))
+        (
+            int(owners[order[lo]]),
+            places[order[lo:hi]],
+            ids[order[lo:hi]],
+            order[lo:hi].astype(np.int64),
+            times[order[lo:hi]],
+        )
         for lo, hi in zip(boundaries[:-1], boundaries[1:])
     ]
     LOG.info(
@@ -246,7 +287,7 @@ def supervision(source, level, target, names):
     return result, groups
 
 
-def attach(task_path, declared, categories, target, output, level):
+def attach(task_path, declared, categories, observers, target, output, level):
     configure(level)
     release()
     source = open_source(task_path, read_json(task_path))
@@ -255,6 +296,7 @@ def attach(task_path, declared, categories, target, output, level):
             reader=source.reader(target),
             registry=None if declared is None else Registry.from_declaration(declared),
             categories=categories,
+            observers=observers,
             output=Path(output),
             finalizer=Finalize(None, source.close, exitpriority=10),
         )
@@ -272,7 +314,7 @@ def release():
 
 
 def graph(job):
-    index, name, steps, ids, rows = job
+    index, name, places, ids, rows = job
     started = time.perf_counter()
     registry = WORKER["registry"]
     tables = WORKER["reader"].graph(index)
@@ -283,11 +325,12 @@ def graph(job):
             raise ValueError("graph %s reads different targets than its supervision" % name)
         labels = rows[position]
     elif registry.extras["level"] == "path":
-        labels = (steps, rows)
+        labels = (places, rows)
     else:
         labels = np.full(tables["queries"].num_rows, -1, np.int64)
-        labels[steps] = rows
-    truth = parse(registry, WORKER["categories"], tables, labels, name)
+        labels[places] = rows
+    truth = parse(registry, WORKER["categories"], WORKER["observers"], tables, labels, name)
+    validate(truth, registry)
     truth.save(WORKER["output"] / "truth" / ("graph_%04d" % index))
     metrics = dict(index=index, name=name, **counts(truth), seconds=time.perf_counter() - started)
     LOG.info("bank graph exit graph=%d seconds=%.3f", index, metrics["seconds"])
@@ -296,13 +339,12 @@ def graph(job):
 
 def counts(truth):
     return dict(
-        steps=truth.steps,
+        unit=truth.unit,
         entities=len(truth.kinds),
-        observations=int((truth.obs_stop.astype(np.int64) - truth.obs_start).sum()),
-        facts=int((truth.fact_stop.astype(np.int64) - truth.fact_start).sum()) + len(truth.removal_step),
-        labels=len(truth.label_step),
-        observation_spans=len(truth.obs_start),
-        fact_spans=len(truth.fact_start),
+        observations=len(truth.obs_since),
+        facts=len(truth.fact_since),
+        tasks=len(truth.query_time),
+        labels=len(truth.label_time),
     )
 
 
@@ -360,20 +402,21 @@ def build(task_path, output, workers, trained):
     try:
         found = parallel(
             scanned,
-            [(index, until[index]) for index, _, _, _ in groups],
+            [(index, until[index]) for index, _, _, _, _ in groups],
             workers,
             attach,
-            (str(task_path), None, categories, task["target"], str(output), LOG.getEffectiveLevel()),
+            (str(task_path), None, categories, [], task["target"], str(output), LOG.getEffectiveLevel()),
         )
     finally:
         release()
     stated = Schema(task["schema"])
     encoding = fitted(stated, merged(stated, [entry[0] for entry in found]), related(stated, found))
+    observers = sorted({name for entry in found for name in entry[2]})
     with closing(open_source(task_path, task)) as source:
         registry = vocabulary.registry(source, task, series, encoding)
     (output / "truth").mkdir(parents=True)
     write_json(output / "supervision.json", rows)
-    jobs = [(index, names[index], steps, ids, members) for index, steps, ids, members in groups]
+    jobs = [(index, names[index], places, ids, members) for index, places, ids, members, _ in groups]
     try:
         metrics = parallel(
             graph,
@@ -384,6 +427,7 @@ def build(task_path, output, workers, trained):
                 str(task_path),
                 registry.declaration(),
                 categories,
+                observers,
                 task["target"],
                 str(output),
                 LOG.getEffectiveLevel(),
@@ -400,6 +444,7 @@ def build(task_path, output, workers, trained):
         spec=registry.declaration(),
         spec_sha256=registry.fingerprint(),
         categories=categories,
+        observers=observers,
         signals=registry.extras["signals"],
         graphs=metrics,
         distinct_entities=catalogue(output, metrics),

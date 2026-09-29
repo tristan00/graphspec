@@ -11,7 +11,8 @@ from graphspec.registry import Registry
 from graphspec.schema import DECLARED, EDGE, OBSERVED, QUERY, VALUE, VERSION, Encoding, Schema
 
 LOG = logging.getLogger(__name__)
-KEYS = ("id", "from", "to", "step", "seq", "present")
+KEYS = ("id", "from", "to", "since", "seq", "present")
+STAMPS = ("since", "until", "known", "replaced", "observers")
 
 
 def staged(folder):
@@ -48,13 +49,29 @@ def values(table, names):
     return {VALUE + name: table.column(name).to_pylist() for name in names}
 
 
+def timed(table, schema):
+    count = table.num_rows
+    found = {
+        name: table.column(name).to_pylist() if name in table.column_names else [None] * count
+        for name in STAMPS
+    }
+    found["known"] = [
+        None if known == since else known for known, since in zip(found["known"], found["since"])
+    ]
+    found["observers"] = [None if names is None else sorted(names) for names in found["observers"]]
+    if "seq" in schema.stamps():
+        found["seq"] = table.column("seq").to_pylist()
+    return found
+
+
 def written(folder, schema):
     started = time.perf_counter()
     tables = staged(folder)
     graphs = tables[("graph", None, None)]
+    units = graphs.column("unit").to_pylist() if "unit" in graphs.column_names else [None] * graphs.num_rows
     result = {
-        name: dict(graph={}, nodes={}, observations={}, edges={}, queries=None)
-        for name in graphs.column("name").to_pylist()
+        name: dict(graph=dict(unit=unit), nodes={}, observations={}, edges={}, queries=None)
+        for name, unit in zip(graphs.column("name").to_pylist(), units)
     }
     names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
     for column in schema.graph:
@@ -63,15 +80,17 @@ def written(folder, schema):
     owner, key, entity = {}, {}, {}
     for kind in schema.nodes:
         held = tables[(kind, None, None)]
+        for name in result:
+            result[name]["nodes"][kind] = []
         for number, graph, label, member in zip(
             *(held.column(name).to_pylist() for name in ("id", "graph", "key", "entity"))
         ):
             owner[(kind, number)], key[(kind, number)], entity[(kind, number)] = names[graph], label, member
-            result[names[graph]]["nodes"].setdefault(kind, []).append(label)
+            result[names[graph]]["nodes"][kind].append(label)
     observation = tables[("observation", None, None)]
-    moment = dict(zip(observation.column("id").to_pylist(), observation.column("step").to_pylist()))
+    place = {number: row for row, number in enumerate(observation.column("id").to_pylist())}
 
-    def split(table, graph_of, columns):
+    def split(graph_of, columns):
         found = {}
         for position, graph in enumerate(graph_of):
             for name, held in columns.items():
@@ -81,18 +100,18 @@ def written(folder, schema):
     for kind, stated_columns in schema.nodes.items():
         held = tables[(OBSERVED + kind, kind, "observation")]
         sources, targets = held.column("from").to_pylist(), held.column("to").to_pylist()
+        moments = observation.take(pa.array([place[number] for number in targets], pa.int64()))
         columns = dict(
             key=[key[(kind, number)] for number in sources],
-            step=[moment[number] for number in targets],
+            **timed(moments, schema),
             **values(held, stated_columns),
         )
         for name in result:
             result[name]["observations"][kind] = {column: [] for column in columns}
-        for graph, found in split(held, [owner[(kind, number)] for number in sources], columns).items():
+        for graph, found in split([owner[(kind, number)] for number in sources], columns).items():
             result[graph]["observations"][kind] = found
     for table, entry in schema.edges.items():
-        for name in result:
-            result[name]["edges"][table] = None
+        parts = {}
         for first, second in entry["endpoints"]:
             held = tables[(EDGE + table, first, second)]
             sources, targets = held.column("from").to_pylist(), held.column("to").to_pylist()
@@ -102,17 +121,20 @@ def written(folder, schema):
             columns = dict(
                 source=[key[source] for source, _ in ends],
                 target=[key[target] for _, target in ends],
-                step=held.column("step").to_pylist(),
                 present=held.column("present").to_pylist(),
                 relation=[table] * held.num_rows
                 if entry["column"] is None
                 else held.column(entry["column"]).to_pylist(),
+                **timed(held, schema),
                 **values(held, entry["columns"]),
             )
             for name in result:
-                result[name]["edges"][table] = {column: [] for column in columns}
-            for graph, found in split(held, [owner[source] for source, _ in ends], columns).items():
-                result[graph]["edges"][table] = found
+                parts.setdefault(name, {column: [] for column in columns})
+            for graph, found in split([owner[source] for source, _ in ends], columns).items():
+                for column, more in found.items():
+                    parts[graph][column] += more
+        for name in result:
+            result[name]["edges"][table] = parts[name]
     if schema.queries is not None:
         held = tables[("query", None, None)]
         place = {number: row for row, number in enumerate(held.column("id").to_pylist())}
@@ -123,18 +145,23 @@ def written(folder, schema):
                 links = tables[(QUERY + name, "query", kind)]
                 for source, target in zip(links.column("from").to_pylist(), links.column("to").to_pylist()):
                     references[name][place[source]] = key[(kind, target)]
-        asked = schema.queries
+        asked, count = schema.queries, held.num_rows
         columns = dict(
-            step=held.column("step").to_pylist(),
-            period=held.column(asked["grouping"]).to_pylist(),
+            time=held.column("time").to_pylist() if "time" in held.column_names else [None] * count,
+            observer=held.column("observer").to_pylist()
+            if "observer" in held.column_names
+            else [None] * count,
             key=held.column(asked["key"]).to_pylist(),
             category=held.column("category").to_pylist(),
         )
         columns.update(values(held, schema.queries["columns"]))
-        found = split(held, [names[graph] for graph in held.column("graph").to_pylist()], columns)
-        named = split(held, [names[graph] for graph in held.column("graph").to_pylist()], references)
+        if asked["grouping"] is not None:
+            columns["grouping"] = held.column(asked["grouping"]).to_pylist()
+        owners = [names[graph] for graph in held.column("graph").to_pylist()]
+        found, named = split(owners, columns), split(owners, references)
         for graph in found:
-            order = np.argsort(found[graph]["step"], kind="stable").tolist()
+            moments = [0 if value is None else value for value in found[graph]["time"]]
+            order = np.argsort(moments, kind="stable").tolist()
             result[graph]["queries"] = dict(
                 {name: [held[row] for row in order] for name, held in found[graph].items()},
                 references={name: [held[row] for row in order] for name, held in named[graph].items()},
@@ -149,7 +176,8 @@ def stated(nodes, edges, columns=None, queries=None):
     result = Schema(
         dict(
             version=VERSION,
-            time=dict(unit="step"),
+            time=dict(model="clock", units=["step"], ties="sequence"),
+            observers=False,
             columns=columns,
             graph=dict(columns=[]),
             nodes={kind: dict(columns=held) for kind, held in nodes.items()},
@@ -182,4 +210,15 @@ def registry(name, nodes, edges, extras):
     encoding = Encoding(schema, {}, dict(value={}), {edge.name: [edge.name] for edge in base})
     result = Registry(name, encoding, edges, [], extras)
     LOG.debug("registry exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
+def shown(opened, index):
+    from graphspec.truth import Graph
+    from tuning.model_spec import configuration
+
+    started = time.perf_counter()
+    cfg = configuration(opened.registry, dict(view="snapshot"), {}, 5)
+    result = Graph.load(opened.view(index, cfg))
+    LOG.debug("shown exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
     return result

@@ -5,7 +5,9 @@ import numpy as np
 import pyarrow as pa
 
 from graphspec.infra.database import columns, connect, connections, query, tables
+from graphspec.infra.timing import timed
 
+from .clock import UNITED
 from .schema import EDGE, OBSERVED, QUERY, VALUE, Tables
 
 LOG = logging.getLogger(__name__)
@@ -13,6 +15,24 @@ LOG = logging.getLogger(__name__)
 
 def valued(holder, names):
     return "".join(", %s.`%s` AS `%s%s`" % (holder, name, VALUE, name) for name in names)
+
+
+@timed("graphdb.stamped")
+def stamped(holder, names):
+    return "".join(", %s.`%s` AS `%s`" % (holder, name, name) for name in names)
+
+
+@timed("graphdb.asked")
+def asked(stated):
+    held = dict(id="id")
+    if stated.model != "none":
+        held["time"] = "time"
+    if stated.observers:
+        held["observer"] = "observer"
+    if stated.queries["grouping"] is not None:
+        held[stated.queries["grouping"]] = "period"
+    held[stated.queries["key"]] = "key"
+    return held
 
 
 class Database(Tables):
@@ -64,24 +84,30 @@ class Database(Tables):
         )
 
     def query_index(self):
-        return query(
+        started = time.perf_counter()
+        result = query(
             self.connection,
-            "MATCH (q:query) RETURN q.graph AS graph, q.step AS step, q.`%s` AS period, q.`%s` AS key"
-            % (self.stated.queries["grouping"], self.stated.queries["key"]),
+            "MATCH (q:query) RETURN q.graph AS graph%s ORDER BY id"
+            % "".join(
+                ", q.`%s` AS `%s`" % pair for pair in asked(self.stated).items() if pair[1] != "observer"
+            ),
         )
+        LOG.debug("query index exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+        return result
 
     def targets(self, level, target):
         if level == "node":
             return query(
                 self.connection,
-                "MATCH (t:`%s`)-[:`%s_of`]->(n) RETURN t.id AS id, t.y AS y, t.split AS split, t.step AS step, "
-                "n.graph AS graph, n.entity AS entity, n.key AS node ORDER BY id" % (target, target),
+                "MATCH (t:`%s`)-[:`%s_of`]->(n) RETURN t.id AS id, t.y AS y, t.split AS split%s, "
+                "n.graph AS graph, n.entity AS entity, n.key AS node ORDER BY id"
+                % (target, target, "" if self.stated.model == "none" else ", t.time AS time"),
             )
         if level in ("query", "path"):
             return query(
                 self.connection,
                 "MATCH (t:`%s`)-[:`%s_of`]->(q:query) RETURN t.id AS id, t.y AS y, t.split AS split, "
-                "q.graph AS graph, q.step AS step%s ORDER BY id"
+                "q.graph AS graph, q.id AS query%s ORDER BY id"
                 % (target, target, ", t.tau AS tau, t.series AS series" if level == "path" else ""),
             )
         return query(
@@ -97,32 +123,35 @@ class Reader:
         self.source, self.connection, stated = source, source.connection, source.stated
         self.level = source.target(target)
         self.statements = dict(
-            graph="MATCH (g:graph) WHERE g.id = $graph RETURN g.name AS name" + valued("g", stated.graph)
+            graph="MATCH (g:graph) WHERE g.id = $graph RETURN g.name AS name"
+            + (", g.unit AS unit" if stated.model in UNITED else "")
+            + valued("g", stated.graph)
         )
         if source.queries:
-            asked = stated.queries
+            names = asked(stated)
             self.statements["queries"] = (
                 "MATCH %s WHERE q.graph = $graph "
-                "RETURN q.step AS step, q.`%s` AS period, q.`%s` AS key, q.category AS category%s%s%s "
-                "ORDER BY step"
+                "RETURN q.category AS category%s%s%s%s "
+                "ORDER BY %sid"
                 % (
                     ", ".join(
                         "(%s)-[:`%s%s`]->(r%d)" % ("q:query" if place == 0 else "q", QUERY, name, place)
-                        for place, name in enumerate(asked["references"])
+                        for place, name in enumerate(stated.queries["references"])
                     ),
-                    asked["grouping"],
-                    asked["key"],
+                    "".join(", q.`%s` AS `%s`" % pair for pair in names.items()),
                     "".join(
-                        ", r%d.entity AS r%d" % (place, place) for place in range(len(asked["references"]))
+                        ", r%d.entity AS r%d" % (place, place)
+                        for place in range(len(stated.queries["references"]))
                     ),
-                    valued("q", asked["columns"]),
+                    valued("q", stated.queries["columns"]),
                     ", q.signal AS signal, q.signal_observed AS signal_observed" if source.signals else "",
+                    "" if stated.model == "none" else "time, ",
                 )
             )
         if self.level in ("query", "path"):
             self.statements["targets"] = (
                 "MATCH (t:`%s`)-[:`%s_of`]->(q:query) WHERE q.graph = $graph "
-                "RETURN q.step AS step, t.id AS id, t.y AS y, t.split AS split%s"
+                "RETURN t.id AS id, t.y AS y, t.split AS split%s"
                 % (target, target, ", t.tau AS tau" if self.level == "path" else "")
             )
         elif self.level == "graph":
@@ -133,8 +162,8 @@ class Reader:
         else:
             self.statements["targets"] = (
                 "MATCH (t:`%s`)-[:`%s_of`]->(n) WHERE n.graph = $graph "
-                "RETURN t.id AS id, t.y AS y, t.split AS split, t.step AS step, n.entity AS entity"
-                % (target, target)
+                "RETURN t.id AS id, t.y AS y, t.split AS split%s, n.entity AS entity"
+                % (target, target, "" if stated.model == "none" else ", t.time AS time")
             )
         for kind, held in stated.nodes.items():
             self.statements["node:" + kind] = (
@@ -142,16 +171,17 @@ class Reader:
             )
             self.statements["observed:" + kind] = (
                 "MATCH (e:`%s`)-[r:`%s%s`]->(o:observation) WHERE e.graph = $graph "
-                "RETURN e.entity AS entity, o.seq AS seq, o.step AS step%s"
-                % (kind, OBSERVED, kind, valued("r", held))
+                "RETURN e.entity AS entity%s%s"
+                % (kind, OBSERVED, kind, stamped("o", stated.stamps()), valued("r", held))
             )
         for table, entry in stated.edges.items():
             self.statements["edge:" + table] = (
                 "MATCH (a)-[r:`%s%s`]->(b) WHERE a.graph = $graph RETURN a.entity AS source, b.entity AS target, "
-                "r.seq AS seq, r.step AS step, r.present AS present%s%s"
+                "r.present AS present%s%s%s"
                 % (
                     EDGE,
                     table,
+                    stamped("r", stated.stamps()),
                     "" if entry["column"] is None else ", r.`%s` AS relation" % entry["column"],
                     valued("r", entry["columns"]),
                 )

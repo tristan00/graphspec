@@ -59,11 +59,6 @@ def check(directory, output, device, seed, graph=None, spec_path=None):
     output = output_path(output)
     compute.reserve(device)
     bank = Deriver(directory, device, RESIDENT)
-    chosen = (
-        max(bank.manifest["graphs"], key=lambda entry: entry["observations"])["index"]
-        if graph is None
-        else graph
-    )
     given = read_json(spec_path) if spec_path else {}
     models = samples(bank.registry)
     unknown = sorted(
@@ -72,6 +67,8 @@ def check(directory, output, device, seed, graph=None, spec_path=None):
     )
     if unknown:
         raise ValueError("spec file names unknown parameters: " + ", ".join(unknown))
+    shown = bank.viewed(configuration(bank.registry, models[0], given, seed)).graphs
+    chosen = max(shown, key=lambda entry: entry["observations"])["index"] if graph is None else graph
     results = []
     for model in models:
         cfg = configuration(bank.registry, model, given, seed)

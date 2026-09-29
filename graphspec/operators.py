@@ -335,7 +335,7 @@ def window(graph, registry, spec, seed, limits, carry=None):
 
 @timed("operators.periods")
 def periods(graph, registry, spec, seed, carry=None):
-    if spec["time/periods"] == "truth":
+    if spec["time/periods"] != "every":
         return graph
     length = spec["time/period_length"]
     joined = graph.step_graph

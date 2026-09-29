@@ -23,6 +23,8 @@ TYPES = {
 def typename(dtype):
     if pa.types.is_fixed_size_list(dtype) and dtype.value_type == pa.float32():
         return "FLOAT[%d]" % dtype.list_size
+    if pa.types.is_list(dtype) and dtype.value_type == pa.string():
+        return "STRING[]"
     if dtype not in TYPES:
         raise ValueError("unsupported graph property type: " + str(dtype))
     return TYPES[dtype]

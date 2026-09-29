@@ -20,8 +20,9 @@ workspace = runtime / "datasets" / "example"
 staging = workspace / "example.staging"
 schema = Schema(
     dict(
-        version=1,
-        time=dict(unit="step"),
+        version=2,
+        time=dict(model="clock", units=["day"], ties="key"),
+        observers=False,
         columns=dict(
             balance=dict(type="number", encoder="standard"),
             tier=dict(type="category", encoder="onehot"),
@@ -35,20 +36,21 @@ schema = Schema(
         queries=None,
     )
 )
-graph = GraphTables(index=0, name="customers", schema=schema)
+graph = GraphTables(index=0, name="customers", unit="day", schema=schema)
+always = dict(since=0, until=None)
 graph.nodes("client", ["a", "b", "c", "d"])
 graph.nodes("branch", ["north"])
-graph.observe("client", ["a", "b", "c", "d"], step=0, balance=[1.0, 2.5, None, 4.0], tier=["low", "high", "low", None])
-graph.observe("branch", ["north"], step=0, open=[True])
-graph.edges("assigned", "client", "branch", ["a", "b", "c", "d"], ["north"] * 4, step=0, present=True)
-graph.labels("client", ["a", "b", "c", "d"], [0, 1, 0, 1], ["train", "train", "validation", "validation"], step=0, target="outcome")
+graph.observe("client", ["a", "b", "c", "d"], always, balance=[1.0, 2.5, None, 4.0], tier=["low", "high", "low", None])
+graph.observe("branch", ["north"], always, open=[True])
+graph.edges("assigned", "client", "branch", ["a", "b", "c", "d"], ["north"] * 4, always, present=True)
+graph.labels("client", ["a", "b", "c", "d"], [0, 1, 0, 1], ["train", "train", "validation", "validation"], moment=0, target="outcome")
 with Stage(staging) as stage:
     graph.write(stage)
 task = write_task(workspace / "example.task.json", "example", staging, "outcome", schema)
 build_bank(task, runtime / "banks" / "example", workers=1, trained=("train",))
 ```
 
-The schema states every kind of node, every edge table and every column with its type and encoder; [the contract](contract.md) describes it. Each kind has its own columns, and `None` states a missing value. Integer identifiers in raw tables are managed by `GraphTables`; readable keys are strings. Nodes must be declared before referencing them. Each `observe`, `edges`, or `labels` call accepts a nonnegative `step`, with zero representing a static snapshot. Temporal observations and facts follow the [contract's time and causality rules](contract.md). The values of edges are keyword lists named as the columns of their edge table; an edge table that takes its relations from a column is given them as `relation`.
+The schema states every kind of node, every edge table and every column with its type and encoder; [the contract](contract.md) describes it. Each kind has its own columns, and `None` states a missing value. Integer identifiers in raw tables are managed by `GraphTables`; readable keys are strings. Nodes must be declared before referencing them. A graph states its unit of time, one of those of the schema, or `None` where the schema has no clock. Each `observe` and `edges` call states when its facts hold as a mapping of exactly the columns of time the schema states, each one value for every row or a list with one value per row; a missing `until` states no end. `labels` states the time of its labels as `moment`. Rows stated in a shorthand form are reduced to such facts by `graphspec.forms.reduced`. Facts and views follow the [contract's rules of time](contract.md). The values of edges are keyword lists named as the columns of their edge table; an edge table that takes its relations from a column is given them as `relation`.
 
 Use the public configuration builder for one model fit on a bank:
 

@@ -27,6 +27,8 @@ TYPES = {
 def typename(kind):
     if pa.types.is_fixed_size_list(kind) and kind.value_type == pa.float32():
         return "FLOAT[%d]" % kind.list_size
+    if pa.types.is_list(kind) and kind.value_type == pa.string():
+        return "STRING[]"
     if kind not in TYPES:
         raise ValueError("unsupported graph property type: " + str(kind))
     return TYPES[kind]
@@ -122,14 +124,7 @@ class Staged(Tables):
         self.queries = stated.queries is not None
         self.signals = stated.queries["signals"] if self.queries else 0
         stated.conform(self)
-        self.entity_of, self.graph_of, self.ids, self.dense, self.based, self.steps = (
-            {},
-            {},
-            {},
-            set(),
-            set(),
-            {},
-        )
+        self.entity_of, self.graph_of, self.ids, self.dense, self.based = {}, {}, {}, set(), set()
         self.location = str(self.directory)
         self.names = None
         if self.index_path.exists():
@@ -196,12 +191,6 @@ class Staged(Tables):
             (unit,) = self.by_table[table]
             self.graph_of[table] = numbers(unit.read(columns=["graph"]), "graph")
         return self.graph_of[table]
-
-    def query_steps(self):
-        if "query" not in self.steps:
-            (unit,) = self.by_table["query"]
-            self.steps["query"] = numbers(unit.read(columns=["step"]), "step")
-        return self.steps["query"]
 
     def endpoints(self, unit):
         table = unit.read(columns=["from", "to"])
@@ -321,10 +310,16 @@ class Staged(Tables):
 
     def query_index(self):
         (unit,) = self.by_table["query"]
-        asked = self.stated.queries
-        return unit.read(columns=["graph", "step", asked["grouping"], asked["key"]]).rename_columns(
-            ["graph", "step", "period", "key"]
-        )
+        started = time.perf_counter()
+        asked, names = self.stated.queries, dict(id="id", graph="graph")
+        if self.stated.model != "none":
+            names["time"] = "time"
+        if asked["grouping"] is not None:
+            names[asked["grouping"]] = "period"
+        names[asked["key"]] = "key"
+        result = unit.read(columns=list(names)).rename_columns(list(names.values()))
+        LOG.debug("query index exit rows=%d seconds=%.4f", result.num_rows, time.perf_counter() - started)
+        return result
 
     def targets(self, level, target):
         (unit,) = self.by_table[target]
@@ -346,9 +341,10 @@ class Staged(Tables):
             raise ValueError("every %s row needs exactly one %s_of link" % (target, target))
         columns = dict(id=table.column("id"), y=table.column("y"), split=table.column("split"))
         if level in ("query", "path"):
+            (asked,) = self.by_table["query"]
             columns.update(
                 graph=pa.array(self.graphs_of("query")[destinations], pa.int32()),
-                step=pa.array(self.query_steps()[destinations], pa.int32()),
+                query=pa.array(numbers(asked.read(columns=["id"]), "id")[destinations], pa.int64()),
             )
             if level == "path":
                 columns.update(tau=table.column("tau"), series=table.column("series"))
@@ -359,8 +355,9 @@ class Staged(Tables):
                 kind: self.by_table[self.nodes[kind]][0].column("key").to_pylist()
                 for kind in np.unique(kinds).tolist()
             }
+            if self.stated.model != "none":
+                columns.update(time=table.column("time"))
             columns.update(
-                step=table.column("step"),
                 graph=pa.array(
                     [
                         int(self.graphs_of(self.nodes[k])[d])
@@ -398,7 +395,8 @@ class Reader:
             parts.append(rows.append_column("kind", pa.array([kind] * rows.num_rows, pa.string())))
         (observation,) = source.by_table["observation"]
         start, stop = int(observation.bounds[index]), int(observation.bounds[index + 1])
-        held = observation.graph_rows(index, ["seq", "step"])
+        stamps = list(stated.stamps())
+        held = observation.graph_rows(index, ["id"] + stamps)
         observations, seen = {}, np.zeros(stop - start, np.int64)
         for kind in source.nodes:
             (unit,) = source.by_table[OBSERVED + kind]
@@ -413,8 +411,7 @@ class Reader:
                     entity=pa.array(
                         source.entity_of[kind][source.positions(kind, numbers(rows, "from"))], pa.int32()
                     ),
-                    seq=held.column("seq").take(take),
-                    step=held.column("step").take(take),
+                    **{name: held.column(name).take(take) for name in stamps},
                     **valued(rows, stated.nodes[kind]),
                 )
             )
@@ -422,8 +419,11 @@ class Reader:
             raise ValueError("graph %d has observations that belong to no node or to several" % index)
         (unit,) = source.by_table["graph"]
         described = unit.graph_rows(index)
+        named = dict(name=described.column("name"))
+        if "unit" in described.column_names:
+            named["unit"] = described.column("unit")
         tables = dict(
-            graph=pa.table(dict(name=described.column("name"), **valued(described, stated.graph))),
+            graph=pa.table(dict(named, **valued(described, stated.graph))),
             nodes=pa.concat_tables(parts),
             observations=observations,
             edges={table: self.edges(index, table) for table in stated.edges},
@@ -458,7 +458,7 @@ class Reader:
                     pa.int32(),
                 ),
             )
-            for name in FACTS:
+            for name in FACTS + tuple(self.source.stated.stamps()):
                 columns[name] = rows.column(name)
             if entry["column"] is not None:
                 columns["relation"] = rows.column(entry["column"])
@@ -484,14 +484,18 @@ class Reader:
             if (found < 0).any():
                 raise ValueError("graph %d has queries without the reference %s" % (index, name))
             references.append(found)
-        order = np.argsort(rows.column("step").to_numpy(), kind="stable")
+        timed = source.stated.model != "none"
+        if timed and rows.column("time").null_count:
+            raise ValueError("graph %d has a task that states no time" % index)
+        order = np.argsort(numbers(rows, "time"), kind="stable") if timed else np.arange(rows.num_rows)
         rows = rows.take(pa.array(order))
-        columns = dict(
-            step=rows.column("step"),
-            period=rows.column(stated["grouping"]),
-            key=rows.column(stated["key"]),
-            category=rows.column("category"),
-        )
+        columns = dict(id=rows.column("id"), key=rows.column(stated["key"]), category=rows.column("category"))
+        if timed:
+            columns["time"] = rows.column("time")
+        if source.stated.observers:
+            columns["observer"] = rows.column("observer")
+        if stated["grouping"] is not None:
+            columns["period"] = rows.column(stated["grouping"])
         columns["references"] = pa.FixedSizeListArray.from_arrays(
             pa.array(np.stack(references, 1)[order].reshape(-1), pa.int32()), len(references)
         )
@@ -515,12 +519,11 @@ class Reader:
         if (destinations < 0).any():
             raise ValueError("graph %d has %s rows without a link" % (index, self.target_name))
         columns = dict(id=rows.column("id"), y=rows.column("y"), split=rows.column("split"))
-        if self.level in ("query", "path"):
-            columns["step"] = pa.array(source.query_steps()[destinations], pa.int32())
-            if self.level == "path":
-                columns["tau"] = rows.column("tau")
+        if self.level == "path":
+            columns["tau"] = rows.column("tau")
         elif self.level == "node":
-            columns["step"] = rows.column("step")
+            if source.stated.model != "none":
+                columns["time"] = rows.column("time")
             columns["entity"] = pa.array(
                 [
                     int(source.entity_of[source.nodes[k]][d])

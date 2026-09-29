@@ -6,12 +6,15 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 
 | File | Role |
 |---|---|
-| `schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes and the unit of time; the registries of column types and encoders; `Encoding`, the fitted encoders of a bank. |
+| `schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types and encoders; `Encoding`, the fitted encoders of a bank. |
 | `inspect.py` | `inspect` prints the schema of a task file or of a bank. |
 | `graphdb.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. Both go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `graphspec.infra.staging`. |
 | `vocabulary.py` | `registry(source, task, series, encoding)`: the relations stated or taken from a column, and every relation a spec can derive. |
 | `declarations.py`, `registry.py` | `EdgeType` and `Registry`, which allocates relation codes, indexes types and fingerprints the declaration. `Registry.from_declaration` rebuilds a registry from a pinned declaration. |
-| `truth.py` | `parse` turns one graph's rows into a span `Graph`; `verify` checks the contract; `Graph.dense()` expands the spans into the per-step working graph by reference. |
+| `clock.py` | The models of time, the rules for ties and the choices among several facts, each a registry; `visible` and `allowed`, the one guard that says which facts a task sees. |
+| `forms.py` | The shorthand forms, registered, each reducing rows to facts with intervals. |
+| `truth.py` | `parse` turns one graph's rows into `Facts`, the stored facts with their intervals, and `check` checks them; `Graph` is a view as spans over steps, which `verify` checks; `Graph.dense()` expands the spans into the per-step working graph by reference. |
+| `view.py` | The choices of steps, registered; `view` shows the facts of a graph at the steps of one sequence as a `Graph`. |
 | `spans.py` | Interval primitives: encoding rows as spans, expanding spans to rows, fact order, coverage checks. |
 | `spec.py` | The spec space: conditional parameters generated from a registry and a set of representation groups, with `draw`, `canonical` and `digest`. |
 | `operators.py` | One function per graph stage. |
@@ -21,7 +24,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `segments.py`, `carry.py` | The segment engine that builds a joined group graph by graph, described below. |
 | `kernels.py` | The numba kernels behind the stages, the representations and `verify`. |
 
-**Truth graph.** `truth.Graph` (version 8) stores one graph as spans, so an unchanged observation or fact costs one row however long it holds:
+**Truth graph and views.** A bank of version 8 stores one graph as `truth.Facts`, facts with the interval in which each holds; [the contract](../docs/contract.md) lists its arrays. Steps are a view the pipeline chooses by `time/steps` and `time/several`. A view is a `truth.Graph`, spans over the steps of the view, so an unchanged observation or fact costs one row however long it is shown:
 
 - `kinds` and `entity_token` (the 64-bit hash of `type:key`) per entity, and `period` per step
 - observation spans `obs_entity`, `obs_start`, `obs_stop` (exclusive), `obs_values` and `obs_x`: an entity's maximal run of consecutive steps with identical stated values, the values as stated and as encoded; within a step observations are ordered by entity
@@ -29,7 +32,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 - removals `removal_source`, `removal_target`, `removal_code`, `removal_step`, `removal_values`: the absent facts, in their `seq` order
 - queries `query_key`, `query_category`, `query_references` (one column per reference the schema names), `query_values`, `query_x`, `query_signals`, labels `label_entity`, `label_step`, `label_row`, `label_id`, and `graph_values`, the attributes of the graph
 
-`verify` checks, in time linear in the spans: steps in range, periods that never decrease, canonical relation codes, one query per step when there are queries, observation spans of one entity that neither overlap nor could merge, present facts observed at every step of their span, queries and node labels observed at their step, absent facts observed at or before theirs, and tokens that match the keys. It also checks that the encoders reproduce the encoded values from the stated ones. A bank build refuses two keys of one type that share a token.
+`verify` checks a view, in time linear in the spans: steps in range, a period for every step, canonical relation codes, one query per step when there are queries, observation spans of one entity that neither overlap nor could merge, present facts observed at every step of their span, queries and node labels observed at their step, absent facts observed at or before theirs, and tokens that match the keys. It also checks that the encoders reproduce the encoded values from the stated ones. A bank build refuses two keys of one type that share a token.
 
 The stages work on `truth.Dense`, the per-step expansion: rows reference their features and attributes (`obs_ref`, `fact_ref`) in `x_table` and `value_table` instead of copying them, so a stage that copies or filters rows moves integers. `step_graph` and `entity_connected` carry the joined timeline (all zeros for a single graph).
 
@@ -73,7 +76,7 @@ The markers `non_relation` and `turn_context` take codes above every relation. T
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `time/periods` | truth, every | Keeps the database periods, or starts a new period every `time/period_length` steps. |
+| `time/periods` | truth or steps, every | truth, offered where the tasks state a grouping, keeps it as the periods; steps, offered where they state none, makes every step a period; every starts a new period every `time/period_length` steps. Periods are runs of equal values and need not increase. |
 | `time/period_length` | 1–16 with queries, 2–16 without | Steps per period. Offered for every. |
 
 2. Time
@@ -81,7 +84,7 @@ The markers `non_relation` and `turn_context` take codes above every relation. T
 | Parameter | Range | Effect |
 |---|---|---|
 | `time/scheme` | window, state | Which earlier facts a snapshot holds. window: facts stated in the last w steps, or in the current period and the previous p periods. state: every earlier fact. In each scheme a fact leaves when it is removed or stated again, and an observation carries forward over the same span until the entity's next observation. Parallel facts are copied together. |
-| `time/unit` | step, period | What the window counts. Offered for window when periods span more than one step: truth periods with queries, or every with a length above 1. |
+| `time/unit` | step, period | What the window counts. Offered for window when periods span more than one step: truth periods, or every with a length above 1. |
 | `time/window` | 1–8 | w. Offered for window counted in steps. |
 | `time/past_periods` | 0–3 | p, counted in distinct periods whatever their numbers. Offered for window counted in periods. |
 | `time/history` | 1–32 | Steps in each training window; read when packing. |
@@ -164,7 +167,7 @@ Whenever a stage removes present facts, it also removes absent rows left without
 
 Base arrays:
 
-- snapshots: `x_ref` per observation into the feature table `x_table`, which for separate graphs is a copy of the truth graph's `obs_x` file when no stage changed it; `entity`, `step`, `turn` and `snapshot_offsets` per observation; `observation_ids` and `observation_offsets` per entity; `entity_kind`, all zero when nodes are untyped; relation edges `spatial` as source observation, target observation and code, with `spatial_step`, `spatial_attribute_row` and `attributes_<relation>`
+- snapshots: `x_ref` per observation into the feature table `x_table`, which for separate graphs is a copy of the `obs_x` file of its view when no stage changed it; `entity`, `step`, `turn` and `snapshot_offsets` per observation; `observation_ids` and `observation_offsets` per entity; `entity_kind`, all zero when nodes are untyped; relation edges `spatial` as source observation, target observation and code, with `spatial_step`, `spatial_attribute_row` and `attributes_<relation>`
 - predictions: `actor`, `subject`, `query_context`, `query_step`, `row_index`, `decision`, `signals`; a node target is its own actor and subject
 - queries: `query` and `decision_actor`
 - `affinity` and `global_affinity`: counts of earlier query categories, per actor and overall
