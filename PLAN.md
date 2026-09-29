@@ -644,6 +644,7 @@ As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, un
 | Review of section 1 | done | Repairs in `26acf81`, `451f229`, `31a29a5`; 392 passed in 11.3 s |
 | 2.1 | done | `6072ce9`; 336 passed in 12.2 s |
 | 2.2 | done | `42b90b1`; 431 passed in 13.0 s |
+| 2.3 | done | `9249781`, and `2a23b17` for the time of the suite; 470 passed in 11.4 s |
 
 **Deviations**
 
@@ -679,3 +680,8 @@ One line per place where the plan was wrong or silent: the subsection, what the 
 | 2.2 | A fact known later is invisible to a task before | A step of a view shows the facts as the task of that step saw them; a later task does not see in earlier steps what became known after them | A history per task needs the forks of 2.7 |
 | 2.2 | A bank of two graphs with different units | The case is a bank of five graphs that alternate between two units | One bank is shared by the cases of the check |
 | 2.2 | Not stated | A task without an observer sees every fact | No observer stated means no restriction stated |
+| 2.3 | Names and number of references are stated per kind of task | References are named once in the schema and each kind picks from them | One name means one thing across kinds |
+| 2.3 | Models receive references as a set keyed by name | One family reads them by name; the others read the first three node references in stated order and stop on kinds they cannot read | To be completed with 8.7 and 9.1, where families state what they read |
+| 2.3 | A kind of task has the columns listed | A kind also states what an absent reference does, whether it is an event between two references, and what a known target becomes | The check's cases need each stated |
+| 2.3 | A bank with targets on nodes and on graphs together | Targets that are numbers and targets that are paths are not mixed in one bank | Kinds of target are 2.10 |
+| 2.3 | An optional weight | A kind that states no weight has weight 1 | Absence of a weight means equal weight |
