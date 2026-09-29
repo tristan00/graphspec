@@ -11,7 +11,8 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
 from graphspec.schema import VERSION, Schema
-from graphspec.truth import Graph
+from graphspec.truth import Facts, Graph, inputs
+from graphspec.view import finished, sequences, view
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration
@@ -168,19 +169,22 @@ def test_a_view_without_any_edge_completes_one_fit_on_cpu(banks, packed, tmp_pat
     assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
-def test_a_value_beyond_sixteen_bits_stops_the_view_naming_the_node_the_column_and_the_encoder(tmp_path):
-    held = case(True)
-    held["graphs"][1]["values"][0]["rows"]["size"][2] = 1e6
-    build(synthetic.stage(tmp_path, "large", held), tmp_path / "large.bank", 1, ("train",))
-    opened = Deriver(tmp_path / "large.bank", "cpu", RESIDENT)
-    cfg = configuration(opened.registry, dict(view="snapshot"), {}, 5, copy.deepcopy(HIDDEN))
+def test_a_value_beyond_sixteen_bits_stops_the_view_naming_the_node_the_column_and_the_encoder(banks):
+    held = Deriver(banks["edged"], "cpu", RESIDENT)
+    cfg = configuration(held.registry, dict(view="snapshot"), {}, 5, copy.deepcopy(HIDDEN))
+    registry, facts = held.fitted(cfg), Facts.load(held.truth(1))
+    values = np.array(facts.obs_values)
+    values[np.asarray(facts.obs_entity) == facts.keys.index("m2"), registry.encoding.layout.index("size")] = 1e6
+    large = facts.replace(obs_values=values)
+    shared = sequences(large, registry, "tasks", held.looking(cfg)[0])[0]
+    shown = view(large, registry, shared, None)
     with pytest.raises(
         ValueError,
         match=r"the node m2 of the kind maker in the view of graph g1 holds the value 1000000\.0 of the column "
         r"size, encoded by value, which gives 1000000\.0; model inputs are stored at 16 bits, which hold "
         r"magnitudes up to 65504",
     ):
-        opened.viewed(cfg)
+        finished(shown, registry, inputs(registry, large.kinds, large.arrays))
 
 
 @pytest.mark.parametrize("weight", [float("inf"), float("nan"), 1e39, 0.0])

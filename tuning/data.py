@@ -197,7 +197,9 @@ class Viewed:
         started = time.perf_counter()
         registry, entries = bank.registry, []
         samples = {name: [] for name in registry.schema.columns}
-        for stored in bank.manifest["graphs"]:
+        rows = [row for code in looking.trained for row in bank.split["indices"][looking.splits[code]]]
+        trained = {bank.rows[row]["graph"] for row in rows}
+        for stored in (graph for graph in bank.manifest["graphs"] if graph["name"] in trained):
             facts = sets.stored(Facts.load(bank.truth(stored["index"])), registry, storage)
             for held in sequences(facts, registry, steps, looking):
                 for name, found in sampled(facts, registry, held, several).items():
