@@ -645,9 +645,13 @@ As of 2026-09-28 at 22:50: on the owner's instruction the whole working tree, un
 | 2.1 | done | `6072ce9`; 336 passed in 12.2 s |
 | 2.2 | done | `42b90b1`; 431 passed in 13.0 s |
 | 2.3 | done | `9249781`, and `2a23b17` for the time of the suite; 470 passed in 11.4 s |
-| 2.4 | being built on 29 September at 04:10 | A commit whose message starts with Step 2.4 |
-| Review of 2.1 to 2.3 | running on 29 September at 04:10 | Its findings are repaired before 2.5 |
-| Hand-over | written | `D:/graphspec-runtime/ground/HANDOFF.md` holds how the work is run and what is open |
+| Hand-over | written | `D:/graphspec-runtime/ground/HANDOFF.md` holds how the work is run and what is open; updated on 29 September at 03:30 when the agents running on Fable stopped at its usage limit and were replaced |
+| 2.4 | done | `b616dd1`; 478 passed in 12.7 s; ruff clean |
+| Review of 2.1 to 2.3 | done | Two reviewers; reports, findings and reproductions in `D:/graphspec-runtime/ground/review-2.1-2.3` |
+| Repairs of the review, suite and robustness | to do | Stale suite caches and a serial run that fails on them; a view without edges crashes; an encoded value past 16 bits stops the build naming no column; registrations do not reach spawned workers; weights not checked for finiteness; ties demanded between different edges; events between task times never shown under `tasks`; the rule for several facts depends on the order of registration; families that cannot read a bank are offered; messages that name nothing |
+| Repairs of the review, leakage | to do | Encoders fitted on rows the trained splits do not see; matured targets cross observers and splits; `without_targets` hides every edge named by a reference, not the edges that are targets |
+| Repairs of the review, references | to do | Seven families read two references by position and drop a third without a word; the kind of a task reaches no model |
+| Repairs of the review, relations from a column | to do | One search parameter, one stored array and one set of weights per value of the column |
 
 **Deviations**
 
@@ -688,3 +692,11 @@ One line per place where the plan was wrong or silent: the subsection, what the 
 | 2.3 | A kind of task has the columns listed | A kind also states what an absent reference does, whether it is an event between two references, and what a known target becomes | The check's cases need each stated |
 | 2.3 | A bank with targets on nodes and on graphs together | Targets that are numbers and targets that are paths are not mixed in one bank | Kinds of target are 2.10 |
 | 2.3 | An optional weight | A kind that states no weight has weight 1 | Absence of a weight means equal weight |
+| 2.4 | An edge may be the endpoint of another edge | An endpoint may name a kind of set edge; an edge that must be an endpoint is stated as a set edge of two members with roles | An edge needs a key to be referred to |
+| 2.4 | Not stated | No sort of reference was added; a reference of a node sort may name kinds of set edge | A set edge is keyed like a node |
+| 2.4 | Not stated | The members of a set edge and the graph a node holds are stated once and carry no time | The simplest statement that serves the check |
+| 2.4 | A node's graph is encoded by a stated encoder | Shipped encoders `pooled` and `propagated` are fixed and computed in the bank, not learned | The check asks for a stated encoder, not a learned one |
+| 2.4 | Not stated | An edge about a set edge states a registered rule for times when that edge does not hold; `stop` and `lapse` shipped | No silent behaviour |
+| 2.4 | Not stated | Relations made by the forms of storage are named `<kind>.<role>` and `<kind>` | Relation names become file names, and `:` is not allowed in them on Windows |
+| 2.4 | Not stated | The database source refuses schemas with set edges or held graphs; they are staged | The database reader is rebuilt in 5.3 and 5.8 |
+| 2.4 | Not stated | Schema version 4 | The shape of the schema gained required fields |
