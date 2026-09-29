@@ -6,6 +6,7 @@ import time
 
 from graphspec.infra.files import sha256_json
 
+from . import sets
 from .clock import SEVERAL
 from .view import offered
 from .vocabulary import HOPS
@@ -30,10 +31,23 @@ class Parameter:
             raise ValueError("numeric parameters require ordered bounds: " + name)
         if log and (kind != "float" or low <= 0):
             raise ValueError("logarithmic parameters require positive float bounds: " + name)
+        if default is None and kind != "choice":
+            raise ValueError("only a choice may be stated by the pipeline without a default: " + name)
         self.name, self.kind, self.default = name, kind, default
         self.low, self.high, self.log, self.options = low, high, log, tuple(options)
         self.condition = condition
-        self.check(default)
+        if default is not None:
+            self.check(default)
+
+    def given(self, supplied):
+        if self.name in supplied:
+            return self.check(supplied[self.name])
+        if self.default is None:
+            raise ValueError(
+                "the pipeline states no %s, which has no default; it is one of %s"
+                % (self.name, list(self.options))
+            )
+        return self.check(self.default)
 
     def active(self, spec):
         return self.condition is None or self.condition(spec)
@@ -360,6 +374,9 @@ def space(registry, groups):
         choice("time/steps", steps, steps[0]),
         choice("time/several", SEVERAL.names(), SEVERAL.names()[-1]),
     ]
+    parameters += [
+        choice(sets.PARAMETER % kind, sets.offered(registry, kind), None) for kind in registry.schema.sets
+    ]
     LOG.debug(
         "space exit seconds=%.4f parameters=%d groups=%s",
         time.perf_counter() - started,
@@ -399,7 +416,9 @@ def narrow(parameters, bounds):
             )
             if not options:
                 raise ValueError("parameter bounds cannot be empty: " + parameter.name)
-            default = parameter.default if parameter.default in options else options[0]
+            default = (
+                parameter.default if parameter.default is None or parameter.default in options else options[0]
+            )
             result.append(
                 Parameter(
                     parameter.name, parameter.kind, default, options=options, condition=parameter.condition
@@ -433,7 +452,10 @@ def draw(parameters, choose):
 
 
 def default(parameters):
-    return draw(parameters, lambda parameter: parameter.default)
+    started = time.perf_counter()
+    result = draw(parameters, lambda parameter: parameter.given({}))
+    LOG.debug("default exit seconds=%.4f parameters=%d", time.perf_counter() - started, len(result))
+    return result
 
 
 def canonical(parameters, spec):
@@ -453,13 +475,13 @@ def canonical(parameters, spec):
 
 
 def configured(parameters, values):
+    started = time.perf_counter()
     supplied = dict(values)
-    result = draw(
-        parameters, lambda parameter: parameter.check(supplied.get(parameter.name, parameter.default))
-    )
+    result = draw(parameters, lambda parameter: parameter.given(supplied))
     extra = sorted(set(supplied) - set(result))
     if extra:
         raise ValueError("spec sets inactive or unknown parameters: " + ", ".join(extra))
+    LOG.debug("configured exit seconds=%.4f parameters=%d", time.perf_counter() - started, len(result))
     return result
 
 

@@ -7,9 +7,10 @@ from graphspec.infra.timing import timed
 
 from . import clock, spans
 from .carry import encode
-from .clock import ALWAYS, NEVER, SEVERAL
+from .clock import ABOUT, ALWAYS, NEVER, SEVERAL
 from .names import Names
 from .references import MEMBERS, ends
+from .sets import NODE, stored
 from .truth import GROUPS, Graph, encoded, ranks, verify
 
 LOG = logging.getLogger(__name__)
@@ -395,6 +396,38 @@ def grouped(facts, held, steps):
     return result
 
 
+def about(facts, registry, lit, rows):
+    started = time.perf_counter()
+    kept = np.ones(len(rows["step"]), bool)
+    kinds, count = np.asarray(facts.kinds, np.int64), len(facts.kinds)
+    joined = np.asarray([kind in registry.schema.sets for kind in registry.nodes], bool)
+    for code, rule in registry.about.items():
+        chosen = np.flatnonzero(rows["present"] & (rows["code"] == code))
+        moments = rows["step"][chosen].astype(np.int64)
+        lacking = np.zeros(len(chosen), bool)
+        for end in (rows["source"][chosen], rows["target"][chosen]):
+            lacking |= joined[kinds[end]] & ~np.isin(moments * count + end, lit)
+
+        def named(position):
+            row = chosen[position]
+            return "the edge of %s from %s to %s of graph %s at %s" % (
+                registry.by_code[code].name,
+                facts.keys[rows["source"][row]],
+                facts.keys[rows["target"][row]],
+                facts.name,
+                clock.shown(rows["moments"][rows["step"][row]]),
+            )
+
+        kept[chosen] = ABOUT.named(rule).kept(lacking, named)
+    LOG.debug(
+        "about exit graph=%s dropped=%d seconds=%.4f",
+        facts.name,
+        int((~kept).sum()),
+        time.perf_counter() - started,
+    )
+    return kept
+
+
 def referred(facts, held):
     started = time.perf_counter()
     place = np.full(len(facts.task_key), -1, np.int64)
@@ -453,9 +486,19 @@ def view(facts, registry, held, several):
         ),
     )
     observed["obs_values"] = observed.pop("obs_x")
+    lit = np.unique(step[chosen].astype(np.int64) * len(facts.kinds) + entity[chosen])
     row, step, since = shown(facts, "fact", held, observer, seen["fact"])
     source, target = np.asarray(facts.fact_source)[row], np.asarray(facts.fact_target)[row]
     code, present = np.asarray(facts.fact_code, np.int64)[row], np.asarray(facts.fact_present)[row]
+    kept = about(
+        facts,
+        registry,
+        lit,
+        dict(step=step, source=source, target=target, code=code, present=present, moments=held["moments"]),
+    )
+    row, step, since, source, target, code, present = (
+        values[kept] for values in (row, step, since, source, target, code, present)
+    )
     keys = clock.keys(
         schema.ties,
         dict(seq=np.asarray(facts.fact_seq)[row], code=code, source=place[source], target=place[target]),
@@ -463,16 +506,18 @@ def view(facts, registry, held, several):
     order = np.lexsort((since,) + tuple(keys[::-1]) + (~present, step))
     tasks = held["tasks"]
     name = facts.name if observer < 0 else "%s seen by observer %d" % (facts.name, observer)
+    inner = np.asarray(facts.entity_held)
     graph = Graph(
         name if held["split"] < 0 else "%s for split %d" % (name, held["split"]),
         facts.keys,
         steps,
         kinds=np.asarray(facts.kinds),
         entity_token=np.asarray(facts.entity_token),
+        entity_held=inner,
         period=grouped(facts, held, steps)
         if schema.tasks["grouping"] is not None
         else np.arange(steps, dtype=np.int32),
-        obs_x=encoded(registry, observed["obs_values"]),
+        obs_x=encoded(registry, observed["obs_values"], inner[observed["obs_entity"]]),
         **observed,
         **spans.fact_spans(
             step[order].astype(np.int32),
@@ -510,6 +555,7 @@ def validate(facts, registry, splits):
     names = offered(registry)
     if not names:
         raise ValueError("no choice of steps serves the graphs of this bank")
+    facts = stored(facts, registry, {kind: NODE for kind in registry.schema.sets})
     result = [
         view(facts, registry, held, SEVERAL.names()[0])
         for held in sequences(facts, registry, names[0], unstated(splits))

@@ -7,15 +7,19 @@ from .declarations import EdgeType
 from .schema import TARGETS, Encoding, Schema
 
 EXTRAS = ("target", "series", "signals", "base", "events", "single")
+STORED = ("member", "pairs")
 
 
 class Registry:
     @timed("registry.registry")
     def __init__(self, name, encoding, edges, markers, extras):
         self.name, self.encoding, self.schema = name, encoding, encoding.schema
-        self.nodes, self.edges = tuple(self.schema.nodes), tuple(edges)
+        self.nodes, self.edges = tuple(self.schema.entities()), tuple(edges)
         self.features, self.values = encoding.features, encoding.values
-        self.widths = {kind: encoding.width(columns) for kind, columns in self.schema.nodes.items()}
+        self.widths = {
+            kind: encoding.width(columns) + (encoding.held[kind][1] if kind in encoding.held else 0)
+            for kind, columns in self.schema.entities().items()
+        }
         self.node_index = {node: i for i, node in enumerate(self.nodes)}
         self.relations = self._allocate()
         self.by_name = {edge.name: edge for edge in self.edges}
@@ -66,12 +70,22 @@ class Registry:
         self.references = tuple(self.schema.tasks["references"])
         if not set(self.extras["base"]) <= set(self.by_name):
             raise ValueError("base relation types must be declared")
-        self.tables = {}
+        self.tables, self.stored, self.about = {}, {}, {}
+        rules = self.schema.about()
         for name in self.extras["base"]:
-            table = self.by_name[name].origin[1]
-            if table not in self.schema.edges or name not in encoding.relations[table]:
-                raise ValueError("the relation %s belongs to no stated edge table" % name)
-            self.tables[name] = table
+            origin = self.by_name[name].origin
+            if origin[0] == "base":
+                if origin[1] not in self.schema.edges or name not in encoding.relations[origin[1]]:
+                    raise ValueError("the relation %s belongs to no stated edge table" % name)
+                self.tables[name] = origin[1]
+                if origin[1] in rules:
+                    self.about[self.code(name)] = rules[origin[1]]
+            elif origin[0] in STORED and origin[1] in self.schema.sets:
+                self.stored[name] = origin[1]
+            else:
+                raise ValueError(
+                    "the relation %s belongs to no stated edge table and no kind of set edge" % name
+                )
 
     @classmethod
     @timed("registry.registry.from_declaration")

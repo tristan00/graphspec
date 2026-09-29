@@ -46,7 +46,8 @@ def stated(model, units, ties, observers):
             ask=dict(type="number", encoder="value"),
         ),
         graph=dict(columns=[]),
-        nodes=dict(maker=dict(columns=["size"]), site=dict(columns=["load"])),
+        nodes=dict(maker=dict(columns=["size"], holds=None), site=dict(columns=["load"], holds=None)),
+        sets={},
         edges=dict(
             serves=synthetic.edge("maker", "site", ["weight"]),
             beside=synthetic.edge("site", "site", [], directed=False),

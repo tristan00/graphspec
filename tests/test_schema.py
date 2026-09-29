@@ -94,7 +94,7 @@ def test_a_schema_with_a_statement_absent_stops_naming_it(path, message):
 
 def test_a_schema_of_another_version_or_with_an_unknown_name_is_refused():
     mapping = synthetic.varied("task")["schema"]
-    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 3"):
+    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 4"):
         Schema(dict(mapping, version=0))
     with pytest.raises(KeyError, match="no column type is registered under the name 'colourful'"):
         Schema(dict(mapping, columns=dict(mapping["columns"], size=dict(type="colourful", encoder="value"))))
@@ -320,7 +320,7 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
     monkeypatch.setattr(sys, "argv", ["graphspec", "inspect", str(varied)])
     main()
     printed = capsys.readouterr().out
-    assert "schema version 3" in printed and "  place: size number by standard, width 2" in printed
+    assert "schema version 4" in printed and "  place: size number by standard, width 2" in printed
     assert "width 11" in printed and "  lends: from links" in printed
     assert "  reference person: node of person" in printed and "keyed by ticket, grouped by week" in printed
     assert (

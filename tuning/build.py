@@ -322,6 +322,8 @@ def counts(truth):
         entities=len(truth.kinds),
         observations=len(truth.obs_since),
         facts=len(truth.fact_since),
+        members=len(truth.set_edge),
+        held=len(truth.inner_owner),
         tasks=len(truth.task_time),
         targets=len(truth.target_task),
     )

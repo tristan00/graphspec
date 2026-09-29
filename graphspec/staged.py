@@ -11,7 +11,7 @@ from graphspec.infra.runtime import cache_path
 from graphspec.infra.staging import manifest
 
 from .references import SORTS
-from .schema import EDGE, FACTS, LINK, OBSERVED, TARGET, TASK, VALUE
+from .schema import EDGE, FACTS, INNER, LINK, MEMBER, OBSERVED, TARGET, TASK, VALUE, WITHIN, inward, outward
 
 LOG = logging.getLogger(__name__)
 IDS = 32
@@ -121,7 +121,7 @@ class Staged:
         self.kinds = {
             table: "NODE" if units[0].source is None else "REL" for table, units in self.by_table.items()
         }
-        self.nodes = tuple(stated.nodes)
+        self.nodes = tuple(stated.entities())
         stated.conform(self)
         self.entity_of, self.graph_of, self.ids, self.dense, self.based = {}, {}, {}, set(), set()
         self.location = str(self.directory)
@@ -207,10 +207,10 @@ class Staged:
         count = len(graphs)
         graph_unit.bounds = np.arange(count + 1)
         self.graph_of["graph"] = graphs
-        for table in list(self.nodes) + ["task"]:
+        for table in list(self.nodes) + ["task"] + [INNER + kind for kind in self.stated.holds]:
             (unit,) = self.by_table[table]
             self.graph_of[table] = numbers(unit.read(columns=["graph"]), "graph")
-            if table != "task":
+            if table in self.nodes:
                 self.entity_of[table] = numbers(unit.read(columns=["entity"]), "entity")
             unit.bounds = self.bounds_of(self.graph_of[table], count, table)
             self.classify(table, unit)
@@ -353,7 +353,7 @@ class Reader:
         start, stop = int(observation.bounds[index]), int(observation.bounds[index + 1])
         stamps = list(stated.stamps())
         held = observation.graph_rows(index, ["id"] + stamps)
-        observations, seen = {}, np.zeros(stop - start, np.int64)
+        observations, seen, entities = {}, np.zeros(stop - start, np.int64), stated.entities()
         for kind in source.nodes:
             (unit,) = source.by_table[OBSERVED + kind]
             rows = unit.graph_rows(index)
@@ -368,7 +368,7 @@ class Reader:
                         source.entity_of[kind][source.positions(kind, numbers(rows, "from"))], pa.int32()
                     ),
                     **{name: held.column(name).take(take) for name in stamps},
-                    **valued(rows, stated.nodes[kind]),
+                    **valued(rows, entities[kind]),
                 )
             )
         if np.any(seen != 1):
@@ -384,6 +384,8 @@ class Reader:
             nodes=nodes,
             observations=observations,
             edges={table: self.edges(index, table) for table in stated.edges},
+            sets={kind: self.members(index, kind) for kind in stated.sets},
+            held={kind: self.inner(index, kind, nodes) for kind in stated.holds},
             tasks=self.tasks(index),
             references=self.references(index, nodes),
             targets=self.targets(index),
@@ -422,6 +424,94 @@ class Reader:
             columns.update(valued(rows, entry["columns"]))
             parts.append(pa.table(columns))
         return pa.concat_tables(parts)
+
+    def members(self, index, kind):
+        started = time.perf_counter()
+        source, entry = self.source, self.source.stated.sets[kind]
+        parts = []
+        for unit in source.by_table[MEMBER + kind]:
+            rows = unit.graph_rows(index)
+            parts.append(
+                pa.table(
+                    dict(
+                        set=pa.array(
+                            source.entity_of[kind][source.positions(kind, numbers(rows, "from"))], pa.int32()
+                        ),
+                        member=pa.array(
+                            source.entity_of[unit.target][source.positions(unit.target, numbers(rows, "to"))],
+                            pa.int32(),
+                        ),
+                        role=rows.column("role"),
+                        **valued(rows, entry["members"]),
+                    )
+                )
+            )
+        result = pa.concat_tables(parts)
+        LOG.debug(
+            "read members exit graph=%d kind=%s rows=%d seconds=%.4f",
+            index,
+            kind,
+            result.num_rows,
+            time.perf_counter() - started,
+        )
+        return result
+
+    def inner(self, index, kind, nodes):
+        started = time.perf_counter()
+        source, held = self.source, self.source.stated.holds[kind]
+        (unit,) = source.by_table[INNER + kind]
+        rows = unit.graph_rows(index)
+        found = {
+            key: entity
+            for entity, key, owned in zip(
+                *(nodes.column(name).to_pylist() for name in ("entity", "key", "kind"))
+            )
+            if owned == kind
+        }
+        owners = rows.column("owner").to_pylist()
+        strangers = sorted({str(owner) for owner in owners if owner not in found})
+        if strangers:
+            raise ValueError(
+                "the graphs held by nodes of %s in graph %d name owners the graph does not hold: %s"
+                % (kind, index, ", ".join(strangers))
+            )
+        start = int(unit.bounds[index])
+        parts = []
+        for link in source.by_table[WITHIN + kind]:
+            links = link.graph_rows(index)
+            parts.append(
+                pa.table(
+                    dict(
+                        source=pa.array(
+                            source.positions(INNER + kind, numbers(links, "from")) - start, pa.int64()
+                        ),
+                        target=pa.array(
+                            source.positions(INNER + kind, numbers(links, "to")) - start, pa.int64()
+                        ),
+                        relation=links.column("relation"),
+                        **valued(links, outward(held)),
+                    )
+                )
+            )
+        result = dict(
+            nodes=pa.table(
+                dict(
+                    owner=pa.array([found[owner] for owner in owners], pa.int32()),
+                    kind=rows.column("kind"),
+                    key=rows.column("key"),
+                    **valued(rows, inward(held)),
+                )
+            ),
+            edges=pa.concat_tables(parts),
+        )
+        LOG.debug(
+            "read held graphs exit graph=%d kind=%s nodes=%d seconds=%.4f",
+            index,
+            kind,
+            rows.num_rows,
+            time.perf_counter() - started,
+        )
+        return result
 
     def tasks(self, index):
         started = time.perf_counter()

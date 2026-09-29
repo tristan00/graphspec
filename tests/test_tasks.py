@@ -101,7 +101,8 @@ def stated(absent):
             ask=dict(type="number", encoder="value"),
         ),
         graph=dict(columns=[]),
-        nodes=dict(maker=dict(columns=["size", "mark"]), site=dict(columns=["load"])),
+        nodes=dict(maker=dict(columns=["size", "mark"], holds=None), site=dict(columns=["load"], holds=None)),
+        sets={},
         edges=dict(
             serves=synthetic.edge("maker", "site", ["weight"]),
             beside=synthetic.edge("site", "site", [], directed=False),

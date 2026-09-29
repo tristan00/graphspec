@@ -1,5 +1,8 @@
+import itertools
 import logging
 import time
+
+from graphspec.infra.timing import timed
 
 from .declarations import EdgeType
 from .registry import Registry
@@ -12,6 +15,42 @@ COUPLING = "temporal"
 UNTYPED = "untyped"
 BOUNDARIES = ("boundary:first", "boundary:last", "boundary:both")
 RESERVED = ("diffusion", "rewire", UNTYPED, COUPLING)
+
+
+@timed("vocabulary.membership")
+def membership(kind, role):
+    return "%s.%s" % (kind, role)
+
+
+@timed("vocabulary.paired")
+def paired(kind):
+    return kind
+
+
+@timed("vocabulary.stored")
+def stored(schema):
+    result = []
+    for kind, entry in schema.sets.items():
+        result += [
+            dict(
+                name=membership(kind, role),
+                origin=("member", kind, role),
+                pairs=[(kind, member) for member in entry["kinds"]],
+                attributes=entry["members"],
+                symmetric=False,
+            )
+            for role in entry["roles"]
+        ]
+        result.append(
+            dict(
+                name=paired(kind),
+                origin=("pairs", kind),
+                pairs=list(itertools.combinations_with_replacement(entry["kinds"], 2)),
+                attributes=entry["columns"],
+                symmetric=True,
+            )
+        )
+    return result
 
 
 def projection(relation, side, first, second):
@@ -32,11 +71,11 @@ def registry(task, encoding, single):
     if unknown:
         raise ValueError("unknown task keys: " + ", ".join(unknown))
     schema = encoding.schema
-    nodes = tuple(schema.nodes)
+    nodes = tuple(schema.entities())
     relations = [
         dict(
             name=name,
-            table=table,
+            origin=("base", table),
             pairs=entry["endpoints"],
             attributes=entry["columns"],
             symmetric=not entry["directed"],
@@ -54,10 +93,17 @@ def registry(task, encoding, single):
     )
     if clash:
         raise ValueError("names collide with derived relation names: " + ", ".join(map(str, clash)))
+    made = stored(schema)
+    clash = sorted({relation["name"] for relation in made} & {relation["name"] for relation in relations})
+    if clash:
+        raise ValueError(
+            "relations stated or taken collide with the relations of set edges: " + ", ".join(clash)
+        )
+    relations += made
     edges = [
         EdgeType(
             relation["name"],
-            ("base", relation["table"]),
+            relation["origin"],
             relation["pairs"],
             relation["attributes"],
             symmetric=relation["symmetric"],

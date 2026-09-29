@@ -8,15 +8,18 @@ import pyarrow as pa
 from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 
-from .clock import MODELS, STAMPS, TIES, UNITED
+from .clock import ABOUT, MODELS, STAMPS, TIES, UNITED
 from .names import Names
 from .references import ABSENT, SORTS
 
 LOG = logging.getLogger(__name__)
-VERSION = 3
+VERSION = 4
 EDGE = "edge_"
 OBSERVED = "observed_"
 TASK = "task_"
+MEMBER = "member_"
+INNER = "held_"
+WITHIN = "held_edge_"
 TARGET = "target"
 LINK = "target_of"
 FACTS = ("present",)
@@ -24,10 +27,16 @@ STAMP = "INT64"
 SEQUENCE = dict(seq="INT32")
 WATCHERS = "STRING[]"
 TABLES = ("graph", "observation", "task", TARGET, LINK)
-PREFIXES = (EDGE, OBSERVED, TASK)
+PREFIXES = (EDGE, OBSERVED, TASK, MEMBER, INNER)
 TARGETS = ("number", "path")
-FIELDS = ("version", "time", "observers", "columns", "graph", "nodes", "edges", "tasks")
+FIELDS = ("version", "time", "observers", "columns", "graph", "nodes", "sets", "edges", "tasks")
 TIMED = ("model", "units", "ties")
+KINDED = ("columns", "holds")
+HOLDS = ("nodes", "edges", "encoder")
+INWARD = ("endpoints", "directed", "columns")
+SETS = ("kinds", "roles", "members", "columns")
+EDGED = ("endpoints", "directed", "columns", "relation", "about")
+OWNED = dict(id="INT64", graph="INT32", owner="STRING", kind="STRING", key="STRING")
 DECLARED = "declared"
 ASKED = ("key", "grouping", "signals", "references", "kinds")
 REFERRED = ("sort", "kinds")
@@ -211,6 +220,64 @@ class OneHot:
         return values, known[:, None].astype(np.float32)
 
 
+@timed("schema.inward")
+def inward(held):
+    return tuple(dict.fromkeys(name for columns in held["nodes"].values() for name in columns))
+
+
+@timed("schema.outward")
+def outward(held):
+    return tuple(dict.fromkeys(name for entry in held["edges"].values() for name in entry["columns"]))
+
+
+class Pooled:
+    @timed("schema.pooled.width")
+    def width(self, encoding, held):
+        return encoding.width(inward(held)) + 1
+
+    def encode(self, encoding, held, graphs):
+        started = time.perf_counter()
+        own = encoding.vectors(inward(held), graphs["values"])
+        node = np.concatenate((own, np.ones((len(own), 1), np.float32)), 1)
+        result = np.zeros((graphs["owners"], node.shape[1]), np.float32)
+        np.add.at(result, graphs["owner"], node)
+        LOG.debug(
+            "pooled exit graphs=%d nodes=%d seconds=%.4f",
+            graphs["owners"],
+            len(own),
+            time.perf_counter() - started,
+        )
+        return result
+
+
+class Propagated:
+    @timed("schema.propagated.width")
+    def width(self, encoding, held):
+        return 2 * encoding.width(inward(held)) + 1
+
+    def encode(self, encoding, held, graphs):
+        started = time.perf_counter()
+        own = encoding.vectors(inward(held), graphs["values"])
+        ends = np.r_[graphs["source"], graphs["target"]].astype(np.int64)
+        other = np.r_[graphs["target"], graphs["source"]].astype(np.int64)
+        summed = np.zeros_like(own)
+        np.add.at(summed, ends, own[other])
+        degree = np.bincount(ends, minlength=len(own)).astype(np.float32)
+        mean = np.divide(summed, degree[:, None], out=np.zeros_like(summed), where=degree[:, None] > 0)
+        node = np.concatenate((own, mean, np.ones((len(own), 1), np.float32)), 1)
+        result = np.zeros((graphs["owners"], node.shape[1]), np.float32)
+        np.add.at(result, graphs["owner"], node)
+        LOG.debug(
+            "propagated exit graphs=%d nodes=%d edges=%d seconds=%.4f",
+            graphs["owners"],
+            len(own),
+            len(graphs["source"]),
+            time.perf_counter() - started,
+        )
+        return result
+
+
+HELD = Names("encoder of held graphs")
 TYPES.register("number", Number())
 TYPES.register("flag", Flag())
 TYPES.register("category", Category())
@@ -218,6 +285,8 @@ ENCODERS.register("value", Value())
 ENCODERS.register("logarithm", Logarithm())
 ENCODERS.register("standard", Standard())
 ENCODERS.register("onehot", OneHot("shared"))
+HELD.register("pooled", Pooled())
+HELD.register("propagated", Propagated())
 
 
 def fields(mapping, names, where):
@@ -235,6 +304,16 @@ def fields(mapping, names, where):
 def named(name, where):
     if type(name) is not str or not name or ":" in name:
         raise ValueError("%s needs a name without colons, found %r" % (where, name))
+    return name
+
+
+@timed("schema.reserved")
+def reserved(name, where):
+    named(name, where)
+    if name in TABLES or name == "step" or name.startswith(PREFIXES):
+        raise ValueError(
+            "the name %s of %s collides with the name of a table of the contract" % (name, where)
+        )
     return name
 
 
@@ -306,18 +385,29 @@ class Schema:
         )
         if not isinstance(held["nodes"], dict) or not held["nodes"]:
             raise ValueError("the schema states at least one kind of node")
-        self.nodes = {}
+        self.nodes, self.holds = {}, {}
         for kind, entry in held["nodes"].items():
-            where = "the kind of node " + named(kind, "a kind of node")
-            if kind in TABLES or kind == "step" or kind.startswith(PREFIXES):
-                raise ValueError("%s collides with the name of a table of the contract" % where)
-            self.nodes[kind] = listed(fields(entry, ("columns",), where)["columns"], self.columns, where)
+            where = "the kind of node " + reserved(kind, "a kind of node")
+            entry = fields(entry, KINDED, where)
+            self.nodes[kind] = listed(entry["columns"], self.columns, where)
+            if entry["holds"] is not None:
+                self.holds[kind] = self.holding(entry["holds"], where)
+        if not isinstance(held["sets"], dict):
+            raise ValueError("the sets of the schema are a mapping from kind of set edge to statement")
+        self.sets = {}
+        for kind, entry in held["sets"].items():
+            where = "the kind of set edge " + reserved(kind, "a kind of set edge")
+            if kind in self.nodes:
+                raise ValueError("%s is also a kind of node" % where)
+            self.sets[kind] = self.joined(fields(entry, SETS, where), where)
         if not isinstance(held["edges"], dict):
             raise ValueError("the edges of the schema are a mapping from table to statement")
         self.edges = {}
         for table, entry in held["edges"].items():
             where = "the edge table " + named(table, "an edge table")
-            entry = fields(entry, ("endpoints", "directed", "columns", "relation"), where)
+            if table in self.nodes or table in self.sets:
+                raise ValueError("%s is also a kind of node or of set edge" % where)
+            entry = fields(entry, EDGED, where)
             pairs = entry["endpoints"]
             if (
                 not isinstance(pairs, list)
@@ -326,11 +416,25 @@ class Schema:
                 or len({tuple(pair) for pair in pairs}) != len(pairs)
             ):
                 raise ValueError("%s states its endpoint kinds as distinct pairs" % where)
-            strangers = sorted({kind for pair in pairs for kind in pair} - set(self.nodes))
+            ends = {kind for pair in pairs for kind in pair}
+            strangers = sorted(ends - set(self.nodes) - set(self.sets))
             if strangers:
                 raise ValueError("%s joins kinds of node not stated: %s" % (where, ", ".join(strangers)))
             if type(entry["directed"]) is not bool:
                 raise ValueError("%s states whether it has a direction as true or false" % where)
+            about = entry["about"]
+            if ends & set(self.sets):
+                if type(about) is not str:
+                    raise ValueError(
+                        "%s joins a kind of set edge and states by name the rule for a time at which the edge "
+                        "it is about does not hold, found %r" % (where, about)
+                    )
+                ABOUT.named(about)
+            elif about is not None:
+                raise ValueError(
+                    "%s joins kinds of node only and states no rule for an edge about an edge, found %r"
+                    % (where, about)
+                )
             relation = entry["relation"]
             if relation != DECLARED:
                 relation = fields(relation, ("column",), "the relation of " + where)["column"]
@@ -344,15 +448,107 @@ class Schema:
                 directed=entry["directed"],
                 columns=columns,
                 column=None if relation == DECLARED else relation,
+                about=about,
             )
         self.tasks = self.asked(held["tasks"])
         LOG.debug(
-            "schema exit kinds=%d edges=%d columns=%d seconds=%.4f",
+            "schema exit kinds=%d sets=%d edges=%d columns=%d seconds=%.4f",
             len(self.nodes),
+            len(self.sets),
             len(self.edges),
             len(self.columns),
             time.perf_counter() - started,
         )
+
+    def joined(self, entry, where):
+        started = time.perf_counter()
+        kinds, roles = entry["kinds"], entry["roles"]
+        if (
+            not isinstance(kinds, list)
+            or not kinds
+            or len(set(kinds)) != len(kinds)
+            or not set(kinds) <= set(self.nodes)
+        ):
+            raise ValueError("%s joins kinds of node that are stated, each once" % where)
+        if not isinstance(roles, list) or not roles or len(set(roles)) != len(roles):
+            raise ValueError("%s states the roles of its members as a list of distinct names" % where)
+        for role in roles:
+            named(role, "a role of " + where)
+        members = listed(entry["members"], self.columns, "the members of " + where)
+        if "role" in members:
+            raise ValueError("a column of the members of %s collides with the column role" % where)
+        result = dict(
+            kinds=tuple(kinds),
+            roles=tuple(roles),
+            members=members,
+            columns=listed(entry["columns"], self.columns, where),
+        )
+        LOG.debug("schema joined exit members=%d seconds=%.4f", len(kinds), time.perf_counter() - started)
+        return result
+
+    def holding(self, stated, where):
+        started = time.perf_counter()
+        stated = fields(stated, HOLDS, "the graphs held by " + where)
+        if not isinstance(stated["nodes"], dict) or not stated["nodes"]:
+            raise ValueError("the graphs held by %s state at least one kind of node" % where)
+        if not isinstance(stated["edges"], dict):
+            raise ValueError(
+                "the edges of the graphs held by %s are a mapping from relation to statement" % where
+            )
+        nodes = {}
+        for kind, entry in stated["nodes"].items():
+            inner = "the kind %s of the graphs held by %s" % (named(kind, "a kind of held node"), where)
+            nodes[kind] = listed(fields(entry, ("columns",), inner)["columns"], self.columns, inner)
+        edges = {}
+        for relation, entry in stated["edges"].items():
+            inner = "the relation %s of the graphs held by %s" % (named(relation, "a held relation"), where)
+            entry = fields(entry, INWARD, inner)
+            pairs = entry["endpoints"]
+            if (
+                not isinstance(pairs, list)
+                or not pairs
+                or any(not isinstance(pair, list) or len(pair) != 2 for pair in pairs)
+                or len({tuple(pair) for pair in pairs}) != len(pairs)
+                or not {kind for pair in pairs for kind in pair} <= set(nodes)
+            ):
+                raise ValueError("%s states its endpoint kinds as distinct pairs of held kinds" % inner)
+            if type(entry["directed"]) is not bool:
+                raise ValueError("%s states whether it has a direction as true or false" % inner)
+            edges[relation] = dict(
+                endpoints=tuple((source, target) for source, target in pairs),
+                directed=entry["directed"],
+                columns=listed(entry["columns"], self.columns, inner),
+            )
+        held = dict(nodes=nodes, edges=edges, encoder=stated["encoder"])
+        HELD.named(held["encoder"])
+        clashes = sorted(set(inward(held) + outward(held)) & (set(OWNED) | {"relation"}))
+        if clashes:
+            raise ValueError(
+                "the columns %s of the graphs held by %s collide with columns of the contract"
+                % (", ".join(clashes), where)
+            )
+        LOG.debug("schema holding exit kinds=%d seconds=%.4f", len(nodes), time.perf_counter() - started)
+        return held
+
+    @timed("schema.entities")
+    def entities(self):
+        return dict(self.nodes, **{kind: entry["columns"] for kind, entry in self.sets.items()})
+
+    @timed("schema.member_columns")
+    def member_columns(self):
+        return tuple(dict.fromkeys(name for entry in self.sets.values() for name in entry["members"]))
+
+    @timed("schema.inner_columns")
+    def inner_columns(self):
+        return tuple(dict.fromkeys(name for held in self.holds.values() for name in inward(held)))
+
+    @timed("schema.within_columns")
+    def within_columns(self):
+        return tuple(dict.fromkeys(name for held in self.holds.values() for name in outward(held)))
+
+    @timed("schema.about")
+    def about(self):
+        return {table: entry["about"] for table, entry in self.edges.items() if entry["about"] is not None}
 
     def asked(self, stated):
         started = time.perf_counter()
@@ -379,9 +575,9 @@ class Schema:
             if (
                 not isinstance(kinds, list)
                 or len(set(kinds)) != len(kinds)
-                or not set(kinds) <= set(self.nodes)
+                or not set(kinds) <= set(self.entities())
             ):
-                raise ValueError("%s names kinds of node that are stated, each once" % where)
+                raise ValueError("%s names kinds of node or of set edge that are stated, each once" % where)
             if bool(kinds) == sort.whole:
                 raise ValueError(
                     "%s is of the sort %s and names %s"
@@ -500,7 +696,8 @@ class Schema:
                 "what matures of %s is a value of one of its references of the sort node, found %r"
                 % (where, name)
             )
-        lacking = [kind for kind in references[name]["kinds"] if column not in self.nodes[kind]]
+        entities = self.entities()
+        lacking = [kind for kind in references[name]["kinds"] if column not in entities[kind]]
         if lacking or column not in self.columns or not self.kind(column).ordered:
             raise ValueError(
                 "what matures of %s is a column of numbers of every kind of node of the reference %s, "
@@ -516,13 +713,45 @@ class Schema:
             observers=self.observers,
             columns={name: dict(entry) for name, entry in self.columns.items()},
             graph=dict(columns=list(self.graph)),
-            nodes={kind: dict(columns=list(columns)) for kind, columns in self.nodes.items()},
+            nodes={
+                kind: dict(
+                    columns=list(columns),
+                    holds=None
+                    if kind not in self.holds
+                    else dict(
+                        nodes={
+                            inner: dict(columns=list(held))
+                            for inner, held in self.holds[kind]["nodes"].items()
+                        },
+                        edges={
+                            relation: dict(
+                                endpoints=[list(pair) for pair in entry["endpoints"]],
+                                directed=entry["directed"],
+                                columns=list(entry["columns"]),
+                            )
+                            for relation, entry in self.holds[kind]["edges"].items()
+                        },
+                        encoder=self.holds[kind]["encoder"],
+                    ),
+                )
+                for kind, columns in self.nodes.items()
+            },
+            sets={
+                kind: dict(
+                    kinds=list(entry["kinds"]),
+                    roles=list(entry["roles"]),
+                    members=list(entry["members"]),
+                    columns=list(entry["columns"]),
+                )
+                for kind, entry in self.sets.items()
+            },
             edges={
                 table: dict(
                     endpoints=[list(pair) for pair in entry["endpoints"]],
                     directed=entry["directed"],
                     columns=list(entry["columns"]),
                     relation=DECLARED if entry["column"] is None else dict(column=entry["column"]),
+                    about=entry["about"],
                 )
                 for table, entry in self.edges.items()
             },
@@ -571,7 +800,7 @@ class Schema:
         return held
 
     def layout(self):
-        groups = list(self.nodes.values()) + [self.asked_columns()]
+        groups = list(self.entities().values()) + [self.asked_columns()]
         return tuple(dict.fromkeys(name for columns in groups for name in columns))
 
     @timed("schema.asked_columns")
@@ -625,10 +854,25 @@ class Schema:
             described["unit"] = "STRING"
         result = {"graph": dict(kind="NODE", required=described, columns=self.graph)}
         result["observation"] = dict(kind="NODE", required=dict(id="INT64", **self.stamps()), columns=())
-        for kind, columns in self.nodes.items():
+        for kind, columns in self.entities().items():
             result[kind] = dict(kind="NODE", required=dict(keys, entity="INT32", key="STRING"), columns=())
             result[OBSERVED + kind] = dict(
                 kind="REL", required={}, columns=columns, pairs=((kind, "observation"),)
+            )
+        for kind, entry in self.sets.items():
+            result[MEMBER + kind] = dict(
+                kind="REL",
+                required=dict(role="STRING"),
+                columns=entry["members"],
+                pairs=tuple((kind, member) for member in entry["kinds"]),
+            )
+        for kind, held in self.holds.items():
+            result[INNER + kind] = dict(kind="NODE", required=dict(OWNED), columns=inward(held))
+            result[WITHIN + kind] = dict(
+                kind="REL",
+                required=dict(relation="STRING"),
+                columns=outward(held),
+                pairs=((INNER + kind, INNER + kind),),
             )
         for table, entry in self.edges.items():
             required = dict(present=("BOOL", "BOOLEAN"), **self.stamps())
@@ -748,13 +992,48 @@ class Schema:
         lines.append("observers: %s" % ("named by facts and tasks" if self.observers else "none"))
         lines.append("graph: %s" % described(self.graph))
         lines.append("kinds of node:")
+        for kind, columns in self.nodes.items():
+            lines.append("  %s: %s%s" % (kind, described(columns), wide(columns)))
+            if kind in self.holds:
+                held = self.holds[kind]
+                lines.append(
+                    "    holds graphs encoded by %s%s: %s; %s"
+                    % (
+                        held["encoder"],
+                        "" if encoding is None else ", width %d" % encoding.held[kind][1],
+                        "; ".join(
+                            "%s of %s" % (inner, described(owned)) for inner, owned in held["nodes"].items()
+                        ),
+                        "; ".join(
+                            "%s from %s, %s, %s"
+                            % (
+                                relation,
+                                " or ".join("%s to %s" % pair for pair in entry["endpoints"]),
+                                "directed" if entry["directed"] else "without direction",
+                                described(entry["columns"]),
+                            )
+                            for relation, entry in held["edges"].items()
+                        )
+                        or "no relations",
+                    )
+                )
+        lines.append("kinds of set edge:")
         lines += [
-            "  %s: %s%s" % (kind, described(columns), wide(columns)) for kind, columns in self.nodes.items()
+            "  %s: members of %s as %s, per member %s; %s%s"
+            % (
+                kind,
+                ", ".join(entry["kinds"]),
+                ", ".join(entry["roles"]),
+                described(entry["members"]),
+                described(entry["columns"]),
+                wide(entry["columns"]),
+            )
+            for kind, entry in self.sets.items()
         ]
         lines.append("edge tables:")
         for table, entry in self.edges.items():
             lines.append(
-                "  %s: %s, %s, relation %s, %s%s"
+                "  %s: %s, %s, relation %s, %s%s%s"
                 % (
                     table,
                     "; ".join("%s to %s" % pair for pair in entry["endpoints"]),
@@ -762,6 +1041,7 @@ class Schema:
                     "declared" if entry["column"] is None else "taken from the column " + entry["column"],
                     described(entry["columns"]),
                     wide(entry["columns"]),
+                    "" if entry["about"] is None else ", about an edge by the rule " + entry["about"],
                 )
             )
         asked = self.tasks
@@ -827,11 +1107,17 @@ class Encoding:
         self.layout = schema.layout()
         self.sizes = {name: schema.encoder(name).widths(states[name]) for name in schema.columns}
         self.values = sum(self.sizes[name][0] for name in self.layout)
-        self.features = self.values + sum(self.sizes[name][1] for name in self.layout)
+        self.held, self.inner = {}, 0
+        for kind, held in schema.holds.items():
+            width = HELD.named(held["encoder"]).width(self, held)
+            self.held[kind] = (self.inner, width)
+            self.inner += width
+        self.features = self.values + sum(self.sizes[name][1] for name in self.layout) + self.inner
         LOG.debug(
-            "encoding exit columns=%d features=%d seconds=%.4f",
+            "encoding exit columns=%d features=%d held=%d seconds=%.4f",
             len(self.layout),
             self.features,
+            self.inner,
             time.perf_counter() - started,
         )
 
@@ -863,11 +1149,41 @@ class Encoding:
         LOG.debug("encoding nodes exit rows=%d seconds=%.4f", len(codes), time.perf_counter() - started)
         return result
 
-    def edges(self, table, codes):
-        columns = self.schema.edges[table]["columns"]
+    def inputs(self, codes, held):
+        started = time.perf_counter()
+        held = np.asarray(held, np.float32)
+        codes = np.asarray(codes, np.float32).reshape(-1, len(self.layout))
+        if held.shape != (len(codes), self.inner):
+            raise ValueError(
+                "the encoded held graphs of %d rows are of the shape %s, and the schema states a width of %d"
+                % (len(codes), held.shape, self.inner)
+            )
+        result = np.concatenate((self.nodes(codes), held), 1)
+        LOG.debug("encoding inputs exit rows=%d seconds=%.4f", len(codes), time.perf_counter() - started)
+        return result
+
+    @timed("schema.encoding.vectors")
+    def vectors(self, columns, codes):
         codes = np.asarray(codes, np.float32).reshape(-1, len(columns))
         values, flags = self.encoded(columns, codes)
         return np.concatenate(values + flags + [np.zeros((len(codes), 0), np.float32)], 1)
+
+    def graphs(self, kind, graphs):
+        started = time.perf_counter()
+        held = self.schema.holds[kind]
+        result = HELD.named(held["encoder"]).encode(self, held, graphs)
+        if result.shape != (graphs["owners"], self.held[kind][1]):
+            raise ValueError(
+                "the encoder %s of the graphs held by %s gave the shape %s, and states the width %d"
+                % (held["encoder"], kind, result.shape, self.held[kind][1])
+            )
+        LOG.debug(
+            "encoding graphs exit kind=%s graphs=%d seconds=%.4f",
+            kind,
+            graphs["owners"],
+            time.perf_counter() - started,
+        )
+        return result
 
 
 def fitted(schema, gathered, relations):

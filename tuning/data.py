@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from numba import njit
 
-from graphspec import Registry, join, segments
+from graphspec import Registry, join, segments, sets
 from graphspec import spec as specs
 from graphspec.infra.arrays import Residents, between
 from graphspec.infra.files import ArrayStore, load_arrays, read_json, save_arrays, sha256_file, write_json
@@ -134,15 +134,17 @@ def written(folder, build):
 
 
 class Viewed:
-    def __init__(self, bank, steps, several, looking):
+    def __init__(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
         self.folder = (
             bank.cache
             / "views"
-            / specs.digest(dict(version=VIEW, steps=steps, several=several, splits=looking.mapping()))
+            / specs.digest(
+                dict(version=VIEW, steps=steps, several=several, storage=storage, splits=looking.mapping())
+            )
         )
         if not (self.folder / "index.json").exists():
-            self.build(bank, steps, several, looking)
+            self.build(bank, steps, several, storage, looking)
         self.graphs = read_json(self.folder / "index.json")
         self.row_index, self.row_steps, self.labels, self.entities = {}, {}, {}, {}
         self.single = True
@@ -169,11 +171,11 @@ class Viewed:
     def path(self, index):
         return self.folder / ("graph_%04d" % index)
 
-    def build(self, bank, steps, several, looking):
+    def build(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
         entries = []
         for stored in bank.manifest["graphs"]:
-            facts = Facts.load(bank.truth(stored["index"]))
+            facts = sets.stored(Facts.load(bank.truth(stored["index"])), bank.registry, storage)
             for held in sequences(facts, bank.registry, steps, looking):
                 graph = view(facts, bank.registry, held, several)
                 written(self.path(len(entries)), graph.save)
@@ -284,9 +286,10 @@ class Bank:
     @timed("bank.viewed")
     def viewed(self, cfg):
         spec = self.stated(cfg)[1]
-        key = (spec["time/steps"], spec["time/several"], specs.digest(cfg["splits"]))
+        storage = sets.chosen(self.registry, spec)
+        key = (spec["time/steps"], spec["time/several"], specs.digest(storage), specs.digest(cfg["splits"]))
         if key not in self._viewed:
-            self._viewed[key] = Viewed(self, *key[:2], self.looking(cfg)[0])
+            self._viewed[key] = Viewed(self, *key[:2], storage, self.looking(cfg)[0])
         return self._viewed[key]
 
     @timed("bank.view")
@@ -348,6 +351,7 @@ class Bank:
         size = (
             spec["time/steps"],
             spec["time/several"],
+            specs.digest(sets.chosen(self.registry, spec)),
             specs.digest(cfg["splits"]),
             spec["graphs/join_size"],
         )

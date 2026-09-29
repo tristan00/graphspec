@@ -12,7 +12,7 @@ from graphspec.infra.workspace import finite
 from . import clock, kernels, spans
 from .clock import ALWAYS, NEVER
 from .references import MEMBERS, SORTS, ends
-from .schema import VALUE, absent
+from .schema import VALUE, absent, inward, outward
 
 LOG = logging.getLogger(__name__)
 VERSION = 8
@@ -24,7 +24,7 @@ ORDER = ("order_step", "order_position", "order_span")
 REMOVALS = ("removal_source", "removal_target", "removal_code", "removal_step", "removal_values")
 STATED = ("obs_values", "task_values", "graph_values")
 ARRAYS = (
-    ("kinds", "entity_token", "period")
+    ("kinds", "entity_token", "entity_held", "period")
     + OBSERVATIONS
     + FACTS
     + ORDER
@@ -34,6 +34,9 @@ ARRAYS = (
     + LABELS
     + STATED
 )
+JOINED = ("set_edge", "set_member", "set_role", "set_values")
+HELD = ("inner_owner", "inner_kind", "inner_values")
+WITHIN = ("within_source", "within_target", "within_code", "within_values")
 DENSE = (
     ("kinds", "entity_token", "entity_connected", "period", "step_graph")
     + ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
@@ -57,6 +60,10 @@ STORED = (
     + MEMBERS
     + ("target_task", "target_row", "target_known", "target_y")
     + ("graph_values",)
+    + JOINED
+    + HELD
+    + WITHIN
+    + ("entity_held",)
 )
 
 
@@ -172,7 +179,7 @@ class Facts:
     NAMES = STORED
 
     @timed("truth.facts")
-    def __init__(self, name, keys, unit, **arrays):
+    def __init__(self, name, keys, unit, inner, **arrays):
         missing = sorted(set(self.NAMES) - set(arrays))
         if missing:
             raise ValueError("graph %s lacks arrays: %s" % (name, ", ".join(missing)))
@@ -180,8 +187,16 @@ class Facts:
         if unknown:
             raise ValueError("graph %s has unknown arrays: %s" % (name, ", ".join(unknown)))
         self.__dict__.update(
-            name=name, keys=list(keys), unit=unit, arrays={key: arrays[key] for key in self.NAMES}
+            name=name,
+            keys=list(keys),
+            unit=unit,
+            inner=list(inner),
+            arrays={key: arrays[key] for key in self.NAMES},
         )
+
+    @timed("truth.facts.replace")
+    def replace(self, **changes):
+        return Facts(self.name, self.keys, self.unit, self.inner, **dict(self.arrays, **changes))
 
     def __getattr__(self, key):
         try:
@@ -193,7 +208,9 @@ class Facts:
         started = time.perf_counter()
         directory = Path(directory)
         save_arrays(directory, self.arrays)
-        write_json(directory / "graph.json", dict(name=self.name, keys=self.keys, unit=self.unit))
+        write_json(
+            directory / "graph.json", dict(name=self.name, keys=self.keys, unit=self.unit, inner=self.inner)
+        )
         LOG.debug("facts save exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
     @classmethod
@@ -201,7 +218,9 @@ class Facts:
         started = time.perf_counter()
         directory = Path(directory)
         meta = read_json(directory / "graph.json")
-        result = cls(meta["name"], meta["keys"], meta["unit"], **load_arrays(directory, cls.NAMES))
+        result = cls(
+            meta["name"], meta["keys"], meta["unit"], meta["inner"], **load_arrays(directory, cls.NAMES)
+        )
         LOG.debug("facts load exit graph=%s seconds=%.4f", result.name, time.perf_counter() - started)
         return result
 
@@ -295,8 +314,8 @@ class Facts:
         kinds, entity = np.asarray(self.kinds), np.asarray(self.obs_entity)
         sequenced = schema.ties is not None and "seq" in clock.TIES.named(schema.ties).columns
         values = np.asarray(self.obs_values)
-        observations = {}
-        for kind, columns in schema.nodes.items():
+        observations, entities = {}, schema.entities()
+        for kind, columns in entities.items():
             rows = kinds[entity] == registry.kind(kind)
             observations[kind] = dict(
                 key=keys[entity[rows]].tolist(),
@@ -350,13 +369,86 @@ class Facts:
                     ).items()
                 },
             ),
-            nodes={kind: keys[kinds == registry.kind(kind)].tolist() for kind in schema.nodes},
+            nodes={kind: keys[kinds == registry.kind(kind)].tolist() for kind in entities},
             observations=observations,
             edges=edges,
+            sets=self.joined(registry),
+            held=self.held(registry),
             tasks=tasks,
             targets=targets,
         )
         LOG.debug("stated exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
+        return result
+
+    def joined(self, registry):
+        started = time.perf_counter()
+        schema, keys = registry.schema, np.asarray(self.keys, object)
+        edge, member = np.asarray(self.set_edge, np.int64), np.asarray(self.set_member, np.int64)
+        role, values, columns = (
+            np.asarray(self.set_role),
+            np.asarray(self.set_values),
+            schema.member_columns(),
+        )
+        result = {}
+        for kind, entry in schema.sets.items():
+            rows = np.asarray(self.kinds)[edge] == registry.kind(kind)
+            result[kind] = dict(
+                set=keys[edge[rows]].tolist(),
+                member=keys[member[rows]].tolist(),
+                role=[entry["roles"][code] for code in role[rows].tolist()],
+                **prefixed(
+                    stated(
+                        registry,
+                        entry["members"],
+                        values[rows][:, [columns.index(name) for name in entry["members"]]],
+                    )
+                ),
+            )
+        LOG.debug("facts joined exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
+        return result
+
+    def held(self, registry):
+        started = time.perf_counter()
+        schema, keys, inner = registry.schema, np.asarray(self.keys, object), np.asarray(self.inner, object)
+        owner, kinds = np.asarray(self.inner_owner, np.int64), np.asarray(self.kinds)
+        source, target = np.asarray(self.within_source, np.int64), np.asarray(self.within_target, np.int64)
+        nodes, links = schema.inner_columns(), schema.within_columns()
+        result = {}
+        for kind, held in schema.holds.items():
+            rows, edges = kinds[owner] == registry.kind(kind), kinds[owner[source]] == registry.kind(kind)
+            names, relations = list(held["nodes"]), list(held["edges"])
+            result[kind] = dict(
+                nodes=dict(
+                    owner=keys[owner[rows]].tolist(),
+                    kind=[names[code] for code in np.asarray(self.inner_kind)[rows].tolist()],
+                    key=inner[rows].tolist(),
+                    **prefixed(
+                        stated(
+                            registry,
+                            inward(held),
+                            np.asarray(self.inner_values)[rows][
+                                :, [nodes.index(name) for name in inward(held)]
+                            ],
+                        )
+                    ),
+                ),
+                edges=dict(
+                    owner=keys[owner[source[edges]]].tolist(),
+                    source=inner[source[edges]].tolist(),
+                    target=inner[target[edges]].tolist(),
+                    relation=[relations[code] for code in np.asarray(self.within_code)[edges].tolist()],
+                    **prefixed(
+                        stated(
+                            registry,
+                            outward(held),
+                            np.asarray(self.within_values)[edges][
+                                :, [links.index(name) for name in outward(held)]
+                            ],
+                        )
+                    ),
+                ),
+            )
+        LOG.debug("facts held exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
         return result
 
 
@@ -410,12 +502,19 @@ def gather(schema, tables, until):
     started = time.perf_counter()
     facts = ("since", "known")
     places = [(tables["graph"], schema.graph, clock.reached(tables["graph"], (), until))]
-    for kind, columns in schema.nodes.items():
+    for kind, columns in schema.entities().items():
         table = tables["observations"][kind]
         places.append((table, columns, clock.reached(table, facts, until)))
     for held, entry in schema.edges.items():
         table = tables["edges"][held]
         places.append((table, entry["columns"], clock.reached(table, facts, until)))
+    for kind, entry in schema.sets.items():
+        table = tables["sets"][kind]
+        places.append((table, entry["members"], clock.reached(table, (), until)))
+    for kind, held in schema.holds.items():
+        for part, columns in (("nodes", inward(held)), ("edges", outward(held))):
+            table = tables["held"][kind][part]
+            places.append((table, columns, clock.reached(table, (), until)))
     found = {name: dict(trained=[], distinct=[]) for name in schema.columns}
     if "tasks" in tables:
         table = tables["tasks"]
@@ -457,8 +556,50 @@ def prefixed(columns):
     return {VALUE + name: values for name, values in columns.items()}
 
 
-def encoded(registry, values):
-    return registry.encoding.nodes(values).astype(np.float16)
+def encoded(registry, values, held):
+    return registry.encoding.inputs(values, held).astype(np.float16)
+
+
+@timed("truth.unheld")
+def unheld(registry, rows):
+    return np.zeros((rows, registry.encoding.inner), np.float32)
+
+
+def inputs(registry, kinds, arrays):
+    started = time.perf_counter()
+    encoding, kinds = registry.encoding, np.asarray(kinds)
+    owner = np.asarray(arrays["inner_owner"], np.int64)
+    source, target = (
+        np.asarray(arrays["within_source"], np.int64),
+        np.asarray(arrays["within_target"], np.int64),
+    )
+    columns = registry.schema.inner_columns()
+    result = unheld(registry, len(kinds))
+    for kind, held in registry.schema.holds.items():
+        code = registry.kind(kind)
+        owners = np.flatnonzero(kinds == code)
+        rows = np.flatnonzero(kinds[owner] == code)
+        place = np.full(len(owner), -1, np.int64)
+        place[rows] = np.arange(len(rows))
+        links = kinds[owner[source]] == code
+        found = encoding.graphs(
+            kind,
+            dict(
+                owners=len(owners),
+                owner=np.searchsorted(owners, owner[rows]),
+                values=np.asarray(arrays["inner_values"])[rows][
+                    :, [columns.index(name) for name in inward(held)]
+                ],
+                source=place[source[links]],
+                target=place[target[links]],
+            ),
+        )
+        start, width = encoding.held[kind]
+        result[owners, start : start + width] = found
+    LOG.debug(
+        "inputs exit entities=%d held=%d seconds=%.4f", len(kinds), len(owner), time.perf_counter() - started
+    )
+    return result
 
 
 @timed("truth.sparse")
@@ -589,7 +730,7 @@ def asked(registry, splits, observers, tables, name):
         task_split=split[order],
         task_weight=weight[order],
         task_values=values[order],
-        task_x=encoded(registry, values[order]),
+        task_x=encoded(registry, values[order], unheld(registry, count)),
         task_signals=np.stack(
             (matrix(tasks, "signal", np.float32), matrix(tasks, "signal_observed", np.float32)), 2
         )[order]
@@ -780,7 +921,7 @@ def parse(registry, splits, observers, tables, rows, name):
     kinds = np.asarray([registry.kind(kind) for kind in nodes.column("kind").to_pylist()], np.int32)[order]
     names = nodes.column("key").to_pylist()
     keys = [names[i] for i in order.tolist()]
-    layout = encoding.layout
+    layout, entities = encoding.layout, schema.entities()
     parts = []
     for kind in registry.nodes:
         table = tables["observations"][kind]
@@ -792,7 +933,7 @@ def parse(registry, splits, observers, tables, rows, name):
         part = read(schema, observers, table, "fact about a node", name)
         part["entity"] = owners
         part["values"] = codes(
-            registry, table, schema.nodes[kind], encoding.positions(schema.nodes[kind]), len(layout)
+            registry, table, entities[kind], encoding.positions(entities[kind]), len(layout)
         )
         parts.append(part)
     seen = gathered(parts, len(layout))
@@ -853,18 +994,25 @@ def parse(registry, splits, observers, tables, rows, name):
     tasks, place = asked(registry, splits, observers, tables, name)
     members = referred(registry, tables, tasks, place, local, kinds, name)
     targets = aimed(registry, tables, tasks, place, rows, name)
+    joined = belonging(registry, tables, kinds, local, name)
+    inner, held = holding(registry, tables, kinds, local, name)
+    entity_held = inputs(registry, kinds, held)
     graph = Facts(
         name,
         keys,
         unit,
+        inner,
         kinds=kinds,
         entity_token=tokens(registry, kinds, keys),
+        entity_held=entity_held,
+        **joined,
+        **held,
         obs_entity=seen["entity"].astype(np.int32),
         obs_since=seen["since"],
         obs_until=seen["until"],
         obs_seq=seen["seq"].astype(np.int32),
         obs_values=seen["values"],
-        obs_x=encoded(registry, seen["values"]),
+        obs_x=encoded(registry, seen["values"], entity_held[seen["entity"]]),
         **sparse("obs", seen, seen["watched"], seen["watchers"]),
         fact_source=facts["source"].astype(np.int32),
         fact_target=facts["target"].astype(np.int32),
@@ -895,6 +1043,135 @@ def parse(registry, splits, observers, tables, rows, name):
     return graph
 
 
+def belonging(registry, tables, kinds, local, name):
+    started = time.perf_counter()
+    schema, columns = registry.schema, registry.schema.member_columns()
+    parts = dict(edge=[], member=[], role=[], values=[])
+    for kind, entry in schema.sets.items():
+        table, where = tables["sets"][kind], "a member of a set edge of %s in graph %s" % (kind, name)
+        edge, member = local(column(table, "set", np.int64)), local(column(table, "member", np.int64))
+        if np.any(kinds[edge] != registry.kind(kind)):
+            raise ValueError("%s belongs to an entity of another kind" % where)
+        if not np.isin(kinds[member], [registry.kind(held) for held in entry["kinds"]]).all():
+            raise ValueError("%s is a node of a kind the set edge does not join" % where)
+        roles = table.column("role").to_pylist()
+        strangers = sorted({str(role) for role in roles if role not in entry["roles"]})
+        if strangers:
+            raise ValueError("%s takes roles its kind does not state: %s" % (where, ", ".join(strangers)))
+        positions = [columns.index(held) for held in entry["members"]]
+        values = codes(registry, table, entry["members"], positions, len(columns))
+        if not np.isfinite(values[:, positions]).all():
+            raise ValueError("%s carries no value in a column of its members" % where)
+        lonely = np.setdiff1d(np.flatnonzero(kinds == registry.kind(kind)), edge)
+        if len(lonely):
+            raise ValueError("the set edge of %s in graph %s has no member" % (kind, name))
+        parts["edge"].append(edge.astype(np.int64))
+        parts["member"].append(member.astype(np.int64))
+        parts["role"].append(np.asarray([entry["roles"].index(role) for role in roles], np.int64).reshape(-1))
+        parts["values"].append(values)
+    edge, member, role = (
+        np.concatenate(parts[part] + [np.zeros(0, np.int64)]) for part in ("edge", "member", "role")
+    )
+    values = np.concatenate(parts["values"] + [np.zeros((0, len(columns)), np.float32)])
+    order = np.lexsort((role, member, edge))
+    edge, member, role, values = edge[order], member[order], role[order], values[order]
+    if np.any((edge[1:] == edge[:-1]) & (member[1:] == member[:-1]) & (role[1:] == role[:-1])):
+        raise ValueError("a node of graph %s is a member of one set edge twice in one role" % name)
+    result = dict(
+        set_edge=edge.astype(np.int32),
+        set_member=member.astype(np.int32),
+        set_role=role.astype(np.int16),
+        set_values=values,
+    )
+    LOG.debug(
+        "belonging exit graph=%s members=%d seconds=%.4f", name, len(edge), time.perf_counter() - started
+    )
+    return result
+
+
+def holding(registry, tables, kinds, local, name):
+    started = time.perf_counter()
+    schema = registry.schema
+    nodes, links = schema.inner_columns(), schema.within_columns()
+    parts = dict(owner=[], kind=[], keys=[], values=[], source=[], target=[], code=[], links=[])
+    offset = 0
+    for kind, held in schema.holds.items():
+        where = "a graph held by a node of %s in graph %s" % (kind, name)
+        table, edges = tables["held"][kind]["nodes"], tables["held"][kind]["edges"]
+        owner = local(column(table, "owner", np.int64)).astype(np.int64)
+        if np.any(kinds[owner] != registry.kind(kind)):
+            raise ValueError("%s belongs to a node of another kind" % where)
+        names, relations = list(held["nodes"]), list(held["edges"])
+        found, keys = table.column("kind").to_pylist(), table.column("key").to_pylist()
+        strangers = sorted({str(value) for value in found if value not in names})
+        if strangers or None in keys:
+            raise ValueError(
+                "%s names held nodes of kinds it does not state, %s, or a held node without a key"
+                % (where, ", ".join(strangers) or "none")
+            )
+        inner = np.asarray([names.index(value) for value in found], np.int64).reshape(-1)
+        paired = sorted(zip(owner.tolist(), keys))
+        if any(first == second for first, second in zip(paired[1:], paired[:-1])):
+            raise ValueError("%s names one held node twice" % where)
+        values = codes(
+            registry, table, inward(held), [nodes.index(part) for part in inward(held)], len(nodes)
+        )
+        for code, part in enumerate(names):
+            others = [nodes.index(other) for other in inward(held) if other not in held["nodes"][part]]
+            if not np.isnan(values[inner == code][:, others]).all():
+                raise ValueError("%s states a column that its held kind %s does not" % (where, part))
+        source, target = column(edges, "source", np.int64), column(edges, "target", np.int64)
+        if np.any(owner[source] != owner[target]):
+            raise ValueError("%s holds an edge between the graphs of two nodes" % where)
+        found = edges.column("relation").to_pylist()
+        strangers = sorted({str(value) for value in found if value not in relations})
+        if strangers:
+            raise ValueError(
+                "%s holds edges of relations it does not state: %s" % (where, ", ".join(strangers))
+            )
+        code = np.asarray([relations.index(value) for value in found], np.int64).reshape(-1)
+        joints = codes(
+            registry, edges, outward(held), [links.index(part) for part in outward(held)], len(links)
+        )
+        for number, relation in enumerate(relations):
+            entry, chosen = held["edges"][relation], code == number
+            pairs = {(names.index(first), names.index(second)) for first, second in entry["endpoints"]}
+            if not entry["directed"]:
+                pairs |= {(second, first) for first, second in pairs}
+            ends = zip(inner[source[chosen]].tolist(), inner[target[chosen]].tolist())
+            if not all(pair in pairs for pair in ends):
+                raise ValueError(
+                    "%s holds an edge of %s between held kinds it does not join" % (where, relation)
+                )
+            others = [links.index(other) for other in outward(held) if other not in entry["columns"]]
+            if not np.isnan(joints[chosen][:, others]).all():
+                raise ValueError("%s holds an edge of %s with a column it does not state" % (where, relation))
+        order = np.argsort(owner, kind="stable")
+        place = np.empty(len(order), np.int64)
+        place[order] = np.arange(len(order))
+        parts["owner"].append(owner[order])
+        parts["kind"].append(inner[order])
+        parts["keys"] += [keys[row] for row in order.tolist()]
+        parts["values"].append(values[order])
+        parts["source"].append(place[source] + offset)
+        parts["target"].append(place[target] + offset)
+        parts["code"].append(code)
+        parts["links"].append(joints)
+        offset += len(order)
+    empty = np.zeros(0, np.int64)
+    result = dict(
+        inner_owner=np.concatenate(parts["owner"] + [empty]).astype(np.int32),
+        inner_kind=np.concatenate(parts["kind"] + [empty]).astype(np.int16),
+        inner_values=np.concatenate(parts["values"] + [np.zeros((0, len(nodes)), np.float32)]),
+        within_source=np.concatenate(parts["source"] + [empty]).astype(np.int32),
+        within_target=np.concatenate(parts["target"] + [empty]).astype(np.int32),
+        within_code=np.concatenate(parts["code"] + [empty]).astype(np.int16),
+        within_values=np.concatenate(parts["links"] + [np.zeros((0, len(links)), np.float32)]),
+    )
+    LOG.debug("holding exit graph=%s held=%d seconds=%.4f", name, offset, time.perf_counter() - started)
+    return parts["keys"], result
+
+
 @timed("truth.ranks")
 def ranks(keys):
     order = sorted(range(len(keys)), key=keys.__getitem__)
@@ -912,6 +1189,9 @@ def check(graph, registry, splits, observers):
         task=len(graph.task_key),
         member=len(graph.member_task),
         target=len(graph.target_task),
+        set=len(graph.set_edge),
+        inner=len(graph.inner_owner),
+        within=len(graph.within_source),
     )
     dimensions = dict(
         obs_x=2,
@@ -920,6 +1200,10 @@ def check(graph, registry, splits, observers):
         task_x=2,
         task_values=2,
         task_signals=3,
+        set_values=2,
+        inner_values=2,
+        within_values=2,
+        entity_held=2,
     )
     real = ("fact_present", "graph_values", "task_weight", "target_y")
     loose = tuple(group + "_" + part for group in GROUPS for part in SPARSE)
@@ -949,20 +1233,39 @@ def check(graph, registry, splits, observers):
         raise ValueError("graph %s signal shape does not match its registry" % name)
     if not finite(graph.obs_x) or not finite(graph.task_x):
         raise ValueError("graph %s observation and task features must be finite" % name)
-    for given, values in ((graph.obs_x, graph.obs_values), (graph.task_x, graph.task_values)):
-        if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values))):
-            raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
-    if graph.graph_values.shape != (len(schema.graph),):
-        raise ValueError("graph %s does not hold the attributes its schema states" % name)
     for label, values in (
         ("fact about a node", graph.obs_entity),
         ("fact source", graph.fact_source),
         ("fact target", graph.fact_target),
         ("reference", graph.member_source),
         ("reference", np.maximum(graph.member_target, 0)),
+        ("set edge", graph.set_edge),
+        ("member of a set edge", graph.set_member),
+        ("holder of a graph", graph.inner_owner),
     ):
         if np.any(values < 0) or np.any(values >= entities):
             raise ValueError("a %s of graph %s names an entity outside 0..%d" % (label, name, entities - 1))
+    if len(graph.within_source) and (
+        max(graph.within_source.max(), graph.within_target.max()) >= len(graph.inner_owner)
+        or min(graph.within_source.min(), graph.within_target.min()) < 0
+    ):
+        raise ValueError("an edge of a graph held in graph %s names a held node outside it" % name)
+    held = inputs(registry, graph.kinds, graph.arrays)
+    if len(graph.inner) != len(graph.inner_owner) or not np.array_equal(graph.entity_held, held):
+        raise ValueError("graph %s holds encoded graphs that its held graphs do not reproduce" % name)
+    for given, values, inner in (
+        (graph.obs_x, graph.obs_values, held[np.asarray(graph.obs_entity, np.int64)]),
+        (graph.task_x, graph.task_values, unheld(registry, len(graph.task_key))),
+    ):
+        if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values), inner)):
+            raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
+    if graph.graph_values.shape != (len(schema.graph),):
+        raise ValueError("graph %s does not hold the attributes its schema states" % name)
+    joined = np.asarray([kind in schema.sets for kind in registry.nodes], bool)
+    if not joined[graph.kinds[graph.set_edge]].all() or joined[graph.kinds[graph.set_member]].any():
+        raise ValueError(
+            "a member of a set edge of graph %s joins entities of kinds its schema does not" % name
+        )
     found = np.asarray(graph.fact_code)
     if np.any(found < 0) or np.any(found >= len(registry.canonical)) or not registry.canonical[found].all():
         raise ValueError("facts of graph %s carry codes that are not canonical relation codes" % name)
@@ -1226,6 +1529,7 @@ def verify(graph, registry):
         task_values=2,
         task_signals=3,
         graph_values=1,
+        entity_held=2,
     )
     for key, values in graph.arrays.items():
         if not isinstance(values, np.ndarray) or values.ndim != dimensions.get(key, 1):
@@ -1249,8 +1553,17 @@ def verify(graph, registry):
         raise ValueError("graph %s fact and removal attribute widths differ" % name)
     if not finite(graph.obs_x) or not finite(graph.task_x):
         raise ValueError("graph %s observation and task features must be finite" % name)
-    for given, values in ((graph.obs_x, graph.obs_values), (graph.task_x, graph.task_values)):
-        if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values))):
+    if graph.entity_held.shape != (entities, registry.encoding.inner):
+        raise ValueError("graph %s does not hold one encoding of held graphs per entity" % name)
+    for given, values, held in (
+        (
+            graph.obs_x,
+            graph.obs_values,
+            np.asarray(graph.entity_held)[np.asarray(graph.obs_entity, np.int64)],
+        ),
+        (graph.task_x, graph.task_values, unheld(registry, len(graph.task_key))),
+    ):
+        if not np.array_equal(np.asarray(given), encoded(registry, np.asarray(values), held)):
             raise ValueError("graph %s holds node values that its encoders do not reproduce" % name)
     if graph.graph_values.shape != (len(registry.schema.graph),):
         raise ValueError("graph %s does not hold the attributes its schema states" % name)

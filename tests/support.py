@@ -9,7 +9,23 @@ import pyarrow.parquet as pq
 from graphspec.infra.files import read_json
 from graphspec.references import SORTS
 from graphspec.registry import Registry
-from graphspec.schema import DECLARED, EDGE, LINK, OBSERVED, TARGET, TASK, VALUE, VERSION, Encoding, Schema
+from graphspec.schema import (
+    DECLARED,
+    EDGE,
+    INNER,
+    LINK,
+    MEMBER,
+    OBSERVED,
+    TARGET,
+    TASK,
+    VALUE,
+    VERSION,
+    WITHIN,
+    Encoding,
+    Schema,
+    inward,
+    outward,
+)
 
 LOG = logging.getLogger(__name__)
 KEYS = ("id", "from", "to", "since", "seq", "present")
@@ -72,7 +88,16 @@ def written(folder, schema):
     graphs = tables[("graph", None, None)]
     units = graphs.column("unit").to_pylist() if "unit" in graphs.column_names else [None] * graphs.num_rows
     result = {
-        name: dict(graph=dict(unit=unit), nodes={}, observations={}, edges={}, tasks=None, targets=None)
+        name: dict(
+            graph=dict(unit=unit),
+            nodes={},
+            observations={},
+            edges={},
+            sets={},
+            held={},
+            tasks=None,
+            targets=None,
+        )
         for name, unit in zip(graphs.column("name").to_pylist(), units)
     }
     names = dict(zip(graphs.column("id").to_pylist(), graphs.column("name").to_pylist()))
@@ -80,7 +105,7 @@ def written(folder, schema):
         for name, value in zip(graphs.column("name").to_pylist(), graphs.column(column).to_pylist()):
             result[name]["graph"][column] = value
     owner, key, entity = {}, {}, {}
-    for kind in schema.nodes:
+    for kind in schema.entities():
         held = tables[(kind, None, None)]
         for name in result:
             result[name]["nodes"][kind] = []
@@ -99,7 +124,7 @@ def written(folder, schema):
                 found.setdefault(graph, {name: [] for name in columns})[name].append(held[position])
         return found
 
-    for kind, stated_columns in schema.nodes.items():
+    for kind, stated_columns in schema.entities().items():
         held = tables[(OBSERVED + kind, kind, "observation")]
         sources, targets = held.column("from").to_pylist(), held.column("to").to_pylist()
         moments = observation.take(pa.array([place[number] for number in targets], pa.int64()))
@@ -137,6 +162,43 @@ def written(folder, schema):
                     parts[graph][column] += more
         for name in result:
             result[name]["edges"][table] = parts[name]
+    for kind, entry in schema.sets.items():
+        columns = ["set", "member", "role"] + [VALUE + name for name in entry["members"]]
+        for name in result:
+            result[name]["sets"][kind] = {column: [] for column in columns}
+        for member in entry["kinds"]:
+            held = tables[(MEMBER + kind, kind, member)]
+            for row in zip(
+                *(held.column(name).to_pylist() for name in ["from", "to", "role"] + list(entry["members"]))
+            ):
+                found = result[owner[(kind, row[0])]]["sets"][kind]
+                for column, value in zip(columns, (key[(kind, row[0])], key[(member, row[1])]) + row[2:]):
+                    found[column].append(value)
+    for kind, entry in schema.holds.items():
+        nodes = tables[(INNER + kind, None, None)]
+        edges = tables[(WITHIN + kind, INNER + kind, INNER + kind)]
+        inner = ["owner", "kind", "key"] + [VALUE + name for name in inward(entry)]
+        links = ["owner", "source", "target", "relation"] + [VALUE + name for name in outward(entry)]
+        for name in result:
+            result[name]["held"][kind] = dict(
+                nodes={column: [] for column in inner}, edges={column: [] for column in links}
+            )
+        within = {}
+        for row in zip(
+            *(
+                nodes.column(name).to_pylist()
+                for name in ["id", "graph", "owner", "kind", "key"] + list(inward(entry))
+            )
+        ):
+            within[row[0]] = (names[row[1]], row[2], row[4])
+            for column, value in zip(inner, row[2:]):
+                result[names[row[1]]]["held"][kind]["nodes"][column].append(value)
+        for row in zip(
+            *(edges.column(name).to_pylist() for name in ["from", "to", "relation"] + list(outward(entry)))
+        ):
+            graph, held_owner, source = within[row[0]]
+            for column, value in zip(links, (held_owner, source, within[row[1]][2]) + row[2:]):
+                result[graph]["held"][kind]["edges"][column].append(value)
     asked, held = schema.tasks, tables[("task", None, None)]
     count = held.num_rows
     place = {number: row for row, number in enumerate(held.column("id").to_pylist())}
@@ -268,13 +330,15 @@ def stated(nodes, edges, columns, tasks):
             observers=False,
             columns=columns,
             graph=dict(columns=[]),
-            nodes={kind: dict(columns=held) for kind, held in nodes.items()},
+            nodes={kind: dict(columns=held, holds=None) for kind, held in nodes.items()},
+            sets={},
             edges={
                 table: dict(
                     endpoints=[list(pair) for pair in entry["endpoints"]],
                     directed=entry["directed"],
                     columns=entry["columns"],
                     relation=DECLARED,
+                    about=None,
                 )
                 for table, entry in edges.items()
             },

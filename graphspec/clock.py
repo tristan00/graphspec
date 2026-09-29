@@ -17,6 +17,7 @@ UNITED = ("clock", "clocks")
 OPEN = dict(since=ALWAYS, until=NEVER, replaced=NEVER)
 TIES = Names("rule for ties")
 SEVERAL = Names("choice among several facts")
+ABOUT = Names("rule for an edge about an edge")
 
 
 class Sequence:
@@ -45,10 +46,31 @@ def last(starts, stops):
     return stops - 1
 
 
+class Stop:
+    def kept(self, lacking, named):
+        started = time.perf_counter()
+        lacking = np.asarray(lacking, bool)
+        if lacking.any():
+            raise ValueError(
+                "%s holds at a time when the edge it is about does not, and the rule stop states that this "
+                "stops the work" % named(int(np.flatnonzero(lacking)[0]))
+            )
+        LOG.debug("about stop exit rows=%d seconds=%.4f", len(lacking), time.perf_counter() - started)
+        return ~lacking
+
+
+class Lapse:
+    @timed("clock.lapse.kept")
+    def kept(self, lacking, named):
+        return ~np.asarray(lacking, bool)
+
+
 TIES.register("sequence", Sequence())
 TIES.register("key", Key())
 SEVERAL.register("first", first)
 SEVERAL.register("last", last)
+ABOUT.register("stop", Stop())
+ABOUT.register("lapse", Lapse())
 
 
 @timed("clock.shown")

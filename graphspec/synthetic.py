@@ -14,7 +14,22 @@ from graphspec.infra.timing import timed
 from . import forms
 from .clock import UNITED
 from .references import SORTS
-from .schema import DECLARED, EDGE, LINK, OBSERVED, STAMP, TARGET, TASK, VERSION, Schema
+from .schema import (
+    DECLARED,
+    EDGE,
+    INNER,
+    LINK,
+    MEMBER,
+    OBSERVED,
+    STAMP,
+    TARGET,
+    TASK,
+    VERSION,
+    WITHIN,
+    Schema,
+    inward,
+    outward,
+)
 
 LOG = logging.getLogger(__name__)
 KINDS = ("buy", "sell", "move")
@@ -35,7 +50,9 @@ WRITTEN = {STAMP: pa.int64(), "INT32": pa.int32(), "STRING[]": pa.list_(pa.strin
 
 
 def edge(source, target, columns, directed=True, relation=DECLARED):
-    return dict(endpoints=[[source, target]], directed=directed, columns=list(columns), relation=relation)
+    return dict(
+        endpoints=[[source, target]], directed=directed, columns=list(columns), relation=relation, about=None
+    )
 
 
 @timed("synthetic.kind")
@@ -91,7 +108,8 @@ def uniform(columns, signals, level):
             observers=False,
             columns=stated,
             graph=dict(columns=[]),
-            nodes={kind: dict(columns=names) for kind in SHARES},
+            nodes={kind: dict(columns=names, holds=None) for kind in SHARES},
+            sets={},
             edges=dict(
                 visits=edge("person", "place", ["weight"]),
                 owns=edge("person", "item", []),
@@ -129,11 +147,12 @@ def varied(level):
             ),
             graph=dict(columns=["season"]),
             nodes=dict(
-                person=dict(columns=["size", "speed", "colour", "open"]),
-                place=dict(columns=["size"]),
-                item=dict(columns=["speed", "colour"]),
-                team=dict(columns=["open"]),
+                person=dict(columns=["size", "speed", "colour", "open"], holds=None),
+                place=dict(columns=["size"], holds=None),
+                item=dict(columns=["speed", "colour"], holds=None),
+                team=dict(columns=["open"], holds=None),
             ),
+            sets={},
             edges=dict(
                 visits=edge("person", "place", ["weight", "mode"]),
                 owns=edge("person", "item", []),
@@ -633,9 +652,14 @@ def gathered(schema, statements, given, values, where):
     return pa.concat_tables(found) if found else none(schema, given, values)
 
 
+@timed("synthetic.fields")
+def fields(schema):
+    return GRAPH + (("sets",) if schema.sets else ()) + (("held",) if schema.holds else ())
+
+
 def case_rows(schema, index, graph, counter):
     started = time.perf_counter()
-    where = "the graph %s" % parted(graph, GRAPH, "a graph of a synthetic case")["name"]
+    where = "the graph %s" % parted(graph, fields(schema), "a graph of a synthetic case")["name"]
     united = schema.model in UNITED
     if united != (graph["unit"] is not None):
         raise ValueError("%s states a unit of time exactly when its schema has a clock" % where)
@@ -647,7 +671,7 @@ def case_rows(schema, index, graph, counter):
     )
     tables = {("graph", None, None): table_of(schema, described)}
     lookup, entity, stamps = {}, 0, list(schema.stamps())
-    for kind in schema.nodes:
+    for kind in schema.entities():
         keys = list(graph["nodes"][kind])
         ids = counter.take(kind, len(keys))
         lookup[kind] = dict(zip(keys, ids.tolist()))
@@ -670,7 +694,7 @@ def case_rows(schema, index, graph, counter):
         return pa.array([lookup[kind][key] for key in keys], pa.int64())
 
     parts = []
-    for kind, columns in schema.nodes.items():
+    for kind, columns in schema.entities().items():
         held_rows = gathered(
             schema,
             [statement for statement in graph["values"] if statement["kind"] == kind],
@@ -712,6 +736,10 @@ def case_rows(schema, index, graph, counter):
                 columns[entry["column"]] = held_rows.column("relation")
             columns.update({column: held_rows.column(column) for column in entry["columns"]})
             tables[(EDGE + name,) + ends] = pa.table(columns)
+    for kind, entry in schema.sets.items():
+        tables.update(case_members(schema, kind, graph["sets"][kind], lookup, found, where))
+    for kind in schema.holds:
+        tables.update(case_held(schema, index, kind, graph["held"][kind], counter, lookup, where))
     tables.update(case_tasks(schema, index, graph["tasks"], counter, lookup, where))
     LOG.info(
         "synthetic case graph exit graph=%s tables=%d seconds=%.3f",
@@ -719,6 +747,81 @@ def case_rows(schema, index, graph, counter):
         len(tables),
         time.perf_counter() - started,
     )
+    return tables
+
+
+def case_members(schema, kind, rows, lookup, found, where):
+    started = time.perf_counter()
+    entry = schema.sets[kind]
+    where = "%s, members of %s" % (where, kind)
+    parted(rows, ("set", "member", "role") + entry["members"], where)
+    owners = []
+    for key in rows["member"]:
+        holders = [member for member in entry["kinds"] if key in lookup[member]]
+        if len(holders) != 1:
+            raise ValueError(
+                "%s names the node %s, which %d of its kinds of node hold" % (where, key, len(holders))
+            )
+        owners.append(holders[0])
+    tables = {}
+    for member in entry["kinds"]:
+        chosen = [row for row, owner in enumerate(owners) if owner == member]
+        tables[(MEMBER + kind, kind, member)] = pa.table(
+            {
+                "from": found(kind, [rows["set"][row] for row in chosen]),
+                "to": found(member, [rows["member"][row] for row in chosen]),
+                "role": pa.array([rows["role"][row] for row in chosen], pa.string()),
+                **{
+                    column: pa.array([rows[column][row] for row in chosen], schema.kind(column).written)
+                    for column in entry["members"]
+                },
+            }
+        )
+    LOG.debug(
+        "case members exit kind=%s rows=%d seconds=%.4f", kind, len(owners), time.perf_counter() - started
+    )
+    return tables
+
+
+def case_held(schema, index, kind, stated, counter, lookup, where):
+    started = time.perf_counter()
+    held = schema.holds[kind]
+    where = "%s, graphs held by %s" % (where, kind)
+    parted(stated, ("nodes", "edges"), where)
+    nodes = parted(stated["nodes"], ("owner", "kind", "key") + inward(held), where + ", nodes")
+    edges = parted(
+        stated["edges"], ("owner", "source", "target", "relation") + outward(held), where + ", edges"
+    )
+    strangers = sorted({str(owner) for owner in nodes["owner"] + edges["owner"] if owner not in lookup[kind]})
+    if strangers:
+        raise ValueError("%s names owners the graph does not hold: %s" % (where, ", ".join(strangers)))
+    ids = counter.take(INNER + kind, len(nodes["key"]))
+    position = dict(zip(zip(nodes["owner"], nodes["key"]), ids.tolist()))
+    if len(position) != len(ids):
+        raise ValueError("%s names one held node twice" % where)
+    tables = {
+        (INNER + kind, None, None): pa.table(
+            dict(
+                id=pa.array(ids),
+                graph=pa.array(np.full(len(ids), index), pa.int32()),
+                owner=pa.array(nodes["owner"], pa.string()),
+                kind=pa.array(nodes["kind"], pa.string()),
+                key=pa.array(nodes["key"], pa.string()),
+                **{column: pa.array(nodes[column], schema.kind(column).written) for column in inward(held)},
+            )
+        ),
+        (WITHIN + kind, INNER + kind, INNER + kind): pa.table(
+            {
+                "from": pa.array(
+                    [position[pair] for pair in zip(edges["owner"], edges["source"])], pa.int64()
+                ),
+                "to": pa.array([position[pair] for pair in zip(edges["owner"], edges["target"])], pa.int64()),
+                "relation": pa.array(edges["relation"], pa.string()),
+                **{column: pa.array(edges[column], schema.kind(column).written) for column in outward(held)},
+            }
+        ),
+    }
+    LOG.debug("case held exit kind=%s nodes=%d seconds=%.4f", kind, len(ids), time.perf_counter() - started)
     return tables
 
 
@@ -891,7 +994,8 @@ def snapshots(case):
     for graph in case["graphs"]:
         where = "the graph %s" % graph["name"]
         stated_facts = [
-            (statement, ("key",), schema.nodes[statement["kind"]], "values") for statement in graph["values"]
+            (statement, ("key",), schema.entities()[statement["kind"]], "values")
+            for statement in graph["values"]
         ] + [
             (
                 statement,

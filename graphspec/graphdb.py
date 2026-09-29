@@ -58,6 +58,12 @@ def placed(found, ids, name, where):
 class Database:
     def __init__(self, path, stated, buffer_pool_size=4 << 30):
         started = time.perf_counter()
+        if stated.sets or stated.holds:
+            raise ValueError(
+                "a database source is read with no edges joining sets and no held graphs, and the schema states "
+                "the kinds of set edge %s and the kinds that hold graphs %s; stage the source instead"
+                % (", ".join(stated.sets) or "none", ", ".join(stated.holds) or "none")
+            )
         self.location, self.stated = str(path), stated
         self.store, self.connection = connect(path, read_only=True, buffer_pool_size=buffer_pool_size)
         try:
@@ -219,6 +225,8 @@ class Reader:
             nodes=nodes,
             observations={kind: self.run("observed:" + kind, index) for kind in stated.nodes},
             edges={table: self.run("edge:" + table, index) for table in stated.edges},
+            sets={},
+            held={},
             tasks=tasks,
             references=self.references(index, nodes, ids),
             targets=placed(self.run("targets", index), ids, "owner", "a target of graph %d" % index),
