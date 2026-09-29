@@ -72,7 +72,7 @@ def observing(tables):
     return sorted(found)
 
 
-def overlapping(stated, tables):
+def several(stated, tables):
     started = time.perf_counter()
     parts = []
     for kind in stated.entities():
@@ -89,8 +89,24 @@ def overlapping(stated, tables):
     order = np.lexsort((since, entity))
     entity, since, until = entity[order], since[order], until[order]
     result = bool(np.any((entity[1:] == entity[:-1]) & (since[1:] < until[:-1])))
+    tasks = tables["tasks"]
+    times = (
+        np.asarray(tasks.column("time").to_numpy(), np.int64)
+        if "time" in tasks.column_names
+        else np.zeros(tasks.num_rows, np.int64)
+    )
+    looking = np.asarray(
+        tasks.column("observer").to_pylist() if "observer" in tasks.column_names else [None] * tasks.num_rows,
+        object,
+    )
+    for observer in set(looking.tolist()):
+        moments = np.unique(times[looking == observer])
+        step = np.searchsorted(moments, since, "left")
+        held = until > moments[np.minimum(step, len(moments) - 1)]
+        shown = np.stack((entity, step), 1)[(step < len(moments)) & ((until == since + 1) | held)]
+        result |= len(np.unique(shown, axis=0)) < len(shown)
     LOG.debug(
-        "overlapping exit facts=%d several=%s seconds=%.4f", len(order), result, time.perf_counter() - started
+        "several exit facts=%d several=%s seconds=%.4f", len(order), result, time.perf_counter() - started
     )
     return result
 
@@ -108,7 +124,7 @@ def scanned(job):
             if entry["column"] is not None
         },
         observing(tables),
-        overlapping(stated, tables),
+        several(stated, tables),
     )
     LOG.info("bank scan exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
     return result

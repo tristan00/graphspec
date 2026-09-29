@@ -460,8 +460,8 @@ def view(facts, registry, held, several):
         raise ValueError("the tasks of the view of graph %s are not in the order of its steps" % facts.name)
     if several is None and registry.extras["several"]:
         raise ValueError(
-            "the bank of graph %s holds several facts about one entity at one time, and no time/several is "
-            "stated; it is one of %s" % (facts.name, ", ".join(SEVERAL.names()))
+            "the bank of graph %s holds facts about one entity that a view can show at one step, and no "
+            "time/several is stated; it is one of %s" % (facts.name, ", ".join(SEVERAL.names()))
         )
     place = ranks(facts.keys)
     seen = permitted(facts, registry, held)
@@ -481,15 +481,14 @@ def view(facts, registry, held, several):
     starts = np.flatnonzero(first[: len(order)])
     stops = np.r_[starts[1:], len(order)][: len(starts)]
     if several is None:
-        tied = np.flatnonzero((stops - starts > 1) & (since[order[stops - 1]] == since[order[stops - 2]]))
-        if len(tied):
-            who = int(entity[order[starts[tied[0]]]])
+        crowded = np.flatnonzero(stops - starts > 1)
+        if len(crowded):
+            named = order[starts[crowded[0]]]
             raise ValueError(
-                "the view of graph %s shows at %s several facts about the node %s that hold from one time, "
-                "and no time/several is stated"
-                % (facts.name, clock.shown(held["moments"][step[order[starts[tied[0]]]]]), facts.keys[who])
+                "the view of graph %s shows at %s several facts about the node %s, and no time/several is stated"
+                % (facts.name, clock.shown(held["moments"][step[named]]), facts.keys[int(entity[named])])
             )
-        chosen = order[stops - 1]
+        chosen = order[starts]
     else:
         chosen = order[SEVERAL.named(several)(starts, stops)]
     observed = spans.observation_spans(

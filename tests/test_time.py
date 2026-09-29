@@ -332,7 +332,15 @@ def ordered():
     return dict(schema=stated("order", [], "key", False), graphs=graphs)
 
 
-CASES = dict(forms=shaped, seen=seen, timeless=timeless, ordered=ordered)
+@clocked("time.spaced")
+def spaced():
+    values, edges = steady("spaced", False)
+    values.append(statement("event", {}, dict(key=["s3", "s3"], load=[7.0, 8.0], at=[5, 6]), kind="site"))
+    graphs = [graph("spaced", "tick", values, edges, MOMENTS, None)]
+    return dict(schema=stated("clock", ["tick"], "key", False), graphs=graphs)
+
+
+CASES = dict(forms=shaped, seen=seen, timeless=timeless, ordered=ordered, spaced=spaced)
 
 
 @pytest.fixture(scope="module")
@@ -397,7 +405,7 @@ def serving(held, graph, step):
     )
 
 
-@pytest.mark.parametrize("name", ["forms", "snapshots", "seen", "timeless", "ordered"])
+@pytest.mark.parametrize("name", ["forms", "snapshots", "seen", "timeless", "ordered", "spaced"])
 def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, name):
     held, _ = opened(banks, name)
     schema = held.registry.schema
@@ -757,6 +765,29 @@ def test_an_event_between_two_steps_is_shown_at_the_first_step_at_or_after_its_t
     assert begun.tolist() == ended.tolist() == [2]
 
 
+def test_two_events_about_one_node_between_two_task_times_are_shown_by_the_rule_stated_for_several_facts(
+    banks,
+):
+    held = Deriver(banks["spaced"], "cpu", RESIDENT)
+    truth = truths(held)["spaced"]
+    rows = np.flatnonzero(np.asarray(truth.obs_entity) == truth.keys.index("s3"))
+    assert truth.obs_since[rows].tolist() == [5, 6] and truth.obs_until[rows].tolist() == [6, 7]
+    assert held.registry.extras["several"] is True
+    with pytest.raises(
+        ValueError, match=r"the pipeline states no time/several, which has no default; it is one of \['first'"
+    ):
+        configuration(held.registry, dict(view="snapshot"), {}, 5, SPLITS)
+    (sequence,) = sequences(truth, held.registry, "tasks", unstated(held.splits))
+    with pytest.raises(ValueError, match="facts about one entity that a view can show at one step"):
+        view(truth, held.registry, sequence, None)
+    for several, wanted in (("first", 7.0), ("last", 8.0)):
+        graph = view(truth, held.registry, sequence, several)
+        for step, moment in enumerate(MOMENTS):
+            assert observed(held, graph, step, "s3") == ([wanted] if moment == 6 else []), (several, moment)
+    held, cfg = opened(banks, "spaced", **{"time/several": "first"})
+    assert observed(held, looked(held, cfg, "spaced"), MOMENTS.index(6), "s3") == [7.0]
+
+
 def broken(starts, stops):
     raise AssertionError("a rule registered first is not the rule of validation")
 
@@ -789,7 +820,9 @@ def test_the_rule_for_several_facts_is_stated_where_a_bank_holds_them_and_valida
     assert len(before) == len(after) > 0
     for left, right in zip(before, after):
         assert all(np.array_equal(left.arrays[name], right.arrays[name], equal_nan=True) for name in left.arrays)
-    with pytest.raises(ValueError, match="holds several facts about one entity at one time, and no time/several"):
+    with pytest.raises(
+        ValueError, match="facts about one entity that a view can show at one step, and no time/several"
+    ):
         view(truth, seen.registry, sequences(truth, seen.registry, "tasks", unstated(seen.splits))[0], None)
 
 
@@ -944,6 +977,12 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
     (chosen,) = STEPS.named("halved")(truth, held.registry)
     chosen.update(split=-1, rules=(), trained=(), scored=(), labels=np.zeros(0, np.int64))
     assert view(truth, held.registry, chosen, "last").steps == 3
+    assert held.registry.extras["several"] is False
+    with pytest.raises(
+        ValueError,
+        match="the view of graph first shows at the time 4 several facts about the node s0, and no time/several",
+    ):
+        view(truth, held.registry, chosen, None)
     names = {parameter.name: parameter for parameter in specs.space(held.registry, ())}
     assert names["time/steps"].options == ("tasks", "changes", "halved")
     assert names["time/steps"].default == "tasks"
