@@ -4,6 +4,7 @@ import logging
 import math
 import time
 from contextlib import closing
+from functools import partial
 from multiprocessing.util import Finalize
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from graphspec import Registry, graphdb, staged, vocabulary
 from graphspec.clock import ALWAYS, NEVER
 from graphspec.infra.files import read_json, sha256_file, write_json
 from graphspec.infra.log import configure
-from graphspec.infra.processes import parallel
+from graphspec.infra.processes import pooled
 from graphspec.infra.runtime import exclusive, output_path
 from graphspec.schema import Schema, fitted
 from graphspec.truth import VERSION, gather, parse
@@ -318,16 +319,13 @@ def supervision(source, trained, names):
     return result, groups, found_splits, single(stated, tasks)
 
 
-def attach(task_path, declared, splits, observers, output, level):
+def attach(task_path, output, level):
     configure(level)
     release()
     source = open_source(task_path, read_json(task_path))
     try:
         WORKER.update(
             reader=source.reader(),
-            registry=None if declared is None else Registry.from_declaration(declared),
-            splits=splits,
-            observers=observers,
             output=Path(output),
             finalizer=Finalize(None, source.close, exitpriority=10),
         )
@@ -344,17 +342,20 @@ def release():
             WORKER.clear()
 
 
-def graph(job):
+def graph(context, job):
+    declared, splits, observers = context
     index, name, ids, rows = job
     started = time.perf_counter()
+    if WORKER.get("declared") != declared:
+        WORKER.update(declared=declared, registry=Registry.from_declaration(declared))
     registry = WORKER["registry"]
     tables = WORKER["reader"].graph(index)
     found = tables["targets"].column("id").to_numpy().astype(np.int64)
     position = np.searchsorted(ids, found)
     if len(found) != len(ids) or np.any(position >= len(ids)) or not np.array_equal(ids[position], found):
         raise ValueError("graph %s reads different targets than its supervision" % name)
-    truth = parse(registry, WORKER["splits"], WORKER["observers"], tables, rows[position], name)
-    shown = validate(truth, registry, WORKER["splits"])
+    truth = parse(registry, splits, observers, tables, rows[position], name)
+    shown = validate(truth, registry, splits)
     truth.save(WORKER["output"] / "truth" / ("graph_%04d" % index))
     metrics = dict(
         index=index,
@@ -426,38 +427,20 @@ def build(task_path, output, workers, trained):
         rows, groups, splits, alone = supervision(source, trained, names)
         location = source.location
     until = seen_until(rows, groups, trained, names)
+    attached = (str(task_path), str(output), LOG.getEffectiveLevel())
     try:
-        found = parallel(
-            scanned,
-            [(index, until[index]) for index, _, _, _ in groups],
-            workers,
-            attach,
-            (str(task_path), None, splits, [], str(output), LOG.getEffectiveLevel()),
-        )
-    finally:
-        release()
-    stated = Schema(task["schema"])
-    encoding = fitted(stated, merged(stated, [entry[0] for entry in found]), related(stated, found))
-    observers = sorted({name for entry in found for name in entry[2]})
-    registry = vocabulary.registry(task, encoding, alone, any(entry[3] for entry in found))
-    (output / "truth").mkdir(parents=True)
-    write_json(output / "supervision.json", rows)
-    jobs = [(index, names[index], ids, members) for index, ids, members, _ in groups]
-    try:
-        metrics = parallel(
-            graph,
-            jobs,
-            workers,
-            attach,
-            (
-                str(task_path),
-                registry.declaration(),
-                splits,
-                observers,
-                str(output),
-                LOG.getEffectiveLevel(),
-            ),
-        )
+        with pooled(workers, len(groups), attach, attached) as mapped:
+            found = mapped(scanned, [(index, until[index]) for index, _, _, _ in groups])
+            stated = Schema(task["schema"])
+            encoding = fitted(stated, merged(stated, [entry[0] for entry in found]), related(stated, found))
+            observers = sorted({name for entry in found for name in entry[2]})
+            registry = vocabulary.registry(task, encoding, alone, any(entry[3] for entry in found))
+            (output / "truth").mkdir(parents=True)
+            write_json(output / "supervision.json", rows)
+            metrics = mapped(
+                partial(graph, (registry.declaration(), splits, observers)),
+                [(index, names[index], ids, members) for index, ids, members, _ in groups],
+            )
     finally:
         release()
     manifest = dict(

@@ -1,6 +1,8 @@
 import copy
 import logging
 import time
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 import numpy as np
 import pytest
@@ -178,20 +180,30 @@ def entries():
         del names.held[name]
 
 
+@timed("workers.counted")
+def counted(pools, *arguments, **named):
+    pools.append(named)
+    return ProcessPoolExecutor(*arguments, **named)
+
+
 @pytest.fixture(scope="module")
 def spread(entries, tmp_path_factory):
     started = time.perf_counter()
     root = tmp_path_factory.mktemp("workers")
     case = dict(schema=stated(), graphs=[graph(place) for place in range(2)])
-    build(synthetic.stage(root, registered.NAME, case), root / "bank", 2, ("alpha",))
+    pools = []
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(processes, "ProcessPoolExecutor", partial(counted, pools))
+        build(synthetic.stage(root, registered.NAME, case), root / "bank", 2, ("alpha",))
     LOG.info("bank of workers exit seconds=%.3f", time.perf_counter() - started)
-    return root / "bank"
+    return root / "bank", pools
 
 
 def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_and_a_fit(
     spread, tmp_path, statement
 ):
-    bank = spread
+    bank, pools = spread
+    assert [pool["max_workers"] for pool in pools] == [2]
     held = Deriver(bank, "cpu", RESIDENT)
     assert held.manifest["spec"]["encoding"]["states"]["size"] == dict(most=9.0)
     splits = copy.deepcopy(SPLITS)

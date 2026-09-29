@@ -180,18 +180,22 @@ def spawned(initializer, initargs):
     return dict(initializer=attached, initargs=(carried(), initializer, initargs))
 
 
-def parallel(function, jobs, workers, initializer, initargs):
+@contextmanager
+def pooled(workers, jobs, initializer, initargs):
     started = time.perf_counter()
-    if min(workers, len(jobs)) <= 1:
+    count = min(workers, jobs)
+    if count <= 1:
         initializer(*initargs)
-        results = [function(job) for job in jobs]
+        yield lambda function, items: [function(item) for item in items]
     else:
         with (
             worker_threads(max(1, (os.cpu_count() or 1) // workers)),
-            ProcessPoolExecutor(max_workers=min(workers, len(jobs)), **spawned(initializer, initargs)) as pool,
+            ProcessPoolExecutor(max_workers=count, **spawned(initializer, initargs)) as pool,
         ):
-            results = list(pool.map(partial(guarded, function), jobs))
-    LOG.debug(
-        "parallel exit jobs=%d workers=%d seconds=%.3f", len(jobs), workers, time.perf_counter() - started
-    )
-    return results
+            yield lambda function, items: list(pool.map(partial(guarded, function), items))
+    LOG.debug("pooled exit jobs=%d workers=%d seconds=%.3f", jobs, count, time.perf_counter() - started)
+
+
+def parallel(function, jobs, workers, initializer, initargs):
+    with pooled(workers, len(jobs), initializer, initargs) as mapped:
+        return mapped(function, jobs)
