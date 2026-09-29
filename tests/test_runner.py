@@ -90,7 +90,6 @@ def plan_at(directory):
         train_rows=2,
         holdout_rows=2,
         objective=None,
-        spread=None,
         workers=1,
         variant_bytes=100,
     )

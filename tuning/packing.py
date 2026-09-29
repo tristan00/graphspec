@@ -42,15 +42,6 @@ def serve_batches(bank_directory, cfg, threads, resident, jobs, results):
             break
         index, blocks, number, slot = job
         started = time.perf_counter()
-        if number is None:
-            try:
-                from .offers import batches
-
-                with measure("offered_batches"):
-                    results.send((index, None, None, 0, None, batches(bank, cfg, slot, blocks), None))
-            except Exception:
-                results.send((index, None, None, 0, None, None, traceback.format_exc()))
-            continue
         try:
             bundle = Bundle("cpu")
             with measure("batch_recipe"):
@@ -168,21 +159,6 @@ class Packer:
             ",".join(sorted(wanted)),
             time.perf_counter() - started,
         )
-
-    @timed("offered")
-    def offered(self, shares, history):
-        if self.closed or self.streaming:
-            raise RuntimeError("packer must be open and idle before packing drawn blocks")
-        for index, share in enumerate(shares):
-            self.jobs.put((index, share, None, history))
-            self.pending += 1
-        held = {}
-        while len(held) < len(shares):
-            index, _, _, _, _, found, failure = self.receive()
-            if failure is not None:
-                raise RuntimeError("packing drawn blocks failed in a worker process:\n" + failure)
-            held[index] = found
-        return [held[index] for index in range(len(shares))]
 
     def submit(self, index, groups):
         number = self.free.popleft()

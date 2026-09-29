@@ -165,8 +165,8 @@ def check_labels(staged, problems):
     tau = table.column("tau").to_numpy()
     if np.any(tau <= 0) or not np.isfinite(tau).all():
         problems.append("label tau values must be positive elapsed days")
-    if not {*table.column("split").to_pylist()} <= {"train", "validation", "spread"}:
-        problems.append("label splits must be train, validation or spread")
+    if not {*table.column("split").to_pylist()} <= {"train", "validation"}:
+        problems.append("label splits must be train or validation")
     if not {*table.column("series").to_pylist()} <= set(SERIES):
         problems.append("label series must be one of " + ", ".join(SERIES))
 

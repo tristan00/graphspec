@@ -1,8 +1,6 @@
 import argparse
 import hashlib
 import logging
-import math
-import random
 import time
 from contextlib import closing
 from dataclasses import dataclass
@@ -17,7 +15,7 @@ from graphspec.infra.runtime import exclusive, output_path
 from graphspec.infra.staging import Stage
 from graphspec.staging import write_task
 
-from . import redraw, source
+from . import source
 from .domain import HELD, SALT, TARGET
 from .graph import Run, allowed_fields
 from .tables import Counter
@@ -35,40 +33,14 @@ class Worker:
     encode: object
     allowed: frozenset
     features: int
-    address: str
 
 
 WORKER = None
 
 
-def drawn(*parts):
-    text = ":".join(str(part) for part in (SALT,) + parts)
-    return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "little")
-
-
 def held(run):
-    return drawn(run) % 1000 < HELD
-
-
-def sampled(summary, decisions):
-    started = time.perf_counter()
-    kept = [item for item in summary if item["split"] == "validation"]
-    share = math.ceil(decisions / len(kept))
-    chosen = {
-        item["run"]: sorted(
-            random.Random(drawn(item["run"], "spread")).sample(
-                item["labelled"], min(share, len(item["labelled"]))
-            )
-        )
-        for item in kept
-    }
-    LOG.info(
-        "sampled exit seconds=%.3f runs=%d decisions=%d",
-        time.perf_counter() - started,
-        len(chosen),
-        sum(len(steps) for steps in chosen.values()),
-    )
-    return chosen
+    digest = hashlib.blake2b(("%s:%d" % (SALT, run)).encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "little") % 1000 < HELD
 
 
 def attach(host, port, database, user, features):
@@ -88,7 +60,6 @@ def attach(host, port, database, user, features):
         encoder(features // 2, numbers, categories),
         frozenset(numbers + categories),
         features,
-        "host=%s port=%d dbname=%s user=%s" % (host, port, database, user),
     )
 
 
@@ -130,87 +101,8 @@ def extract(job):
     return summary
 
 
-def offer(job):
-    if WORKER is None:
-        raise RuntimeError("run worker must be initialized before extraction")
-    directory, chosen, project, blocks = job
-    started = time.perf_counter()
-    summary = []
-    with Stage(directory) as stage:
-        for first, run, steps in chosen:
-            clock = time.perf_counter()
-            graph = Run(
-                WORKER.encode,
-                WORKER.features,
-                run,
-                source.load(WORKER.connection, run),
-                WORKER.names,
-                WORKER.columns,
-                WORKER.parameters,
-                WORKER.allowed,
-            )
-            moments = [[graph.steps[step], drawn(run["run_id"], graph.steps[step])] for step in steps]
-            advisor, found = redraw.drawn(
-                project, WORKER.address, run["run_id"], moments, blocks - 1, TIMEOUT_MS
-            )
-            written = graph.offered(stage, first, "run-%d" % run["run_id"], dict(zip(steps, found)), advisor)
-            if len(written) != len(steps) * blocks:
-                raise ValueError("run %d wrote %d of its offered graphs" % (run["run_id"], len(written)))
-            share = (time.perf_counter() - clock) / len(written)
-            summary.extend(
-                dict(
-                    item,
-                    run=run["run_id"],
-                    kind=run["kind"],
-                    end_reason=run["end_reason"],
-                    split="spread",
-                    seconds=share,
-                    entities=len(graph.kinds),
-                    absent=graph.absent,
-                    labelled=[item["steps"] - 1],
-                )
-                for item in written
-            )
-    LOG.info(
-        "offer exit directory=%s graphs=%d seconds=%.1f",
-        directory,
-        len(summary),
-        time.perf_counter() - started,
-    )
-    return summary
-
-
-def offers(staging, picked, summary, spread, workers, settings):
-    started = time.perf_counter()
-    project, decisions, blocks = spread
-    if decisions < 1 or blocks < 2:
-        raise ValueError("spread needs a decision and two blocks")
-    chosen = sampled(summary, decisions)
-    rows = {run["run_id"]: run for _, run in picked}
-    first, planned = len(picked), []
-    for run, steps in sorted(chosen.items()):
-        if steps:
-            planned.append((first, rows[run], steps))
-            first += len(steps) * blocks
-    shards = min(workers, len(planned))
-    jobs = [
-        (
-            str(staging / ("offer_%02d" % shard)),
-            planned[shard * len(planned) // shards : (shard + 1) * len(planned) // shards],
-            project,
-            blocks,
-        )
-        for shard in range(shards)
-    ]
-    found = [item for part in parallel(offer, jobs, shards, attach, settings) for item in part]
-    LOG.info("offers exit seconds=%.1f graphs=%d", time.perf_counter() - started, len(found))
-    return [directory for directory, *_ in jobs], found
-
-
 @exclusive
-def build(
-    output, name, host, port, database, user, runs, chosen, features, workers, staged=False, spread=None
-):
+def build(output, name, host, port, database, user, runs, chosen, features, workers, staged=False):
     started = time.perf_counter()
     if runs < 1 or workers < 1:
         raise ValueError("runs and workers must be positive")
@@ -242,14 +134,7 @@ def build(
             for part in parallel(extract, jobs, shards, attach, (host, port, database, user, features))
             for item in part
         ]
-        folders = [directory for directory, _ in jobs]
-        if spread is not None:
-            extra, found = offers(
-                staging, picked, summary, spread, workers, (host, port, database, user, features)
-            )
-            folders += extra
-            summary += found
-        stage = Stage.merge(staging, folders)
+        stage = Stage.merge(staging, [directory for directory, _ in jobs])
         write_json(staging / "summary.json", summary)
     task = write_task(output / (name + ".task.json"), name, staging, TARGET)
     write_json(
@@ -280,9 +165,6 @@ def main():
     parser.add_argument("--features", type=int, default=128)
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--staged", action="store_true")
-    parser.add_argument("--redraw", help="the vic3 project whose redraw draws blocks for stored pauses")
-    parser.add_argument("--spread-decisions", type=int, default=60)
-    parser.add_argument("--spread-blocks", type=int, default=8)
     args = parser.parse_args()
     configure()
     print(
@@ -298,7 +180,6 @@ def main():
             args.features,
             args.workers,
             args.staged,
-            None if args.redraw is None else (args.redraw, args.spread_decisions, args.spread_blocks),
         )
     )
 

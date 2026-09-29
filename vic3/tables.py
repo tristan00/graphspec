@@ -144,7 +144,7 @@ def node_tables(index, name, kinds, keys):
     return tables
 
 
-def label_tables(index, counter, labels, split):
+def label_tables(index, counter, labels, held_out):
     ids = counter.take(TARGET, len(labels))
     query_base = index << IDS
     return {
@@ -152,7 +152,7 @@ def label_tables(index, counter, labels, split):
             dict(
                 id=pa.array(ids),
                 y=pa.array([row[2] for row in labels], pa.float64()),
-                split=pa.array([split] * len(labels), pa.string()),
+                split=pa.array(["validation" if held_out else "train"] * len(labels), pa.string()),
                 tau=pa.array([row[1] for row in labels], pa.float32()),
                 series=pa.array([row[3] for row in labels], pa.string()),
             )

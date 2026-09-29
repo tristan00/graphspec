@@ -24,12 +24,14 @@ def matrix(values):
 
 @contextmanager
 def single():
+    started = time.perf_counter()
     threads = torch.get_num_threads()
     torch.set_num_threads(1)
     try:
         yield
     finally:
         torch.set_num_threads(threads)
+        LOG.debug("single exit threads=%d seconds=%.4f", threads, time.perf_counter() - started)
 
 
 def inverse(values):

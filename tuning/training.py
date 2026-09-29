@@ -319,12 +319,9 @@ class TrainingSession:
 
     @timed("validation")
     def evaluate(self, packer: Packer, schedule: Schedule) -> tuple[np.ndarray, np.ndarray]:
-        self.budget.pulse("evaluation")
-        return self.predict(packer, schedule, 1)
-
-    @timed("predict")
-    def predict(self, packer: Packer, schedule: Schedule, partition: int) -> tuple[np.ndarray, np.ndarray]:
         import torch
+
+        self.budget.pulse("evaluation")
 
         from .batching import batches
         from .turns import blocks as turn_blocks
@@ -332,7 +329,7 @@ class TrainingSession:
         values, indices = [], []
         with measure("validation_schedule"):
             validation = batches(
-                turn_blocks(self.bank, self.bank.blocks(partition, self.history, self.config), self.config),
+                turn_blocks(self.bank, self.bank.blocks(1, self.history, self.config), self.config),
                 schedule.batch_size,
                 schedule.sizes,
                 frame_budget=1024,
@@ -344,7 +341,7 @@ class TrainingSession:
                 with self.budget.measure("validation_compute"):
                     with measure("forward"):
                         predictions = self.net(batch)
-                    if index == 0 and partition == 1:
+                    if index == 0:
                         self.verify_checkpoint(predictions, batch)
                     with measure("prediction_collect"):
                         if not torch.isfinite(predictions).all():
@@ -365,7 +362,7 @@ class TrainingSession:
         return np.asarray(indices, np.int64), np.asarray(values, np.float64)
 
     @timed("score_and_save")
-    def save_result(self, indices: np.ndarray, values: np.ndarray, batch_size: int, offered=None) -> dict:
+    def save_result(self, indices: np.ndarray, values: np.ndarray, batch_size: int) -> dict:
         import torch
 
         from .budget import POLICY
@@ -387,23 +384,6 @@ class TrainingSession:
                     self.bank.series_names,
                     self.bank.scale,
                 )
-                from .tracking import track
-
-                for name, found in track(self.bank, indices, values).items():
-                    metrics["series"][name]["measures"] = found
-                if offered is not None:
-                    from .offers import spread
-
-                    found, gap = spread(self.bank, *offered, indices, values)
-                    for name, value in found.items():
-                        metrics["series"][name]["spread"] = value
-                    metrics["recorded_block_gap"] = gap
-                    np.savez_compressed(
-                        self.directory / "offered.npz",
-                        row_index=np.concatenate([rows[0] for rows in offered[0]]),
-                        blocks=np.asarray([len(rows) for rows in offered[0]]),
-                        prediction=np.concatenate([paths.reshape(-1) for paths in offered[1]]),
-                    )
             else:
                 metrics = score(targets, values)
         with measure("prediction_save"):
@@ -480,25 +460,11 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
             session.train(packer, schedule)
             session.checkpoint(training_blocks)
             indices, values = session.evaluate(packer, schedule)
-            offered = None
-            if session.bank.offered:
-                from .offers import predict
-
-                budget.pulse("spread")
-                with budget.measure("spread_compute"):
-                    offered = predict(
-                        session.bank,
-                        session.config,
-                        session.net,
-                        session.device,
-                        session.history,
-                        packer,
-                    )
         finally:
             budget.pulse("cleanup")
             with measure("packer_cleanup"):
                 packer.close()
-        result = session.save_result(indices, values, batch_size, offered)
+        result = session.save_result(indices, values, batch_size)
     result["timeline"] = budget.timeline.snapshot()
     write_json(Path(directory) / "result.json", result)
     return result

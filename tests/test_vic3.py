@@ -420,7 +420,7 @@ def test_run_writes_a_contract_graph(tmp_path):
     staging = tmp_path / "vic3.staging"
     with Stage(staging) as stage:
         counts = graph.build(stage, Counter(0), 0, "run-2", held(2))
-    assert counts == dict(steps=3, entities=len(graph.kinds), labels=18, absent={}, labelled=[0, 1, 2])
+    assert counts == dict(steps=3, entities=len(graph.kinds), labels=18, absent={})
     assert read == [0, 3, 4, 6]
     staged = Staged(staging)
     reader = staged.reader(TARGET)
@@ -527,7 +527,7 @@ def test_action_targets_absent_at_the_step_are_counted_not_stated():
     graph.actions[0][2]["params"]["building"] = 999
     facts = {}
     graph.current(0)
-    graph.actions_at(0, 0, graph.actions[0], {}, facts)
+    graph.actions_at(0, 0, {}, facts)
     assert graph.absent == {"action_target_building": 1}
     assert sorted(graph.kinds[target] for _, target in facts["targets"]) == [
         "building_type",
@@ -541,7 +541,7 @@ def test_unknown_action_parameter_is_an_error():
     graph.actions[0][0]["params"]["mystery"] = 3
     graph.current(0)
     with pytest.raises(ValueError, match="undeclared action parameter"):
-        graph.actions_at(0, 0, graph.actions[0], {}, {})
+        graph.actions_at(0, 0, {}, {})
 
 
 def test_missing_edge_attribute_is_an_error():

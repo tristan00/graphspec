@@ -128,9 +128,6 @@ class Bank:
         self.targets = np.asarray([row["y"] for row in self.rows], np.float32)
         self.partitions = np.zeros(len(self.rows), np.int8)
         self.partitions[self.split["validation_indices"]] = 1
-        self.partitions[self.split.get("spread_indices", [])] = 2
-        kept = {row["graph"] for row, part in zip(self.rows, self.partitions.tolist()) if part < 2}
-        self.offered = {graph["index"] for graph in self.manifest["graphs"] if graph["name"] not in kept}
         if self.level == "path":
             self.taus = np.asarray([row["tau"] for row in self.rows], np.float32)
             self.series_names = [entry["name"] for entry in self.split["series"]]
@@ -228,8 +225,6 @@ class Bank:
             started = time.perf_counter()
             splits = {}
             for graph in self.manifest["graphs"]:
-                if graph["index"] in self.offered:
-                    continue
                 rows = self.row_index[graph["index"]]
                 key = tuple(np.unique(self.partitions[rows[rows >= 0]]).tolist())
                 splits.setdefault(key, []).append(graph["index"])
@@ -249,7 +244,7 @@ class Bank:
     def graphs(self, cfg):
         if self.joining(cfg):
             return list(range(len(self.groups(cfg))))
-        return [graph["index"] for graph in self.manifest["graphs"] if graph["index"] not in self.offered]
+        return [graph["index"] for graph in self.manifest["graphs"]]
 
     def points(self, index, cfg):
         if not self.joining(cfg):
@@ -408,7 +403,8 @@ class Bank:
                 result.extend(layout(group, rows, moments, self.partitions, partition, history, self.level))
         else:
             result = []
-            for index in self.graphs(cfg):
+            for graph in self.manifest["graphs"]:
+                index = graph["index"]
                 result.extend(
                     layout(
                         index,
