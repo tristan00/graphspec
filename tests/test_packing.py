@@ -127,15 +127,16 @@ def test_bundle_write_matches_pack():
     )
 
 
-def test_slot_transfer_and_growth():
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
+def test_slot_transfer_and_growth(device):
     assert slot_bytes(1) == 1 << 20 and slot_bytes(100 << 20) == 125 << 20
     tensor = shared(1 << 20)
     tensor.numpy()[:] = np.arange(1 << 20, dtype=np.uint32).view(np.uint8)[: 1 << 20]
-    slot = Slot(tensor, "cuda")
-    moved = slot.transfer(4096, "cuda")
-    assert moved.device.type == "cuda" and torch.equal(moved.cpu(), tensor[:4096])
+    slot = Slot(tensor, device)
+    moved = slot.transfer(4096, device)
+    assert moved.device.type == device and torch.equal(moved.cpu(), tensor[:4096])
     tensor.numpy()[:8] = 7
-    assert int(moved[0]) != 7 and int(slot.transfer(8, "cuda")[0]) == 7
+    assert int(moved[0]) != 7 and int(slot.transfer(8, device)[0]) == 7
     slot.release()
 
 
@@ -147,7 +148,7 @@ def test_packer_matches_single_process(packers, view):
     groups = batches(blocks, 2, opened.sizes(cfg), 5, frame_budget=1024)[:5]
     assert len(groups) == 5
     for group, streamed in zip(groups, packer.stream(groups), strict=True):
-        assert same(materialise(opened, cfg, recipe_batch(opened, group, cfg), "cuda"), streamed)
+        assert same(materialise(opened, cfg, recipe_batch(opened, group, cfg), "cpu"), streamed)
     packer.close()
     assert len(packer.slots) == 2 and packer.slots[0].tensor.numel() >= 1 << 20
 

@@ -160,7 +160,7 @@ def test_timeout_is_recorded_then_joined_before_the_next_trial(tmp_path, monkeyp
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
-    runner.execute(tmp_path, plan, False, None)
+    runner.execute(tmp_path, plan, False, None, "cpu")
     assert events == [
         ("start", "opaque-first"),
         ("joined", "opaque-first"),
@@ -189,7 +189,7 @@ def test_saved_trial_limit_controls_deadline_and_all_terminal_records(tmp_path, 
         return process.wait(timeout=1)
 
     monkeypatch.setattr("tuning.budget.wait_worker", wait)
-    runner.execute(tmp_path, plan, False, None)
+    runner.execute(tmp_path, plan, False, None, "cpu")
     assert 44 < deadlines[0] <= 45
     assert 74 < deadlines[1] <= 75
     assert read_json(tmp_path / "opaque-first" / "timeout.json")["budget"] == 45
@@ -208,7 +208,7 @@ def test_legacy_pending_trial_gets_limit_before_worker_start(tmp_path, monkeypat
         return process.wait(timeout=1)
 
     monkeypatch.setattr("tuning.budget.wait_worker", wait)
-    runner.execute(tmp_path, plan, False, None)
+    runner.execute(tmp_path, plan, False, None, "cpu")
     assert len(events) == 4
 
 
@@ -217,7 +217,7 @@ def test_cleanup_failure_preserves_timeout_and_stops_before_another_trial(tmp_pa
     events = []
     patch_execution(monkeypatch, tmp_path, events, cleanup_error=True)
     with pytest.raises(RuntimeError, match="OS refused"):
-        runner.execute(tmp_path, plan, False, None)
+        runner.execute(tmp_path, plan, False, None, "cpu")
     assert events == [("start", "opaque-first"), ("joined", "opaque-first")]
     assert Outcome.read(tmp_path / "opaque-first", JsonCache()).status == Status.TIMEOUT
     state = read_json(tmp_path / "runner.json")
@@ -228,7 +228,7 @@ def test_expired_preparation_never_launches_a_worker(tmp_path, monkeypatch):
     plan = plan_at(tmp_path)
     events = []
     patch_execution(monkeypatch, tmp_path, events)
-    runner.execute_trial(tmp_path, plan, plan["trials"][0], 0, time.perf_counter() - 11, {})
+    runner.execute_trial(tmp_path, plan, plan["trials"][0], 0, time.perf_counter() - 11, {}, "cpu")
     assert events == []
     assert Outcome.read(tmp_path / "opaque-first", JsonCache()).status == Status.TIMEOUT
 
@@ -241,7 +241,7 @@ def test_worker_deadline_exit_becomes_timeout_and_continues(tmp_path, monkeypatc
     monkeypatch.setattr(
         runner.WorkerProcess, "__exit__", lambda self, *args: events.append(("joined", self.trial.name))
     )
-    runner.execute(tmp_path, plan, False, None)
+    runner.execute(tmp_path, plan, False, None, "cpu")
     assert len(events) == 4
     assert all(
         Outcome.read(tmp_path / item["directory"], JsonCache()).status == Status.TIMEOUT

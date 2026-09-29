@@ -24,7 +24,7 @@ def test_remaining_parameter_changes_with_the_fixed_parameter():
         for value in np.linspace(0, 1, 11):
             x.append([view, 1 - view, value])
             losses.append((value - (0.2 if view == 0 else 0.8)) ** 2)
-    search = Search(x, losses, [True] * len(x))
+    search = Search(x, losses, [True] * len(x), "cpu")
     selected = []
     for view in (0, 1):
         candidates = np.array([[view, 1 - view, value] for value in np.linspace(0, 1, 101)])
@@ -41,7 +41,7 @@ def test_failed_trials_train_feasibility_without_fake_objective_values():
     x = np.linspace(0, 1, 16)[:, None]
     completed = x[:, 0] < 0.6
     losses = np.where(completed, (x[:, 0] - 0.3) ** 2, np.nan)
-    search = Search(x, losses, completed)
+    search = Search(x, losses, completed, "cpu")
     objective, feasibility = search.acquisition.model.models
     assert len(objective.train_inputs[0]) == sum(completed)
     assert len(feasibility.train_inputs[0]) == len(x)
@@ -79,7 +79,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
 
     class InspectSearch:
         def __init__(self, x, losses, completed, device):
-            assert device.type == "cuda"
+            assert device == "cpu"
             assert len(x) == 8
             assert completed == [True] * 4 + [False] * 4
             assert np.allclose(x[:4, -2], [0, 1 / 3, 2 / 3, 1])
@@ -111,7 +111,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     random_params = ["model/view", "lr", "epochs", "max_seconds"]
     progress = []
     config, selection = bayesian.suggest(
-        registry, observations, failures, 42, 7, bounds, random_params, progress=progress.append
+        registry, observations, failures, 42, 7, bounds, random_params, "cpu", progress=progress.append
     )
     assert selection["observations"] == selection["failed_observations"] == 4
     assert selection["excluded"] == []
@@ -131,7 +131,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     assert selection["diagnostics"]["candidates"][0]["rank"] == {"acquisition": 1, "predicted_mse": 12}
     assert config in [c["config"] for c in selection["diagnostics"]["candidates"]]
     assert sum(selection["diagnostics"]["distribution"]["acquisition"]["counts"]) == 12
-    assert selection["settings"]["device"] == "cuda"
+    assert selection["settings"]["device"] == "cpu"
     assert [entry["stage"] for entry in progress] == [
         "Fitting models",
         "Ranking candidates",
@@ -139,7 +139,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     ]
     assert progress[-1]["stage"] == "Proposal ready"
     repeated, repeated_selection = bayesian.suggest(
-        registry, observations, failures, 42, 7, bounds, random_params
+        registry, observations, failures, 42, 7, bounds, random_params, "cpu"
     )
     assert repeated == config
     assert repeated_selection["fixed_params"] == selection["fixed_params"]
@@ -167,7 +167,7 @@ def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, finis
     calls = []
 
     def propose(*args, progress=None, seconds=600):
-        calls.append(args[-1])
+        calls.append(args[-2:])
         config["max_seconds"] = 843
         return config, dict(metadata, phase="botorch")
 
@@ -184,12 +184,12 @@ def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, finis
         bank_manifest_sha256="bank",
         supervision_sha256="labels",
     )
-    selector.append_trial(tmp_path, plan, registry)
+    selector.append_trial(tmp_path, plan, registry, "cpu")
     item = plan["trials"][-1]
     assert item["selector"] == expected
     selection = read_json(tmp_path / item["directory"] / "selection.json")
     assert selection["startup_trials_finished"] == finished
-    assert calls == ([["model/view"]] if expected == "botorch" else [])
+    assert calls == ([(["model/view"], "cpu")] if expected == "botorch" else [])
     saved = read_json(tmp_path / item["directory"] / "config.json")
     assert saved["max_seconds"] == (843 if expected == "botorch" else 1200)
 
@@ -201,7 +201,7 @@ def test_acquisition_conditions_remaining_choices_on_epochs_and_runtime():
             for value in np.linspace(0, 1, 11):
                 inputs.append([epochs, runtime, value])
                 losses.append((value - (0.1 + 0.35 * epochs + 0.35 * runtime)) ** 2)
-    search = Search(inputs, losses, [True] * len(inputs))
+    search = Search(inputs, losses, [True] * len(inputs), "cpu")
     for epochs in (0.0, 1.0):
         for runtime in (0.0, 1.0):
             candidates = np.array([[epochs, runtime, value] for value in np.linspace(0, 1, 101)])
@@ -252,7 +252,7 @@ def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch
         supervision_sha256="labels",
     )
     for _ in range(40):
-        selector.append_trial(tmp_path, plan, registry)
+        selector.append_trial(tmp_path, plan, registry, "cpu")
     chosen = [item["selector"] for item in plan["trials"]]
     expected = [
         "random" if value < 0.8 else "forest" if value < 0.9 else "tpe"

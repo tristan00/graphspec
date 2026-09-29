@@ -84,6 +84,7 @@ def arguments(bank, output, **overrides):
     values = dict(
         bank=str(bank),
         output=str(output),
+        device="cpu",
         seed=3,
         batch_sequences=8,
         continuous=False,
@@ -267,12 +268,12 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path):
         limit=None,
     )
     write_json(tmp_path / "plan.json", plan)
-    append_trial(tmp_path, plan, registry)
+    append_trial(tmp_path, plan, registry, "cpu")
     first_path = tmp_path / plan["trials"][0]["directory"] / "config.json"
     assert read_json(first_path)["max_seconds"] == 1200
     plan["seconds"] = 1800
     write_json(tmp_path / "plan.json", plan)
-    append_trial(tmp_path, plan, registry)
+    append_trial(tmp_path, plan, registry, "cpu")
     second = read_json(tmp_path / plan["trials"][1]["directory"] / "config.json")
     assert second["max_seconds"] == 1800
     assert read_json(first_path)["max_seconds"] == 1200

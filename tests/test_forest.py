@@ -75,7 +75,7 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
     encoding = space.Space(registry, bounds)
     progress = []
     config, selection = forest.suggest(
-        registry, observations, failures, 4, 9, bounds, ["model/view"], progress=progress.append
+        registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu", progress=progress.append
     )
     assert selection["sampler"] == "SMAC"
     assert selection["phase"] == "forest"
@@ -106,7 +106,7 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
         "Ranking candidates",
         "Proposal ready",
     ]
-    repeated, _ = forest.suggest(registry, observations, failures, 4, 9, bounds, ["model/view"])
+    repeated, _ = forest.suggest(registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu")
     assert repeated == config
 
 
@@ -129,6 +129,6 @@ def test_startup_counts_toward_the_forest_selector(bank, tmp_path, monkeypatch):
         bank_manifest_sha256="bank",
         supervision_sha256="labels",
     )
-    selector.append_trial(tmp_path, plan, registry)
+    selector.append_trial(tmp_path, plan, registry, "cpu")
     assert plan["trials"][-1]["selector"] == "forest"
     assert read_json(tmp_path / plan["trials"][-1]["directory"] / "selection.json")["phase"] == "forest"

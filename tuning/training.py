@@ -115,7 +115,7 @@ class Schedule:
 
 
 class TrainingSession:
-    def __init__(self, bank_directory, directory, config: dict, budget, workers: int):
+    def __init__(self, bank_directory, directory, config: dict, budget, workers: int, device):
         import torch
 
         from .data import Bank
@@ -125,8 +125,9 @@ class TrainingSession:
 
         self.entered = time.perf_counter()
         self.directory = output_path(directory)
-        if not torch.cuda.is_available():
-            raise RuntimeError("training requires a CUDA device")
+        self.device = device
+        self.cuda = compute.require(device) == "cuda"
+        compute.state(device)
         self.budget: FitBudget = budget
         with self.budget.measure("graph_prepare"):
             prepare(bank_directory, config, workers, self.directory / "timing_workers")
@@ -140,8 +141,7 @@ class TrainingSession:
         with measure("device_setup"):
             torch.manual_seed(config["seed"])
             np.random.seed(config["seed"])
-            self.device = compute.DEVICE
-            compute.reserve()
+            compute.reserve(device)
         with measure("bank_load_and_verify"):
             self.bank: Bank = Bank(bank_directory)
             self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
@@ -154,9 +154,10 @@ class TrainingSession:
                 self.net.parameters(),
                 lr=config["lr"],
                 weight_decay=config["weight_decay"],
-                fused=torch.device(self.device).type == "cuda",
+                fused=self.cuda,
             )
-        torch.cuda.reset_peak_memory_stats()
+        if self.cuda:
+            torch.cuda.reset_peak_memory_stats(device)
         self.timing = self.budget.timings
         self.timing.update(
             packer=0.0,
@@ -225,8 +226,9 @@ class TrainingSession:
                 )
             with measure("optimizer_step"):
                 self.optimizer.step()
-            with measure("device_wait"):
-                torch.cuda.synchronize()
+            if self.cuda:
+                with measure("device_wait"):
+                    torch.cuda.synchronize(self.device)
             return float(value.detach())
 
     @timed("epoch_bookkeeping")
@@ -405,7 +407,7 @@ class TrainingSession:
             seconds=time.perf_counter() - self.entered,
             timings=self.timing,
             parameters=sum(p.numel() for p in self.net.parameters()),
-            peak_cuda_bytes=torch.cuda.max_memory_allocated(),
+            peak_cuda_bytes=torch.cuda.max_memory_allocated(self.device) if self.cuda else 0,
             optimizer_updates=len(self.losses),
             epochs=len(self.epoch_losses),
             requested_epochs=self.config["epochs"],
@@ -441,13 +443,13 @@ class TrainingSession:
         return result
 
 
-def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, workers):
+def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, workers, device):
     from .budget import FitBudget
     from .packing import Packer
 
     with FitBudget(directory, deadline) as budget:
         with budget.measure("prepare"):
-            session = TrainingSession(bank_directory, directory, config, budget, workers)
+            session = TrainingSession(bank_directory, directory, config, budget, workers, device)
         budget.pulse("scheduling")
         schedule = session.schedule(training_blocks, batch_size)
         session.net.train()

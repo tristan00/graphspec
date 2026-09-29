@@ -36,7 +36,7 @@ def fit_model(x, y):
 
 
 class Search:
-    def __init__(self, x, losses, completed, device="cpu"):
+    def __init__(self, x, losses, completed, device):
         from botorch.acquisition.analytic import LogConstrainedExpectedImprovement, LogExpectedImprovement
         from botorch.models import ModelListGP
 

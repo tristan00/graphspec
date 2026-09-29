@@ -144,7 +144,7 @@ def test_bank_build_closes_source_when_validation_fails(tmp_path, monkeypatch):
 )
 def test_fit_rejects_invalid_resource_inputs_before_opening_bank(tmp_path, options):
     with pytest.raises(ValueError, match="fit "):
-        api.fit.__wrapped__(tmp_path / "missing-bank", {}, tmp_path / "fit", **options)
+        api.fit.__wrapped__(tmp_path / "missing-bank", {}, tmp_path / "fit", "cpu", **options)
 
 
 def test_dense_algebra_gives_the_same_bits_at_any_thread_count():

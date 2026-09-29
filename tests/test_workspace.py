@@ -86,7 +86,7 @@ def test_written_array_store_publishes_after_workspace_cleanup(tmp_path):
     assert [path.name for path in (tmp_path / "result").iterdir()] == ["x.npy"]
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=pytest.mark.gpu)])
 def test_mapped_rows_and_mixed_tables_preserve_order_duplicates_and_dtype(device):
     values = np.arange(21, dtype=np.float16).reshape(7, 3)
     mapped = MappedRows(values, device)

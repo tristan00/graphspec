@@ -10,12 +10,40 @@ from numba import njit, prange
 LOG = logging.getLogger(__name__)
 GPU_FROM = 1024
 FRACTION = 0.9
-DEVICE = "cuda"
 THREADS = 2
+SETTING = "GRAPHSPEC_DEVICE"
+
+
+def require(device):
+    started = time.perf_counter()
+    kind = torch.device(device).type
+    if kind not in ("cpu", "cuda"):
+        raise ValueError("device %s is neither cpu nor cuda" % device)
+    if kind == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("device %s was requested and no GPU is present" % device)
+    LOG.debug("require exit device=%s seconds=%.4f", device, time.perf_counter() - started)
+    return kind
+
+
+def state(device):
+    started = time.perf_counter()
+    require(device)
+    os.environ[SETTING] = str(device)
+    LOG.info("state exit device=%s seconds=%.3f", device, time.perf_counter() - started)
+
+
+def stated():
+    if SETTING not in os.environ:
+        raise RuntimeError("the device of dense algebra is not stated: " + SETTING)
+    return os.environ[SETTING]
 
 
 def device_for(size):
-    return "cuda" if size >= GPU_FROM else "cpu"
+    device = stated()
+    if size < GPU_FROM or torch.device(device).type == "cpu":
+        return "cpu"
+    require(device)
+    return device
 
 
 def matrix(values):
@@ -127,7 +155,7 @@ def top_rows(scores, width):
 def top(scores, width):
     started = time.perf_counter()
     scores = np.asarray(scores, dtype=np.float64)
-    if device_for(len(scores)) == "cuda":
+    if device_for(len(scores)) != "cpu":
         values, indices = torch.sort(matrix(scores), dim=1, descending=True, stable=True)
         result = indices[:, :width].cpu().numpy(), values[:, :width].cpu().numpy()
     else:
@@ -136,7 +164,10 @@ def top(scores, width):
     return result
 
 
-def reserve():
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+def reserve(device):
+    started = time.perf_counter()
     torch.set_num_threads(THREADS)
-    torch.cuda.set_per_process_memory_fraction(FRACTION)
+    if require(device) == "cuda":
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        torch.cuda.set_per_process_memory_fraction(FRACTION, device)
+    LOG.info("reserve exit device=%s seconds=%.3f", device, time.perf_counter() - started)

@@ -279,7 +279,7 @@ def pick(mix):
     return list(mix)[-1]
 
 
-def append_trial(directory, plan, registry):
+def append_trial(directory, plan, registry, device):
     started = time.perf_counter()
     observations, failures, history, failure_history = load_history(directory, plan)
     index = len(plan["trials"])
@@ -312,6 +312,7 @@ def append_trial(directory, plan, registry):
                 training_seed,
                 bounds,
                 plan["random_params"],
+                device,
                 progress=progress,
                 seconds=plan["seconds"],
             )

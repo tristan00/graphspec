@@ -56,8 +56,8 @@ def probe(bank, block, cfg, device):
 def check(directory, output, device, graph=None, spec_path=None):
     entered = time.perf_counter()
     output = output_path(output)
-    if torch.device(device).type == "cuda":
-        compute.reserve()
+    compute.state(device)
+    compute.reserve(device)
     bank = Bank(directory)
     chosen = (
         max(bank.manifest["graphs"], key=lambda entry: entry["observations"])["index"]
@@ -100,7 +100,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("directory")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--device", default=compute.DEVICE)
+    parser.add_argument("--device", required=True)
     parser.add_argument("--graph", type=int)
     parser.add_argument("--spec")
     args = parser.parse_args()

@@ -32,20 +32,25 @@ def configuration(bank, model=None, graph=None, training=None, seed=1):
 
 
 @exclusive
-def fit(bank, config, output, workers=1, seconds=600, batch_sequences=64):
+def fit(bank, config, output, device, workers=1, seconds=600, batch_sequences=64):
     if type(workers) is not int or workers < 1 or type(batch_sequences) is not int or batch_sequences < 1:
         raise ValueError("fit workers and batch_sequences must be positive integers")
     if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0:
         raise ValueError("fit seconds must be a finite positive number")
     from tuning.training import fit as train
 
+    from .infra import compute
+
     started = time.perf_counter()
+    compute.require(device)
     output = output_path(output)
     if output.exists():
         raise FileExistsError("fit output already exists: " + str(output))
     opened = open_bank(bank)
     blocks = opened.blocks(0, config["graph"]["time/history"], config)
     output.mkdir(parents=True)
-    result = train(bank, output, config, blocks, batch_sequences, time.perf_counter() + seconds, workers)
+    result = train(
+        bank, output, config, blocks, batch_sequences, time.perf_counter() + seconds, workers, device
+    )
     LOG.info("fit exit seconds=%.3f output=%s", time.perf_counter() - started, output)
     return result

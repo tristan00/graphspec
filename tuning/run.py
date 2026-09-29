@@ -53,7 +53,16 @@ def worker(args):
     config = read_json(directory / "config.json")
     blocks = read_json(args.training_blocks)
     try:
-        fit(args.bank, directory, config, blocks, args.batch_sequences, args.deadline, args.workers)
+        fit(
+            args.bank,
+            directory,
+            config,
+            blocks,
+            args.batch_sequences,
+            args.deadline,
+            args.workers,
+            args.device,
+        )
     except TimeoutError as error:
         emit("worker_timeout", error=str(error), deadline=args.deadline)
         raise SystemExit(TIMEOUT_EXIT_CODE) from error
@@ -160,7 +169,7 @@ def run(args):
         )
         discard_unfinished(directory, plan)
         write_json(path, plan)
-        execute(directory, plan, args.continuous, bank.registry)
+        execute(directory, plan, args.continuous, bank.registry, args.device)
 
 
 def discard_unfinished(directory, plan):
@@ -220,12 +229,12 @@ def mark_timeout(trial, max_seconds, started, phases, error):
     )
 
 
-def execute_trial(directory, plan, item, index, started, phases):
+def execute_trial(directory, plan, item, index, started, phases, device):
     with Timeline(directory / item["directory"] / "runner_timing.json"), measure("trial_runner"):
-        return execute_trial_body(directory, plan, item, index, started, phases)
+        return execute_trial_body(directory, plan, item, index, started, phases, device)
 
 
-def execute_trial_body(directory, plan, item, index, started, phases):
+def execute_trial_body(directory, plan, item, index, started, phases, device):
     from .budget import wait_worker
 
     trial = directory / item["directory"]
@@ -255,6 +264,8 @@ def execute_trial_body(directory, plan, item, index, started, phases):
             str(batch_size),
             "--workers",
             str(plan["workers"]),
+            "--device",
+            device,
             "--deadline",
             repr(deadline),
         ]
@@ -332,7 +343,7 @@ def execute_trial_body(directory, plan, item, index, started, phases):
     return config
 
 
-def execute(directory, plan, continuous, registry):
+def execute(directory, plan, continuous, registry, device):
     from .data import Bank
     from .selector import append_trial
     from .variants import prune
@@ -356,13 +367,13 @@ def execute(directory, plan, continuous, registry):
             if index == len(plan["trials"]):
                 if not continuous:
                     break
-                append_trial(directory, plan, registry)
+                append_trial(directory, plan, registry, device)
                 phases["select"] = time.perf_counter() - trial_started
             item = plan["trials"][index]
             index += 1
             if Outcome.read(directory / item["directory"], JsonCache()) is not None:
                 continue
-            config = execute_trial(directory, plan, item, index, trial_started, phases)
+            config = execute_trial(directory, plan, item, index, trial_started, phases, device)
             stage = time.perf_counter()
             with Timeline(directory / item["directory"] / "maintenance_timing.json"), measure("maintenance"):
                 with measure("cache_prune"):
@@ -392,6 +403,7 @@ def main():
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--bank", required=True)
     run_parser.add_argument("--output", required=True)
+    run_parser.add_argument("--device", required=True)
     run_parser.add_argument("--seed", type=int, default=20260909)
     run_parser.add_argument("--batch-sequences", type=int, default=64)
     run_parser.add_argument("--continuous", action="store_true")
@@ -438,6 +450,7 @@ def main():
     worker_parser.add_argument("--batch-sequences", type=int, required=True)
     worker_parser.add_argument("--deadline", type=float, required=True)
     worker_parser.add_argument("--workers", type=int, required=True)
+    worker_parser.add_argument("--device", required=True)
     report_parser = subparsers.add_parser("report")
     report_parser.add_argument("directory")
     args = parser.parse_args()

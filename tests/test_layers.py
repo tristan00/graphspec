@@ -11,45 +11,43 @@ def edge_loop(h, source, destination, relation, weights):
 
 
 def test_segment_matmul_without_edges():
-    h, weights = torch.randn(5, 4, device="cuda"), torch.randn(3, 4, 4, device="cuda")
-    empty = torch.zeros(0, dtype=torch.long, device="cuda")
+    h, weights = torch.randn(5, 4), torch.randn(3, 4, 4)
+    empty = torch.zeros(0, dtype=torch.long)
     groups = Groups((empty, empty), empty, 5)
     update = h.new_zeros((6, 4)).index_add_(
         0, groups.relational.targets, segment_matmul(h, weights, groups.relational)
     )
-    assert torch.equal(update, torch.zeros(6, 4, device="cuda")) and torch.equal(
-        groups.degree, torch.ones(5, device="cuda")
-    )
+    assert torch.equal(update, torch.zeros(6, 4)) and torch.equal(groups.degree, torch.ones(5))
 
 
 def test_segment_matmul_matches_edge_loop():
     torch.manual_seed(0)
-    h, weights = torch.randn(60, 4, device="cuda"), torch.randn(3, 4, 4, device="cuda")
+    h, weights = torch.randn(60, 4), torch.randn(3, 4, 4)
     source, destination = (
-        torch.randint(0, 60, (200,), device="cuda"),
-        torch.randint(0, 60, (200,), device="cuda"),
+        torch.randint(0, 60, (200,)),
+        torch.randint(0, 60, (200,)),
     )
-    relation = torch.randint(0, 3, (200,), device="cuda")
+    relation = torch.randint(0, 3, (200,))
     groups = Groups((source, destination), relation, 60)
     update = h.new_zeros((61, 4)).index_add_(
         0, groups.relational.targets, segment_matmul(h, weights, groups.relational)
     )[:60]
     torch.testing.assert_close(update, edge_loop(h, source, destination, relation, weights))
-    counts = torch.zeros(60, device="cuda").index_add_(0, destination, torch.ones(200, device="cuda"))
+    counts = torch.zeros(60).index_add_(0, destination, torch.ones(200))
     assert (counts == 0).any() and torch.equal(groups.degree, counts.clamp_min(1))
 
 
 def test_relational_layer_matches_per_name_linears():
     torch.manual_seed(1)
-    layer = Spatial(4, "relational", 3, dict(first=2, second=5)).cuda()
-    h = torch.randn(40, 4, device="cuda")
+    layer = Spatial(4, "relational", 3, dict(first=2, second=5))
+    h = torch.randn(40, 4)
     source, destination = (
-        torch.randint(0, 40, (90,), device="cuda"),
-        torch.randint(0, 40, (90,), device="cuda"),
+        torch.randint(0, 40, (90,)),
+        torch.randint(0, 40, (90,)),
     )
-    relation = torch.randint(0, 3, (90,), device="cuda")
-    first, second = torch.randn(30, 2, device="cuda"), torch.randn(20, 5, device="cuda")
-    edges = torch.cat((torch.arange(30, device="cuda"), torch.arange(30, 50, device="cuda")))
+    relation = torch.randint(0, 3, (90,))
+    first, second = torch.randn(30, 2), torch.randn(20, 5)
+    edges = torch.cat((torch.arange(30), torch.arange(30, 50)))
     groups = Groups(
         (source, destination),
         relation,
@@ -66,8 +64,6 @@ def test_relational_layer_matches_per_name_linears():
             destination[rows],
             (values.sign() * values.abs().log1p()) @ layer.attribute_weights[slot, :width],
         )
-    count = (
-        torch.zeros(40, device="cuda").index_add_(0, destination, torch.ones(90, device="cuda")).clamp_min(1)
-    )
+    count = torch.zeros(40).index_add_(0, destination, torch.ones(90)).clamp_min(1)
     expected = layer.norm(h + torch.nn.functional.silu(layer.root(h) + update / count[:, None]))
     torch.testing.assert_close(layer(h, (source, destination), groups), expected)

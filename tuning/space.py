@@ -179,6 +179,7 @@ def propose(
     training_seed,
     bounds,
     random_params,
+    device,
     progress=None,
     seconds=600,
 ):
@@ -205,7 +206,7 @@ def propose(
 
     update("Fitting models")
     history = [entry["config"] for entry in records]
-    model = build(space.encode(history), losses, complete, seed)
+    model = build(space.encode(history), losses, complete, seed, device)
     candidates = draw_candidates(registry, bounds, seconds, history, seed, training_seed, fixed, CANDIDATES)
     update("Ranking candidates")
     index, value = model.choose(space.encode(candidates))
