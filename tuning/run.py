@@ -71,11 +71,11 @@ def registered(path):
 
 
 def worker(args):
-    registered(args.registered)
     directory = Path(args.output)
     config = read_json(directory / "config.json")
     blocks = read_json(args.training_blocks)
     try:
+        registered(args.registered)
         fit(
             args.bank,
             directory,
