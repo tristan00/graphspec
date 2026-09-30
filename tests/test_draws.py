@@ -24,7 +24,7 @@ from tuning.batches import inputs
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("draws")
 GROUPS = ("coupling", "events", "neighbors", "walks")
-SAMPLED = 2
+SAMPLED, PAIRED = 2, 8
 LIMITS = GraphLimits("cpu")
 DRAWN = {
     "time/periods": "every",
@@ -188,8 +188,7 @@ def sampled(found, registry, order):
         0, held, b["member_entity"].astype(np.int64), cutoffs, 0, SAMPLED, 2, registry, spec, transform.SEED
     )
     x, task = (piece[1] for piece in history["history_x"].segments[0][2])
-    common = through(keys.entities, history["common_ids"])
-    place = np.argsort(common, axis=1, kind="stable")
+    paired = inputs.history_inputs(window, b, PAIRED, False, None)
     result = dict(
         history=rows(
             spaces.member,
@@ -200,9 +199,8 @@ def sampled(found, registry, order):
         ),
         common=rows(
             spaces.rows,
-            np.take_along_axis(common, place, 1),
-            np.take_along_axis(history["common_frequency"], place, 1),
-            *(history[name] for name in ("common_stats", "pair_gap", "pair_mask")),
+            through(keys.entities, paired["common_ids"]),
+            *(paired[name] for name in ("common_frequency", "common_stats", "pair_gap", "pair_mask")),
         ),
         tree=rows(
             spaces.member,
@@ -212,9 +210,11 @@ def sampled(found, registry, order):
             ),
         ),
     )
-    full = history["history_mask"].all(1)
-    LOG.info("sampled exit order=%s full=%d seconds=%.3f", order, int(full.sum()), time.perf_counter() - started)
-    return result, int(full.sum())
+    full, shared = int(history["history_mask"].all(1).sum()), int(((paired["common_ids"] >= 0).sum(1) > 1).sum())
+    LOG.info(
+        "sampled exit order=%s full=%d shared=%d seconds=%.3f", order, full, shared, time.perf_counter() - started
+    )
+    return result, full, shared
 
 
 @pytest.fixture(scope="module")
@@ -279,8 +279,8 @@ def test_the_neighbours_a_batch_reads_are_equal_when_entities_are_renumbered_or_
 ):
     registry = drawn[0]
     _, whole, turned = unlinked
-    found, full = sampled(whole, registry, order)
-    assert full and differing(sampled(turned, registry, order)[0], found) == []
+    found, full, shared = sampled(whole, registry, order)
+    assert full and shared and differing(sampled(turned, registry, order)[0], found) == []
 
 
 def test_no_draw_reads_a_random_generator_or_a_device(drawn, monkeypatch):

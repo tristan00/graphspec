@@ -488,7 +488,8 @@ def paired(
             scratch,
         )
         shared = 0
-        for value in np.unique(first):
+        distinct = np.unique(first)
+        for value in distinct[np.argsort(keyed[0][distinct], kind="mergesort")]:
             if occurrences(second, value) > 0:
                 common_ids[i, shared] = value
                 common_frequency[i, shared] = occurrences(first, value) * occurrences(second, value)
