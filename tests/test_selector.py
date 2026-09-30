@@ -1,7 +1,9 @@
 import argparse
+from pathlib import Path
 
 import numpy as np
 import pytest
+import support
 from optuna.distributions import IntDistribution
 
 from graphspec.infra.files import read_json, write_json
@@ -9,14 +11,30 @@ from graphspec.operations import parameters as specs
 from graphspec.representations.groups import lags
 from tuning.bank.bank import Bank
 from tuning.families.model_spec import space
+from tuning.searches import selector
 from tuning.searches.run import run
-from tuning.searches.selector import distribution, random_suggest, suggest
+from tuning.searches.selector import distribution
 from tuning.statement import state
+
+TEMPLATE = support.template()
+PIPELINE = str(Path(__file__).parent / "pipeline.json")
+
+
+def random_suggest(*arguments):
+    return selector.random_suggest(*arguments, TEMPLATE)
+
+
+def suggest(*arguments):
+    return selector.suggest(*arguments, TEMPLATE)
+
+
+def test_the_template_of_the_suite_is_the_seven_in_their_order():
+    assert read_json(PIPELINE) == TEMPLATE
 
 
 def test_numeric_parameters_use_full_integer_domains(bank):
     registry = Bank(bank).registry
-    parameters = space(registry) + specs.space(registry, specs.GROUPS)
+    parameters = space(registry) + support.parameters(registry, specs.GROUPS)
     expected = {
         "snapshot/heads": (1, 4),
         "sequence/heads": (1, 4),
@@ -98,6 +116,7 @@ def arguments(bank, output, **overrides):
         mix=None,
         objective=None,
         bounds=None,
+        pipeline=None,
         workers=1,
         variant_gb=1,
         trained=["train"],
@@ -108,7 +127,7 @@ def arguments(bank, output, **overrides):
     return argparse.Namespace(**values)
 
 
-FRESH = dict(selector="random", random_trials=10, mix=["random=100"], random_params=[])
+FRESH = dict(selector="random", random_trials=10, mix=["random=100"], random_params=[], pipeline=PIPELINE)
 
 
 def test_hidden_covers_every_integer_and_uses_integer_tpe_distribution(bank):
@@ -212,6 +231,7 @@ def test_random_parameter_settings_persist_and_can_be_cleared(bank, tmp_path):
             random_trials=100,
             mix=["botorch=100"],
             random_params=["model/view"],
+            pipeline=PIPELINE,
         )
     )
     plan = read_json(output / "plan.json")
@@ -248,7 +268,7 @@ def test_bounds_that_hold_the_seconds_of_a_trial_are_refused_naming_them(bank, t
 
     registry = Bank(bank).registry
     with pytest.raises(ValueError, match="the bounds hold max_seconds"):
-        check_bounds(registry, {"max_seconds": bound})
+        check_bounds(registry, {"max_seconds": bound}, TEMPLATE)
     with pytest.raises(ValueError, match="the bounds hold max_seconds"):
         random_suggest(registry, 1, 2, {"epochs": 2, "max_seconds": bound}, 600)
     with pytest.raises(ValueError, match="the bounds hold max_seconds"):
@@ -309,6 +329,7 @@ def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_fie
         "random_params",
         "bounds",
         "objective",
+        "pipeline",
     ],
 )
 def test_a_plan_on_disk_that_lacks_a_field_stops_naming_it(bank, tmp_path, field):
@@ -342,6 +363,7 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path, s
         holdout_rows=1,
         objective=None,
         limit=None,
+        pipeline=TEMPLATE,
     )
     write_json(tmp_path / "plan.json", plan)
     append_trial(tmp_path, plan, registry, state(dict(statement, seconds=1200)))
@@ -374,6 +396,7 @@ def test_tpe_good_set_is_the_best_hundred_trials():
         ("random_trials", "--startup-trials"),
         ("mix", "--mix"),
         ("random_params", "--random-params"),
+        ("pipeline", "--pipeline"),
     ],
 )
 def test_a_new_run_that_leaves_a_choice_of_the_search_unstated_stops_naming_it(bank, tmp_path, field, flag):
@@ -384,9 +407,20 @@ def test_a_new_run_that_leaves_a_choice_of_the_search_unstated_stops_naming_it(b
 
 def test_a_new_run_stores_the_choices_of_the_search_as_stated(bank, tmp_path):
     mix = ["random=25", "tpe=25", "forest=25", "botorch=25"]
-    run(arguments(bank, tmp_path / "mixed", selector="botorch", random_trials=10, mix=mix, random_params=[]))
+    run(
+        arguments(
+            bank,
+            tmp_path / "mixed",
+            selector="botorch",
+            random_trials=10,
+            mix=mix,
+            random_params=[],
+            pipeline=PIPELINE,
+        )
+    )
     plan = read_json(tmp_path / "mixed" / "plan.json")
     assert plan["selector"] == "botorch" and plan["random_trials"] == 10 and plan["random_params"] == []
+    assert plan["pipeline"] == TEMPLATE
     assert plan["mix"] == {"random": 25, "tpe": 25, "forest": 25, "botorch": 25}
     assert plan["batch_sequences"] == 8 and plan["seconds"] == 10 and plan["seed"] == 3
 

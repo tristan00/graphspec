@@ -47,7 +47,7 @@ DERIVED = dict(
 )
 
 
-def configurations(place):
+def read(place):
     started = time.perf_counter()
     place = Path(place)
     if not (place / "fixture.json").exists():
@@ -57,8 +57,29 @@ def configurations(place):
         raise ValueError(
             "the fixture holds version %s; its reader reads %d" % (held["truth_version"], VERSION)
         )
-    LOG.debug("configurations exit seconds=%.4f", time.perf_counter() - started)
+    LOG.debug("read exit seconds=%.4f", time.perf_counter() - started)
+    return held
+
+
+def configurations(place):
+    held = read(place)
     return held["configurations"], held["joined"]
+
+
+def labels(place):
+    return tuple(read(place)["stages"])
+
+
+def pipeline(registry, entry):
+    from support import pipelined
+
+    started = time.perf_counter()
+    values = spec(entry["values"])
+    if "relations/direction" in values:
+        values["edges/direction"] = values["relations/direction"]
+    result = pipelined(registry, values)
+    LOG.debug("pipeline exit name=%s seconds=%.4f", entry["name"], time.perf_counter() - started)
+    return result
 
 
 def shaped(source):

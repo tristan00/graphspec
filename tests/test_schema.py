@@ -395,8 +395,12 @@ def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(g
     source = {held["name"]: held for held in entries}[entry["configuration"]]["source"]
     opened = Deriver(grounded[source["name"]] / "bank", "cpu", RESIDENT)
     started = time.perf_counter()
-    spec = specs.configured(specs.space(opened.registry, tuple(entry["groups"])), entry["values"])
-    assert spec == fixture.spec(entry["spec"])
+    rest = fixture.pipeline(opened.registry, entry)[1]
+    spec = specs.configured(specs.settings(opened.registry, tuple(entry["groups"])), rest)
+    recorded = fixture.spec(entry["spec"])
+    assert {name: value for name, value in spec.items() if name.startswith("graphs/")} == {
+        name: value for name, value in recorded.items() if name.startswith("graphs/")
+    }
     members = [support.shown(opened, graph["index"]).dense() for graph in opened.manifest["graphs"]]
     held = fixture.joined(ground / entry["folder"] / entry["files"]["input"], source["level"], members)
     assert fixture.differing(join.joined(members, support.fitted(opened), spec).arrays, held) == []

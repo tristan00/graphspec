@@ -1,0 +1,9 @@
+[
+  {"operation": "graphspec.periods"},
+  {"operation": "graphspec.window"},
+  {"operation": "graphspec.nodes"},
+  {"operation": "graphspec.derive"},
+  {"operation": "graphspec.relations"},
+  {"operation": "graphspec.edges"},
+  {"operation": "graphspec.merging"}
+]

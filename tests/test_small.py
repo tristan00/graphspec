@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 import pytest
+from support import configuration
 
 from conftest import Inline
 from graphspec.facts.stored import Facts, inputs
@@ -16,7 +17,6 @@ from graphspec.views.graph import Graph
 from graphspec.views.view import finished, sequences, view
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
-from tuning.families.model_spec import configuration
 from tuning.fits.training import fit
 from tuning.statement import state
 

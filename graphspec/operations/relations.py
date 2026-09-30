@@ -12,38 +12,21 @@ from .rows import FACTS, grouped, select
 LOG = logging.getLogger(__name__)
 
 
-def linking(registry):
+def joined(registry):
     started = time.perf_counter()
-    names = tuple("relations/%s/keep" % group for group in registry.groups)
-    LOG.debug("linking exit relations=%d seconds=%.4f", len(names), time.perf_counter() - started)
-    return lambda spec: any(enabled(spec, name) for name in names)
+    result = {frozenset(pair) for group in registry.groups for pair in registry.named[group].pairs}
+    LOG.debug("joined exit pairs=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
-def joining(registry):
-    started = time.perf_counter()
-    joined = {}
-    for group in registry.groups:
-        for pair in registry.named[group].pairs:
-            joined.setdefault(frozenset(pair), []).append("relations/%s/keep" % group)
-    LOG.debug("joining exit pairs=%d seconds=%.4f", len(joined), time.perf_counter() - started)
-    return lambda spec, first, second: any(
-        enabled(spec, name) for name in joined.get(frozenset((first, second)), ())
-    )
+def relating(registry):
+    stated = bool(registry.groups)
+    return lambda spec: stated
 
 
 def stated(registry):
     started = time.perf_counter()
-    result = tuple(
-        flag(
-            "relations/%s/keep" % group,
-            True,
-            lambda spec, edge=registry.named[group]: any(
-                spec["nodes/%s/keep" % source] and spec["nodes/%s/keep" % target]
-                for source, target in edge.pairs
-            ),
-        )
-        for group in registry.groups
-    )
+    result = tuple(flag("relations/%s/keep" % group, True) for group in registry.groups)
     LOG.debug("relations stated exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 

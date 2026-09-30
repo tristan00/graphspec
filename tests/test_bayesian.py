@@ -2,6 +2,7 @@ import copy
 
 import numpy as np
 import pytest
+import support
 import torch
 
 from graphspec.infra.files import read_json
@@ -11,6 +12,7 @@ from tuning.searches.surrogates import Search
 from tuning.statement import state
 
 pytestmark = pytest.mark.xdist_group("candidates")
+TEMPLATE = support.template()
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +72,9 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     registry = Bank(bank).registry
     observations, failures = [], []
     for index, view in enumerate(("snapshot", "mixed", "sequence", "memory")):
-        config, _ = selector.random_suggest(registry, index, index + 1, {"view": view, "epochs": 4}, 600)
+        config, _ = selector.random_suggest(
+            registry, index, index + 1, {"view": view, "epochs": 4}, 600, TEMPLATE
+        )
         config["max_seconds"] = 600 + 400 * index
         entry = dict(config=config, status="complete", trial=str(index), objective=float(index + 1))
         observations.append(entry)
@@ -108,13 +112,23 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     monkeypatch.setattr(surrogates, "Search", InspectSearch)
     monkeypatch.setattr(space, "CANDIDATES", 12)
     bounds = {"epochs": {"low": 1, "high": 3}, "hidden": 37}
-    encoding = space.Space(registry, bounds, 600, [entry["config"] for entry in original])
+    encoding = space.Space(registry, bounds, 600, [entry["config"] for entry in original], TEMPLATE)
     names = list(encoding.parameters)
     preceding = {name: names[: names.index(name)] for name in ("epochs", "max_seconds")}
     random_params = ["model/view", "lr", "epochs", "max_seconds"]
     progress = []
     config, selection = surrogates.suggest_botorch(
-        registry, observations, failures, 42, 7, bounds, random_params, "cpu", 600, progress=progress.append
+        registry,
+        observations,
+        failures,
+        42,
+        7,
+        bounds,
+        TEMPLATE,
+        random_params,
+        "cpu",
+        600,
+        progress=progress.append,
     )
     assert selection["observations"] == selection["failed_observations"] == 4
     assert selection["excluded"] == []
@@ -142,7 +156,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
     ]
     assert progress[-1]["stage"] == "Proposal ready"
     repeated, repeated_selection = surrogates.suggest_botorch(
-        registry, observations, failures, 42, 7, bounds, random_params, "cpu", 600
+        registry, observations, failures, 42, 7, bounds, TEMPLATE, random_params, "cpu", 600
     )
     assert repeated == config
     assert repeated_selection["fixed_params"] == selection["fixed_params"]
@@ -150,7 +164,7 @@ def test_history_and_candidates_preserve_parameters_and_condition_on_random_valu
 
 def test_random_view_covers_snapshot_and_other_choices(bank):
     registry = Bank(bank).registry
-    encoding = space.Space(registry, {}, 600, ())
+    encoding = space.Space(registry, {}, 600, (), TEMPLATE)
     parameter = encoding.proposal_parameters["model/view"]
     values = {parameter.uniform(np.random.default_rng(seed)) for seed in range(200)}
     assert values == set(parameter.options)
@@ -163,7 +177,7 @@ def test_random_view_covers_snapshot_and_other_choices(bank):
 @pytest.mark.parametrize("finished,expected", [(99, "random"), (100, "botorch")])
 def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, statement, finished, expected):
     registry = Bank(bank).registry
-    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
+    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600, TEMPLATE)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(40)]
     failures = [dict(config=config, status="failed", trial="bad-" + str(i)) for i in range(finished - 40)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, failures, [], []))
@@ -186,6 +200,7 @@ def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, state
         bounds={},
         bank_manifest_sha256="bank",
         supervision_sha256="labels",
+        pipeline=TEMPLATE,
     )
     selector.append_trial(tmp_path, plan, registry, state(dict(statement, seconds=1200)))
     item = plan["trials"][-1]
@@ -214,10 +229,10 @@ def test_acquisition_conditions_remaining_choices_on_epochs_and_runtime():
 
 def test_unknown_historical_runtime_stays_unknown(bank):
     registry = Bank(bank).registry
-    config, _ = selector.random_suggest(registry, 1, 2, {}, 600)
+    config, _ = selector.random_suggest(registry, 1, 2, {}, 600, TEMPLATE)
     unknown = copy.deepcopy(config)
     del unknown["max_seconds"]
-    encoding = space.Space(registry, {}, 600, [dict(config, max_seconds=1200)])
+    encoding = space.Space(registry, {}, 600, [dict(config, max_seconds=1200)], TEMPLATE)
     encoded = encoding.encode([config, unknown])
     assert encoded[0, -1] == 1
     assert encoded[1, -1] == 0
@@ -225,17 +240,17 @@ def test_unknown_historical_runtime_stays_unknown(bank):
 
 def test_inactive_parameters_are_distinct_from_active_minimum_values(bank):
     registry = Bank(bank).registry
-    config, _ = selector.random_suggest(registry, 1, 2, {"view": "mixed"}, 600)
+    config, _ = selector.random_suggest(registry, 1, 2, {"view": "mixed"}, 600, TEMPLATE)
     other = copy.deepcopy(config)
     other["model"]["snapshot/layers"] = 1
-    encoding = space.Space(registry, {}, 600, ())
+    encoding = space.Space(registry, {}, 600, (), TEMPLATE)
     encoded = encoding.encode([config, other])
     assert not np.array_equal(encoded[0], encoded[1])
 
 
 def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch, statement):
     registry = Bank(bank).registry
-    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
+    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600, TEMPLATE)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(20)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, [], [], []))
     monkeypatch.setattr(selector, "suggest", lambda *args, **kwargs: (config, dict(metadata, phase="tpe")))
@@ -253,6 +268,7 @@ def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch
         bounds={},
         bank_manifest_sha256="bank",
         supervision_sha256="labels",
+        pipeline=TEMPLATE,
     )
     for _ in range(40):
         selector.append_trial(tmp_path, plan, registry, state(dict(statement, seconds=600)))

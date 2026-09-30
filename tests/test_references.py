@@ -4,6 +4,7 @@ import logging
 import time
 
 import pytest
+import support
 import torch
 
 from conftest import shared
@@ -19,10 +20,11 @@ from tuning.bank.build import build
 from tuning.batches.batching import batches, pack_batch
 from tuning.batches.inputs import couples
 from tuning.families.event_graph import KINDS
-from tuning.families.model_spec import VIEWS, configuration, views
+from tuning.families.model_spec import VIEWS, views
 from tuning.families.models import build as network
 
 LOG = logging.getLogger(__name__)
+configuration = support.configuration
 SPLITS = dict(trained=["train"], scored=["test"], sees=dict(train=[], test=[]))
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
 TIMES, THIRD, KIND, VALUE = 4, 1, 3, 2
@@ -279,9 +281,11 @@ def sizes(banks, name):
     held = opened(banks, name)
     cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, copy.deepcopy(SPLITS))
     registry = held.fitted(cfg)
-    space = specs.space(registry, specs.GROUPS)
-    spec = specs.configured(space, {"time/history": 2})
-    arrays = materialize(Graph.load(held.view(0, cfg)).dense(), registry, spec, specs.GROUPS, held.limits())
+    space = support.parameters(registry, specs.GROUPS)
+    steps, spec = support.steps(registry, {"time/history": 2}, specs.GROUPS)
+    arrays = materialize(
+        Graph.load(held.view(0, cfg)).dense(), registry, steps, spec, specs.GROUPS, held.limits(), None
+    )
     weights = {}
     for family in views(registry):
         torch.manual_seed(5)
@@ -302,7 +306,9 @@ def test_a_relation_taken_from_a_column_has_the_parameters_arrays_and_weights_of
     banks = dict(banks, wide=shared("references-wide", made(WIDE)) / "wide")
     few, many = sizes(banks, "stated"), sizes(banks, "wide")
     assert few.pop("values") == FEW and many.pop("values") == MANY and few == many
-    assert "relations/links/keep" in [parameter.name for parameter in specs.space(opened(banks, "wide").registry, ())]
+    assert "relations/links/keep" in [
+        parameter.name for parameter in support.parameters(opened(banks, "wide").registry, ())
+    ]
     assert "attributes_links" in few["arrays"] and set(few["weights"]) == set(VIEWS)
 
 

@@ -64,17 +64,6 @@ def test_the_suite_clears_what_it_made_under_its_homes_except_compiled_code(tmp_
     ]
 
 
-def test_the_caches_of_a_bank_are_keyed_by_the_code_that_made_them(bank, monkeypatch):
-    from graphspec.build import staged
-    from tuning.bank import bank as data
-
-    assert data.CODE == code.digest(data.PACKAGES)
-    assert staged.CODE == code.digest((Path(staged.__file__).parents[1],))
-    before = data.Bank(bank).cache
-    monkeypatch.setattr(data, "CODE", "0" * 64)
-    assert data.Bank(bank).cache != before and data.Bank(bank).cache.parent == before.parent
-
-
 def test_json_write_failure_preserves_prior_record_and_removes_temporary(tmp_path):
     path = tmp_path / "record.json"
     files.write_json(path, {"value": 1})

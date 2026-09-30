@@ -7,6 +7,7 @@ from functools import partial
 import numpy as np
 import pytest
 import registered
+from support import configuration
 
 from graphspec import ABOUT, ENCODERS, FORMS, HELD, SEES, SEVERAL, SORTS, STEPS, STORAGE, TIES, TYPES
 from graphspec.build.forms import Form
@@ -21,7 +22,6 @@ from graphspec.sources import synthetic
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 from tuning.bank.variants import prepare
-from tuning.families.model_spec import configuration
 from tuning.fits.training import fit
 from tuning.statement import state
 

@@ -168,11 +168,12 @@ def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
 
 
 def test_mixed_nodes_without_an_entity_carry_no_token(bank):
+    from support import configuration
+
     from conftest import SPLITS
     from graphspec.infra.arrays import RESIDENT
     from tuning.bank.bank import Deriver
     from tuning.batches.inputs import recipe
-    from tuning.families.model_spec import configuration
 
     opened = Deriver(bank, "cpu", RESIDENT)
     cfg = configuration(

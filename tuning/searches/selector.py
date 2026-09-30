@@ -8,6 +8,7 @@ from graphspec.infra.files import JsonCache, read_json, sha256_file, write_json
 from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
+from graphspec.operations import pipeline
 from graphspec.views.view import STEPS
 from tuning.families.model_spec import TRAINING, describe, groups
 from tuning.families.model_spec import space as model_space
@@ -52,7 +53,12 @@ def stepped(registry, parameters):
 
 
 def graph_space(registry, model, bounds):
-    return stepped(registry, narrow_group(specs.space(registry, groups(model)), bounds))
+    return stepped(registry, narrow_group(specs.settings(registry, groups(model)), bounds))
+
+
+@timed("selector.pipeline_space")
+def pipeline_space(registry, template, bounds):
+    return narrow_group(pipeline.space(registry, template), bounds)
 
 
 def spaces(registry, bounds):
@@ -74,14 +80,19 @@ def narrow_group(parameters, bounds):
     return specs.narrow(parameters, applicable)
 
 
-def check_bounds(registry, bounds):
+def check_bounds(registry, bounds, template):
+    started = time.perf_counter()
     if "max_seconds" in bounds:
         raise ValueError(
             "the bounds hold max_seconds; the seconds of a trial are those of the statement and no other"
         )
-    known = {
-        parameter.name for parameter in model_space(registry) + TRAINING + specs.space(registry, specs.GROUPS)
-    }
+    parameters = (
+        model_space(registry)
+        + TRAINING
+        + specs.settings(registry, specs.GROUPS)
+        + pipeline.space(registry, template)
+    )
+    known = {parameter.name for parameter in parameters}
     unknown = sorted(
         key
         for key in bounds
@@ -89,15 +100,16 @@ def check_bounds(registry, bounds):
     )
     if unknown:
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
-    specs.narrow(model_space(registry) + TRAINING + specs.space(registry, specs.GROUPS), bounds)
-    stepped(registry, narrow_group(specs.space(registry, ()), bounds))
+    specs.narrow(parameters, bounds)
+    stepped(registry, narrow_group(specs.settings(registry, ()), bounds))
+    emit("bounds_checked", bounds=len(bounds), seconds=time.perf_counter() - started)
 
 
 def training(config):
     return {parameter.name: config[parameter.name] for parameter in TRAINING}
 
 
-def observation(registry, config, value, bounds, **attrs):
+def observation(registry, config, value, bounds, template, **attrs):
     params, distributions = {}, {}
     models, trainings = spaces(registry, bounds)
 
@@ -109,6 +121,9 @@ def observation(registry, config, value, bounds, **attrs):
     enter("model/", models, config["model"])
     enter("", trainings, training(config))
     enter("graph/", graph_space(registry, config["model"], bounds), config["graph"])
+    enter(
+        "", pipeline_space(registry, template, bounds), pipeline.flattened(template, config["pipeline"])
+    )
     if "max_seconds" in config:
         enter("", (runtime_parameter(config["max_seconds"]),), {"max_seconds": config["max_seconds"]})
     return tpe.record(value, params, distributions, config=config, **attrs)
@@ -132,18 +147,20 @@ def outside(parameters, spec):
     return names
 
 
-def excluded(registry, config, bounds):
+def excluded(registry, config, bounds, template):
     models, trainings = spaces(registry, bounds)
     return (
         outside(models, config["model"])
         + outside(trainings, training(config))
         + outside(graph_space(registry, config["model"], bounds), config["graph"])
+        + outside(pipeline_space(registry, template, bounds), pipeline.flattened(template, config["pipeline"]))
         + (outside((runtime_parameter(config["max_seconds"]),), config) if "max_seconds" in config else [])
     )
 
 
-def metadata(registry, config, seed, training_seed, bounds, **extra):
+def metadata(registry, config, seed, training_seed, bounds, template, **extra):
     model, graph = spaces(registry, bounds)[0], graph_space(registry, config["model"], bounds)
+    held = pipeline_space(registry, template, bounds)
     return dict(
         extra,
         model_digest=specs.digest(config["model"]),
@@ -153,12 +170,15 @@ def metadata(registry, config, seed, training_seed, bounds, **extra):
         graph_digest=specs.digest(config["graph"]),
         graph_summary=specs.summary(graph, config["graph"]),
         graph_space=[parameter.declaration() for parameter in graph],
+        pipeline_digest=specs.digest(config["pipeline"]),
+        pipeline_summary=specs.summary(held, pipeline.flattened(template, config["pipeline"])),
+        pipeline_space=[parameter.declaration() for parameter in held],
         selector_seed=seed,
         training_seed=training_seed,
     )
 
 
-def configuration(registry, choose, training_seed, bounds, seconds):
+def configuration(registry, choose, training_seed, bounds, seconds, template):
     models, trainings = spaces(registry, bounds)
     model = specs.draw(models, lambda parameter: choose("model/", parameter))
     config = dict(
@@ -167,16 +187,20 @@ def configuration(registry, choose, training_seed, bounds, seconds):
     config["graph"] = specs.draw(
         graph_space(registry, model, bounds), lambda parameter: choose("graph/", parameter)
     )
+    config["pipeline"] = pipeline.entries(
+        template,
+        specs.draw(pipeline_space(registry, template, bounds), lambda parameter: choose("", parameter)),
+    )
     config["max_seconds"] = choose("", runtime_parameter(seconds))
     return config
 
 
-def suggest(registry, observations, failures, seed, training_seed, bounds, seconds):
+def suggest(registry, observations, failures, seed, training_seed, bounds, seconds, template):
     started = time.perf_counter()
-    check_bounds(registry, bounds)
+    check_bounds(registry, bounds, template)
     records, left_out, used = [], [], dict(complete=0, failed=0)
     for entry in observations + failures:
-        names = excluded(registry, entry["config"], bounds)
+        names = excluded(registry, entry["config"], bounds, template)
         if names:
             left_out.append(dict(trial=entry["trial"], status=entry["status"], parameters=names))
             continue
@@ -188,6 +212,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
                 entry["config"],
                 entry["objective"] if complete else math.inf,
                 bounds,
+                template,
                 outcome=entry["status"],
             )
         )
@@ -199,6 +224,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
         training_seed,
         bounds,
         seconds,
+        template,
     )
     return config, metadata(
         registry,
@@ -206,6 +232,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
         seed,
         training_seed,
         bounds,
+        template,
         sampler="TPESampler",
         settings=SETTINGS,
         params=trial.params,
@@ -219,12 +246,12 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
     )
 
 
-def random_suggest(registry, seed, training_seed, bounds, seconds):
+def random_suggest(registry, seed, training_seed, bounds, seconds, template):
     started = time.perf_counter()
-    check_bounds(registry, bounds)
+    check_bounds(registry, bounds, template)
     rng = np.random.default_rng(seed)
     config = configuration(
-        registry, lambda prefix, parameter: parameter.uniform(rng), training_seed, bounds, seconds
+        registry, lambda prefix, parameter: parameter.uniform(rng), training_seed, bounds, seconds, template
     )
     return config, metadata(
         registry,
@@ -232,6 +259,7 @@ def random_suggest(registry, seed, training_seed, bounds, seconds):
         seed,
         training_seed,
         bounds,
+        template,
         sampler="numpy.random.Generator",
         phase="random",
         seconds=time.perf_counter() - started,
@@ -313,8 +341,11 @@ def append_trial(directory, plan, registry, stated):
         finished < plan["random_trials"] if plan["selector"] in SURROGATES else index < plan["random_trials"]
     )
     selector = "random" if startup else pick(plan["mix"])
+    template = plan["pipeline"]
     if selector == "random":
-        config, selection = random_suggest(registry, selector_seed, training_seed, bounds, stated.seconds)
+        config, selection = random_suggest(
+            registry, selector_seed, training_seed, bounds, stated.seconds, template
+        )
     elif selector in SURROGATES:
         from .surrogates import suggest_botorch, suggest_forest
 
@@ -335,6 +366,7 @@ def append_trial(directory, plan, registry, stated):
                 selector_seed,
                 training_seed,
                 bounds,
+                template,
                 plan["random_params"],
                 stated.device,
                 stated.seconds,
@@ -346,7 +378,7 @@ def append_trial(directory, plan, registry, stated):
         selection["failure_history"] = failure_history
     else:
         config, selection = suggest(
-            registry, observations, failures, selector_seed, training_seed, bounds, stated.seconds
+            registry, observations, failures, selector_seed, training_seed, bounds, stated.seconds, template
         )
         selection["failure_history"] = failure_history
     selection.update(

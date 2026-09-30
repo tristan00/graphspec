@@ -6,6 +6,7 @@ from graphspec.budgets import GraphLimits
 from graphspec.engine import join, segments, transform
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
+from graphspec.operations import pipeline
 from graphspec.representations import groups
 from graphspec.views.graph import DENSE
 from tuning.bank.bank import Deriver, identical
@@ -37,18 +38,24 @@ def test_segment_engine_equals_the_physical_join(bank, draw):
     opened = Deriver(bank, "cpu", RESIDENT)
     registry = support.fitted(opened)
     rng = np.random.default_rng(draw)
+    template = [dict(operation=name) for name in support.SEVEN]
+    stated = specs.draw(
+        pipeline.space(registry, template),
+        lambda parameter: True if parameter.name.count("/") == 1 else parameter.uniform(rng),
+    )
+    steps = pipeline.resolved(registry, pipeline.entries(template, stated))
     spec = specs.draw(
-        specs.space(registry, specs.GROUPS),
+        specs.settings(registry, specs.GROUPS),
         lambda parameter: "single" if parameter.name == "graphs/join" else parameter.uniform(rng),
     )
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     graphs = [shortened(graph, int(rng.integers(1, graph.steps + 1))) for graph in graphs]
-    derived = transform.derive(join.joined(graphs, registry, spec), registry, spec, GraphLimits("cpu"))
+    derived = transform.derive(join.joined(graphs, registry, spec), registry, steps, GraphLimits("cpu"), None)
     reference = groups.build(
         derived, registry, spec, specs.GROUPS, transform.SEED, GraphLimits("cpu")
     )
-    plan = segments.Plan(graphs, registry, spec)
-    outputs = segments.derived(plan, graphs, registry, spec, GraphLimits("cpu"))
+    plan = segments.Plan(graphs, registry, steps, spec)
+    outputs = segments.derived(plan, graphs, registry, steps, GraphLimits("cpu"), None)
     stitched = segments.stitch(plan, graphs, outputs)
     assert all(
         identical(np.asarray(derived.arrays[name]), np.asarray(stitched.arrays[name])) for name in DENSE

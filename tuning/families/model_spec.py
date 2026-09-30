@@ -3,6 +3,7 @@ import time
 
 from graphspec.operations import parameters as specs
 from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, number, real
+from graphspec.operations.pipeline import resolved
 
 LOG = logging.getLogger(__name__)
 VIEWS = (
@@ -250,11 +251,16 @@ def configured(registry, values):
     return specs.configured(space(registry), values)
 
 
-def configuration(registry, values, graph_values, seed, splits):
+def configuration(registry, values, pipeline, graph, seed, splits):
+    started = time.perf_counter()
     spec = configured(registry, values)
-    parameters = specs.space(registry, groups(spec))
-    graph = specs.configured(parameters, graph_values)
-    return dict(seed=seed, model=spec, graph=graph, splits=splits, **specs.default(TRAINING))
+    resolved(registry, pipeline)
+    graph = specs.canonical(specs.settings(registry, groups(spec)), graph)
+    result = dict(
+        seed=seed, model=spec, pipeline=pipeline, graph=graph, splits=splits, **specs.default(TRAINING)
+    )
+    LOG.debug("configuration exit entries=%d seconds=%.4f", len(pipeline), time.perf_counter() - started)
+    return result
 
 
 def samples(registry):

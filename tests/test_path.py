@@ -1,6 +1,7 @@
 import numpy as np
 import pyarrow as pa
 import pytest
+from support import configuration
 
 from conftest import SPLITS
 from graphspec.build.output import Stage
@@ -10,7 +11,6 @@ from graphspec.schema.schema import TARGET
 from graphspec.sources.synthetic import Counter, graph_rows, uniform
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
-from tuning.families.model_spec import configuration
 
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SHAPE = uniform(4, 2, "path")
@@ -103,7 +103,6 @@ def expected_points(opened, block):
 def test_path_windows_carry_every_point_of_their_step(path_bank):
     from tuning.batches.batching import recipe_batch
     from tuning.batches.inputs import recipe
-    from tuning.families.model_spec import configuration
 
     opened = Deriver(path_bank, "cpu", RESIDENT)
     cfg = configuration(opened.registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
@@ -128,7 +127,6 @@ def test_path_windows_carry_every_point_of_their_step(path_bank):
 def test_path_windows_join_like_the_windows_of_numbers(path_bank):
     from tuning.bank.variants import prepare
     from tuning.batches.inputs import recipe
-    from tuning.families.model_spec import configuration
 
     opened = Deriver(path_bank, "cpu", RESIDENT)
     single = configuration(
@@ -270,7 +268,6 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     import torch
 
     from tuning.batches.batching import pack_batch
-    from tuning.families.model_spec import configuration
     from tuning.families.models import build
     from tuning.families.periods import blocks as period_blocks
     from tuning.fits.training import loss

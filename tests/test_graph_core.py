@@ -11,6 +11,9 @@ from graphspec.build.calls import GraphTables
 from graphspec.infra import compute
 from graphspec.operations import derive, edges, kernels
 from graphspec.operations import parameters as spec
+from graphspec.operations.edges import EDGES
+from graphspec.operations.pipeline import resolved
+from graphspec.operations.window import WINDOW
 from graphspec.schema.declaration import EdgeType
 from graphspec.views import spans
 from graphspec.views.graph import verify
@@ -115,12 +118,10 @@ def test_bounds_that_leave_out_a_default_leave_the_parameter_without_one():
 
 def test_a_period_length_read_where_it_is_absent_stops_naming_it():
     registry = registered("test", ["person"], [EdgeType("rel", ("base", "rel"), [("person", "person")])])
-    unit = next(parameter for parameter in spec.space(registry, ()) if parameter.name == "time/unit")
-    window = {"time/scheme": "window"}
-    assert unit.active(dict(window, **{"time/periods": "every", "time/period_length": 2}))
-    assert not unit.active(dict(window, **{"time/periods": "steps"}))
-    with pytest.raises(KeyError, match="time/period_length"):
-        unit.active(dict(window, **{"time/periods": "every"}))
+    unit = next(parameter for parameter in WINDOW.stated(registry) if parameter.name == "time/unit")
+    assert unit.active({"time/scheme": "window"}) and not unit.active({"time/scheme": "state"})
+    with pytest.raises(ValueError, match="the entry graphspec.periods of the pipeline states no time/period_length"):
+        resolved(registry, [dict(operation="graphspec.periods", parameters={"time/periods": "every"})])
 
 
 def test_a_name_that_is_no_relation_of_the_registry_has_no_group():
@@ -184,7 +185,7 @@ def test_persistence_bounds_widen_only_the_three_named_relations():
         "edges/*/persistence": {"low": 1, "high": 4},
         **{name: {"low": 1, "high": 8} for name in selected},
     }
-    parameters = spec.narrow(spec.space(registry, ()), bounds)
+    parameters = spec.narrow(EDGES.stated(registry), bounds)
     persistence = [parameter for parameter in parameters if parameter.name.endswith("/persistence")]
     assert len(persistence) == 6
     for parameter in persistence:

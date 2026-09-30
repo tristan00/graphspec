@@ -10,11 +10,11 @@ from graphspec.schema.time import SEVERAL
 from graphspec.views.view import offered
 
 from . import sets
-from .operation import PIPELINE, ordered
 
 LOG = logging.getLogger(__name__)
 GROUPS = ("coupling", "events", "neighbors", "walks", "mixed")
 PACKING = ("time/history", "time/context", "neighbors/order", "neighbors/decay")
+DIRECTIONS = ("inverse", "symmetric", "directed")
 
 
 class Parameter:
@@ -134,7 +134,7 @@ def differs(name, value):
     return lambda spec: name in spec and spec[name] != value
 
 
-def space(registry, groups):
+def settings(registry, groups):
     started = time.perf_counter()
     unknown = sorted(set(groups) - set(GROUPS))
     if unknown:
@@ -147,9 +147,8 @@ def space(registry, groups):
     parameters.append(
         real("graphs/connect_fraction", 0.01, 1.0, 1.0, equals("graphs/join", "single"), log=True)
     )
-    for operation in ordered(PIPELINE):
-        parameters += operation.stated(registry)
     parameters += [flag("nodes/untyped", False)] if len(nodes) > 1 else []
+    parameters += [choice("relations/direction", DIRECTIONS, "inverse")] if registry.groups else []
     tasks = ("task",) if extras["events"] else ()
     if "coupling" in groups:
         parameters += [
@@ -221,7 +220,7 @@ def space(registry, groups):
     if twice:
         raise ValueError("the parameters %s are stated twice" % ", ".join(twice))
     LOG.debug(
-        "space exit seconds=%.4f parameters=%d groups=%s",
+        "settings exit seconds=%.4f parameters=%d groups=%s",
         time.perf_counter() - started,
         len(parameters),
         "+".join(groups),

@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import support
 
 from graphspec.infra.files import read_json
 from tuning.bank.bank import Bank
@@ -8,6 +9,7 @@ from tuning.searches.surrogates import COMPLETION_WEIGHT, Forest, log_expected_i
 from tuning.statement import state
 
 pytestmark = pytest.mark.xdist_group("candidates")
+TEMPLATE = support.template()
 
 
 def test_log_expected_improvement_matches_the_closed_form_and_stays_finite_far_away():
@@ -68,17 +70,27 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
     registry = Bank(bank).registry
     observations, failures = [], []
     for index in range(6):
-        config, _ = selector.random_suggest(registry, index, index + 1, {"epochs": 2}, 600)
+        config, _ = selector.random_suggest(registry, index, index + 1, {"epochs": 2}, 600, TEMPLATE)
         entry = dict(config=config, status="complete", trial=str(index), objective=float(index + 1))
         observations.append(entry)
         failed = dict(entry, status="failed", trial="failed-" + str(index), objective=None)
         failures.append(failed)
     monkeypatch.setattr(space, "CANDIDATES", 20)
     bounds = {"epochs": {"low": 1, "high": 3}}
-    encoding = space.Space(registry, bounds, 600, ())
+    encoding = space.Space(registry, bounds, 600, (), TEMPLATE)
     progress = []
     config, selection = surrogates.suggest_forest(
-        registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu", 600, progress=progress.append
+        registry,
+        observations,
+        failures,
+        4,
+        9,
+        bounds,
+        TEMPLATE,
+        ["model/view"],
+        "cpu",
+        600,
+        progress=progress.append,
     )
     assert selection["sampler"] == "SMAC"
     assert selection["phase"] == "forest"
@@ -109,13 +121,15 @@ def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, can
         "Ranking candidates",
         "Proposal ready",
     ]
-    repeated, _ = surrogates.suggest_forest(registry, observations, failures, 4, 9, bounds, ["model/view"], "cpu", 600)
+    repeated, _ = surrogates.suggest_forest(
+        registry, observations, failures, 4, 9, bounds, TEMPLATE, ["model/view"], "cpu", 600
+    )
     assert repeated == config
 
 
 def test_startup_counts_toward_the_forest_selector(bank, tmp_path, monkeypatch, statement):
     registry = Bank(bank).registry
-    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600)
+    config, metadata = selector.random_suggest(registry, 1, 2, {}, 600, TEMPLATE)
     observations = [dict(config=config, status="complete", trial="good-" + str(i)) for i in range(40)]
     failures = [dict(config=config, status="failed", trial="bad-" + str(i)) for i in range(60)]
     monkeypatch.setattr(selector, "load_history", lambda *args: (observations, failures, [], []))
@@ -131,6 +145,7 @@ def test_startup_counts_toward_the_forest_selector(bank, tmp_path, monkeypatch, 
         bounds={},
         bank_manifest_sha256="bank",
         supervision_sha256="labels",
+        pipeline=TEMPLATE,
     )
     selector.append_trial(tmp_path, plan, registry, state(dict(statement, seconds=1200)))
     assert plan["trials"][-1]["selector"] == "forest"

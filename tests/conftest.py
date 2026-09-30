@@ -238,10 +238,9 @@ def grounded(ground):
 
 
 def stated(directory, view):
-    from support import several
+    from support import configuration, several
 
     from tuning.bank.bank import Bank
-    from tuning.families.model_spec import configuration
 
     started = time.perf_counter()
     registry = Bank(directory).registry

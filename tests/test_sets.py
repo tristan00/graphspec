@@ -25,11 +25,11 @@ from graphspec.views.view import sequences, view
 from graphspec.views.visible import unstated
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
-from tuning.families.model_spec import configuration
 from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
+configuration = support.configuration
 pytestmark = pytest.mark.xdist_group("sets")
 POINTS = tuple("p%d" % number for number in range(16))
 PLACES = tuple("q%d" % number for number in range(8))
@@ -408,7 +408,7 @@ def test_a_set_edge_is_one_edge_per_pair_of_members_under_the_pairs_form(bank):
     ]
     assert [sum(1 for row in pairs if row[0] == step) for step in range(8)] == per_step
     assert present(held, graph, "gathering.lead") == []
-    names = {parameter.name: parameter for parameter in specs.space(registry, ())}
+    names = {parameter.name: parameter for parameter in specs.settings(registry, ())}
     assert names["sets/gathering/storage"].options == ("node", "pairs")
     assert names["sets/link/storage"].options == ("node",) and names["sets/link/storage"].default is None
     with pytest.raises(
@@ -501,13 +501,13 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
     (index,) = [entry["index"] for entry in held.viewed(cfg).graphs if entry["source"] == 0]
     dense = Graph.load(held.view(index, cfg)).dense()
     values = {"nodes/point/filter": "degree", "nodes/point/min_degree": 2, **STORED["node"]}
-    spec = specs.configured(specs.space(registry, ()), values)
-    derived = transform.derive(dense, registry, spec, GraphLimits("cpu"))
+    steps = support.steps(registry, values)[0]
+    derived = transform.derive(dense, registry, steps, GraphLimits("cpu"), None)
     points = registry.kind("point")
     before = int((np.asarray(dense.kinds)[dense.obs_entity] == points).sum())
     after = int((np.asarray(derived.kinds)[derived.obs_entity] == points).sum())
     assert 0 < after < before
-    counts = {count.name for _, operation in transform.STAGES for count in operation.requires}
+    counts = {count.name for step in steps for count in step.operation.requires}
     assert counts >= {"nodes/degree", "nodes/core", "derive/hops", "derive/diffusion", "edges/cap"}
     (degree,) = [count for count in NODES.requires if count.name == "nodes/degree"]
     with pytest.raises(
@@ -523,14 +523,14 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
         match="the count nodes/degree of the operation graphspec.nodes counts degree and refuses the edges "
         "joining sets of the kind gathering",
     ):
-        transform.derive(dense, registry, spec, GraphLimits("cpu"))
+        transform.derive(dense, registry, steps, GraphLimits("cpu"), None)
     monkeypatch.setattr(NODES, "requires", (Count("nodes/degree", "degree", degree.active, "stored", "refuses"),))
     with pytest.raises(
         ValueError,
         match="nodes/degree of the operation graphspec.nodes counts degree and refuses the edges of the table "
         "note, which are about edges",
     ):
-        transform.derive(dense, registry, spec, GraphLimits("cpu"))
+        transform.derive(dense, registry, steps, GraphLimits("cpu"), None)
 
 
 @pytest.fixture

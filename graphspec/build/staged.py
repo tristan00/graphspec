@@ -6,7 +6,6 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from graphspec.infra.code import digest
 from graphspec.infra.files import sha256_json
 from graphspec.infra.runtime import cache_path
 from graphspec.schema.references import SORTS
@@ -29,7 +28,7 @@ from graphspec.schema.schema import (
 from .output import manifest
 
 LOG = logging.getLogger(__name__)
-CODE = digest((Path(__file__).parents[1],))
+INDEX = 3
 IDS = 32
 
 
@@ -109,7 +108,7 @@ class Staged:
             for name in entry["files"]
         ]
         self.index_path = (
-            cache_path("partitions", sha256_json(dict(version=2, entries=entries, files=metadata, code=CODE)))
+            cache_path("partitions", sha256_json(dict(version=INDEX, entries=entries, files=metadata)))
             / "partition.npz"
         )
         self.units = [Unit(self.directory, entry) for entry in entries]

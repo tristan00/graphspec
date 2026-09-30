@@ -5,7 +5,6 @@ import numpy as np
 
 from graphspec.infra.timing import measure, timed
 from graphspec.operations import sets
-from graphspec.operations.operation import OPERATIONS, PIPELINE
 from graphspec.representations import groups as representations
 from graphspec.views import view as views
 from graphspec.views.graph import conforms, referring, unobserved, unresolved, verify_dense
@@ -13,16 +12,7 @@ from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
 SEED = 0x6772617068
-LABELS = (
-    "periods",
-    "time window",
-    "nodes",
-    "derived relations",
-    "relations",
-    "edge filters",
-    "relation merging",
-)
-STAGES = tuple(zip(LABELS, (OPERATIONS.named(name) for name in PIPELINE), strict=True))
+VERSION = 1
 REMOVES = "references"
 
 
@@ -55,20 +45,31 @@ def kept(operation, before, graph, registry):
     )
 
 
+def applied(step, graph, registry, limits, carry, partitions):
+    if carry is None:
+        return step(graph, registry, SEED, limits, None, partitions)
+    held = carry.state
+    carry.state = held.setdefault(step.name, {})
+    try:
+        return step(graph, registry, SEED, limits, carry, partitions)
+    finally:
+        carry.state = held
+
+
 @timed("graph_transform")
-def derive(graph, registry, spec, limits, carry=None, known=None, stages=STAGES, check=True):
+def derive(graph, registry, steps, limits, partitions, carry=None, known=None, check=True):
     started, given = time.perf_counter(), graph
-    for name, operation in stages:
+    for step in steps:
         clock = time.perf_counter()
-        with measure(name):
-            before, graph = graph, operation(graph, registry, spec, SEED, limits, carry)
+        with measure(step.name):
+            before, graph = graph, applied(step, graph, registry, limits, carry, partitions)
             if graph is not before:
-                kept(operation, before, graph, registry)
+                kept(step.operation, before, graph, registry)
             if check and graph is not before:
-                conforms(graph, registry, tuple(part for part in operation.changes if part != REMOVES))
+                conforms(graph, registry, tuple(part for part in step.operation.changes if part != REMOVES))
         LOG.info(
             "stage exit stage=%s graph=%s seconds=%.3f facts=%d observations=%d",
-            name,
+            step.name,
             graph.name,
             time.perf_counter() - clock,
             len(graph.fact_step),
@@ -82,9 +83,9 @@ def derive(graph, registry, spec, limits, carry=None, known=None, stages=STAGES,
 
 
 @timed("materialize")
-def materialize(graph, registry, spec, groups, limits):
+def materialize(graph, registry, steps, spec, groups, limits, partitions):
     started = time.perf_counter()
-    derived = derive(graph, registry, spec, limits)
+    derived = derive(graph, registry, steps, limits, partitions)
     arrays = representations.build(derived, registry, spec, groups, SEED, limits)
     representations.validate(arrays, derived, registry, spec, groups)
     LOG.info(

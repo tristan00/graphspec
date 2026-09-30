@@ -2,6 +2,8 @@ import logging
 import time
 from collections import Counter
 
+import numpy as np
+
 from graphspec.registries import Names
 from graphspec.views.graph import CHANGES as CHECKED
 
@@ -11,15 +13,6 @@ SPLITS = ("trained", "scored")
 TREATMENTS = ("stored", "refuses")
 EDGES = dict(
     sets="the edges joining sets of the kind %s", about="the edges of the table %s, which are about edges"
-)
-PIPELINE = (
-    "graphspec.periods",
-    "graphspec.window",
-    "graphspec.nodes",
-    "graphspec.derive",
-    "graphspec.relations",
-    "graphspec.edges",
-    "graphspec.merging",
 )
 
 
@@ -42,9 +35,9 @@ class Count:
 
 
 class Settings:
-    def __init__(self, operation, parameters, spec):
+    def __init__(self, operation, parameters, spec, splits, tasks):
         started = time.perf_counter()
-        self.operation, self.spec = operation, spec
+        self.operation, self.spec, self.splits, self.tasks = operation, spec, splits, tasks
         self.parameters = {parameter.name: parameter for parameter in parameters}
         LOG.debug(
             "settings exit operation=%s parameters=%d seconds=%.4f",
@@ -52,6 +45,23 @@ class Settings:
             len(self.parameters),
             time.perf_counter() - started,
         )
+
+    def split(self, name):
+        started = time.perf_counter()
+        if name not in self.splits:
+            raise KeyError(
+                "the operation %s reads the split %s, which it does not state it may read; it states %s"
+                % (self.operation, name, ", ".join(self.splits) or "none")
+            )
+        result = self.tasks(name)
+        LOG.debug(
+            "split exit operation=%s split=%s tasks=%d seconds=%.4f",
+            self.operation,
+            name,
+            len(result),
+            time.perf_counter() - started,
+        )
+        return result
 
     def stated(self, name):
         if name not in self.parameters:
@@ -126,12 +136,22 @@ class Operation:
         )
         return found
 
-    def settings(self, registry, spec):
+    def settings(self, registry, spec, graph, partitions):
         started = time.perf_counter()
         parameters = self.stated(registry)
         for read in self.reads:
             parameters += OPERATIONS.named(read).stated(registry)
-        result = Settings(self.name, parameters, spec)
+
+        def tasks(name):
+            if partitions is None:
+                raise ValueError(
+                    "the derivation of graph %s was given no splits, and the operation %s reads the split %s"
+                    % (graph.name, self.name, name)
+                )
+            rows = np.asarray(graph.label_row, np.int64)
+            return np.unique(np.asarray(graph.label_task)[partitions[rows] == SPLITS.index(name)])
+
+        result = Settings(self.name, parameters, spec, self.splits, tasks)
         LOG.debug("settings made exit operation=%s seconds=%.4f", self.name, time.perf_counter() - started)
         return result
 
@@ -150,9 +170,9 @@ class Operation:
                         )
         LOG.debug("check exit operation=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
-    def __call__(self, graph, registry, spec, seed, limits, carry):
+    def __call__(self, graph, registry, spec, seed, limits, carry, partitions):
         started = time.perf_counter()
-        settings = self.settings(registry, spec)
+        settings = self.settings(registry, spec, graph, partitions)
         self.check(registry, settings)
         result = self.function(graph, registry, settings, seed, limits, carry)
         LOG.debug(
@@ -199,23 +219,3 @@ def listed(registry):
     result = tuple(OPERATIONS.named(name).declaration(registry) for name in OPERATIONS.names())
     LOG.debug("listed exit operations=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
-
-
-def ordered(names):
-    started = time.perf_counter()
-    found, entered, waiting = [], set(), [(name, False) for name in reversed(names)]
-    while waiting:
-        name, expanded = waiting.pop()
-        operation = OPERATIONS.named(name)
-        if operation in found:
-            continue
-        if expanded:
-            found.append(operation)
-            continue
-        if name in entered:
-            raise ValueError("the operation %s reads, through the operations it reads, its own parameters" % name)
-        entered.add(name)
-        waiting.append((name, True))
-        waiting.extend((read, False) for read in reversed(operation.reads))
-    LOG.debug("ordered exit operations=%d seconds=%.4f", len(found), time.perf_counter() - started)
-    return tuple(found)

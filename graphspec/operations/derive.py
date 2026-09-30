@@ -10,40 +10,26 @@ from graphspec.schema.declaration import HOPS, completion, hop
 from . import kernels
 from .operation import OPERATIONS, Count, Operation
 from .parameters import among, choice, enabled, equals, flag, number, real
-from .relations import joining, linking
+from .relations import joined, relating
 from .rows import REWIRE, counted, extend, fact_bytes, grouped, member_end, open_runs, prune, run_state
 
 LOG = logging.getLogger(__name__)
 BLOCK = 1 << 22
 
 
-def counterparts(relation, position, kind):
-    return {pair[1 - position] for pair in relation.pairs if pair[position] == kind}
-
-
-def projectable(registry, spec, edge):
-    relation, position, first, second = (
-        registry.named[edge.origin[1]],
-        ("sources", "targets").index(edge.origin[2]),
-        edge.origin[3],
-        edge.origin[4],
-    )
-    shared = counterparts(relation, position, first) & counterparts(relation, position, second)
-    return (
-        spec["nodes/%s/keep" % first]
-        and spec["nodes/%s/keep" % second]
-        and any(spec["nodes/%s/keep" % kind] for kind in shared)
-    )
+def anchoring(registry):
+    started = time.perf_counter()
+    nodes, pairs = registry.nodes, joined(registry)
+    result = {kind: tuple(other for other in nodes if frozenset((kind, other)) in pairs) for kind in nodes}
+    LOG.debug("anchoring exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 def stated(registry):
     started = time.perf_counter()
-    nodes, connected, meets = registry.nodes, linking(registry), joining(registry)
+    nodes, anchors = registry.nodes, anchoring(registry)
     projected = [edge for edge in registry.edges if edge.origin[0] == "project"]
-    result = [
-        flag("derive/" + edge.name, False, lambda spec, edge=edge: projectable(registry, spec, edge))
-        for edge in projected
-    ]
+    result = [flag("derive/" + edge.name, False) for edge in projected]
     result.append(
         number(
             "derive/project_cap",
@@ -53,30 +39,23 @@ def stated(registry):
             lambda spec: any(enabled(spec, "derive/" + edge.name) for edge in projected),
         )
     )
-    result += [
-        flag("derive/complete/" + kind, False, lambda spec, kind=kind: spec["nodes/%s/keep" % kind])
-        for kind in nodes
-    ]
+    result += [flag("derive/complete/" + kind, False) for kind in nodes]
     result += [
         flag(
             "derive/complete_within/" + kind,
             False,
-            lambda spec, kind=kind: (
-                spec["nodes/%s/keep" % kind]
-                and any(
-                    enabled(spec, "derive/complete/" + other) and meets(spec, kind, other) for other in nodes
-                )
-            ),
+            lambda spec, kind=kind: any(enabled(spec, "derive/complete/" + other) for other in anchors[kind]),
         )
         for kind in nodes
     ]
+    related = relating(registry)
     result += [
-        number("derive/hops", 1, HOPS[-1], 1, connected),
-        choice("derive/diffusion", ("none", "ppr", "heat"), "none", connected),
+        number("derive/hops", 1, HOPS[-1], 1, related),
+        choice("derive/diffusion", ("none", "ppr", "heat"), "none", related),
         number("derive/diffusion_top_k", 1, 16, 4, among("derive/diffusion", ("ppr", "heat"))),
         real("derive/ppr_alpha", 0.05, 0.5, 0.15, equals("derive/diffusion", "ppr")),
         real("derive/heat_time", 0.5, 5.0, 2.0, equals("derive/diffusion", "heat")),
-        choice("derive/rewiring", ("none", "sdrf", "fosr"), "none", connected),
+        choice("derive/rewiring", ("none", "sdrf", "fosr"), "none", related),
         number("derive/rewiring_budget", 1, 64, 8, among("derive/rewiring", ("sdrf", "fosr"))),
         real("derive/sdrf_temperature", 1.0, 500.0, 115.0, equals("derive/rewiring", "sdrf"), log=True),
         real("derive/sdrf_threshold", 0.1, 20.0, 1.0, equals("derive/rewiring", "sdrf"), log=True),
@@ -442,19 +421,14 @@ def derivation(registry, spec):
     return (projected, selected, within) if wanted else None
 
 
-def derivable(graph, registry, spec):
-    groups = registry.groups
-    stated = graph.fact_present & np.isin(graph.fact_code, grouped(registry, groups))
-    kept = graph.fact_present & np.isin(
-        graph.fact_code,
-        grouped(registry, [group for group in groups if enabled(spec, "relations/%s/keep" % group)]),
-    )
-    return stated, kept
+@timed("operators.derivable")
+def derivable(graph, registry):
+    return graph.fact_present & np.isin(graph.fact_code, grouped(registry, registry.groups))
 
 
 @timed("operators.derive_prepare")
 def derive_prepare(graph, registry, spec, carry=None):
-    stated, _ = derivable(graph, registry, spec)
+    stated = derivable(graph, registry)
     recency = np.zeros(len(graph.fact_step), np.int64)
     statements = np.flatnonzero(stated)
     ids, count = kernels.keyed(
@@ -478,7 +452,7 @@ def derive_prepare(graph, registry, spec, carry=None):
 def derive_steps(graph, registry, spec, seed, recency, step0, limits):
     projected, selected, within = derivation(registry, spec)
     steps, entities = graph.steps, len(graph.kinds)
-    stated, kept = derivable(graph, registry, spec)
+    stated = derivable(graph, registry)
     fact_bounds = np.searchsorted(graph.fact_step, np.arange(steps + 1))
     observed_bounds = np.searchsorted(graph.obs_step, np.arange(steps + 1))
     budget = GraphBudget(limits, fact_bytes(graph))
@@ -486,7 +460,7 @@ def derive_steps(graph, registry, spec, seed, recency, step0, limits):
     closed, diffusion, rewired = closing(spec), diffusing(spec), rewiring(spec)
     for step in range(steps):
         span = np.arange(fact_bounds[step], fact_bounds[step + 1])
-        every, rows = span[stated[span]], span[kept[span]]
+        rows = span[stated[span]]
         source, target = graph.fact_source[rows], graph.fact_target[rows]
         lo, hi = observed_bounds[step], observed_bounds[step + 1]
         present = np.sort(graph.obs_entity[lo:hi][~graph.obs_anchor[lo:hi]])
@@ -497,10 +471,10 @@ def derive_steps(graph, registry, spec, seed, recency, step0, limits):
                 graph,
                 registry,
                 edge,
-                graph.fact_source[every],
-                graph.fact_target[every],
-                graph.fact_code[every],
-                recency[every],
+                source,
+                target,
+                graph.fact_code[rows],
+                recency[rows],
                 spec["derive/project_cap"],
                 budget,
                 memo,
@@ -649,7 +623,7 @@ DERIVE = OPERATIONS.register(
         name="derive",
         function=derive,
         parameters=stated,
-        reads=("graphspec.relations",),
+        reads=(),
         splits=(),
         requires=(
             Count("derive/hops", "paths", lambda registry, spec: closing(spec), "stored", "stored"),
@@ -662,6 +636,6 @@ DERIVE = OPERATIONS.register(
             ),
         ),
         changes=("facts",),
-        version=1,
+        version=2,
     ),
 )

@@ -7,13 +7,15 @@ from graphspec.infra.hashing import unit
 from graphspec.infra.timing import timed
 
 from . import kernels
+from .derive import anchoring
 from .operation import OPERATIONS, Count, Operation
-from .parameters import choice, differs, enabled, holds, number, real
-from .relations import joining, linking
-from .rows import DROP, RANDOM, grouped, identities, open_runs, prune, prune_mask, run_state
+from .parameters import DIRECTIONS, choice, differs, enabled, holds, number, real
+from .relations import relating
+from .rows import DROP, RANDOM, identities, open_runs, prune, run_state
 
 LOG = logging.getLogger(__name__)
 EMITTED = ("project", "complete", "hop", "diffusion", "rewire")
+DIRECTION = "edges/direction"
 
 
 def filters(name, condition, attributes):
@@ -27,18 +29,18 @@ def filters(name, condition, attributes):
             prefix + "cap_order",
             orders,
             "recent",
-            lambda spec: condition(spec) and spec[prefix + "cap"] > 0,
+            lambda spec: prefix + "cap" in spec and spec[prefix + "cap"] > 0,
         ),
     ]
 
 
 def stated(registry):
     started = time.perf_counter()
-    nodes, meets = registry.nodes, joining(registry)
+    nodes, joins = registry.nodes, anchoring(registry)
 
     def anchored(spec, first, second):
         anchors = [kind for kind in nodes if enabled(spec, "derive/complete_within/" + kind)]
-        return not anchors or any(meets(spec, kind, first) and meets(spec, kind, second) for kind in anchors)
+        return not anchors or any(first in joins[kind] and second in joins[kind] for kind in anchors)
 
     emits = dict(
         project=lambda spec, edge: enabled(spec, "derive/" + edge.name),
@@ -51,14 +53,9 @@ def stated(registry):
         diffusion=lambda spec, edge: differs("derive/diffusion", "none")(spec),
         rewire=lambda spec, edge: differs("derive/rewiring", "none")(spec),
     )
-    directions = ("inverse", "symmetric", "directed")
-    result = [choice("relations/direction", directions, "inverse", linking(registry))]
+    result = [choice(DIRECTION, DIRECTIONS, "inverse", relating(registry))]
     for group in registry.groups:
-        result += filters(
-            group,
-            lambda spec, group=group: bool(enabled(spec, "relations/%s/keep" % group)),
-            registry.ordered(group),
-        )
+        result += filters(group, None, registry.ordered(group))
     for edge in registry.edges:
         if edge.origin[0] in EMITTED:
             result += filters(edge.name, lambda spec, edge=edge: bool(emits[edge.origin[0]](spec, edge)), ())
@@ -78,7 +75,7 @@ def filterable(registry):
 def symmetric(registry, spec):
     return np.asarray(
         [edge.symmetric for edge in registry.edges] + [False] * (registry.relations - len(registry.edges))
-    ) | holds(spec, "relations/direction", "symmetric")
+    ) | holds(spec, DIRECTION, "symmetric")
 
 
 def filtering(spec, name):
@@ -115,39 +112,6 @@ def edges(graph, registry, spec, seed, limits, carry):
     return prune(graph, kept, carry, "edges")
 
 
-def edges_survive(graph, registry, spec, seed, carry):
-    survives = np.ones(len(graph.fact_step), bool)
-    for name in filtered_names(registry, spec):
-        rows = np.flatnonzero(np.isin(graph.fact_code, registry.coded[name]))
-        survives[rows] = undropped(graph, registry, spec, seed, name, rows, carry)
-    return survives
-
-
-def edges_mask(graph, registry, spec, seed, carry, names, survives):
-    named = [name for name in filtered_names(registry, spec) if name in names]
-    kept = np.ones(len(graph.fact_step), bool)
-    if not named:
-        return kept
-    pieces = {"edges/persistence": [], "edges/cap": []}
-    for name in named:
-        rows = np.flatnonzero(np.isin(graph.fact_code, registry.coded[name]))
-        kept[rows] = filtered(graph, registry, spec, seed, name, rows, carry, pieces, survives[rows])
-    for name, found in pieces.items():
-        open_runs(carry, name, found)
-    rows = np.flatnonzero(np.isin(graph.fact_code, grouped(registry, named)))
-    kept[rows] = prune_mask(
-        graph.fact_source[rows],
-        graph.fact_target[rows],
-        graph.fact_code[rows],
-        graph.fact_present[rows],
-        kept[rows],
-        graph.entity_connected,
-        carry,
-        "edges",
-    )
-    return kept
-
-
 def endpoints(graph, registry, spec, rows):
     code, source, target = graph.fact_code[rows], graph.fact_source[rows], graph.fact_target[rows]
     both = symmetric(registry, spec)[code]
@@ -167,11 +131,11 @@ def undropped(graph, registry, spec, seed, name, rows, carry=None):
     )
 
 
-def filtered(graph, registry, spec, seed, name, rows, carry=None, pieces=None, survives=None):
+def filtered(graph, registry, spec, seed, name, rows, carry=None, pieces=None):
     prefix = "edges/%s/" % name
     step, present = graph.fact_step[rows], graph.fact_present[rows]
     code, both, first, second = endpoints(graph, registry, spec, rows)
-    kept = undropped(graph, registry, spec, seed, name, rows, carry) if survives is None else survives.copy()
+    kept = undropped(graph, registry, spec, seed, name, rows, carry)
     stated = np.flatnonzero(kept & present)
     ids, count = kernels.keyed(code[stated], first[stated], second[stated])
     keys = None if carry is None else carry.keys(code[stated], first[stated], second[stated])
@@ -212,7 +176,7 @@ def filtered(graph, registry, spec, seed, name, rows, carry=None, pieces=None, s
     earliest = kernels.smallest(pair, secondary.astype(np.float64), count)
     pair_step, pair_code, pair_low, pair_high, mode = (np.zeros(count, np.int64) for _ in range(5))
     pair_step[pair], pair_code[pair], pair_low[pair], pair_high[pair] = step[stated], code[stated], low, high
-    mode[pair] = np.where(both[stated], 2, 1 if holds(spec, "relations/direction", "inverse") else 0)
+    mode[pair] = np.where(both[stated], 2, 1 if holds(spec, DIRECTION, "inverse") else 0)
     extra = np.flatnonzero((mode == 1) | ((mode == 2) & (pair_low != pair_high)))
     owners = np.r_[np.arange(count), extra]
     flag = np.r_[np.zeros(count, np.int64), mode[extra] == 1]
@@ -246,10 +210,10 @@ EDGES = OPERATIONS.register(
         name="edges",
         function=edges,
         parameters=stated,
-        reads=(),
+        reads=("graphspec.derive",),
         splits=(),
         requires=(Count("edges/cap", "degree", capping, "stored", "stored"),),
         changes=("facts",),
-        version=1,
+        version=2,
     ),
 )

@@ -1,12 +1,17 @@
 import logging
 import time
+from collections import ChainMap
 from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from graphspec import OPERATIONS
 from graphspec.infra.files import read_json
+from graphspec.operations import parameters as specs
+from graphspec.operations import pipeline
+from graphspec.operations.pipeline import resolved
 from graphspec.schema.declaration import Registry
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import (
@@ -28,6 +33,15 @@ from graphspec.schema.schema import (
 )
 
 LOG = logging.getLogger(__name__)
+SEVEN = (
+    "graphspec.periods",
+    "graphspec.window",
+    "graphspec.nodes",
+    "graphspec.derive",
+    "graphspec.relations",
+    "graphspec.edges",
+    "graphspec.merging",
+)
 KEYS = ("id", "from", "to", "since", "seq", "present")
 VALUES = dict(value=dict(type="number", encoder="value"))
 STAMPS = ("since", "until", "known", "replaced", "observers")
@@ -401,7 +415,6 @@ def several(registry):
 def shown(opened, index):
     from conftest import SPLITS
     from graphspec.views.graph import Graph
-    from tuning.families.model_spec import configuration
 
     started = time.perf_counter()
     cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)
@@ -412,10 +425,64 @@ def shown(opened, index):
 
 def fitted(opened):
     from conftest import SPLITS
-    from tuning.families.model_spec import configuration
 
     started = time.perf_counter()
     cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)
     result = opened.fitted(cfg)
     LOG.debug("fitted exit features=%d seconds=%.4f", result.features, time.perf_counter() - started)
+    return result
+
+
+def pipelined(registry, values, names=SEVEN, labels=None):
+    started = time.perf_counter()
+    stated = [
+        dict(operation=name, **({} if labels is None or labels[place] is None else dict(label=labels[place])))
+        for place, name in enumerate(names)
+    ]
+    found = pipeline.checked(stated, pipeline.TEMPLATE)
+    reads, remaining, held = pipeline.readers(found), dict(values), {}
+    for name in pipeline.drawn(found, reads):
+        (operation,) = [operation for key, operation, _, _ in found if key == name]
+        own = {}
+        view = ChainMap(own, *[held[read] for read in reads[name]])
+        for parameter in operation.stated(registry):
+            if parameter.active(view):
+                own[parameter.name] = remaining.pop(parameter.name) if parameter.name in remaining else parameter.default
+        held[name] = own
+    entries = [dict(entry, parameters=held[name]) for name, _, _, entry in found]
+    LOG.debug("pipelined exit entries=%d seconds=%.4f", len(entries), time.perf_counter() - started)
+    return entries, remaining
+
+
+def configuration(registry, values, graph_values, seed, splits, names=SEVEN):
+    from tuning.families.model_spec import configuration as configure
+    from tuning.families.model_spec import configured, groups
+
+    started = time.perf_counter()
+    model = configured(registry, values)
+    pipeline, rest = pipelined(registry, graph_values, names)
+    graph = specs.configured(specs.settings(registry, groups(model)), rest)
+    result = configure(registry, model, pipeline, graph, seed, splits)
+    LOG.debug("configuration exit entries=%d seconds=%.4f", len(pipeline), time.perf_counter() - started)
+    return result
+
+
+def template(names=SEVEN):
+    return [dict(operation=name) for name in names]
+
+
+def parameters(registry, groups, names=SEVEN):
+    started = time.perf_counter()
+    result = specs.settings(registry, groups) + tuple(
+        parameter for name in names for parameter in OPERATIONS.named(name).stated(registry)
+    )
+    LOG.debug("parameters exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def steps(registry, values, groups=(), names=SEVEN):
+    started = time.perf_counter()
+    pipeline, rest = pipelined(registry, values, names)
+    result = resolved(registry, pipeline), specs.configured(specs.settings(registry, groups), rest)
+    LOG.debug("steps exit steps=%d seconds=%.4f", len(result[0]), time.perf_counter() - started)
     return result

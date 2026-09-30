@@ -12,11 +12,10 @@ from numba import njit
 
 from graphspec import Registry
 from graphspec.budgets import GraphLimits
-from graphspec.engine import join, segments
+from graphspec.engine import join, segments, transform
 from graphspec.engine.transform import SEED, materialize
 from graphspec.facts.stored import Facts, admitted, inputs
 from graphspec.infra.arrays import Residents, between
-from graphspec.infra.code import digest
 from graphspec.infra.files import (
     ArrayStore,
     load_arrays,
@@ -31,6 +30,8 @@ from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.operations import parameters as specs
 from graphspec.operations import sets
+from graphspec.operations.pipeline import resolved
+from graphspec.representations import groups as representations
 from graphspec.schema.schema import Encoding, fitted
 from graphspec.views.graph import Graph
 from graphspec.views.view import finished, sampled, sequences, view
@@ -38,7 +39,6 @@ from graphspec.views.visible import STATEMENT, Looking
 
 LOG = logging.getLogger(__name__)
 PACKAGES = (Path(__file__).parents[1], Path(__file__).parents[2] / "graphspec")
-CODE = digest(PACKAGES)
 ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
@@ -155,9 +155,7 @@ class Viewed:
         self.folder = (
             bank.cache
             / "views"
-            / specs.digest(
-                dict(version=VIEW, steps=steps, several=several, storage=storage, splits=looking.mapping())
-            )
+            / specs.digest(dict(steps=steps, several=several, storage=storage, splits=looking.mapping()))
         )
         if not (self.folder / "index.json").exists():
             self.build(bank, steps, several, storage, looking)
@@ -241,9 +239,8 @@ class Bank:
         started = time.perf_counter()
         self.directory = Path(directory)
         self.manifest = admitted(self.directory, read_json(self.directory / "manifest.json"))
-        self.cache = cache_path(
-            "banks", sha256_json(dict(manifest=sha256_file(self.directory / "manifest.json"), code=CODE))
-        )
+        self.source = sha256_file(self.directory / "manifest.json")
+        self.cache = cache_path("banks", sha256_json(dict(manifest=self.source, version=VIEW)))
         self.registry = Registry.from_declaration(self.manifest["spec"])
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")
@@ -325,7 +322,7 @@ class Bank:
 
     @timed("bank.viewed")
     def viewed(self, cfg):
-        spec = self.stated(cfg)[1]
+        spec = self.stated(cfg)[2]
         storage = sets.chosen(self.registry, spec)
         key = (spec["time/steps"], self.several(spec), specs.digest(storage), specs.digest(cfg["splits"]))
         if key not in self._viewed:
@@ -392,10 +389,10 @@ class Bank:
         return self._tokens[held]
 
     def joining(self, cfg):
-        return self.stated(cfg)[1]["graphs/join"] == "single"
+        return self.stated(cfg)[2]["graphs/join"] == "single"
 
     def groups(self, cfg):
-        spec, viewed = self.stated(cfg)[1], self.viewed(cfg)
+        spec, viewed = self.stated(cfg)[2], self.viewed(cfg)
         size = (
             spec["time/steps"],
             self.several(spec),
@@ -457,11 +454,17 @@ class Bank:
     def stated(self, cfg):
         from tuning.families.model_spec import groups
 
+        if "pipeline" not in cfg:
+            raise KeyError("the configuration states no pipeline")
         chosen = groups(cfg["model"])
-        key = (chosen, specs.digest(cfg["graph"]))
+        key = (chosen, specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])))
         if key not in self.variants:
             started = time.perf_counter()
-            self.variants[key] = (specs.canonical(specs.space(self.registry, chosen), cfg["graph"]), chosen)
+            self.variants[key] = (
+                resolved(self.registry, cfg["pipeline"]),
+                specs.canonical(specs.settings(self.registry, chosen), cfg["graph"]),
+                chosen,
+            )
             LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)
         return key, *self.variants[key]
 
@@ -512,7 +515,7 @@ class Deriver(Bank):
     def segmented(self, indices, cfg, workers):
         started = time.perf_counter()
         root = self.stamp(cfg)
-        _, spec, chosen = self.variant(cfg)
+        _, steps, spec, chosen = self.variant(cfg)
         jobs, folders = [], []
         try:
             for index in indices:
@@ -524,7 +527,9 @@ class Deriver(Bank):
                 paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
                 members = [Graph.load(path, mapped=True) for path in paths]
                 jobs.append(dict(members=members, paths=paths, spill=spill, destination=temporary))
-            segments.build_parallel(jobs, self.fitted(cfg), spec, chosen, SEED, workers, self.limits())
+            segments.build_parallel(
+                jobs, self.fitted(cfg), steps, spec, chosen, SEED, workers, self.limits(), self.partitions(cfg)
+            )
             for (temporary, final), job in zip(folders, jobs):
                 shutil.rmtree(job["spill"])
                 temporary.replace(final)
@@ -557,21 +562,26 @@ class Deriver(Bank):
 
     def identity(self, cfg):
         started = time.perf_counter()
-        _, spec, chosen = self.stated(cfg)
+        _, steps, spec, chosen = self.stated(cfg)
         result = dict(
-            spec=specs.materialized(spec),
+            schema=self.registry.fingerprint(),
+            source=self.source,
+            pipeline=[step.keyed() for step in steps],
+            settings=specs.materialized(spec),
             groups=list(chosen),
-            device=self.device,
             splits=cfg["splits"],
+            device=self.device,
+            seeds=dict(derivation=SEED),
+            versions=dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION),
         )
         LOG.debug("deriver identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
         return result
 
     def variant(self, cfg):
-        key, spec, chosen = self.stated(cfg)
+        key, steps, spec, chosen = self.stated(cfg)
         if key not in self.roots:
             self.roots[key] = self.cache / "variants" / specs.digest(self.identity(cfg))
-        return self.roots[key], spec, chosen
+        return self.roots[key], steps, spec, chosen
 
     def stamp(self, cfg):
         root = self.variant(cfg)[0]
@@ -582,7 +592,7 @@ class Deriver(Bank):
 
     @timed("arrays")
     def arrays(self, index, cfg):
-        root, spec, chosen = self.variant(cfg)
+        root, steps, spec, chosen = self.variant(cfg)
         joining = spec["graphs/join"] == "single"
 
         def materialized():
@@ -590,7 +600,9 @@ class Deriver(Bank):
             self.stamp(cfg)
             with measure("truth_load"):
                 truth = Graph.load(self.view(index, cfg)).dense()
-            arrays = materialize(truth, self.fitted(cfg), spec, chosen, self.limits())
+            arrays = materialize(
+                truth, self.fitted(cfg), steps, spec, chosen, self.limits(), self.partitions(cfg)
+            )
             with measure("feature_deduplication"):
                 linked = []
                 for name, held, source in (("task", "task_x", "task_x"), ("x_table", "x_table", "obs_x")):
@@ -614,17 +626,18 @@ class Deriver(Bank):
                     tempfile.TemporaryDirectory(prefix="segments-", dir=destination) as spill,
                 ):
                     try:
-                        _, spec, chosen = self.variant(cfg)
                         paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
                         members = [Graph.load(path, mapped=True) for path in paths]
                         segments.build(
                             members,
                             self.fitted(cfg),
+                            steps,
                             spec,
                             chosen,
                             SEED,
                             spill,
                             self.limits(),
+                            self.partitions(cfg),
                             destination,
                         )
                     except BaseException as error:

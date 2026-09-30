@@ -15,6 +15,7 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
+VERSION = 1
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALK_STREAM, PERIOD_STREAM = 16, 32
@@ -211,9 +212,11 @@ def base(graph, registry, spec, link=None):
     symmetric = np.asarray(
         [edge.symmetric for edge in registry.edges] + [False] * (registry.relations - len(registry.edges))
     )[codes]
-    direction = spec.get("relations/direction")
-    doubled = symmetric | (direction != "directed")
-    reverse = np.where(symmetric | (direction == "symmetric"), codes, registry.flipped[codes])
+    doubled, reverse = symmetric, codes
+    if registry.groups:
+        direction = spec["relations/direction"]
+        doubled = symmetric | (direction != "directed")
+        reverse = np.where(symmetric | (direction == "symmetric"), codes, registry.flipped[codes])
     index = np.repeat(np.arange(len(codes)), np.where(doubled, 2, 1))
     flip = np.r_[False, index[1:] == index[:-1]] if len(index) else np.zeros(0, bool)
     spatial = np.stack(

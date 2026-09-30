@@ -9,7 +9,7 @@ from graphspec.schema.declaration import UNTYPED
 from . import kernels
 from .operation import OPERATIONS, Operation
 from .parameters import choice, holds
-from .relations import linking
+from .relations import relating
 from .rows import FACTS, grouped, select
 
 LOG = logging.getLogger(__name__)
@@ -17,10 +17,10 @@ LOG = logging.getLogger(__name__)
 
 def stated(registry):
     started = time.perf_counter()
-    connected = linking(registry)
+    related = relating(registry)
     result = (
-        choice("relations/types", ("typed", "untyped"), "typed", connected),
-        choice("relations/parallel", ("keep", "merge"), "keep", connected),
+        choice("relations/types", ("typed", "untyped"), "typed", related),
+        choice("relations/parallel", ("keep", "merge"), "keep", related),
     )
     LOG.debug("merging stated exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result

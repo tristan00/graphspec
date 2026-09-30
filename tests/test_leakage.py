@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 import pytest
+import support
 
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -13,9 +14,9 @@ from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
-from tuning.families.model_spec import configuration
 
 LOG = logging.getLogger(__name__)
+configuration = support.configuration
 pytestmark = pytest.mark.xdist_group("leakage")
 MAKERS, SITES = tuple("m%d" % number for number in range(6)), tuple("s%d" % number for number in range(6))
 SPLITS = dict(
@@ -300,12 +301,14 @@ def test_a_search_offers_a_choice_of_steps_only_where_it_shows_every_graph_of_th
     registry = Deriver(banks["seen"], "cpu", RESIDENT).registry
     found = {p.name: p for p in graph_space(registry, configured(registry, dict(view="snapshot")), {})}
     assert found["time/steps"].options == ("changes",)
-    assert Space(registry, {}, 600, []).proposal_parameters["graph/time/steps"].options == ("changes",)
-    assert random_suggest(registry, 3, 3, {}, 600)[0]["graph"]["time/steps"] == "changes"
+    template = support.template()
+    space = Space(registry, {}, 600, [], template)
+    assert space.proposal_parameters["graph/time/steps"].options == ("changes",)
+    assert random_suggest(registry, 3, 3, {}, 600, template)[0]["graph"]["time/steps"] == "changes"
     assert registry.extras["untasked"] == ["g1"]
     with pytest.raises(
         ValueError,
         match="the bank seen holds a graph that no choice of steps among tasks shows: tasks shows a graph at "
         "the times of its tasks, and these graphs of the bank hold no task: g1",
     ):
-        check_bounds(registry, {"time/steps": "tasks"})
+        check_bounds(registry, {"time/steps": "tasks"}, template)

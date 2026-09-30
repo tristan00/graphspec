@@ -9,17 +9,11 @@ from graphspec.infra.workspace import concatenate, take
 
 from . import kernels
 from .operation import OPERATIONS, Operation
-from .parameters import choice, holds, number
+from .parameters import choice, equals, holds, number
 from .rows import FACTS, OBSERVATIONS, counted, extend, fact_bytes, member_end
 from .state import FOREVER
 
 LOG = logging.getLogger(__name__)
-
-
-def periodic(spec):
-    return spec["time/periods"] == "truth" or (
-        spec["time/periods"] == "every" and spec["time/period_length"] > 1
-    )
 
 
 def by_period(spec):
@@ -30,12 +24,7 @@ def stated(registry):
     started = time.perf_counter()
     result = (
         choice("time/scheme", ("window", "state"), "window"),
-        choice(
-            "time/unit",
-            ("step", "period"),
-            "step",
-            lambda spec: spec["time/scheme"] == "window" and periodic(spec),
-        ),
+        choice("time/unit", ("step", "period"), "step", equals("time/scheme", "window")),
         number("time/window", 1, 8, 1, lambda spec: spec["time/scheme"] == "window" and not by_period(spec)),
         number("time/past_periods", 0, 3, 0, by_period),
     )

@@ -32,7 +32,11 @@ from .report import report
 REFERENCE_HISTORY = 16
 
 FLAGS = dict(
-    selector="--selector", random_trials="--startup-trials", mix="--mix", random_params="--random-params"
+    selector="--selector",
+    random_trials="--startup-trials",
+    mix="--mix",
+    random_params="--random-params",
+    pipeline="--pipeline",
 )
 COPIES = dict(
     seed="seed",
@@ -144,6 +148,7 @@ def opened(stated, given, bank_path, manifest, limit):
         seed=stated.seed,
         bank=bank_path,
         selector=given["selector"],
+        pipeline=given["pipeline"],
         trials=[],
         batch_sequences=stated.batch_sequences,
         workers=stated.workers,
@@ -193,6 +198,12 @@ def run(args):
             raise ValueError("this run was written by another plan version; choose a new output")
         if plan["bank_manifest_sha256"] != sha256_file(Path(args.bank) / "manifest.json"):
             raise ValueError("this run belongs to a different bank")
+        if "pipeline" not in plan:
+            raise KeyError("plan.json lacks pipeline")
+        if args.pipeline is not None and read_json(args.pipeline) != plan["pipeline"]:
+            raise ValueError(
+                "this run searches the pipeline its plan.json holds, and a continued run states no other"
+            )
         given = dict(
             selector=args.selector,
             random_trials=args.random_trials,
@@ -210,15 +221,18 @@ def run(args):
             random_trials=args.random_trials,
             mix=mix,
             random_params=args.random_params,
+            pipeline=read_json(args.pipeline) if args.pipeline else None,
             bounds=read_json(args.bounds) if args.bounds else {},
             objective=objective.weights(bank, args.objective),
         )
         plan = opened(stated, given, str(Path(args.bank).resolve()), bank.manifest, args.trials)
-    check_bounds(bank.registry, plan["bounds"])
+    check_bounds(bank.registry, plan["bounds"], plan["pipeline"])
     if plan["selector"] in SURROGATES:
         from .space import Space
 
-        Space(bank.registry, plan["bounds"], stated.seconds, ()).random_names(plan["random_params"])
+        Space(bank.registry, plan["bounds"], stated.seconds, (), plan["pipeline"]).random_names(
+            plan["random_params"]
+        )
     directory.mkdir(parents=True, exist_ok=True)
     with Lock(directory / "runner.lock"):
         running = directory / "running.json"
@@ -533,6 +547,11 @@ def main():
         help="series=weight pairs that blend per-series validation losses into the trial score; every series weighs 1 when omitted on a new run",
     )
     run_parser.add_argument("--bounds")
+    run_parser.add_argument(
+        "--pipeline",
+        help="a JSON file of the operations of the pipeline in order, each with its label where it states one; "
+        "stated for a new run, and a continued run keeps it",
+    )
     run_parser.add_argument("--workers", type=int, required=True)
     run_parser.add_argument("--variant-gb", type=int, required=True)
     run_parser.add_argument("--trained", nargs="+", required=True, help="the splits trained on")

@@ -17,18 +17,9 @@ from graphspec.budgets import GraphBudget
 from graphspec.infra.files import Arrays
 from graphspec.infra.processes.processes import guarded, spawned, worker_threads
 from graphspec.infra.timing import measure, timed
-from graphspec.operations.derive import (
-    DERIVE,
-    derivation,
-    derive_handoff,
-    derive_prepare,
-    derive_steps,
-    derived_rows,
-    rewiring,
-)
-from graphspec.operations.edges import EDGES, edges_mask, edges_survive, filtered_names
+from graphspec.operations import pipeline
 from graphspec.operations.parameters import enabled
-from graphspec.operations.rows import FACTS, fact_bytes, prune_mask, select
+from graphspec.operations.periods import PERIODS
 from graphspec.operations.state import Segment, Table
 from graphspec.representations import groups as representations
 from graphspec.representations import kernels
@@ -73,16 +64,33 @@ def period_groups(period):
     return 1 + int(np.count_nonzero(np.diff(period))) if len(period) else 0
 
 
+def every(steps):
+    started = time.perf_counter()
+    found = [
+        step.parameters["time/period_length"]
+        for step in steps
+        if step.operation is PERIODS and step.parameters["time/periods"] == "every"
+    ]
+    if len(found) > 1:
+        raise ValueError(
+            "a joined group numbers its periods by one entry of %s that starts a period every few steps; "
+            "the pipeline holds %d" % (PERIODS.name, len(found))
+        )
+    LOG.debug("every exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found[0] if found else None
+
+
 class Plan:
-    def __init__(self, graphs, registry, spec):
+    def __init__(self, graphs, registry, steps, spec):
         started = time.perf_counter()
         self.maps, self.kinds, self.tokens, self.connected = join.unify(graphs, registry, spec)
-        steps = np.asarray([graph.steps for graph in graphs], np.int64)
-        self.step_offsets = np.r_[0, np.cumsum(steps)]
+        counts = np.asarray([graph.steps for graph in graphs], np.int64)
+        self.step_offsets = np.r_[0, np.cumsum(counts)]
         self.task_offsets = np.r_[0, np.cumsum([len(graph.task_key) for graph in graphs])]
         self.truth_periods = np.r_[0, np.cumsum([int(graph.period.max(initial=-1)) + 1 for graph in graphs])]
-        if spec["time/periods"] == "every":
-            self.period_offsets = np.r_[0, np.cumsum(-(-steps // spec["time/period_length"]))]
+        length = every(steps)
+        if length is not None:
+            self.period_offsets = np.r_[0, np.cumsum(-(-counts // length))]
             self.group_offsets = self.period_offsets
         else:
             self.period_offsets = self.truth_periods
@@ -102,12 +110,13 @@ class Plan:
 
 def carried_entities(state):
     parts = [np.zeros(0, np.int64)]
-    window = state.get("window")
-    if window is not None:
-        parts += [window["obs"]["entity"], window["facts"]["source"], window["facts"]["target"]]
-    live = state.get("derive/live")
-    if live is not None:
-        parts += [live["source"], live["target"]]
+    for held in state.values():
+        window = held.get("window")
+        if window is not None:
+            parts += [window["obs"]["entity"], window["facts"]["source"], window["facts"]["target"]]
+        live = held.get("derive/live")
+        if live is not None:
+            parts += [live["source"], live["target"]]
     return np.concatenate([np.asarray(part, np.int64) for part in parts])
 
 
@@ -138,13 +147,13 @@ def segment(plan, index, graph, state):
     return carry, Dense(graph.name, [], graph.steps, **arrays)
 
 
-def derive_segment(plan, index, graph, state, registry, spec, limits):
+def derive_segment(plan, index, graph, state, registry, steps, limits, partitions):
     started = time.perf_counter()
     with measure("segment"):
         carry, dense = segment(plan, index, graph, state)
     known = plan.seen[carry.glob]
     plan.seen[carry.glob[dense.obs_entity]] = True
-    result = transform.derive(dense, registry, spec, limits, carry, known)
+    result = transform.derive(dense, registry, steps, limits, partitions, carry, known)
     plan.seen[carry.glob[result.obs_entity]] = True
     LOG.info(
         "segment exit index=%d seconds=%.3f entities=%d facts=%d",
@@ -156,11 +165,11 @@ def derive_segment(plan, index, graph, state, registry, spec, limits):
     return carry, result
 
 
-def derived(plan, graphs, registry, spec, limits):
+def derived(plan, graphs, registry, steps, limits, partitions):
     started = time.perf_counter()
     state = {}
     outputs = [
-        derive_segment(plan, index, graph, state, registry, spec, limits)
+        derive_segment(plan, index, graph, state, registry, steps, limits, partitions)
         for index, graph in enumerate(graphs)
     ]
     LOG.info("derived exit seconds=%.3f segments=%d", time.perf_counter() - started, len(outputs))
@@ -835,9 +844,9 @@ def finished(appender, context, groups):
     appender.close()
 
 
-def build(members, registry, spec, groups, seed, spill, limits, destination=None):
+def build(members, registry, steps, spec, groups, seed, spill, limits, partitions, destination=None):
     started = time.perf_counter()
-    plan = Plan(members, registry, spec)
+    plan = Plan(members, registry, steps, spec)
     transform_state, representation_state, context = {}, {}, Context(plan, spec, groups)
     folder = Path(spill if destination is None else destination)
     appender = Appender(folder)
@@ -845,7 +854,7 @@ def build(members, registry, spec, groups, seed, spill, limits, destination=None
         clock = time.perf_counter()
         with measure("dense"):
             dense = member.dense()
-        carry, graph = derive_segment(plan, index, dense, transform_state, registry, spec, limits)
+        carry, graph = derive_segment(plan, index, dense, transform_state, registry, steps, limits, partitions)
         with measure("represent"):
             piece = represent_segment(
                 carry, graph, registry, spec, groups, seed, limits, representation_state, context
@@ -878,15 +887,13 @@ def build(members, registry, spec, groups, seed, spill, limits, destination=None
 
 
 PIPE = {}
-CHAIN = ("window", "nodes", "finish", "merging", "represent")
-SHARDS = 3
-RANK = dict(stitch=0, assemble=1, steps=2, expand=3)
+RANK = dict(stitch=0, expand=1)
 
 
-def attach(jobs, registry, spec, groups, seed, limits, threads):
+def attach(jobs, registry, stated, spec, groups, seed, limits, partitions, threads):
+    started = time.perf_counter()
     numba.set_num_threads(threads)
     PIPE.clear()
-    deriving, filtering = DERIVE.settings(registry, spec), EDGES.settings(registry, spec)
     PIPE.update(
         jobs=[
             dict(
@@ -900,14 +907,14 @@ def attach(jobs, registry, spec, groups, seed, limits, threads):
             for plan, paths, spill, destination in jobs
         ],
         registry=registry,
+        steps=pipeline.resolved(registry, stated),
         spec=spec,
         groups=groups,
         seed=seed,
         limits=limits,
-        deriving=deriving,
-        edges=filtering,
-        filtering=bool(filtered_names(registry, filtering)),
+        partitions=partitions,
     )
+    LOG.debug("attach exit jobs=%d seconds=%.4f", len(jobs), time.perf_counter() - started)
 
 
 def staged(function):
@@ -999,155 +1006,59 @@ def expand_task(job, index):
 
 
 @staged
-def window_task(job, index):
-    registry, spec, limits, plan = PIPE["registry"], PIPE["spec"], PIPE["limits"], PIPE["jobs"][job]["plan"]
+def segment_task(job, index):
+    plan = PIPE["jobs"][job]["plan"]
     name, steps, arrays = taken(job, index, "expanded")
-    state = state_of(job, "window", index)
-    carry, dense = segment(plan, index, Dense(name, [], steps, **arrays), state)
-    seen = state.get("pipe/seen", EMPTY)
+    state = state_of(job, "segment", index)
+    carry, dense = segment(plan, index, Dense(name, [], steps, **arrays), {})
+    seen = state.get("seen", EMPTY)
     known = np.isin(carry.glob, seen)
-    graph = transform.derive(dense, registry, spec, limits, carry, known, transform.STAGES[:2], False)
     observed = np.zeros(len(carry.glob), bool)
     observed[dense.obs_entity] = True
-    observed[graph.obs_entity] = True
-    state["pipe/seen"] = np.union1d(seen, carry.glob[observed & graph.entity_connected])
-    park(job, index, "window", packed(carry, graph, known))
-    keep(job, "window", index, state)
+    state["seen"] = np.union1d(seen, carry.glob[observed & dense.entity_connected])
+    park(job, index, "segment", packed(carry, dense, known))
+    keep(job, "segment", index, state)
 
 
-@staged
-def nodes_task(job, index):
-    registry, spec, limits = PIPE["registry"], PIPE["spec"], PIPE["limits"]
-    state = state_of(job, "nodes", index)
-    graph, carry, known = unpacked(taken(job, index, "window"), state)
-    graph = transform.derive(graph, registry, spec, limits, carry, known, transform.STAGES[2:3], False)
-    deriving = PIPE["deriving"]
-    recency = None
-    if derivation(registry, deriving) is not None:
-        recency = derive_prepare(graph, registry, deriving, carry)
-    value = packed(carry, graph, known, recency=recency)
-    park(job, index, "nodes", value)
-    park(job, index, "meta", dict(value, graph=None, recency=None, steps=graph.steps))
-    keep(job, "nodes", index, state)
-
-
-@staged
-def steps_task(job, index):
-    value = peek(job, index, "nodes")
-    graph, carry, _ = unpacked(value, {})
-    found, removed, budget = derive_steps(
-        graph,
-        PIPE["registry"],
-        PIPE["deriving"],
-        transform.SEED,
-        value["recency"],
-        carry.step0,
-        PIPE["limits"],
-    )
-    park(job, index, "steps", (found, removed, budget.facts))
-
-
-@staged
-def finish_task(job, index):
-    registry, deriving, plan = PIPE["registry"], PIPE["deriving"], PIPE["jobs"][job]["plan"]
-    state = state_of(job, "finish", index)
-    meta = taken(job, index, "meta")
-    carry = carried(meta, state)
-    live = state.get("derive/live")
-    glob = np.union1d(carry.glob, EMPTY if live is None else np.r_[live["source"], live["target"]])
+def widened(plan, graph, carry, known):
+    started = time.perf_counter()
+    glob = np.union1d(carry.glob, carried_entities(carry.state))
+    if len(glob) == len(carry.glob):
+        return graph, known
     position = np.searchsorted(glob, carry.glob)
-    known = np.ones(len(glob), bool)
-    known[position] = meta["known"]
+    grown = np.ones(len(glob), bool)
+    grown[position] = known
+    graph = relabelled(plan, graph, glob, position)
     carry.glob = glob
-    result = dict(glob=glob, position=position, known=known, deriving=False, kept=None, found=None)
-    if derivation(registry, deriving) is not None:
-        (source, target, code, step), removed, facts = taken(job, index, "steps")
-        source, target = position[source].astype(source.dtype), position[target].astype(target.dtype)
-        connected = plan.connected[glob]
-        result.update(deriving=True)
-        if rewiring(deriving):
-            graph = relabelled(plan, unpacked(peek(job, index, "nodes"), {})[0], glob, position)
-            result.update(
-                kept=prune_mask(
-                    graph.fact_source,
-                    graph.fact_target,
-                    graph.fact_code,
-                    graph.fact_present,
-                    ~removed,
-                    connected,
-                    carry,
-                    "derive",
-                )
-            )
-        if not facts and (live is None or not len(live["source"])):
-            state["derive/live"] = None
-        else:
-            found = (source, target, code, step)
-            result.update(
-                found=found, stop=derive_handoff(carry, found, meta["steps"], connected), facts=facts
-            )
-    park(job, index, "finish", result)
-    keep(job, "finish", index, state)
+    LOG.debug("widened exit entities=%d seconds=%.4f", len(glob), time.perf_counter() - started)
+    return graph, grown
+
+
+def before(place):
+    return "segment" if place == 0 else "step%d" % (place - 1)
 
 
 @staged
-def assemble_task(job, index):
-    registry, spec, limits, work = PIPE["registry"], PIPE["spec"], PIPE["limits"], PIPE["jobs"][job]
-    graph, carry, _ = unpacked(taken(job, index, "nodes"), {})
-    finish = taken(job, index, "finish")
-    graph = relabelled(work["plan"], graph, finish["glob"], finish["position"])
-    carry.glob, known = finish["glob"], finish["known"]
-    if finish["deriving"]:
-        with measure("derived relations"):
-            if finish["kept"] is not None:
-                graph = select(graph, FACTS, finish["kept"])
-            if finish["found"] is not None:
-                budget = GraphBudget(limits, fact_bytes(graph))
-                budget.facts = finish["facts"]
-                graph = derived_rows(graph, finish["found"], finish["stop"], budget)
-    graph = transform.derive(graph, registry, spec, limits, carry, known, transform.STAGES[4:5], False)
-    if not PIPE["filtering"]:
-        park(job, index, "assembled", packed(carry, graph, known))
-        return {}
-    survives = edges_survive(graph, registry, PIPE["edges"], transform.SEED, carry)
-    park(job, index, "assembled", packed(carry, graph, known, survives=survives))
-    rows = np.bincount(graph.fact_code, minlength=registry.relations)
-    return dict(
-        rows={name: int(rows[registry.coded[name]].sum()) for name in filtered_names(registry, PIPE["edges"])}
+def step_task(job, index, place):
+    registry, steps, limits = PIPE["registry"], PIPE["steps"], PIPE["limits"]
+    stage = "step%d" % place
+    state = state_of(job, stage, index)
+    graph, carry, known = unpacked(taken(job, index, before(place)), state)
+    graph, known = widened(PIPE["jobs"][job]["plan"], graph, carry, known)
+    graph = transform.derive(
+        graph, registry, steps[place : place + 1], limits, PIPE["partitions"], carry, known, False
     )
-
-
-@staged
-def edges_task(job, index, shard, names):
-    value = peek(job, index, "assembled")
-    state = state_of(job, "edges%d" % shard, index)
-    graph, carry, _ = unpacked(value, state)
-    kept = edges_mask(graph, PIPE["registry"], PIPE["edges"], transform.SEED, carry, names, value["survives"])
-    park(job, index, "edges%d" % shard, kept)
-    keep(job, "edges%d" % shard, index, state)
-
-
-@staged
-def merging_task(job, index, shards):
-    registry, spec, limits = PIPE["registry"], PIPE["spec"], PIPE["limits"]
-    state = state_of(job, "merging", index)
-    graph, carry, known = unpacked(taken(job, index, "assembled"), state)
-    if shards:
-        kept = np.ones(len(graph.fact_step), bool)
-        for shard in range(shards):
-            kept &= taken(job, index, "edges%d" % shard)
-        graph = select(graph, FACTS, kept)
-    graph = transform.derive(graph, registry, spec, limits, carry, known, transform.STAGES[6:], False)
-    with measure("verify"):
-        verify_dense(graph, registry, known)
-    park(job, index, "merged", packed(carry, graph, known))
-    keep(job, "merging", index, state)
+    if place == len(steps) - 1:
+        with measure("verify"):
+            verify_dense(graph, registry, known)
+    park(job, index, stage, packed(carry, graph, known))
+    keep(job, stage, index, state)
 
 
 @staged
 def represent_task(job, index):
     work = PIPE["jobs"][job]
-    graph, carry, _ = unpacked(taken(job, index, "merged"), {})
+    graph, carry, _ = unpacked(taken(job, index, before(len(PIPE["steps"]))), {})
     context, state = work["context"], state_of(job, "represent", index)
     piece = represent_segment(
         carry,
@@ -1190,36 +1101,17 @@ def stitch_task(job, index):
 
 TASKS = dict(
     expand=expand_task,
-    window=window_task,
-    nodes=nodes_task,
-    steps=steps_task,
-    finish=finish_task,
-    assemble=assemble_task,
-    edges=edges_task,
-    merging=merging_task,
+    segment=segment_task,
+    step=step_task,
     represent=represent_task,
     stitch=stitch_task,
 )
 
 
-def balanced(rows, count):
-    shards, load = [[] for _ in range(count)], [0] * count
-    for name in sorted(rows, key=lambda name: (-rows[name], name)):
-        target = load.index(min(load))
-        shards[target].append(name)
-        load[target] += rows[name]
-    return [tuple(shard) for shard in shards]
-
-
-def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
+def build_parallel(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
     started = time.perf_counter()
-    settings = {operation: operation.settings(registry, spec) for operation in (DERIVE, EDGES)}
-    for operation, held in settings.items():
-        operation.check(registry, held)
-    count = min(SHARDS, len(filtered_names(registry, settings[EDGES])))
-    deriving = derivation(registry, settings[DERIVE]) is not None
-    stages = CHAIN[:3] + tuple("edges%d" % shard for shard in range(count)) + CHAIN[3:]
-    plans = [Plan(job["members"], registry, spec) for job in jobs]
+    stages = ("segment",) + tuple("step%d" % place for place in range(len(steps))) + ("represent",)
+    plans = [Plan(job["members"], registry, steps, spec) for job in jobs]
     sizes = [len(job["members"]) for job in jobs]
     initargs = (
         [
@@ -1227,30 +1119,25 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
             for plan, job in zip(plans, jobs)
         ],
         registry,
+        [step.entry() for step in steps],
         spec,
         groups,
         seed,
         limits,
+        partitions,
         max(1, numba.config.NUMBA_NUM_THREADS // workers),
     )
     hosts, dedicated = max(1, workers // 8), workers > 2
-    after = dict(window="expand", nodes="window", finish="nodes", merging="filtered", represent="merging")
-    after.update({stage: "assemble" for stage in stages if stage.startswith("edges")})
+    after = dict(zip(stages, ("expand",) + stages[:-1]))
     ordered = {(job, stage): 0 for job in range(len(jobs)) for stage in stages}
     last = {}
-    done = {(job, stage): set() for job in range(len(jobs)) for stage in tuple(RANK) + stages + ("filtered",)}
-    expanded, shards, active = [0] * len(jobs), [None] * len(jobs), set()
+    done = {(job, stage): set() for job in range(len(jobs)) for stage in tuple(RANK) + stages}
+    expanded, active = [0] * len(jobs), set()
     waiting, running, pending, busy, stitched = [], {}, {}, {}, 0
     lookahead = 2 * workers
 
     def ready(job, stage):
-        index = ordered[job, stage]
-        return (
-            (job, stage) not in active
-            and index in done[job, after[stage]]
-            and (stage != "finish" or not deriving or index in done[job, "steps"])
-            and (not stage.startswith("edges") or shards[job] is not None)
-        )
+        return (job, stage) not in active and ordered[job, stage] in done[job, after[stage]]
 
     def chosen(worker):
         reserved = dedicated and worker < hosts
@@ -1265,9 +1152,9 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
             ordered[job, stage] += 1
             active.add((job, stage))
             last[job, stage] = worker
-            if stage.startswith("edges"):
-                return job, stage, (index, int(stage[5:]), shards[job][int(stage[5:])])
-            return job, stage, (index, count) if stage == "merging" else (index,)
+            if stage.startswith("step"):
+                return job, stage, (index, int(stage[4:]))
+            return job, stage, (index,)
         if waiting and not reserved:
             _, _, job, stage, arguments = heapq.heappop(waiting)
             return job, stage, arguments
@@ -1292,7 +1179,7 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
                         task = chosen(worker)
                         if task is not None:
                             job, stage, arguments = task
-                            function = TASKS["edges" if stage.startswith("edges") else stage]
+                            function = TASKS["step" if stage.startswith("step") else stage]
                             running[executors[worker].submit(guarded, function, job, *arguments)] = worker
                             pending[worker] = task
                 if not running:
@@ -1308,18 +1195,6 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
                         continue
                     index = arguments[0]
                     done[job, stage].add(index)
-                    if stage == "nodes" and deriving:
-                        heapq.heappush(waiting, (index, RANK["steps"], job, "steps", (index,)))
-                    if stage == "finish":
-                        heapq.heappush(waiting, (index, RANK["assemble"], job, "assemble", (index,)))
-                    if stage == "assemble" and not count:
-                        done[job, "filtered"].add(index)
-                    if stage == "assemble" and count and shards[job] is None:
-                        shards[job] = balanced(result["rows"], count)
-                    if stage.startswith("edges") and all(
-                        index in done[job, "edges%d" % shard] for shard in range(count)
-                    ):
-                        done[job, "filtered"].add(index)
                     if stage == "represent" and index == sizes[job] - 1:
                         LOG.info(
                             "segments represented job=%d seconds=%.3f", job, time.perf_counter() - started
@@ -1332,12 +1207,12 @@ def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
     for (_, stage), seconds in busy.items():
         totals[stage] = totals.get(stage, 0.0) + seconds
     LOG.info(
-        "segments parallel build exit seconds=%.3f groups=%d segments=%d workers=%d shards=%d busy=%s",
+        "segments parallel build exit seconds=%.3f groups=%d segments=%d workers=%d steps=%d busy=%s",
         time.perf_counter() - started,
         len(jobs),
         sum(sizes),
         workers,
-        count,
+        len(steps),
         ",".join("%s:%.1f" % item for item in sorted(totals.items())),
     )
 

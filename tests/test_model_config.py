@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from support import configuration
 
 from conftest import SPLITS
 from graphspec.infra.arrays import RESIDENT
@@ -12,7 +13,7 @@ from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
 from tuning.batches.packing import Packer
 from tuning.families.layers import CausalAttention, TimeEncoding
-from tuning.families.model_spec import configuration, configured, samples, space, views
+from tuning.families.model_spec import configured, samples, space, views
 from tuning.families.models import build
 from tuning.families.periods import blocks as period_blocks
 
@@ -86,16 +87,17 @@ def test_antisymmetric_state_readout_has_no_unused_time_encoding():
 
 def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     bank = Deriver.__new__(Deriver)
-    bank.registry = registry()
+    bank.registry = SimpleNamespace(**vars(registry()), fingerprint=lambda: "stated")
     bank.cache = Path(tmp_path)
     bank.variants, bank.roots, bank.device, bank.directory = {}, {}, "cpu", Path(tmp_path)
+    bank.source = "source"
     monkeypatch.setattr(
-        specs, "space", lambda declaration, groups: (specs.number("time/history", 1, 32, 16),)
+        specs, "settings", lambda declaration, groups: (specs.number("time/history", 1, 32, 16),)
     )
-    cfg = {"model": {"view": "signal"}, "graph": {"time/history": 1}, "splits": SPLITS}
-    assert bank.variant(cfg)[1]["time/history"] == 1
+    cfg = {"model": {"view": "signal"}, "pipeline": [], "graph": {"time/history": 1}, "splits": SPLITS}
+    assert bank.variant(cfg)[2]["time/history"] == 1
     cfg["graph"]["time/history"] = 2
-    assert bank.variant(cfg)[1]["time/history"] == 2
+    assert bank.variant(cfg)[2]["time/history"] == 2
 
 
 def test_encoding_and_attention_reject_invalid_parameters_at_construction():

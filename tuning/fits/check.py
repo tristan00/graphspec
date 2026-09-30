@@ -55,25 +55,41 @@ def probe(bank, block, cfg, device):
     )
 
 
+def settled(registry, model, given):
+    started = time.perf_counter()
+
+    def read(parameter):
+        if parameter.name not in given:
+            raise ValueError(
+                "the settings of the check state no %s, which the model %s reads" % (parameter.name, describe(model))
+            )
+        return parameter.check(given[parameter.name])
+
+    result = specs.draw(specs.settings(registry, groups(model)), read)
+    emit("check_settled", settings=len(result), seconds=time.perf_counter() - started)
+    return result
+
+
 @exclusive
-def check(directory, output, device, seed, splits, graph=None, spec_path=None):
+def check(directory, output, device, seed, splits, pipeline_path, settings_path, graph=None):
     entered = time.perf_counter()
     output = output_path(output)
     compute.reserve(device)
     bank = Deriver(directory, device, RESIDENT)
-    given = read_json(spec_path) if spec_path else {}
+    pipeline, given = read_json(pipeline_path), read_json(settings_path)
     models = samples(bank.registry)
     unknown = sorted(
         set(given)
-        - {parameter.name for model in models for parameter in specs.space(bank.registry, groups(model))}
+        - {parameter.name for model in models for parameter in specs.settings(bank.registry, groups(model))}
     )
     if unknown:
-        raise ValueError("spec file names unknown parameters: " + ", ".join(unknown))
-    shown = bank.viewed(configuration(bank.registry, models[0], given, seed, splits)).graphs
+        raise ValueError("the settings of the check name unknown parameters: " + ", ".join(unknown))
+    first = settled(bank.registry, models[0], given)
+    shown = bank.viewed(configuration(bank.registry, models[0], pipeline, first, seed, splits)).graphs
     chosen = max(shown, key=lambda entry: entry["observations"])["index"] if graph is None else graph
     results = []
     for model in models:
-        cfg = configuration(bank.registry, model, given, seed, splits)
+        cfg = configuration(bank.registry, model, pipeline, settled(bank.registry, model, given), seed, splits)
         candidates = sorted(
             block
             for partition in (0, 1)
@@ -105,11 +121,12 @@ def main():
     parser.add_argument("--scored", nargs="+", required=True)
     parser.add_argument("--sees", nargs="+", required=True)
     parser.add_argument("--graph", type=int)
-    parser.add_argument("--spec")
+    parser.add_argument("--pipeline", required=True, help="the pipeline every model derives its variant by")
+    parser.add_argument("--settings", required=True, help="every setting of the graph any model reads")
     args = parser.parse_args()
     configure()
     splits = dict(trained=args.trained, scored=args.scored, sees=seen(args.sees))
-    check(args.directory, args.output, args.device, args.seed, splits, args.graph, args.spec)
+    check(args.directory, args.output, args.device, args.seed, splits, args.pipeline, args.settings, args.graph)
 
 
 if __name__ == "__main__":

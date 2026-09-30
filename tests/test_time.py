@@ -24,11 +24,11 @@ from graphspec.views.view import sequences, view
 from graphspec.views.visible import unstated
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
-from tuning.families.model_spec import configuration
 from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
+configuration = support.configuration
 pytestmark = pytest.mark.xdist_group("time")
 MAKERS, SITES = ("m0", "m1", "m2"), ("s0", "s1", "s2", "s3")
 MOMENTS = (0, 2, 4, 6, 8, 10)
@@ -682,7 +682,7 @@ def test_a_graph_without_time_shows_every_task_the_same_facts(banks):
         assert shown_graph.task_step.tolist() == [0] * 6 and len(shown_graph.label_task) == 6
         assert serving(held, shown_graph, 0) == [("m0", "s0"), ("m1", "s1")]
     spec = cfg["graph"]
-    assert spec["time/periods"] == "steps" and spec["time/steps"] == "tasks"
+    assert cfg["pipeline"][0]["parameters"]["time/periods"] == "steps" and spec["time/steps"] == "tasks"
 
 
 def test_a_graph_with_order_only_states_positions_and_no_unit(banks):
@@ -701,7 +701,7 @@ def test_a_bank_holds_graphs_of_different_units_and_states_no_period(banks):
     units = [graph["unit"] for graph in held.manifest["graphs"]]
     assert units == ["hour", "day", "hour", "day", "hour"]
     assert held.registry.schema.units == ("hour", "day")
-    names = {parameter.name: parameter for parameter in specs.space(held.registry, ())}
+    names = {parameter.name: parameter for parameter in support.parameters(held.registry, ())}
     assert names["time/periods"].options == ("steps", "every")
     assert all("week" not in row and "period" not in row for row in held.rows)
     assert support.shown(held, 0).period.tolist() == list(range(len(MOMENTS)))
@@ -817,7 +817,7 @@ def test_the_rule_for_several_facts_is_stated_where_a_bank_holds_them_and_valida
         ValueError, match=r"the pipeline states no time/several, which has no default; it is one of \['first'"
     ):
         configuration(seen.registry, dict(view="snapshot"), {}, 5, SPLITS)
-    assert "time/several" not in {parameter.name for parameter in specs.space(forms_bank.registry, ())}
+    assert "time/several" not in {parameter.name for parameter in specs.settings(forms_bank.registry, ())}
     truth = truths(seen)["several"]
     before = validate(truth, seen.registry, seen.splits)
     monkeypatch.setattr(SEVERAL, "held", dict(broken=broken, **SEVERAL.held))
@@ -844,13 +844,11 @@ def test_periods_are_a_view_and_need_not_increase(banks):
     from graphspec.budgets import GraphLimits
     from graphspec.engine import transform
 
-    every = specs.configured(
-        specs.space(held.registry, ()), {"time/periods": "every", "time/period_length": 4}
-    )
-    derived = transform.derive(dense, support.fitted(held), every, GraphLimits("cpu"))
+    every = support.steps(held.registry, {"time/periods": "every", "time/period_length": 4})[0]
+    derived = transform.derive(dense, support.fitted(held), every, GraphLimits("cpu"), None)
     assert derived.period.tolist() == [0, 0, 0, 0, 1, 1]
-    kept = specs.configured(specs.space(held.registry, ()), {})
-    assert transform.derive(dense, held.registry, kept, GraphLimits("cpu")).period.tolist() == [
+    kept = support.steps(held.registry, {})[0]
+    assert transform.derive(dense, held.registry, kept, GraphLimits("cpu"), None).period.tolist() == [
         3,
         3,
         1,
@@ -930,7 +928,7 @@ def test_the_steps_of_a_view_may_be_the_times_of_change(tmp_path):
     assert manifest["spec"]["extras"]["target"] == "number" and manifest["graphs"][0]["tasks"] == 4
     held = Deriver(tmp_path / "bank", "cpu", RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), {"time/steps": "changes"}, 5, SPLITS)
-    assert cfg["graph"]["time/periods"] == "steps"
+    assert cfg["pipeline"][0] == dict(operation="graphspec.periods", parameters={"time/periods": "steps"})
     truth = Facts.load(held.truth(0))
     (sequence,) = sequences(truth, held.registry, "changes", held.looking(cfg)[0])
     assert sequence["moments"].tolist() == [3, 5, 10, 20] and sequence["observer"] == -1
@@ -989,7 +987,7 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
         match="the view of graph first shows at the time 4 several facts about the node s0, and no time/several",
     ):
         view(truth, held.registry, chosen, None)
-    names = {parameter.name: parameter for parameter in specs.space(held.registry, ())}
+    names = {parameter.name: parameter for parameter in specs.settings(held.registry, ())}
     assert names["time/steps"].options == ("tasks", "changes", "halved")
     assert names["time/steps"].default == "tasks"
 

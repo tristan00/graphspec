@@ -12,11 +12,21 @@ import numpy as np
 from graphspec.infra.log import emit
 from graphspec.infra.processes.processes import guarded, spawned
 from graphspec.operations import parameters as specs
+from graphspec.operations import pipeline
 from graphspec.registries import carried, restored
 from tuning.families.model_spec import TRAINING, groups
 from tuning.families.model_spec import space as model_space
 
-from .selector import check_bounds, graph_space, metadata, narrow_group, runtime_parameter, spaces, stepped
+from .selector import (
+    check_bounds,
+    graph_space,
+    metadata,
+    narrow_group,
+    pipeline_space,
+    runtime_parameter,
+    spaces,
+    stepped,
+)
 
 CANDIDATES = 10000
 RANKED = 25
@@ -38,19 +48,22 @@ def histogram(values):
     return dict(edges=edges.tolist(), counts=counts.tolist())
 
 
-def flatten(config):
+def flatten(config, template):
     return {
         **{"model/" + name: value for name, value in config["model"].items()},
         **{"graph/" + name: value for name, value in config["graph"].items()},
+        **pipeline.flattened(template, config["pipeline"]),
         **{parameter.name: config[parameter.name] for parameter in TRAINING},
         **({"max_seconds": config["max_seconds"]} if "max_seconds" in config else {}),
     }
 
 
 class Space:
-    def __init__(self, registry, bounds, seconds, history):
-        self.registry, self.bounds = registry, bounds
+    def __init__(self, registry, bounds, seconds, history, template):
+        started = time.perf_counter()
+        self.registry, self.bounds, self.template = registry, bounds, template
         self.models, self.training = spaces(registry, bounds)
+        self.pipeline = pipeline_space(registry, template, bounds)
         self.runtime = runtime_parameter(seconds)
         limits = [self.runtime.low, self.runtime.high]
         limits.extend(
@@ -58,19 +71,22 @@ class Space:
         )
         runtime = specs.number("max_seconds", min(limits), max(limits), self.runtime.default)
         self.graphs = {}
-        graph = specs.space(registry, specs.GROUPS)
+        graph = specs.settings(registry, specs.GROUPS)
         self.parameters = {
             **{"model/" + p.name: p for p in model_space(registry)},
             **{p.name: p for p in TRAINING},
             **{"graph/" + p.name: p for p in graph},
+            **{p.name: p for p in pipeline.space(registry, template)},
             runtime.name: runtime,
         }
         self.proposal_parameters = {
             **{"model/" + p.name: p for p in self.models},
             **{p.name: p for p in self.training},
             **{"graph/" + p.name: p for p in stepped(registry, narrow_group(graph, bounds))},
+            **{p.name: p for p in self.pipeline},
             self.runtime.name: self.runtime,
         }
+        emit("space_made", parameters=len(self.parameters), seconds=time.perf_counter() - started)
         self.width = sum(len(p.options) if p.options else 2 for p in self.parameters.values())
 
     def importance(self, weights):
@@ -91,7 +107,7 @@ class Space:
     def encode(self, configs):
         encoded = np.zeros((len(configs), self.width), dtype=np.float64)
         for row, config in enumerate(configs):
-            values, column = flatten(config), 0
+            values, column = flatten(config, self.template), 0
             unknown = sorted(set(values) - self.parameters.keys())
             if unknown:
                 raise ValueError("historical configuration has unknown parameters: " + ", ".join(unknown))
@@ -129,6 +145,7 @@ class Space:
             seed=training_seed,
             model=model,
             graph=specs.draw(self.graphs[key], lambda p: choose("graph/", p)),
+            pipeline=pipeline.entries(self.template, specs.draw(self.pipeline, lambda p: choose("", p))),
             **specs.draw(self.training, lambda p: choose("", p)),
             max_seconds=choose("", self.runtime),
         )
@@ -146,13 +163,13 @@ def pool():
     return POOL["executor"]
 
 
-def draw_chunk(registry, bounds, seconds, history, seed, training_seed, fixed, count):
-    space = Space(registry, bounds, seconds, history)
+def draw_chunk(registry, bounds, seconds, history, template, seed, training_seed, fixed, count):
+    space = Space(registry, bounds, seconds, history, template)
     rng = np.random.default_rng(seed)
     return [space.draw(rng, training_seed, fixed) for _ in range(count)]
 
 
-def draw_candidates(registry, bounds, seconds, history, seed, training_seed, fixed, count):
+def draw_candidates(registry, bounds, seconds, history, template, seed, training_seed, fixed, count):
     started = time.perf_counter()
     workers = min(os.cpu_count(), count)
     counts = [count // workers + (index < count % workers) for index in range(workers)]
@@ -163,6 +180,7 @@ def draw_candidates(registry, bounds, seconds, history, seed, training_seed, fix
         repeat(bounds),
         repeat(seconds),
         repeat(history),
+        repeat(template),
         seeds,
         repeat(training_seed),
         repeat(fixed),
@@ -181,15 +199,16 @@ def propose(
     seed,
     training_seed,
     bounds,
+    template,
     random_params,
     device,
     seconds,
     progress=None,
 ):
     started = time.perf_counter()
-    check_bounds(registry, bounds)
+    check_bounds(registry, bounds, template)
     records = observations + failures
-    space = Space(registry, bounds, seconds, [entry["config"] for entry in records])
+    space = Space(registry, bounds, seconds, [entry["config"] for entry in records], template)
     rng = np.random.default_rng(seed)
     fixed = {name: space.proposal_parameters[name].uniform(rng) for name in space.random_names(random_params)}
     complete = [entry["status"] == "complete" for entry in records]
@@ -210,7 +229,9 @@ def propose(
     update("Fitting models")
     history = [entry["config"] for entry in records]
     model = build(space.encode(history), losses, complete, seed, device)
-    candidates = draw_candidates(registry, bounds, seconds, history, seed, training_seed, fixed, CANDIDATES)
+    candidates = draw_candidates(
+        registry, bounds, seconds, history, template, seed, training_seed, fixed, CANDIDATES
+    )
     update("Ranking candidates")
     index, value = model.choose(space.encode(candidates))
     config = candidates[index]
@@ -227,7 +248,7 @@ def propose(
         )
         for i in order
     ]
-    params = flatten(config)
+    params = flatten(config, template)
     if any(params[name] != value for name, value in fixed.items() if name in params):
         raise RuntimeError(model.sampler + " proposal changed a preset random parameter")
     elapsed = time.perf_counter() - started
@@ -238,6 +259,7 @@ def propose(
         seed,
         training_seed,
         bounds,
+        template,
         sampler=model.sampler,
         phase=model.phase,
         params=params,

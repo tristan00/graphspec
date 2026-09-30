@@ -473,6 +473,8 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
             "the splits of the configuration are %r and those of the statement are %r"
             % (config["splits"], stated.splits())
         )
+    if "pipeline" not in config:
+        raise KeyError("the configuration states no pipeline")
     with FitBudget(directory, deadline, stated.preparation_seconds) as budget:
         with budget.measure("prepare"):
             session = TrainingSession(bank_directory, directory, config, budget, stated)

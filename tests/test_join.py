@@ -9,7 +9,8 @@ from graphspec.operations.periods import PERIODS
 from tuning.bank.bank import Bank, Deriver, distinct, identical
 from tuning.bank.variants import prepare
 from tuning.batches.inputs import recipe
-from tuning.families.model_spec import configuration
+
+configuration = support.configuration
 
 
 def test_single_join_builds_one_graph_per_group_and_keeps_every_block(bank):
@@ -51,16 +52,16 @@ def test_single_join_groups_graphs_within_their_split(bank):
 
 def joined_spec(opened, **graph):
     values = {"graphs/join": "single", "graphs/join_size": 4, **graph}
-    return opened.variant(configuration(opened.registry, dict(view="snapshot"), values, 5, SPLITS))[1]
+    return opened.variant(configuration(opened.registry, dict(view="snapshot"), values, 5, SPLITS))[1:3]
 
 
 def test_unconnected_entities_end_with_their_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     unlinked = {"graphs/connect/%s" % kind: False for kind in opened.registry.nodes}
-    spec = joined_spec(opened, **{"time/scheme": "state"}, **unlinked)
+    steps, spec = joined_spec(opened, **{"time/scheme": "state"}, **unlinked)
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     combined = join.joined(graphs, support.fitted(opened), spec)
-    derived = transform.derive(combined, support.fitted(opened), spec, GraphLimits("cpu"))
+    derived = transform.derive(combined, support.fitted(opened), steps, GraphLimits("cpu"), None)
     home = np.full(len(derived.kinds), -1)
     home[combined.obs_entity] = combined.step_graph[combined.obs_step]
     assert not derived.entity_connected.any()
@@ -71,10 +72,11 @@ def test_unconnected_entities_end_with_their_graph(bank):
 
 def test_every_periods_restart_at_each_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
-    spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
+    steps, spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     registry = support.fitted(opened)
-    combined = PERIODS(join.joined(graphs, registry, spec), registry, spec, 0, GraphLimits("cpu"), None)
+    (periods,) = [step for step in steps if step.operation is PERIODS]
+    combined = periods(join.joined(graphs, registry, spec), registry, 0, GraphLimits("cpu"), None, None)
     starts = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     for first, last in zip(starts[:-1], starts[1:]):
         local = combined.period[first:last] - combined.period[first]
@@ -85,11 +87,13 @@ def test_every_periods_restart_at_each_graph(bank):
 def test_a_join_of_one_graph_equals_the_graph(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     values = {"graphs/join": "single", "graphs/join_size": 4, "time/scheme": "state"}
-    _, spec, chosen = opened.variant(configuration(opened.registry, dict(view="mixed"), values, 5, SPLITS))
+    _, steps, spec, chosen = opened.variant(
+        configuration(opened.registry, dict(view="mixed"), values, 5, SPLITS)
+    )
     graph, registry = support.shown(opened, 2).dense(), support.fitted(opened)
-    alone = transform.materialize(graph, registry, spec, chosen, GraphLimits("cpu"))
+    alone = transform.materialize(graph, registry, steps, spec, chosen, GraphLimits("cpu"), None)
     together = transform.materialize(
-        join.joined([graph], registry, spec), registry, spec, chosen, GraphLimits("cpu")
+        join.joined([graph], registry, spec), registry, steps, spec, chosen, GraphLimits("cpu"), None
     )
     assert sorted(alone) == sorted(together)
     assert all(identical(np.asarray(alone[name]), np.asarray(together[name])) for name in alone)

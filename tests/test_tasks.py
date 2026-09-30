@@ -7,14 +7,13 @@ import pytest
 import support
 
 from conftest import inline
-from graphspec import SEES, SORTS
+from graphspec import OPERATIONS, SEES, SORTS
 from graphspec.budgets import GraphLimits
 from graphspec.engine import transform
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.operations import parameters as specs
 from graphspec.schema.references import Sort
 from graphspec.schema.schema import VERSION, Schema
 from graphspec.schema.time import ALWAYS, NEVER
@@ -23,11 +22,12 @@ from graphspec.views.graph import Graph
 from graphspec.views.visible import Looking
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
-from tuning.families.model_spec import VIEWS, configuration, views
+from tuning.families.model_spec import VIEWS, views
 from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
+configuration = support.configuration
 pytestmark = pytest.mark.xdist_group("tasks")
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
 SERVES = (("m0", "s0"), ("m1", "s1"), ("m2", "s2"), ("m3", "s3"), ("m0", "s1"))
@@ -540,35 +540,33 @@ def test_a_reference_to_a_node_not_observed_resolves_as_its_kind_states(bank):
 
 def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank, monkeypatch):
     held, cfg = opened(bank)
-    names = {parameter.name: parameter for parameter in specs.space(held.registry, ())}
+    names = {parameter.name: parameter for parameter in support.parameters(held.registry, ())}
     assert names["nodes/referenced"].options == ("keep", "remove")
     assert names["nodes/referenced"].default == "keep"
-    assert transform.REMOVES in dict(transform.STAGES)["nodes"].changes
-    assert [name for name, stage in transform.STAGES if transform.REMOVES in stage.changes] == ["nodes"]
+    stages = {name: OPERATIONS.named(name) for name in support.SEVEN}
+    assert [name for name, stage in stages.items() if transform.REMOVES in stage.changes] == ["graphspec.nodes"]
     dense = shown(held, cfg, "one", None).dense()
     sites = np.flatnonzero(dense.kinds == held.registry.kind("site"))
     found = {}
     for choice in ("keep", "remove"):
-        spec = specs.configured(
-            specs.space(held.registry, ()), {"nodes/site/keep": False, "nodes/referenced": choice}
-        )
-        derived = transform.derive(dense, held.fitted(cfg), spec, GraphLimits("cpu"))
+        steps = support.steps(held.registry, {"nodes/site/keep": False, "nodes/referenced": choice})[0]
+        derived = transform.derive(dense, held.fitted(cfg), steps, GraphLimits("cpu"), None)
         kept = derived.obs_entity[np.isin(derived.obs_entity, sites)]
         found[choice] = sorted({dense.keys[entity] for entity in kept.tolist()})
         assert not np.isin(derived.fact_source, sites).any() and not np.isin(derived.fact_target, sites).any()
         assert np.array_equal(derived.member_source, dense.member_source)
     assert found == dict(keep=["s0", "s1", "s2", "s3"], remove=[])
-    monkeypatch.setattr(dict(transform.STAGES)["nodes"], "changes", ("observations", "facts"))
+    monkeypatch.setattr(stages["graphspec.nodes"], "changes", ("observations", "facts"))
     with pytest.raises(
         ValueError,
         match="the operation graphspec.nodes removes the node of the reference "
         "(link|group|route|part|couple) of the task "
         r"\d+ of the kind (wide|joint) of graph one and does not state that it may remove a referenced node",
     ):
-        transform.derive(dense, held.fitted(cfg), spec, GraphLimits("cpu"))
+        transform.derive(dense, held.fitted(cfg), steps, GraphLimits("cpu"), None)
     strict = support.registry("strict", ["maker"], [])
     assert strict.stops.all()
-    names = {parameter.name: parameter for parameter in specs.space(strict, ())}
+    names = {parameter.name: parameter for parameter in support.parameters(strict, ())}
     assert names["nodes/referenced"].options == ("keep",)
 
 
@@ -583,11 +581,11 @@ def test_a_search_offers_every_family_under_every_context_for_references_of_ever
     for family in VIEWS[:8]:
         found = {p.name: p for p in graph_space(registry, configured(registry, dict(view=family)), {})}
         assert (found["time/context"].low, found["time/context"].high) == (0, 3)
-    drawn = [random_suggest(registry, seed, seed, {}, 600)[0] for seed in range(12)]
+    drawn = [random_suggest(registry, seed, seed, {}, 600, support.template())[0] for seed in range(12)]
     assert len({config["model"]["view"] for config in drawn}) > 1
-    space, rng = Space(registry, {}, 600, []), np.random.default_rng(5)
+    space, rng = Space(registry, {}, 600, [], support.template()), np.random.default_rng(5)
     assert len({space.draw(rng, 0, {})["graph"]["time/context"] for _ in range(12)}) > 1
-    check_bounds(registry, {"time/context": {"low": 1, "high": 3}})
+    check_bounds(registry, {"time/context": {"low": 1, "high": 3}}, support.template())
 
 
 @pytest.fixture

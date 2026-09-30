@@ -106,14 +106,25 @@ def test_a_bank_opened_to_read_cannot_derive_and_deriving_states_its_device(bank
 
 
 def test_the_key_of_a_variant_holds_the_device(bank):
+    from support import configuration
+
     from conftest import SPLITS
-    from tuning.families.model_spec import configuration
 
     cfg = configuration(Bank(bank).registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
     central, graphic = Deriver(bank, "cpu", RESIDENT), Deriver(bank, "cuda", RESIDENT)
     left, right = central.identity(cfg), graphic.identity(cfg)
     assert {name for name in left if left[name] != right[name]} == {"device"}
-    assert sorted(left) == ["device", "groups", "spec", "splits"]
+    assert sorted(left) == [
+        "device",
+        "groups",
+        "pipeline",
+        "schema",
+        "seeds",
+        "settings",
+        "source",
+        "splits",
+        "versions",
+    ]
     assert central.variant(cfg)[0].parent == central.cache / "variants"
     assert central.variant(cfg)[0] != graphic.variant(cfg)[0]
     assert central.variant(cfg)[0] == Deriver(bank, "cpu", RESIDENT).variant(cfg)[0]
