@@ -6,7 +6,8 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from graphspec.infra import files, runtime, sources, staging
+from graphspec.build import output
+from graphspec.infra import code, files, runtime
 from tuning import api, build
 
 
@@ -63,11 +64,11 @@ def test_the_suite_clears_what_it_made_under_its_homes_except_compiled_code(tmp_
 
 
 def test_the_caches_of_a_bank_are_keyed_by_the_code_that_made_them(bank, monkeypatch):
-    from graphspec import staged
+    from graphspec.build import staged
     from tuning import data
 
-    assert data.CODE == sources.digest(data.PACKAGES)
-    assert staged.CODE == sources.digest((Path(staged.__file__).parent,))
+    assert data.CODE == code.digest(data.PACKAGES)
+    assert staged.CODE == code.digest((Path(staged.__file__).parents[1],))
     before = data.Bank(bank).cache
     monkeypatch.setattr(data, "CODE", "0" * 64)
     assert data.Bank(bank).cache != before and data.Bank(bank).cache.parent == before.parent
@@ -147,7 +148,7 @@ def test_explicit_runtime_home_does_not_read_invalid_settings(tmp_path, monkeypa
 
 def test_stage_rejects_schema_changes_even_when_table_is_empty(tmp_path):
     key = ("graph", None, None)
-    with staging.Stage(tmp_path / "stage") as stage:
+    with output.Stage(tmp_path / "stage") as stage:
         stage.write({key: pa.table({"id": pa.array([], pa.int32())})})
         with pytest.raises(ValueError, match="inconsistent table schema"):
             stage.write({key: pa.table({"id": pa.array([], pa.float32())})})
@@ -165,8 +166,8 @@ def test_stage_closes_every_writer_after_close_failure(tmp_path, monkeypatch):
             if self.path.name == "00001.parquet":
                 raise OSError("close failed")
 
-    monkeypatch.setattr(staging.pq, "ParquetWriter", Writer)
-    stage = staging.Stage(tmp_path / "stage")
+    monkeypatch.setattr(output.pq, "ParquetWriter", Writer)
+    stage = output.Stage(tmp_path / "stage")
     table = pa.table({"id": pa.array([], pa.int32())})
     stage.write({("first", None, None): table, ("second", None, None): table})
     with pytest.raises(OSError, match="close failed"):
@@ -181,7 +182,7 @@ def test_source_snapshot_rejects_package_path_collisions(tmp_path):
         package.mkdir(parents=True)
         (package / "__init__.py").write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="overlapping snapshot paths"):
-        sources.snapshot(packages, tmp_path / "snapshot")
+        code.snapshot(packages, tmp_path / "snapshot")
     assert not (tmp_path / "snapshot").exists()
 
 

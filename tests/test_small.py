@@ -6,13 +6,14 @@ import numpy as np
 import pytest
 
 from conftest import Inline
-from graphspec import synthetic
+from graphspec.facts.stored import Facts, inputs
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.schema import VERSION, Schema
-from graphspec.truth import Facts, Graph, inputs
-from graphspec.view import finished, sequences, view
+from graphspec.schema.schema import VERSION, Schema
+from graphspec.sources import synthetic
+from graphspec.views.graph import Graph
+from graphspec.views.view import finished, sequences, view
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration

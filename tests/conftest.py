@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from graphspec.infra import locks
-from graphspec.infra.locks import Lock, LockBusy
+from graphspec.infra.processes import locks
+from graphspec.infra.processes.locks import Lock, LockBusy
 
 WORKER = "PYTEST_XDIST_WORKER" in os.environ
 LOG = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ def pytest_unconfigure(config):
 
 
 def synthetic_bank(root, level):
-    from graphspec.synthetic import generate, uniform
+    from graphspec.sources.synthetic import generate, uniform
     from tuning.build import build
 
     started = time.perf_counter()
@@ -136,7 +136,7 @@ def path_bank():
 
 @pytest.fixture(scope="session")
 def varied(tmp_path_factory):
-    from graphspec import synthetic
+    from graphspec.sources import synthetic
     from tuning.build import build
 
     root = tmp_path_factory.mktemp("varied")

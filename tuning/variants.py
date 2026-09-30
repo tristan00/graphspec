@@ -8,9 +8,9 @@ import torch
 from graphspec.infra import files
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.log import emit
-from graphspec.infra.processes import parallel
+from graphspec.infra.processes.processes import parallel
 from graphspec.infra.timing import Timeline, measure
-from graphspec.names import carried, restored
+from graphspec.registries import carried, restored
 
 from .data import Bank, Deriver
 

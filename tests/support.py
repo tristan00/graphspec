@@ -7,9 +7,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from graphspec.infra.files import read_json
-from graphspec.references import SORTS
-from graphspec.registry import Registry
-from graphspec.schema import (
+from graphspec.schema.declaration import Registry
+from graphspec.schema.references import SORTS
+from graphspec.schema.schema import (
     DECLARED,
     EDGE,
     INNER,
@@ -400,7 +400,7 @@ def several(registry):
 
 def shown(opened, index):
     from conftest import SPLITS
-    from graphspec.truth import Graph
+    from graphspec.views.graph import Graph
     from tuning.model_spec import configuration
 
     started = time.perf_counter()

@@ -7,13 +7,13 @@ import pytest
 import torch
 
 from conftest import shared
-from graphspec import spec as specs
-from graphspec import synthetic
+from graphspec.engine.transform import materialize
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.timing import timed
-from graphspec.schema import VERSION, Schema
-from graphspec.transform import materialize
-from graphspec.truth import Graph
+from graphspec.operations import parameters as specs
+from graphspec.schema.schema import VERSION, Schema
+from graphspec.sources import synthetic
+from graphspec.views.graph import Graph
 from tuning.batching import batches, pack_batch
 from tuning.build import build
 from tuning.data import Deriver

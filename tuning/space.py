@@ -9,10 +9,10 @@ from itertools import repeat
 
 import numpy as np
 
-from graphspec import spec as specs
 from graphspec.infra.log import emit
-from graphspec.infra.processes import guarded, spawned
-from graphspec.names import carried, restored
+from graphspec.infra.processes.processes import guarded, spawned
+from graphspec.operations import parameters as specs
+from graphspec.registries import carried, restored
 
 from .model_spec import TRAINING, groups
 from .model_spec import space as model_space

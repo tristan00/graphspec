@@ -8,8 +8,8 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = ["numpy>=2.1", "numba>=0.60", "torch>=2.4", "pyarrow>=25", "optuna>=4.0", "botorch==0.18.1", "scikit-learn>=1.6", "scipy>=1.14", "psutil>=6.0"]
 
-[tool.setuptools]
-packages = ["graphspec", "graphspec.infra", "tuning"]
+[tool.setuptools.packages.find]
+include = ["graphspec*", "tuning*"]
 
 [tool.setuptools.package-data]
 tuning = ["web/*.html", "web/*.css", "web/*.js"]

@@ -55,7 +55,7 @@ def splits(value):
 
 
 def seeing(value):
-    from graphspec.view import SEES
+    from graphspec.views.visible import SEES
 
     started = time.perf_counter()
     result = isinstance(value, dict) and all(

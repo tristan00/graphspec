@@ -10,17 +10,21 @@ from pathlib import Path
 
 import numpy as np
 
-from graphspec import Registry, graphdb, staged, vocabulary
-from graphspec.clock import ALWAYS, NEVER
+from graphspec import Registry
+from graphspec.build import staged
+from graphspec.build.parse import distinct, parse
+from graphspec.engine.transform import validate
+from graphspec.facts.stored import VERSION
 from graphspec.infra.files import read_json, sha256_file, write_json
-from graphspec.infra.locks import exclusive
 from graphspec.infra.log import configure
-from graphspec.infra.processes import pooled
+from graphspec.infra.processes.locks import exclusive
+from graphspec.infra.processes.processes import pooled
 from graphspec.infra.runtime import output_path
-from graphspec.names import carried, restored
-from graphspec.schema import Encoding, Schema
-from graphspec.truth import VERSION, distinct, parse
-from graphspec.view import validate
+from graphspec.registries import carried, restored
+from graphspec.schema import declaration
+from graphspec.schema.schema import Encoding, Schema
+from graphspec.schema.time import ALWAYS, NEVER
+from graphspec.sources import ladybug
 
 LOG = logging.getLogger(__name__)
 WORKER = {}
@@ -36,7 +40,7 @@ def open_source(task_path, task):
     if "staging" in task:
         result = staged.Staged(root / task["staging"], stated)
     elif "database" in task:
-        result = graphdb.Database((root / task["database"]).resolve(), stated)
+        result = ladybug.Database((root / task["database"]).resolve(), stated)
     else:
         raise ValueError("task must name a staging directory or a database")
     LOG.debug("open_source exit seconds=%.4f", time.perf_counter() - started)
@@ -396,7 +400,7 @@ def build(task_path, output, workers, trained):
                 stated, merged(stated, [entry[0] for entry in found]), None, related(stated, found)
             )
             observers = sorted({name for entry in found for name in entry[2]})
-            registry = vocabulary.registry(task, encoding, any(entry[3] for entry in found), bare)
+            registry = declaration.registry(task, encoding, any(entry[3] for entry in found), bare)
             (output / "truth").mkdir(parents=True)
             write_json(output / "supervision.json", rows)
             metrics = mapped(

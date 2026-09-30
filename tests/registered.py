@@ -1,11 +1,11 @@
 import numpy as np
 import pyarrow as pa
 
-from graphspec.clock import NEVER
 from graphspec.infra.timing import timed
-from graphspec.references import Sort
-from graphspec.sets import Form, node
-from graphspec.view import Tasks
+from graphspec.operations.sets import Form, node
+from graphspec.schema.references import Sort
+from graphspec.schema.time import NEVER
+from graphspec.views.view import Tasks
 
 NAME = "registered"
 

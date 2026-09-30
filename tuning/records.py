@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from graphspec.infra.files import JsonCache, sha256_json
-from graphspec.infra.processes import command
+from graphspec.infra.processes.processes import command
 from graphspec.infra.timing import timed
 
 from . import objective

@@ -13,9 +13,9 @@ import torch.multiprocessing as multiprocessing
 
 from graphspec.infra.arrays import RESIDENT, Bundle, Slot, shared, slot_bytes, views
 from graphspec.infra.log import configure
-from graphspec.infra.processes import worker_threads
+from graphspec.infra.processes.processes import worker_threads
 from graphspec.infra.timing import Timeline, measure, timed
-from graphspec.names import carried, restored
+from graphspec.registries import carried, restored
 
 from .batching import recipe_batch
 from .data import Deriver

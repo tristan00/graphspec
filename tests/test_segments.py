@@ -2,11 +2,12 @@ import numpy as np
 import pytest
 import support
 
-from graphspec import join, representations, segments, transform
-from graphspec import spec as specs
+from graphspec.budgets import GraphLimits
+from graphspec.engine import join, segments, transform
 from graphspec.infra.arrays import RESIDENT
-from graphspec.resources import GraphLimits
-from graphspec.truth import DENSE
+from graphspec.operations import parameters as specs
+from graphspec.representations import groups
+from graphspec.views.graph import DENSE
 from tuning.data import Deriver, identical
 
 
@@ -41,7 +42,7 @@ def test_segment_engine_equals_the_physical_join(bank, draw):
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     graphs = [shortened(graph, int(rng.integers(1, graph.steps + 1))) for graph in graphs]
     derived = transform.derive(join.joined(graphs, registry, spec), registry, spec, GraphLimits("cpu"))
-    reference = representations.build(
+    reference = groups.build(
         derived, registry, spec, specs.GROUPS, transform.SEED, GraphLimits("cpu")
     )
     plan = segments.Plan(graphs, registry, spec)

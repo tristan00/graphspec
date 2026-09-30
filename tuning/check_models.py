@@ -4,13 +4,13 @@ from pathlib import Path
 
 import torch
 
-from graphspec import spec as specs
 from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, write_json
-from graphspec.infra.locks import exclusive
 from graphspec.infra.log import configure, emit
+from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.runtime import output_path
+from graphspec.operations import parameters as specs
 
 from .batching import pack_batch
 from .data import Deriver

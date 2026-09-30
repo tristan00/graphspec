@@ -8,14 +8,20 @@ import pytest
 import support
 
 from conftest import SPLITS, inline
-from graphspec import FORMS, SEES, SEVERAL, STEPS, TIES, clock, forms, synthetic
-from graphspec import spec as specs
+from graphspec import FORMS, SEES, SEVERAL, STEPS, TIES
+from graphspec.build import forms
+from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed as clocked
-from graphspec.schema import VERSION, Schema
-from graphspec.truth import Facts, Graph
-from graphspec.view import sequences, unstated, view
+from graphspec.operations import parameters as specs
+from graphspec.schema import time as clock
+from graphspec.schema.schema import VERSION, Schema
+from graphspec.sources import synthetic
+from graphspec.views import visible
+from graphspec.views.graph import Graph
+from graphspec.views.view import sequences, view
+from graphspec.views.visible import unstated
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration
@@ -570,17 +576,17 @@ def test_the_guard_shows_a_fact_where_it_holds_is_known_is_not_replaced_and_may_
     since, until = np.asarray([2, 2, 2, 2]), np.asarray([8, 8, 8, 8])
     known, replaced = np.asarray([2, 6, 2, 2]), np.asarray([clock.NEVER, clock.NEVER, 4, clock.NEVER])
     moments = np.asarray([0, 2, 4, 6, 8])
-    permitted = clock.allowed(4, [3], [1], 0)
+    permitted = visible.allowed(4, [3], [1], 0)
     assert permitted.tolist() == [True, True, True, False]
-    begun, ended = clock.visible(since, until, known, replaced, permitted, moments, moments)
+    begun, ended = visible.visible(since, until, known, replaced, permitted, moments, moments)
     assert list(zip(begun.tolist(), ended.tolist())) == [(1, 4), (3, 4), (1, 2), (1, 1)]
-    assert clock.allowed(4, [3], [1], 1).all() and clock.allowed(4, [3], [1], -1).all()
-    begun, ended = clock.visible(since, until, known, replaced, permitted, moments, moments + 4)
+    assert visible.allowed(4, [3], [1], 1).all() and visible.allowed(4, [3], [1], -1).all()
+    begun, ended = visible.visible(since, until, known, replaced, permitted, moments, moments + 4)
     assert list(zip(begun.tolist(), ended.tolist())) == [(1, 4), (1, 4), (1, 1), (1, 1)]
     with pytest.raises(ValueError, match="shows no time later than the time of looking"):
-        clock.visible(since, until, known, replaced, permitted, moments, moments - 1)
+        visible.visible(since, until, known, replaced, permitted, moments, moments - 1)
     with pytest.raises(ValueError, match="never decrease"):
-        clock.visible(since, until, known, replaced, permitted, moments[::-1], moments[::-1])
+        visible.visible(since, until, known, replaced, permitted, moments[::-1], moments[::-1])
 
 
 def test_a_fact_known_later_than_it_holds_is_invisible_to_a_task_between_the_two_times(banks):
@@ -759,9 +765,9 @@ def test_an_event_between_two_steps_is_shown_at_the_first_step_at_or_after_its_t
             if ("m2", "s2") in serving(held, graph, step)
         ]
     assert found == dict(tasks=[6], changes=[5])
-    begun, ended = clock.visible([5], [6], [5], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
+    begun, ended = visible.visible([5], [6], [5], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
     assert begun.tolist() == [1] and ended.tolist() == [2]
-    begun, ended = clock.visible([5], [6], [7], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
+    begun, ended = visible.visible([5], [6], [7], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
     assert begun.tolist() == ended.tolist() == [2]
 
 
@@ -803,7 +809,7 @@ class Broken:
 def test_the_rule_for_several_facts_is_stated_where_a_bank_holds_them_and_validation_names_its_own(
     banks, monkeypatch
 ):
-    from graphspec.view import validate
+    from graphspec.engine.transform import validate
 
     seen, forms_bank = Deriver(banks["seen"], "cpu", RESIDENT), Deriver(banks["forms"], "cpu", RESIDENT)
     assert seen.registry.extras["several"] is True and forms_bank.registry.extras["several"] is False
@@ -830,13 +836,13 @@ def test_periods_are_a_view_and_need_not_increase(banks):
     held, cfg = opened(banks, "ordered")
     graph = support.shown(held, 0)
     turned = graph.replace(period=np.asarray([3, 3, 1, 1, 2, 2], np.int32))
-    from graphspec.truth import verify
+    from graphspec.views.graph import verify
 
     verify(turned, held.registry)
     dense = turned.dense()
     assert dense.period.tolist() == [3, 3, 1, 1, 2, 2]
-    from graphspec import transform
-    from graphspec.resources import GraphLimits
+    from graphspec.budgets import GraphLimits
+    from graphspec.engine import transform
 
     every = specs.configured(
         specs.space(held.registry, ()), {"time/periods": "every", "time/period_length": 4}
@@ -878,9 +884,9 @@ def test_a_case_of_time_completes_one_fit_on_cpu(prepared, tmp_path, statement):
 
 def test_a_database_gives_the_facts_of_two_clocks_and_their_observers_as_the_staging_does(banks, tmp_path):
     pytest.importorskip("ladybug")
-    from graphspec.database import export
+    from graphspec.facts.stored import STORED
     from graphspec.infra.files import write_json
-    from graphspec.truth import STORED
+    from graphspec.sources.ladybug import export
 
     root = banks["seen"].parent
     export(root / "seen.staging", tmp_path / "seen.lbug")
@@ -941,7 +947,8 @@ def test_the_steps_of_a_view_may_be_the_times_of_change(tmp_path):
 
 
 def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(banks, monkeypatch):
-    from graphspec.view import offered, unstated
+    from graphspec.views.view import offered
+    from graphspec.views.visible import unstated
 
     monkeypatch.setattr(STEPS, "held", dict(STEPS.held))
 

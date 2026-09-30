@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from graphspec.infra import compute, sources
+from graphspec.infra import compute
+from graphspec.infra.code import digest as code_digest
 from graphspec.infra.files import sha256_bytes, sha256_file, write_json
 from graphspec.infra.log import emit
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import measure, timed
-from graphspec.spec import digest
+from graphspec.operations.parameters import digest
 
 from .data import PACKAGES
 
@@ -140,7 +141,7 @@ class TrainingSession:
             prepare(bank_directory, config, stated.workers, self.device, self.directory / "timing_workers")
         self.budget.check()
         with measure("source_digest"):
-            self.revision = sources.digest(PACKAGES)
+            self.revision = code_digest(PACKAGES)
         self.config = config
         self.graph_digest = digest(config["graph"])
         self.history = config["graph"]["time/history"]

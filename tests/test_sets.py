@@ -7,15 +7,20 @@ import pytest
 import support
 
 from conftest import SPLITS, Inline
-from graphspec import ABOUT, HELD, STORAGE, inspect, sets, synthetic, transform
-from graphspec import spec as specs
+from graphspec import ABOUT, HELD, STORAGE, inspect
+from graphspec.budgets import GraphLimits
+from graphspec.engine import transform
+from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.resources import GraphLimits
-from graphspec.schema import VERSION, Encoding, Schema, fitted
-from graphspec.truth import Facts, Graph
-from graphspec.view import sequences, unstated, view
+from graphspec.operations import parameters as specs
+from graphspec.operations import sets
+from graphspec.schema.schema import VERSION, Encoding, Schema, fitted
+from graphspec.sources import synthetic
+from graphspec.views.graph import Graph
+from graphspec.views.view import sequences, view
+from graphspec.views.visible import unstated
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration

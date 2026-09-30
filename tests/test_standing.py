@@ -22,6 +22,22 @@ COMPILERS = ("njit", "jit")
 LOADERS = ("import_module", "__import__", "run_module")
 LOCAL = re.compile(r"(^|[\\/])local([\\/]|$)")
 INFRA = "graphspec/infra"
+GROUPED = ("graphspec",)
+LAYERS = {
+    INFRA: (),
+    "graphspec/registries.py": (),
+    "graphspec/budgets.py": (),
+    "graphspec/schema": ("graphspec/registries.py", "graphspec/budgets.py"),
+    "graphspec/facts": ("graphspec/schema",),
+    "graphspec/views": ("graphspec/facts",),
+    "graphspec/build": ("graphspec/views",),
+    "graphspec/sources": ("graphspec/build",),
+    "graphspec/operations": ("graphspec/views",),
+    "graphspec/representations": ("graphspec/operations",),
+    "graphspec/engine": ("graphspec/representations",),
+    "graphspec/descriptions": ("graphspec/engine", "graphspec/sources"),
+    "graphspec/__init__.py": ("graphspec/descriptions",),
+}
 
 
 def compiled(node):
@@ -185,15 +201,43 @@ def imports(root, folders):
     return found
 
 
-def outside(root, folders):
+def group(place):
+    parts = place.split("/")
+    if place.startswith(INFRA + "/"):
+        return INFRA
+    return "/".join(parts[:2]) if len(parts) > 2 else place
+
+
+def below(name):
     started = time.perf_counter()
-    found = [
-        (place, line, target)
+    found, waiting = set(), list(LAYERS.get(name, ()))
+    while waiting:
+        held = waiting.pop()
+        if held not in found:
+            found.add(held)
+            waiting.extend(LAYERS[held])
+    LOG.debug("below exit group=%s groups=%d seconds=%.4f", name, len(found), time.perf_counter() - started)
+    return found | ({INFRA} if name != INFRA else set())
+
+
+def layered(root, folders):
+    started = time.perf_counter()
+    reach = {name: below(name) for name in LAYERS}
+    unplaced = sorted(
+        place for place, _ in sources(root, folders) if place.split("/")[0] in GROUPED and group(place) not in LAYERS
+    )
+    crossing = sorted(
+        (place, line, group(place), group(target))
         for place, line, target in imports(root, folders)
-        if place.startswith(INFRA + "/") and not target.startswith(INFRA + "/")
-    ]
-    LOG.debug("outside exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
-    return found
+        if group(place) in LAYERS and group(target) != group(place) and group(target) not in reach[group(place)]
+    )
+    LOG.debug(
+        "layered exit unplaced=%d crossing=%d seconds=%.4f",
+        len(unplaced),
+        len(crossing),
+        time.perf_counter() - started,
+    )
+    return unplaced, crossing
 
 
 def write(root, place, source):
@@ -292,19 +336,27 @@ def test_graphspec_does_not_import_tuning_and_nothing_reads_local(tmp_path):
     ]
 
 
-def test_infra_imports_nothing_else_of_the_library(tmp_path):
-    assert outside(ROOT, CODE) == []
-    write(tmp_path, "graphspec/__init__.py", "")
-    write(tmp_path, "graphspec/names.py", "VALUE = 1\n")
-    write(tmp_path, "graphspec/infra/__init__.py", "")
-    write(tmp_path, "graphspec/infra/files.py", "VALUE = 1\n")
-    write(tmp_path, "graphspec/infra/pools.py", "from ..names import VALUE\nfrom .files import VALUE as SAME\n")
-    write(tmp_path, "graphspec/infra/inside.py", "def work():\n    import tuning.run\n\n    return tuning.run\n")
-    write(tmp_path, "graphspec/infra/whole.py", "from graphspec import names\nfrom graphspec.infra import files\n")
-    write(tmp_path, "tuning/__init__.py", "")
+def test_every_module_sits_in_a_group_and_imports_only_the_groups_below_it(tmp_path):
+    assert layered(ROOT, CODE) == ([], [])
+    for place in ("graphspec", "graphspec/infra", "graphspec/infra/processes", "graphspec/views", "tuning"):
+        write(tmp_path, place + "/__init__.py", "")
+    for place in ("registries", "infra/files", "operations/sets", "views/graph", "engine/transform"):
+        write(tmp_path, "graphspec/%s.py" % place, "VALUE = 1\n")
     write(tmp_path, "tuning/run.py", "from graphspec.infra.files import VALUE\n")
-    assert outside(tmp_path, CODE) == [
-        ("graphspec/infra/inside.py", 2, "tuning/run.py"),
-        ("graphspec/infra/pools.py", 1, "graphspec/names.py"),
-        ("graphspec/infra/whole.py", 1, "graphspec/names.py"),
-    ]
+    write(tmp_path, "graphspec/loose.py", "from graphspec.infra.files import VALUE\n")
+    write(tmp_path, "graphspec/views/seen.py", "from .graph import VALUE\nfrom graphspec.operations.sets import VALUE\n")
+    write(tmp_path, "graphspec/views/late.py", "def work():\n    from ..engine import transform\n\n    return transform\n")
+    write(tmp_path, "graphspec/engine/fine.py", "from graphspec.infra import files\nfrom graphspec.views import graph\n")
+    write(tmp_path, "graphspec/infra/pools.py", "from ..registries import VALUE\nfrom .files import VALUE as SAME\n")
+    write(tmp_path, "graphspec/infra/processes/inside.py", "def work():\n    import tuning.run\n\n    return 1\n")
+    write(tmp_path, "graphspec/infra/whole.py", "from graphspec import registries\nfrom graphspec.infra import files\n")
+    assert layered(tmp_path, CODE) == (
+        ["graphspec/loose.py"],
+        [
+            ("graphspec/infra/pools.py", 1, INFRA, "graphspec/registries.py"),
+            ("graphspec/infra/processes/inside.py", 2, INFRA, "tuning/run.py"),
+            ("graphspec/infra/whole.py", 1, INFRA, "graphspec/registries.py"),
+            ("graphspec/views/late.py", 2, "graphspec/views", "graphspec/engine"),
+            ("graphspec/views/seen.py", 2, "graphspec/views", "graphspec/operations"),
+        ],
+    )

@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from graphspec.infra.files import JsonCache
-from graphspec.infra.processes import Heartbeat
+from graphspec.infra.processes.processes import Heartbeat
 from graphspec.infra.timing import Timeline
 
 LOG = logging.getLogger(__name__)

@@ -9,13 +9,17 @@ import pyarrow as pa
 import pytest
 import support
 
-from graphspec import ENCODERS, TYPES, inspect, join, synthetic
-from graphspec import spec as specs
+from graphspec import ENCODERS, TYPES, inspect
+from graphspec.build.parse import distinct
+from graphspec.engine import join
+from graphspec.facts.stored import VERSION, Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
-from graphspec.registry import EXTRAS
-from graphspec.schema import VALUE, Encoding, Schema, fitted
-from graphspec.truth import VERSION, Facts, conforms, distinct
+from graphspec.operations import parameters as specs
+from graphspec.schema.declaration import EXTRAS
+from graphspec.schema.schema import VALUE, Encoding, Schema, fitted
+from graphspec.sources import synthetic
+from graphspec.views.graph import conforms
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.statement import state
@@ -224,7 +228,7 @@ def test_a_bank_keeps_every_value_stated_in_its_dictionaries_and_encoders_fit_on
 
 @pytest.mark.parametrize("unseen", ["stop", "shared"])
 def test_the_onehot_encoder_states_what_it_does_with_a_value_unseen_in_training(unseen):
-    from graphspec.schema import OneHot
+    from graphspec.schema.schema import OneHot
 
     encoder, dictionary = OneHot(unseen), ["low", "mid", "high"]
     state = encoder.fit(np.asarray([0, 2]), dictionary, "shade")

@@ -21,7 +21,7 @@ def child(code, name, directory):
 
 
 def test_singleton_rejects_local_reentry_without_profile_access(monkeypatch):
-    from graphspec.infra.locks import Path, singleton
+    from graphspec.infra.processes.locks import Path, singleton
 
     def forbidden():
         raise AssertionError("Windows singleton must not access the user profile")
@@ -37,13 +37,13 @@ def test_singleton_rejects_local_reentry_without_profile_access(monkeypatch):
 
 
 def test_singleton_excludes_other_home_and_releases(tmp_path, monkeypatch):
-    from graphspec.infra.locks import singleton
+    from graphspec.infra.processes.locks import singleton
 
     name = uuid.uuid4().hex
     monkeypatch.setenv("GRAPHSPEC_HOME", str(tmp_path / "first"))
     code = """
 import sys
-from graphspec.infra.locks import singleton
+from graphspec.infra.processes.locks import singleton
 try:
     with singleton(sys.argv[1], "busy"):
         print("acquired")
@@ -56,7 +56,7 @@ except RuntimeError:
 
 
 def test_abandoned_mutex_is_owned_and_released(tmp_path, monkeypatch):
-    from graphspec.infra import windows_mutex as win
+    from graphspec.infra.processes import windows_mutex as win
 
     name = uuid.uuid4().hex
     mutex = win.Mutex(name)
@@ -76,7 +76,7 @@ def test_abandoned_mutex_is_owned_and_released(tmp_path, monkeypatch):
     code = """
 import os
 import sys
-from graphspec.infra.windows_mutex import Mutex
+from graphspec.infra.processes.windows_mutex import Mutex
 owner = Mutex(sys.argv[1])
 owner.__enter__()
 os._exit(0)
@@ -97,7 +97,7 @@ os._exit(0)
 
 @pytest.mark.parametrize("phase", ["create", "busy", "wait"])
 def test_failed_acquisition_closes_handle_and_clears_local_claim(monkeypatch, phase):
-    from graphspec.infra import windows_mutex as win
+    from graphspec.infra.processes import windows_mutex as win
 
     mutex = win.Mutex(uuid.uuid4().hex)
     closed, released = [], []

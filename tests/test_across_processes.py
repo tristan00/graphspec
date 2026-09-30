@@ -8,28 +8,16 @@ import numpy as np
 import pytest
 import registered
 
-from graphspec import (
-    ABOUT,
-    ENCODERS,
-    FORMS,
-    HELD,
-    SEES,
-    SEVERAL,
-    SORTS,
-    STEPS,
-    STORAGE,
-    TIES,
-    TYPES,
-    synthetic,
-)
-from graphspec.forms import Form
-from graphspec.infra import processes
+from graphspec import ABOUT, ENCODERS, FORMS, HELD, SEES, SEVERAL, SORTS, STEPS, STORAGE, TIES, TYPES
+from graphspec.build.forms import Form
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
-from graphspec.infra.processes import guarded, parallel, spawned
+from graphspec.infra.processes import processes
+from graphspec.infra.processes.processes import guarded, parallel, spawned
 from graphspec.infra.timing import timed
-from graphspec.names import carried, restored
-from graphspec.schema import VERSION
+from graphspec.registries import carried, restored
+from graphspec.schema.schema import VERSION
+from graphspec.sources import synthetic
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration

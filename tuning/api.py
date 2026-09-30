@@ -1,7 +1,7 @@
 import logging
 import time
 
-from graphspec.infra.locks import exclusive
+from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.runtime import output_path
 
 LOG = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def open_bank(path):
 
 
 def configuration(bank, model=None, graph=None, training=None, *, seed, splits):
-    from graphspec.spec import configured
+    from graphspec.operations.parameters import configured
 
     from .model_spec import TRAINING
     from .model_spec import configuration as configure

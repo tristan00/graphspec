@@ -4,11 +4,11 @@ import time
 
 import numpy as np
 
-from graphspec import spec as specs
 from graphspec.infra.files import JsonCache, read_json, sha256_file, write_json
 from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
-from graphspec.view import STEPS
+from graphspec.operations import parameters as specs
+from graphspec.views.view import STEPS
 
 from . import objective, tpe
 from .model_spec import TRAINING, describe, groups

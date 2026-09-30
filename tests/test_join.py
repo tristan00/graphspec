@@ -2,9 +2,10 @@ import numpy as np
 import support
 
 from conftest import SPLITS
-from graphspec import join, operators, transform
+from graphspec.budgets import GraphLimits
+from graphspec.engine import join, transform
 from graphspec.infra.arrays import RESIDENT
-from graphspec.resources import GraphLimits
+from graphspec.operations import stages
 from tuning.data import Bank, Deriver, distinct, identical
 from tuning.inputs import recipe
 from tuning.model_spec import configuration
@@ -73,7 +74,7 @@ def test_every_periods_restart_at_each_graph(bank):
     spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     registry = support.fitted(opened)
-    combined = operators.periods(join.joined(graphs, registry, spec), registry, spec, 0)
+    combined = stages.periods(join.joined(graphs, registry, spec), registry, spec, 0)
     starts = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     for first, last in zip(starts[:-1], starts[1:]):
         local = combined.period[first:last] - combined.period[first]

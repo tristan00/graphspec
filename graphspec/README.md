@@ -1,31 +1,48 @@
 **Graph spec core**
 
+| Where | What is there |
+|---|---|
+| `schema/` | What a graph is stated to hold: the schema, types and encoders of columns (`schema.py`), time and its rules (`time.py`), references (`references.py`), a bank's declaration of relations (`declaration.py`) |
+| `facts/` | The truth graph as a bank stores it (`stored.py`), and its check (`check.py`) |
+| `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
+| `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
+| `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
+| `operations/` | Functions from graphs to a graph: the seven stages (`stages.py`), forms of storage of set edges (`sets.py`), parameters (`parameters.py`), carried state (`state.py`), and their kernels (`kernels.py`) |
+| `representations/` | The arrays a family of models reads (`groups.py`) and their kernels (`kernels.py`) |
+| `engine/` | Derivation of variants: stages in order (`transform.py`), segments (`segments.py`), joined graphs (`join.py`) |
+| `descriptions/` | What the library writes about graphs: `inspect` |
+| `registries.py`, `budgets.py` | Registries of named entries; limits of a derivation |
+| `infra/` | Code that knows nothing of graphs: files, runtime home, timing, logs, hashing, dense algebra, arrays on the device, the digest of the code (`code.py`), and `processes/` with pools, workers, locks and platform code |
+
+A module imports only its own group, `infra/` and the groups below it; `tests/test_standing.py` holds the order. `infra/` imports nothing else of `graphspec` and nothing of `tuning`.
+
 Domain-free machinery that reads a typed temporal truth graph from staged Parquet or an optional LadybugDB database and derives the graph variants a model search explores. Structure comes from the schema a task file states, documented in [the contract](../docs/contract.md). Mechanism lives in the `graphspec.infra` package: files and arrays, database access and hashing.
 
 Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launching Python. There is no default home or profile configuration. On Windows, output must resolve to that runtime volume; managed caches and temporary files stay beneath the home. The checkout launcher accepts mandatory `-Home`; see the [storage and loader guide](../docs/loader.md).
 
 | File | Role |
 |---|---|
-| `schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types and encoders; `Encoding`, the dictionaries of a bank and, once fitted by `fitted` on what the views of the splits trained on show, the states of its encoders. |
-| `inspect.py` | `inspect` prints the schema of a task file or of a bank. |
-| `graphdb.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. Both go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `graphspec.infra.staging`. |
-| `references.py` | The sorts of reference, registered: what a task may refer to, how it is stored and how it resolves at the time of the task. |
-| `vocabulary.py` | `registry(task, encoding, several, untasked)`: the relations stated or taken from a column, and every relation a spec can derive. |
-| `declarations.py`, `registry.py` | `EdgeType` and `Registry`, which allocates relation codes, indexes types and fingerprints the declaration. `Registry.from_declaration` rebuilds a registry from a pinned declaration. |
-| `clock.py` | The models of time, the rules for ties and the choices among several facts, each a registry; `visible` and `allowed`, the one guard that says which facts a task sees. |
-| `forms.py` | The shorthand forms, registered, each reducing rows to facts with intervals. |
-| `truth.py` | `parse` turns one graph's rows into `Facts`, the stored facts with their intervals, and `check` checks them; `Graph` is a view as spans over steps, which `verify` checks; `Graph.dense()` expands the spans into the per-step working graph by reference. |
-| `view.py` | The choices of steps and the rules of what a split may see, each registered; `sequences` gives the sequences of a graph and `view` shows the facts of a graph at the steps of one sequence as a `Graph`. |
-| `spans.py` | Interval primitives: encoding rows as spans, expanding spans to rows, fact order, coverage checks. |
-| `spec.py` | The spec space: conditional parameters generated from a registry and a set of representation groups, with `draw`, `canonical` and `digest`. |
-| `operators.py` | One function per graph stage. |
-| `representations.py` | Model inputs built from a derived graph, and their validation. |
-| `transform.py` | `derive` runs the stages and verifies the graph after each; `materialize` adds the representations. |
-| `join.py` | `unify` gives the members of a joined group one entity numbering; `joined` concatenates them into one physical graph, the reference the segment engine is checked against. |
-| `segments.py`, `carry.py` | The segment engine that builds a joined group graph by graph, described below. |
-| `kernels.py` | The numba kernels behind the stages, the representations and `verify`. |
+| `schema/schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types and encoders; the one table of type names written to staged tables and its inverse; `Encoding`, the dictionaries of a bank and, once fitted by `fitted` on what the views of the splits trained on show, the states of its encoders. |
+| `descriptions/inspect.py` | `inspect` prints the schema of a task file or of a bank. |
+| `sources/ladybug.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. `export` writes staged tables to a database. They go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `build/output.py`. |
+| `schema/references.py` | The sorts of reference, registered: what a task may refer to, how it is stored and how it resolves at the time of the task. |
+| `schema/declaration.py` | `EdgeType` and `Registry`, which allocates relation codes, indexes types and fingerprints the declaration; `Registry.from_declaration` rebuilds a registry from a pinned declaration; `registry(task, encoding, several, untasked)`: the relations stated or taken from a column, and every relation a spec can derive. |
+| `schema/time.py` | The models of time, the rules for ties and the choices among several facts, each a registry. |
+| `views/visible.py` | `visible` and `allowed`, the one guard that says which facts a task sees, and the rules of what a split may see, registered. |
+| `build/forms.py` | The shorthand forms, registered, each reducing rows to facts with intervals. |
+| `build/parse.py`, `facts/stored.py`, `facts/check.py` | `parse` turns one graph's rows into `Facts`, the stored facts with their intervals, and `check` checks them. |
+| `views/graph.py` | `Graph` is a view as spans over steps, which `verify` checks; `Graph.dense()` expands the spans into the per-step working graph by reference. |
+| `views/view.py` | The choices of steps, registered; `sequences` gives the sequences of a graph and `view` shows the facts of a graph at the steps of one sequence as a `Graph`. |
+| `views/spans.py` | Interval primitives: encoding rows as spans, expanding spans to rows, fact order, coverage checks. |
+| `operations/parameters.py` | The spec space: conditional parameters generated from a registry and a set of representation groups, with `draw`, `canonical` and `digest`. |
+| `operations/stages.py` | One function per graph stage. |
+| `representations/groups.py` | Model inputs built from a derived graph, and their validation. |
+| `engine/transform.py` | `derive` runs the stages and verifies the graph after each; `materialize` adds the representations; `validate` shows every graph of a bank once. |
+| `engine/join.py` | `unify` gives the members of a joined group one entity numbering; `joined` concatenates them into one physical graph, the reference the segment engine is checked against. |
+| `engine/segments.py`, `operations/state.py` | The segment engine that builds a joined group graph by graph, described below. |
+| `operations/kernels.py`, `representations/kernels.py` | The numba kernels behind the stages and the representations; `verify`'s is in `views/graph.py`. |
 
-**Truth graph and views.** A bank of version 8 stores one graph as `truth.Facts`, facts with the interval in which each holds; [the contract](../docs/contract.md) lists its arrays. Steps are a view the pipeline chooses by `time/steps` and `time/several`. A view is first shown as stated, a `truth.Shown`, and then encoded, with the encoders fitted for its statement, into a `truth.Graph`, spans over the steps of the view, so an unchanged observation or fact costs one row however long it is shown:
+**Truth graph and views.** A bank of version 8 stores one graph as `stored.Facts`, facts with the interval in which each holds; [the contract](../docs/contract.md) lists its arrays. Steps are a view the pipeline chooses by `time/steps` and `time/several`. A view is first shown as stated, a `graph.Shown`, and then encoded, with the encoders fitted for its statement, into a `graph.Graph`, spans over the steps of the view, so an unchanged observation or fact costs one row however long it is shown:
 
 - `kinds` and `entity_token` (the 64-bit hash of `type:key`) per entity, and `period` per step
 - observation spans `obs_entity`, `obs_start`, `obs_stop` (exclusive), `obs_values` and `obs_x`: an entity's maximal run of consecutive steps with identical stated values, the values as stated and as encoded; within a step observations are ordered by entity
@@ -35,11 +52,11 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 
 `verify` checks a view, in time linear in the spans: steps in range, a period for every step, canonical relation codes, tasks in the order of their steps, observation spans of one entity that neither overlap nor could merge, present facts observed at every step of their span, the nodes that the references of a task name observed at its step where its kind states that an absent node stops the work, absent facts observed at or before theirs, and tokens that match the keys. The encoded values are checked where they are made, against the limit of 16 bits. A bank build refuses two keys of one type that share a token.
 
-The stages work on `truth.Dense`, the per-step expansion: rows reference their features and attributes (`obs_ref`, `fact_ref`) in `x_table` and `value_table` instead of copying them, so a stage that copies or filters rows moves integers. `step_graph` and `entity_connected` carry the joined timeline (all zeros for a single graph).
+The stages work on `graph.Dense`, the per-step expansion: rows reference their features and attributes (`obs_ref`, `fact_ref`) in `x_table` and `value_table` instead of copying them, so a stage that copies or filters rows moves integers. `step_graph` and `entity_connected` carry the joined timeline (all zeros for a single graph).
 
-**Joined groups.** A joined group is never concatenated. `segments.build` transforms and represents one member graph at a time, as a segment of the group's timeline: its entities are numbered by the rank of their group id, so every sort and tie-break matches the whole group, and hashes and random streams receive group ids and group steps. Each stage and representation that looks back in time receives the state earlier graphs left it (`carry.Segment.state`): window copies still open, running degree and activity counts, fact runs, orphan states, derived facts live at the boundary, typed relations still live, last observations, replay states, coupling tails and mixed chains. Lookbacks bounded in time (event DAG, boundaries, walks) read a halo of the recent rows instead. Every segment's rows are written with group ids and offsets, then stitched into the group's variant, which is bitwise equal to transforming and representing the physical join. When a split has few groups, `segments.build_parallel` spreads its groups over the workers, and the groups advance side by side. Each stage that carries state runs its segments in order: the time window, the node filters, the derived facts live at the boundary, the edge filters split by relation over up to three shards balanced by row count, relation merging, and the representations. A stage's carried state is small, so it is written beside the spill files after every segment and any idle worker runs the next segment of any stage; only the representations stay on one worker, which appends every segment's arrays straight into the group's variant files. Work without carried state runs wherever a worker is free: expanding graphs from spans, the per-step derivation, and assembling derived facts with the relation filter and the stateless edge drop. Stages hand segments to each other through one spill file each. The variant is verified once per segment after relation merging, and stitching only adds the group-level indexes. Budgets apply per segment, so a group's size is bounded by disk, not by the graph budget.
+**Joined groups.** A joined group is never concatenated. `segments.build` transforms and represents one member graph at a time, as a segment of the group's timeline: its entities are numbered by the rank of their group id, so every sort and tie-break matches the whole group, and hashes and random streams receive group ids and group steps. Each stage and representation that looks back in time receives the state earlier graphs left it (`state.Segment.state`): window copies still open, running degree and activity counts, fact runs, orphan states, derived facts live at the boundary, typed relations still live, last observations, replay states, coupling tails and mixed chains. Lookbacks bounded in time (event DAG, boundaries, walks) read a halo of the recent rows instead. Every segment's rows are written with group ids and offsets, then stitched into the group's variant, which is bitwise equal to transforming and representing the physical join. When a split has few groups, `segments.build_parallel` spreads its groups over the workers, and the groups advance side by side. Each stage that carries state runs its segments in order: the time window, the node filters, the derived facts live at the boundary, the edge filters split by relation over up to three shards balanced by row count, relation merging, and the representations. A stage's carried state is small, so it is written beside the spill files after every segment and any idle worker runs the next segment of any stage; only the representations stay on one worker, which appends every segment's arrays straight into the group's variant files. Work without carried state runs wherever a worker is free: expanding graphs from spans, the per-step derivation, and assembling derived facts with the relation filter and the stateless edge drop. Stages hand segments to each other through one spill file each. The variant is verified once per segment after relation merging, and stitching only adds the group-level indexes. Budgets apply per segment, so a group's size is bounded by disk, not by the graph budget.
 
-**Relation vocabulary.** `vocabulary.registry` numbers node types and base relations in the order the schema states them, the relations an edge table takes from a column in sorted order at the place of their table, then declares every relation a spec can derive. A relation stated without direction is symmetric. A directed relation has a canonical and a reverse code; a symmetric relation has one.
+**Relation vocabulary.** `declaration.registry` numbers node types and base relations in the order the schema states them, the relations an edge table takes from a column in sorted order at the place of their table, then declares every relation a spec can derive. A relation stated without direction is symmetric. A directed relation has a canonical and a reverse code; a symmetric relation has one.
 
 A table whose relations are taken from a column is one table with a value. Each value keeps its own code, which facts, references and events carry and which models read through a learned embedding; everything else is the table's: its parameters under `relations/<table>/` and `edges/<table>/`, its projections, its array `attributes_<table>`, and the weights models hold per relation. `Registry.groups` names, for every relation stated, every table of relations taken from a column and every relation of a set edge, the relations it holds; `Registry.coded` their codes, with every derived relation alone; `Registry.grouped` the index of the weights of every code, one per table and direction; `Registry.valued` the tables whose relations carry values, and `Registry.value_group` the place of each code among them. What grows with the number of values of a column is the declaration of the registry, its tables indexed by code, and the embedding tables of relations in models.
 
@@ -65,7 +82,7 @@ The markers `non_relation` and `period_context` take codes above every relation.
 
 `declaration()` serialises everything and `fingerprint()` hashes it. The bank manifest, the run plan and every trial's `selection.json` pin that hash.
 
-**Spec.** A spec is a flat dictionary of graph-transform parameters. `spec.space(registry, groups)` generates the parameters for one registry and the representation groups a model reads. Each parameter is active only under its condition; `nodes/<type>/min_degree`, for example, needs `nodes/<type>/filter` set to degree or total_degree.
+**Spec.** A spec is a flat dictionary of graph-transform parameters. `parameters.space(registry, groups)` generates the parameters for one registry and the representation groups a model reads. Each parameter is active only under its condition; `nodes/<type>/min_degree`, for example, needs `nodes/<type>/filter` set to degree or total_degree.
 
 - `draw` walks the parameters in order and asks for a value for each active one.
 - `canonical` refuses a missing active parameter, an inactive or unknown one, and an out-of-range value.
@@ -167,7 +184,7 @@ Whenever a stage removes present facts, it also removes absent rows left without
 | `relations/types` | typed, untyped | untyped replaces every base relation with `untyped` and drops attributes. Its absent row stays only when no underlying relation between the pair is still present. Offered while a base relation is kept. |
 | `relations/parallel` | keep, merge | merge keeps the last of identical facts stated at one step. Offered while a base relation is kept. |
 
-**Representations.** `representations.build` always produces the base arrays and adds the groups a model reads.
+**Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 
 Base arrays:
 

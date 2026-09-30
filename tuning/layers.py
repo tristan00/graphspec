@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from graphspec.infra.timing import timed
-from graphspec.references import SORTS
+from graphspec.schema.references import SORTS
 
 CHUNK = 128
 

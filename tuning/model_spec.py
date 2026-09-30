@@ -1,8 +1,8 @@
 import logging
 import time
 
-from graphspec import spec as specs
-from graphspec.spec import GROUPS, among, choice, draw, equals, flag, number, real
+from graphspec.operations import parameters as specs
+from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, number, real
 
 LOG = logging.getLogger(__name__)
 VIEWS = (

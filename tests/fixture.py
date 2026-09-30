@@ -6,10 +6,10 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from graphspec import synthetic
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.schema import EDGE, LINK, OBSERVED, TARGET, TASK
+from graphspec.schema.schema import EDGE, LINK, OBSERVED, TARGET, TASK
+from graphspec.sources import synthetic
 
 LOG = logging.getLogger(__name__)
 VERSION = 7

@@ -1,11 +1,11 @@
 import numpy as np
 
+from graphspec.build.output import Stage
+from graphspec.build.staged import IDS, Staged
+from graphspec.facts.stored import STORED, Facts
 from graphspec.infra.files import write_json
-from graphspec.infra.staging import Stage
-from graphspec.schema import Schema
-from graphspec.staged import IDS, Staged
-from graphspec.synthetic import Counter, graph_rows, uniform
-from graphspec.truth import STORED, Facts
+from graphspec.schema.schema import Schema
+from graphspec.sources.synthetic import Counter, graph_rows, uniform
 from tuning.build import build
 
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)

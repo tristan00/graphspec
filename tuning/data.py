@@ -10,10 +10,13 @@ import numpy as np
 import torch
 from numba import njit
 
-from graphspec import Registry, join, segments, sets
-from graphspec import spec as specs
-from graphspec.infra import sources
+from graphspec import Registry
+from graphspec.budgets import GraphLimits
+from graphspec.engine import join, segments
+from graphspec.engine.transform import SEED, materialize
+from graphspec.facts.stored import Facts, admitted, inputs
 from graphspec.infra.arrays import Residents, between
+from graphspec.infra.code import digest
 from graphspec.infra.files import (
     ArrayStore,
     load_arrays,
@@ -26,15 +29,16 @@ from graphspec.infra.files import (
 from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
-from graphspec.resources import GraphLimits
-from graphspec.schema import Encoding, fitted
-from graphspec.transform import SEED, materialize
-from graphspec.truth import Facts, Graph, admitted, inputs
-from graphspec.view import STATEMENT, Looking, finished, sampled, sequences, view
+from graphspec.operations import parameters as specs
+from graphspec.operations import sets
+from graphspec.schema.schema import Encoding, fitted
+from graphspec.views.graph import Graph
+from graphspec.views.view import finished, sampled, sequences, view
+from graphspec.views.visible import STATEMENT, Looking
 
 LOG = logging.getLogger(__name__)
 PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / "graphspec")
-CODE = sources.digest(PACKAGES)
+CODE = digest(PACKAGES)
 ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30

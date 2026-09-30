@@ -8,7 +8,7 @@ from pathlib import Path
 import psutil
 import pytest
 
-from graphspec.infra.processes import WorkerProcess
+from graphspec.infra.processes.processes import WorkerProcess
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows process ownership integration")
 
@@ -92,7 +92,7 @@ def test_windows_owner_death_terminates_its_job(tmp_path):
     owner_script = tmp_path / "owner.py"
     owner_script.write_text(
         "import os, socket, sys\n"
-        "from graphspec.infra.processes import WorkerProcess\n"
+        "from graphspec.infra.processes.processes import WorkerProcess\n"
         "with WorkerProcess('probe', sys.argv[1:], sys.stdout):\n"
         "    with socket.socket() as blocker:\n"
         "        blocker.bind(('127.0.0.1', 0))\n"

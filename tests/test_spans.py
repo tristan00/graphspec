@@ -1,6 +1,6 @@
 import numpy as np
 
-from graphspec import spans
+from graphspec.views import spans
 
 NAN = np.nan
 ROWS = [

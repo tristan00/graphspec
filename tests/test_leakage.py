@@ -5,12 +5,12 @@ import time
 import numpy as np
 import pytest
 
-from graphspec import synthetic
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.schema import VERSION, Schema
-from graphspec.truth import Graph
+from graphspec.schema.schema import VERSION, Schema
+from graphspec.sources import synthetic
+from graphspec.views.graph import Graph
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration

@@ -6,9 +6,9 @@ import numpy as np
 import torch
 
 from graphspec import Registry
+from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import Resident, between
-from graphspec.references import SORTS
-from graphspec.transform import SEED
+from graphspec.schema.references import SORTS
 
 from . import gather
 from .tensors import Frames, Host, array, features, features_at, gathered, joined

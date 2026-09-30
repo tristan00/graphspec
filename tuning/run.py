@@ -9,20 +9,17 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from graphspec.infra import files, sources
-from graphspec.infra.files import (
-    JsonCache,
-    read_json,
-    sha256_file,
-    write_json,
-)
-from graphspec.infra.locks import Lock, exclusive
+from graphspec.infra import files
+from graphspec.infra.code import digest as code_digest
+from graphspec.infra.code import snapshot
+from graphspec.infra.files import JsonCache, read_json, sha256_file, write_json
 from graphspec.infra.log import configure, emit
-from graphspec.infra.processes import WorkerProcess
+from graphspec.infra.processes.locks import Lock, exclusive
+from graphspec.infra.processes.processes import WorkerProcess
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import Timeline, measure, timed
-from graphspec.names import carried, restored
-from graphspec.spec import digest
+from graphspec.operations.parameters import digest
+from graphspec.registries import carried, restored
 
 from . import objective
 from . import statement as statements
@@ -98,7 +95,7 @@ def worker(args):
                 graph=digest(config["graph"]),
                 error=repr(error),
                 traceback=traceback.format_exc(),
-                source_sha256=sources.digest(PACKAGES),
+                source_sha256=code_digest(PACKAGES),
                 **fit_timings(directory),
             ),
         )
@@ -277,7 +274,7 @@ def training_layout(directory, plan, config, stated):
 
     started = time.perf_counter()
     history = config["graph"]["time/history"]
-    from graphspec.join import parameters
+    from graphspec.engine.join import parameters
 
     path = directory / (
         "train_blocks_%s.json" % digest(dict(history=history, join=parameters(config["graph"])))[:12]
@@ -371,7 +368,7 @@ def execute_trial_body(directory, plan, item, index, started, phases, stated):
         )
         stage = time.perf_counter()
         with measure("source_snapshot"):
-            sources.snapshot(PACKAGES, trial / "source")
+            snapshot(PACKAGES, trial / "source")
         phases["snapshot"] = time.perf_counter() - stage
         if time.perf_counter() >= deadline:
             mark_timeout(trial, max_seconds, started, phases, "deadline reached during trial preparation")

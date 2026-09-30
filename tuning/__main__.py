@@ -8,12 +8,12 @@ LOG = logging.getLogger(__name__)
 def main():
     started = time.perf_counter()
     commands = {
-        "inspect": ("graphspec.inspect", "main"),
-        "synthetic": ("graphspec.synthetic", "main"),
+        "inspect": ("graphspec.descriptions.inspect", "main"),
+        "synthetic": ("graphspec.sources.synthetic", "main"),
         "build": ("tuning.build", "main"),
         "search": ("tuning.run", "main"),
         "check": ("tuning.check_models", "main"),
-        "database": ("graphspec.database", "main"),
+        "database": ("graphspec.sources.ladybug", "main"),
         "dashboard": ("tuning.dashboard", "main"),
     }
     if len(sys.argv) < 2 or sys.argv[1] not in commands:

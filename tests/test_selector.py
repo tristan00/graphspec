@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 from optuna.distributions import IntDistribution
 
-from graphspec import spec as specs
 from graphspec.infra.files import read_json, write_json
-from graphspec.representations import lags
+from graphspec.operations import parameters as specs
+from graphspec.representations.groups import lags
 from tuning.data import Bank
 from tuning.model_spec import space
 from tuning.run import run

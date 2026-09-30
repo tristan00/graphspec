@@ -8,9 +8,9 @@ import pytest
 from support import VALUES, asked, stated
 
 from graphspec import GraphTables, Stage, write_task
-from graphspec.infra.locks import heavy_job
+from graphspec.build.staged import Staged
+from graphspec.infra.processes.locks import heavy_job
 from graphspec.infra.runtime import output_path
-from graphspec.staged import Staged
 from tuning.build import build, open_source
 
 
@@ -71,13 +71,13 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
 
 
 def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):
-    from graphspec.infra import locks
+    from graphspec.infra.processes import locks
 
     name = "heavy-exclusion-%d" % os.getpid()
     held = locks.singleton
     monkeypatch.setattr(locks, "singleton", lambda given, message: held(name, message))
     program = (
-        "from graphspec.infra import locks\n"
+        "from graphspec.infra.processes import locks\n"
         "held = locks.singleton\n"
         "locks.singleton = lambda given, message: held(%r, message)\n"
         "with locks.heavy_job():\n    pass"
@@ -92,7 +92,7 @@ def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):
 def test_the_heavy_job_of_production_requests_the_singleton_named_heavy(monkeypatch):
     from contextlib import contextmanager
 
-    from graphspec.infra import locks
+    from graphspec.infra.processes import locks
 
     requested = []
 
@@ -113,9 +113,9 @@ def test_the_heavy_job_of_production_requests_the_singleton_named_heavy(monkeypa
 
 def test_database_export_and_staging_read_the_same_graph(bank, tmp_path):
     pytest.importorskip("ladybug")
-    from graphspec.database import export
+    from graphspec.facts.stored import STORED, Facts
     from graphspec.infra.files import read_json, write_json
-    from graphspec.truth import STORED, Facts
+    from graphspec.sources.ladybug import export
 
     export(bank.parent / "tiny.staging", tmp_path / "tiny.lbug")
     task = tmp_path / "task.json"

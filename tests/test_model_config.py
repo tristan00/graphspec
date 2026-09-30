@@ -6,8 +6,8 @@ import pytest
 import torch
 
 from conftest import SPLITS
-from graphspec import spec as specs
 from graphspec.infra.arrays import RESIDENT
+from graphspec.operations import parameters as specs
 from tuning.batching import pack_batch
 from tuning.data import Deriver
 from tuning.layers import CausalAttention, TimeEncoding

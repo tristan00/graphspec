@@ -7,17 +7,20 @@ import pytest
 import support
 
 from conftest import inline
-from graphspec import SEES, SORTS, synthetic, transform
-from graphspec import spec as specs
-from graphspec.clock import ALWAYS, NEVER
+from graphspec import SEES, SORTS
+from graphspec.budgets import GraphLimits
+from graphspec.engine import transform
+from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.references import Sort
-from graphspec.resources import GraphLimits
-from graphspec.schema import VERSION, Schema
-from graphspec.truth import Facts, Graph
-from graphspec.view import Looking
+from graphspec.operations import parameters as specs
+from graphspec.schema.references import Sort
+from graphspec.schema.schema import VERSION, Schema
+from graphspec.schema.time import ALWAYS, NEVER
+from graphspec.sources import synthetic
+from graphspec.views.graph import Graph
+from graphspec.views.visible import Looking
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import VIEWS, configuration, views

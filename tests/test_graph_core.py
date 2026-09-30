@@ -6,12 +6,14 @@ import torch
 from support import VALUES, asked, stated
 from support import registry as registered
 
-from graphspec import kernels, operators, spans, spec
-from graphspec.declarations import EdgeType
+from graphspec.budgets import GraphBudget, GraphCapacityError, GraphLimits
+from graphspec.build.calls import GraphTables
 from graphspec.infra import compute
-from graphspec.resources import GraphBudget, GraphCapacityError, GraphLimits
-from graphspec.staging import GraphTables
-from graphspec.truth import verify
+from graphspec.operations import kernels, stages
+from graphspec.operations import parameters as spec
+from graphspec.schema.declaration import EdgeType
+from graphspec.views import spans
+from graphspec.views.graph import verify
 
 
 @pytest.mark.parametrize("width", [0, 1, 4, 8, 20])
@@ -55,9 +57,9 @@ def test_rewiring_rejects_dense_workspace_before_allocating(monkeypatch):
     def forbidden(*args):
         raise AssertionError("dense graph was allocated")
 
-    monkeypatch.setattr(operators, "dense", forbidden)
+    monkeypatch.setattr(stages, "dense", forbidden)
     with pytest.raises(GraphCapacityError, match="fosr rewiring"):
-        operators.rewire(
+        stages.rewire(
             {"derive/rewiring": "fosr", "derive/rewiring_budget": 1},
             present,
             present[:-1],
@@ -72,7 +74,7 @@ def test_rewiring_rejects_dense_workspace_before_allocating(monkeypatch):
 def test_rewiring_does_not_allocate_for_isolated_nodes(mode):
     present = np.arange(100_000, dtype=np.int32)
     empty = np.empty(0, np.int32)
-    added, removed = operators.rewire(
+    added, removed = stages.rewire(
         {"derive/rewiring": mode, "derive/rewiring_budget": 8},
         present,
         empty,
@@ -156,7 +158,7 @@ def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
     )
     monkeypatch.setattr(kernels, "runs", kernels.runs.py_func)
     settings = {"edges/rel/drop": 0.0, "edges/rel/persistence": 8, "edges/rel/cap": 0}
-    retained = operators.filtered(graph, registry, settings, 1, "rel", np.arange(len(steps)))
+    retained = stages.filtered(graph, registry, settings, 1, "rel", np.arange(len(steps)))
     assert steps[retained].tolist() == [7, 7, 8]
 
 

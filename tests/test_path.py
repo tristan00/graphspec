@@ -3,11 +3,11 @@ import pyarrow as pa
 import pytest
 
 from conftest import SPLITS
+from graphspec.build.output import Stage
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, write_json
-from graphspec.infra.staging import Stage
-from graphspec.schema import TARGET
-from graphspec.synthetic import Counter, graph_rows, uniform
+from graphspec.schema.schema import TARGET
+from graphspec.sources.synthetic import Counter, graph_rows, uniform
 from tuning.build import build
 from tuning.data import Deriver
 from tuning.model_spec import configuration

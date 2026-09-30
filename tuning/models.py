@@ -1,7 +1,7 @@
 import logging
 import time
 
-from graphspec.spec import canonical
+from graphspec.operations.parameters import canonical
 
 from .affinity import AffinityNet
 from .events import EventGraphNet, MemoryNet, ProjectionNet

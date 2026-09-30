@@ -1,9 +1,9 @@
 import numpy as np
 import torch
 
+from graphspec.engine.transform import SEED
 from graphspec.infra.timing import timed
-from graphspec.representations import tick_span
-from graphspec.transform import SEED
+from graphspec.representations.groups import tick_span
 
 from .inputs import tree
 from .periods import lookback

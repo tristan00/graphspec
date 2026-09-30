@@ -2,11 +2,11 @@ import numpy as np
 import pytest
 import torch
 
+from graphspec.budgets import GraphBudget, GraphLimits
 from graphspec.infra import workspace
 from graphspec.infra.arrays import MappedRows, join_tensors
 from graphspec.infra.files import ArrayStore, save_arrays
-from graphspec.representations import periods
-from graphspec.resources import GraphBudget, GraphLimits
+from graphspec.representations.groups import periods
 from tuning.period_inputs import prior_rows, profiles
 
 

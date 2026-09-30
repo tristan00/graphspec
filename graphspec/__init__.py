@@ -3,18 +3,18 @@ from .infra.runtime import identities, initialize_storage
 initialize_storage()
 identities()
 
-from .clock import ABOUT, SEVERAL, TIES
-from .declarations import EdgeType
-from .forms import FORMS
-from .infra.staging import Stage
-from .inspect import inspect
-from .names import ship
-from .references import SORTS
-from .registry import Registry
-from .schema import ENCODERS, HELD, TYPES, Schema
-from .sets import STORAGE
-from .staging import GraphTables, write_task
-from .view import SEES, STEPS
+from .build.calls import GraphTables, write_task
+from .build.forms import FORMS
+from .build.output import Stage
+from .descriptions.inspect import inspect
+from .operations.sets import STORAGE
+from .registries import ship
+from .schema.declaration import EdgeType, Registry
+from .schema.references import SORTS
+from .schema.schema import ENCODERS, HELD, TYPES, Schema
+from .schema.time import ABOUT, SEVERAL, TIES
+from .views.view import STEPS
+from .views.visible import SEES
 
 ship()
 

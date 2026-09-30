@@ -164,7 +164,7 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
         ),
     )
     monkeypatch.setattr(runner, "training_layout", layout)
-    monkeypatch.setattr(runner.sources, "snapshot", lambda *args: None)
+    monkeypatch.setattr(runner, "snapshot", lambda *args: None)
     monkeypatch.setattr(runner, "report", lambda *args: [])
     monkeypatch.setattr("tuning.data.Deriver", Deriver)
     monkeypatch.setattr("tuning.variants.prune", lambda *args: None)
