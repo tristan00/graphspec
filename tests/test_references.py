@@ -8,7 +8,8 @@ import support
 import torch
 
 from conftest import shared
-from graphspec.engine.transform import materialize
+from graphspec.engine.segments import Derivation
+from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
@@ -283,8 +284,11 @@ def sizes(banks, name):
     registry = held.fitted(cfg)
     space = support.parameters(registry, specs.GROUPS)
     steps, spec = support.steps(registry, {"time/history": 2}, specs.GROUPS)
-    arrays = materialize(
-        Graph.load(held.view(0, cfg)).dense(), registry, steps, spec, specs.GROUPS, held.limits(), None
+    dense = Graph.load(held.view(0, cfg)).dense()
+    arrays = (
+        Derivation.begun([dense], registry, steps, spec, specs.GROUPS, SEED, held.limits(), None, 0)
+        .continued(dense.steps, None)
+        .arrays()
     )
     weights = {}
     for family in views(registry):

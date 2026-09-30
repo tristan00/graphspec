@@ -12,21 +12,13 @@ from numba import njit
 
 from graphspec import Registry
 from graphspec.budgets import GraphLimits
-from graphspec.engine import join, segments, transform
-from graphspec.engine.transform import SEED, materialize
+from graphspec.engine import join, schedule, segments, transform
+from graphspec.engine.transform import SEED
 from graphspec.facts.stored import Facts, admitted, inputs
 from graphspec.infra.arrays import Residents, between
-from graphspec.infra.files import (
-    ArrayStore,
-    load_arrays,
-    read_json,
-    save_arrays,
-    sha256_file,
-    sha256_json,
-    write_json,
-)
+from graphspec.infra.files import ArrayStore, load_arrays, read_json, sha256_file, sha256_json, write_json
 from graphspec.infra.runtime import cache_path, output_path
-from graphspec.infra.timing import measure, timed
+from graphspec.infra.timing import timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.operations import parameters as specs
 from graphspec.operations import sets
@@ -43,7 +35,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 3
+VIEW = 4
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -527,7 +519,7 @@ class Deriver(Bank):
                 paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
                 members = [Graph.load(path, mapped=True) for path in paths]
                 jobs.append(dict(members=members, paths=paths, spill=spill, destination=temporary))
-            segments.build_parallel(
+            schedule.built(
                 jobs, self.fitted(cfg), steps, spec, chosen, SEED, workers, self.limits(), self.partitions(cfg)
             )
             for (temporary, final), job in zip(folders, jobs):
@@ -593,60 +585,29 @@ class Deriver(Bank):
     @timed("arrays")
     def arrays(self, index, cfg):
         root, steps, spec, chosen = self.variant(cfg)
-        joining = spec["graphs/join"] == "single"
-
-        def materialized():
-            started = time.perf_counter()
-            self.stamp(cfg)
-            with measure("truth_load"):
-                truth = Graph.load(self.view(index, cfg)).dense()
-            arrays = materialize(
-                truth, self.fitted(cfg), steps, spec, chosen, self.limits(), self.partitions(cfg)
-            )
-            with measure("feature_deduplication"):
-                linked = []
-                for name, held, source in (("task", "task_x", "task_x"), ("x_table", "x_table", "obs_x")):
-                    if identical(arrays[name], truth.arrays[held]):
-                        arrays[name] = self.view(index, cfg) / (source + ".npy")
-                        linked.append(name)
-            LOG.info(
-                "variant exit graph=%d seconds=%.3f arrays=%d linked=%s",
-                index,
-                time.perf_counter() - started,
-                len(arrays),
-                ",".join(linked),
-            )
-            return arrays
+        indices = self.groups(cfg)[index] if self.joining(cfg) else [index]
 
         def build(destination):
-            if joining:
-                self.stamp(cfg)
-                with (
-                    Workspace(destination),
-                    tempfile.TemporaryDirectory(prefix="segments-", dir=destination) as spill,
-                ):
-                    try:
-                        paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
-                        members = [Graph.load(path, mapped=True) for path in paths]
-                        segments.build(
-                            members,
-                            self.fitted(cfg),
-                            steps,
-                            spec,
-                            chosen,
-                            SEED,
-                            spill,
-                            self.limits(),
-                            self.partitions(cfg),
-                            destination,
-                        )
-                    except BaseException as error:
-                        traceback.clear_frames(error.__traceback__)
-                        raise
-            else:
-                arrays = materialized()
-                with measure("array_save"):
-                    save_arrays(destination, arrays)
+            started = time.perf_counter()
+            self.stamp(cfg)
+            with Workspace(destination):
+                try:
+                    members = [Graph.load(self.view(member, cfg), mapped=True) for member in indices]
+                    segments.build(
+                        members,
+                        self.fitted(cfg),
+                        steps,
+                        spec,
+                        chosen,
+                        SEED,
+                        self.limits(),
+                        self.partitions(cfg),
+                        destination,
+                    )
+                except BaseException as error:
+                    traceback.clear_frames(error.__traceback__)
+                    raise
+            LOG.info("variant exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
 
         return self.store.open_written(root / ("graph_%04d" % index), build)
 
@@ -658,11 +619,3 @@ class Deriver(Bank):
             JOINED_RESIDENT if self.joining(cfg) else MEMORY_BYTES,
             JOINED_BUDGET if self.joining(cfg) else None,
         )
-
-
-def identical(left, right):
-    return left is right or (
-        left.shape == right.shape
-        and left.dtype == right.dtype
-        and np.array_equal(left.view(np.uint8), right.view(np.uint8))
-    )

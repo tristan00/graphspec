@@ -8,9 +8,10 @@ from graphspec.infra.timing import timed
 from graphspec.schema.references import ends
 
 from . import kernels
-from .operation import OPERATIONS, Count, Operation
+from .operation import OPERATIONS, Count, Operation, Phase
 from .parameters import among, choice, equals, flag, holds, number, real
-from .rows import OBSERVATIONS, SAMPLE, identities, prune, select
+from .rows import OBSERVATIONS, SAMPLE, prune, pruned, select
+from .state import EMPTY, Table
 
 LOG = logging.getLogger(__name__)
 FILTERS = ("none", "degree", "total_degree", "core", "activity", "sample")
@@ -42,21 +43,26 @@ def filtered(registry, spec, mode):
 
 
 def counters(carry, name, graph):
-    count = np.zeros(len(graph.kinds), np.int64)
-    if carry is not None:
-        count[:] = carry.table(name).lookup("value", carry.glob, 0)
-    return count
+    return np.asarray(carry.state[name].lookup("value", carry.glob, 0), np.int64).copy()
 
 
 def remember(carry, name, graph, values):
-    if carry is not None:
-        chosen = np.flatnonzero(graph.entity_connected)
-        keys = carry.glob[chosen]
-        carry.state[name] = carry.table(name).replaced(keys, keys, value=values[chosen])
+    chosen = np.flatnonzero(graph.entity_connected)
+    keys = carry.glob[chosen]
+    carry.state[name] = carry.state[name].replaced(keys, keys, value=values[chosen])
+
+
+def carried(registry, spec):
+    return {
+        "nodes/total_degree": Table(EMPTY, value=EMPTY),
+        "nodes/activity": Table(EMPTY, value=EMPTY),
+        "nodes/structural": Table(EMPTY, value=EMPTY),
+        "prune/nodes": pruned(),
+    }
 
 
 @timed("operators.nodes")
-def nodes(graph, registry, spec, seed, limits, carry):
+def nodes(graph, registry, spec, seed, limits, carry, held):
     steps, entities = graph.steps, len(graph.kinds)
     retained = np.asarray([spec["nodes/%s/keep" % kind] for kind in registry.nodes])
     filters = {
@@ -76,7 +82,7 @@ def nodes(graph, registry, spec, seed, limits, carry):
         if mode in ("degree", "total_degree"):
             if mode not in counts:
                 total = mode == "total_degree"
-                count = counters(carry if total else None, "nodes/total_degree", graph)
+                count = counters(carry, "nodes/total_degree", graph) if total else np.zeros(entities, np.int64)
                 counts[mode] = kernels.degrees(
                     obs_entity,
                     obs_step,
@@ -98,9 +104,7 @@ def nodes(graph, registry, spec, seed, limits, carry):
                 remember(carry, "nodes/activity", graph, count)
             passed[members] = counts[mode][members] >= spec[prefix + "min_activity"]
         elif mode == "sample":
-            passed[members] = (
-                unit(seed, SAMPLE, identities(carry, obs_entity[members])) < spec[prefix + "sample"]
-            )
+            passed[members] = unit(seed, SAMPLE, carry.glob[obs_entity[members]]) < spec[prefix + "sample"]
         else:
             minimum[members] = spec[prefix + "core"]
     structural = allowed[obs_entity] & passed
@@ -122,9 +126,8 @@ def nodes(graph, registry, spec, seed, limits, carry):
         moments = graph.task_step[graph.member_task[member]].astype(np.int64)
         needed = np.isin(obs_step.astype(np.int64) * entities + obs_entity, moments * entities + entity)
     first, _ = kernels.first_observed(obs_entity, obs_step, structural, entities, steps)
-    if carry is not None:
-        first[counters(carry, "nodes/structural", graph) > 0] = -1
-        remember(carry, "nodes/structural", graph, (first < steps).astype(np.int64))
+    first[counters(carry, "nodes/structural", graph) > 0] = -1
+    remember(carry, "nodes/structural", graph, (first < steps).astype(np.int64))
     present = kernels.observed_at(
         obs_entity, obs_step, structural, graph.fact_source, graph.fact_step, entities
     ) & kernels.observed_at(obs_entity, obs_step, structural, graph.fact_target, graph.fact_step, entities)
@@ -142,7 +145,7 @@ NODES = OPERATIONS.register(
     Operation(
         namespace="graphspec",
         name="nodes",
-        function=nodes,
+        phases=(Phase("nodes", nodes, carried, None),),
         parameters=stated,
         reads=(),
         splits=(),
@@ -155,6 +158,6 @@ NODES = OPERATIONS.register(
             )
         ),
         changes=("observations", "facts", "references"),
-        version=1,
+        version=2,
     ),
 )

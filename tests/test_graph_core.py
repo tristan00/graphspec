@@ -13,6 +13,7 @@ from graphspec.operations import derive, edges, kernels
 from graphspec.operations import parameters as spec
 from graphspec.operations.edges import EDGES
 from graphspec.operations.pipeline import resolved
+from graphspec.operations.state import Segment
 from graphspec.operations.window import WINDOW
 from graphspec.schema.declaration import EdgeType
 from graphspec.views import spans
@@ -146,6 +147,7 @@ def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
     registry = registered("test", ["person"], [relation])
     steps = np.array([0, 1, 2, 3, 4, 5, 6, 7, 7, 8, 10, 11], np.int32)
     graph = SimpleNamespace(
+        steps=12,
         fact_step=steps,
         fact_code=np.zeros(len(steps), np.int32),
         fact_present=np.ones(len(steps), bool),
@@ -154,7 +156,11 @@ def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
     )
     monkeypatch.setattr(kernels, "runs", kernels.runs.py_func)
     settings = {"edges/rel/drop": 0.0, "edges/rel/persistence": 8, "edges/rel/cap": 0}
-    retained = edges.filtered(graph, registry, settings, 1, "rel", np.arange(len(steps)))
+    empty = np.zeros(0, np.int64)
+    carry = Segment(np.arange(2), 2, 0, 0, np.zeros(2, bool), empty, empty, None)
+    carry.state = edges.filtering_runs(registry, settings)
+    pieces = {"edges/persistence": [], "edges/cap": []}
+    retained = edges.filtered(graph, registry, settings, 1, "rel", np.arange(len(steps)), carry, pieces)
     assert steps[retained].tolist() == [7, 7, 8]
 
 

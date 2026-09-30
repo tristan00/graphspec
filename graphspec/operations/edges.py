@@ -8,10 +8,10 @@ from graphspec.infra.timing import timed
 
 from . import kernels
 from .derive import anchoring
-from .operation import OPERATIONS, Count, Operation
+from .operation import OPERATIONS, Count, Operation, Phase
 from .parameters import DIRECTIONS, choice, differs, enabled, holds, number, real
 from .relations import relating
-from .rows import DROP, RANDOM, identities, open_runs, prune, run_state
+from .rows import DROP, RANDOM, open_runs, prune, pruned, run_state, runs
 
 LOG = logging.getLogger(__name__)
 EMITTED = ("project", "complete", "hop", "diffusion", "rewire")
@@ -97,18 +97,35 @@ def capping(registry, spec):
     )
 
 
-@timed("operators.edges")
-def edges(graph, registry, spec, seed, limits, carry):
-    named = filtered_names(registry, spec)
-    if not named:
-        return graph
-    kept = np.ones(len(graph.fact_step), bool)
+def parts(registry, spec):
+    return tuple(filtered_names(registry, spec))
+
+
+def filtering_runs(registry, spec):
+    return {"edges/persistence": runs(), "edges/cap": runs()}
+
+
+def pruning(registry, spec):
+    return {"prune/edges": pruned()}
+
+
+@timed("operators.edges_filter")
+def filter_part(graph, registry, spec, seed, limits, carry, held):
+    rows = np.flatnonzero(np.isin(graph.fact_code, registry.coded[carry.part]))
     pieces = {"edges/persistence": [], "edges/cap": []}
-    for name in named:
-        rows = np.flatnonzero(np.isin(graph.fact_code, registry.coded[name]))
-        kept[rows] = filtered(graph, registry, spec, seed, name, rows, carry, pieces)
+    kept = filtered(graph, registry, spec, seed, carry.part, rows, carry, pieces)
     for name, found in pieces.items():
         open_runs(carry, name, found)
+    return rows, kept
+
+
+@timed("operators.edges")
+def edges(graph, registry, spec, seed, limits, carry, held):
+    if not held:
+        return graph
+    kept = np.ones(len(graph.fact_step), bool)
+    for rows, values in held.values():
+        kept[rows] = values
     return prune(graph, kept, carry, "edges")
 
 
@@ -123,25 +140,21 @@ def endpoints(graph, registry, spec, rows):
     )
 
 
-def undropped(graph, registry, spec, seed, name, rows, carry=None):
+def undropped(graph, registry, spec, seed, name, rows, carry):
     code, _, first, second = endpoints(graph, registry, spec, rows)
-    return (
-        unit(seed, DROP, identities(carry, first), identities(carry, second), code)
-        >= spec["edges/%s/drop" % name]
-    )
+    return unit(seed, DROP, carry.glob[first], carry.glob[second], code) >= spec["edges/%s/drop" % name]
 
 
-def filtered(graph, registry, spec, seed, name, rows, carry=None, pieces=None):
+def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
     prefix = "edges/%s/" % name
     step, present = graph.fact_step[rows], graph.fact_present[rows]
     code, both, first, second = endpoints(graph, registry, spec, rows)
     kept = undropped(graph, registry, spec, seed, name, rows, carry)
     stated = np.flatnonzero(kept & present)
     ids, count = kernels.keyed(code[stated], first[stated], second[stated])
-    keys = None if carry is None else carry.keys(code[stated], first[stated], second[stated])
+    keys = carry.keys(code[stated], first[stated], second[stated])
     (position, _), piece = run_state(carry, "edges/persistence", graph, ids, count, step[stated], keys)
-    if pieces is not None:
-        pieces["edges/persistence"].append(piece)
+    pieces["edges/persistence"].append(piece)
     lasting = position >= spec[prefix + "persistence"] - 1
     kept[stated[~lasting]] = False
     if spec[prefix + "cap"] == 0:
@@ -149,18 +162,14 @@ def filtered(graph, registry, spec, seed, name, rows, carry=None, pieces=None):
     stated = stated[lasting]
     low, high = first[stated], second[stated]
     ids, count = kernels.keyed(code[stated], low, high)
-    keys = None if carry is None else carry.keys(code[stated], low, high)
+    keys = carry.keys(code[stated], low, high)
     (_, begun), piece = run_state(carry, "edges/cap", graph, ids, count, step[stated], keys)
-    if pieces is not None:
-        pieces["edges/cap"].append(piece)
+    pieces["edges/cap"].append(piece)
     order = spec[prefix + "cap_order"]
     if order == "recent":
         primary, secondary = -begun, rows[stated]
     elif order == "random":
-        primary, secondary = (
-            unit(seed, RANDOM, identities(carry, low), identities(carry, high), code[stated]),
-            rows[stated],
-        )
+        primary, secondary = unit(seed, RANDOM, carry.glob[low], carry.glob[high], code[stated]), rows[stated]
     else:
         reference = graph.fact_ref[rows[stated]]
         value = np.where(
@@ -208,12 +217,15 @@ EDGES = OPERATIONS.register(
     Operation(
         namespace="graphspec",
         name="edges",
-        function=edges,
+        phases=(
+            Phase("filter", filter_part, filtering_runs, parts),
+            Phase("prune", edges, pruning, None),
+        ),
         parameters=stated,
         reads=("graphspec.derive",),
         splits=(),
         requires=(Count("edges/cap", "degree", capping, "stored", "stored"),),
         changes=("facts",),
-        version=2,
+        version=3,
     ),
 )

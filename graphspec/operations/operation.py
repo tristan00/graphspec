@@ -92,15 +92,89 @@ class Settings:
         return self.spec[name]
 
 
+class Phase:
+    def __init__(self, name, function, carries, parts):
+        started = time.perf_counter()
+        if type(name) is not str or not name or "." in name or "/" in name:
+            raise ValueError("a phase states its name as a word without a dot or a slash, found %r" % (name,))
+        stated = dict(
+            function=callable(function),
+            carries=carries is None or callable(carries),
+            parts=parts is None or callable(parts),
+        )
+        wrong = [label for label, held in stated.items() if not held]
+        if wrong:
+            raise ValueError(
+                "the phase %s states %s as the constructor of a phase asks: a function of a graph, a registry, "
+                "settings, a seed, limits, a segment and what the phase before it handed on; none, where the "
+                "phase reads no carried state and runs on segments in any order, or a function from a registry "
+                "and settings to the state it carries into its first segment; none, or a function from a "
+                "registry and settings to the names of the parts it runs apart" % (name, ", ".join(wrong))
+            )
+        self.name, self.function, self.carries, self.parts = name, function, carries, parts
+        LOG.debug("phase exit name=%s seconds=%.4f", name, time.perf_counter() - started)
+
+    def named(self, registry, settings):
+        started = time.perf_counter()
+        found = self.parts(registry, settings)
+        if type(found) is not tuple or len(set(found)) != len(found) or not all(type(part) is str for part in found):
+            raise ValueError(
+                "the phase %s names its parts as a tuple of distinct words, found %r" % (self.name, found)
+            )
+        LOG.debug("named exit phase=%s parts=%d seconds=%.4f", self.name, len(found), time.perf_counter() - started)
+        return found
+
+    def initial(self, registry, settings):
+        started = time.perf_counter()
+        if self.parts is None:
+            result = self.carries(registry, settings)
+        else:
+            result = {part: self.carries(registry, settings) for part in self.named(registry, settings)}
+        LOG.debug("phase initial exit phase=%s seconds=%.4f", self.name, time.perf_counter() - started)
+        return result
+
+    def once(self, graph, registry, settings, seed, limits, carry, held, state, part):
+        started = time.perf_counter()
+        if (state is None) != (self.carries is None):
+            raise ValueError(
+                "the phase %s %s carried state" % (self.name, "is given no" if state is None else "carries no")
+            )
+        carry.state, carry.part = None if state is None else dict(state), part
+        try:
+            result = self.function(graph, registry, settings, seed, limits, carry, held)
+            found = carry.state
+        finally:
+            carry.state, carry.part = None, None
+        LOG.debug("phase once exit phase=%s part=%s seconds=%.4f", self.name, part, time.perf_counter() - started)
+        return result, found
+
+    def run(self, graph, registry, settings, seed, limits, carry, held, state):
+        if self.parts is None:
+            return self.once(graph, registry, settings, seed, limits, carry, held, state, None)
+        results, states = {}, {}
+        for part in self.named(registry, settings):
+            results[part], states[part] = self.once(
+                graph, registry, settings, seed, limits, carry, held, None if state is None else state[part], part
+            )
+        return results, None if state is None else states
+
+
 class Operation:
-    def __init__(self, namespace, name, function, parameters, reads, splits, requires, changes, version):
+    def __init__(self, namespace, name, phases, parameters, reads, splits, requires, changes, version):
         started = time.perf_counter()
         for label, part in (("namespace", namespace), ("name", name)):
             if type(part) is not str or not part or "." in part:
                 raise ValueError("an operation states its %s as a word without a dot, found %r" % (label, part))
         self.name = namespace + "." + name
         stated = dict(
-            function=callable(function),
+            phases=type(phases) is tuple
+            and len(phases) > 0
+            and all(isinstance(phase, Phase) for phase in phases)
+            and len({phase.name for phase in phases}) == len(phases)
+            and phases[-1].parts is None
+            and not any(
+                phase.parts is not None and later.parts is not None for phase, later in zip(phases, phases[1:])
+            ),
             parameters=callable(parameters),
             reads=type(reads) is tuple and all(type(read) is str for read in reads),
             splits=type(splits) is tuple and all(split in SPLITS for split in splits),
@@ -111,13 +185,14 @@ class Operation:
         wrong = [label for label, held in stated.items() if not held]
         if wrong:
             raise ValueError(
-                "the operation %s states %s as the constructor of an operation asks: a function of a graph, a "
-                "registry, settings, a seed, limits and carried state; a function from a registry to its "
-                "parameters; a tuple of the names of the operations whose parameters it reads; a tuple of the "
-                "splits it may read, among %s; a tuple of counts; a tuple of what it changes, among %s; a whole "
-                "version from 1" % (self.name, ", ".join(wrong), ", ".join(SPLITS), ", ".join(CHANGES))
+                "the operation %s states %s as the constructor of an operation asks: a tuple of its phases, at "
+                "least one, of distinct names, the last not run in parts and none run in parts after one that "
+                "is; a function from a registry to its parameters; a tuple of the "
+                "names of the operations whose parameters it reads; a tuple of the splits it may read, among %s; "
+                "a tuple of counts; a tuple of what it changes, among %s; a whole version from 1"
+                % (self.name, ", ".join(wrong), ", ".join(SPLITS), ", ".join(CHANGES))
             )
-        self.namespace, self.function, self.parameters, self.reads = namespace, function, parameters, reads
+        self.namespace, self.phases, self.parameters, self.reads = namespace, phases, parameters, reads
         self.splits, self.requires, self.changes, self.version = splits, requires, changes, version
         LOG.debug("operation exit name=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
@@ -143,6 +218,10 @@ class Operation:
             parameters += OPERATIONS.named(read).stated(registry)
 
         def tasks(name):
+            if graph is None:
+                raise ValueError(
+                    "the operation %s reads the split %s where it states the state it carries" % (self.name, name)
+                )
             if partitions is None:
                 raise ValueError(
                     "the derivation of graph %s was given no splits, and the operation %s reads the split %s"
@@ -170,18 +249,47 @@ class Operation:
                         )
         LOG.debug("check exit operation=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
-    def __call__(self, graph, registry, spec, seed, limits, carry, partitions):
+    def initial(self, registry, spec):
+        started = time.perf_counter()
+        settings = self.settings(registry, spec, None, None)
+        result = {phase.name: phase.initial(registry, settings) for phase in self.phases if phase.carries is not None}
+        LOG.debug(
+            "initial exit operation=%s phases=%d seconds=%.4f", self.name, len(result), time.perf_counter() - started
+        )
+        return result
+
+    def phase(self, place, graph, registry, spec, seed, limits, carry, held, state, part, partitions):
+        started = time.perf_counter()
+        settings = self.settings(registry, spec, graph, partitions)
+        if place == 0:
+            self.check(registry, settings)
+        result = self.phases[place].once(graph, registry, settings, seed, limits, carry, held, state, part)
+        LOG.debug(
+            "operation phase exit name=%s phase=%d part=%s seconds=%.4f",
+            self.name,
+            place,
+            part,
+            time.perf_counter() - started,
+        )
+        return result
+
+    def __call__(self, graph, registry, spec, seed, limits, carry, state, partitions):
         started = time.perf_counter()
         settings = self.settings(registry, spec, graph, partitions)
         self.check(registry, settings)
-        result = self.function(graph, registry, settings, seed, limits, carry)
+        held, found = None, {}
+        for phase in self.phases:
+            given = None if phase.carries is None else state[phase.name]
+            held, carried = phase.run(graph, registry, settings, seed, limits, carry, held, given)
+            if phase.carries is not None:
+                found[phase.name] = carried
         LOG.debug(
             "operation call exit name=%s graph=%s seconds=%.4f",
             self.name,
             graph.name,
             time.perf_counter() - started,
         )
-        return result
+        return held, found
 
     def declaration(self, registry):
         started = time.perf_counter()
@@ -193,6 +301,10 @@ class Operation:
             splits=list(self.splits),
             requires=[count.declaration() for count in self.requires],
             changes=list(self.changes),
+            phases=[
+                dict(name=phase.name, carries=phase.carries is not None, parts=phase.parts is not None)
+                for phase in self.phases
+            ],
         )
         LOG.debug("declaration exit operation=%s seconds=%.4f", self.name, time.perf_counter() - started)
         return result

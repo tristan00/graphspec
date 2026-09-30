@@ -8,10 +8,23 @@ from graphspec.infra.timing import timed
 from graphspec.schema.declaration import HOPS, completion, hop
 
 from . import kernels
-from .operation import OPERATIONS, Count, Operation
+from .operation import OPERATIONS, Count, Operation, Phase
 from .parameters import among, choice, enabled, equals, flag, number, real
 from .relations import joined, relating
-from .rows import REWIRE, counted, extend, fact_bytes, grouped, member_end, open_runs, prune, run_state
+from .rows import (
+    REWIRE,
+    counted,
+    extend,
+    fact_bytes,
+    grouped,
+    member_end,
+    open_runs,
+    prune,
+    pruned,
+    run_state,
+    runs,
+)
+from .state import EMPTY
 
 LOG = logging.getLogger(__name__)
 BLOCK = 1 << 22
@@ -427,20 +440,14 @@ def derivable(graph, registry):
 
 
 @timed("operators.derive_prepare")
-def derive_prepare(graph, registry, spec, carry=None):
+def derive_prepare(graph, registry, spec, carry):
     stated = derivable(graph, registry)
     recency = np.zeros(len(graph.fact_step), np.int64)
     statements = np.flatnonzero(stated)
     ids, count = kernels.keyed(
         graph.fact_code[statements], graph.fact_source[statements], graph.fact_target[statements]
     )
-    keys = (
-        None
-        if carry is None
-        else carry.keys(
-            graph.fact_code[statements], graph.fact_source[statements], graph.fact_target[statements]
-        )
-    )
+    keys = carry.keys(graph.fact_code[statements], graph.fact_source[statements], graph.fact_target[statements])
     (_, recency[statements]), piece = run_state(
         carry, "derive/recency", graph, ids, count, graph.fact_step[statements], keys
     )
@@ -533,11 +540,15 @@ def derive_steps(graph, registry, spec, seed, recency, step0, limits):
     return (source, target, code, step), removed, budget
 
 
+def unlived():
+    return dict(key=EMPTY, source=EMPTY, target=EMPTY, code=EMPTY)
+
+
 def derive_handoff(carry, found, steps, connected):
     source, target, code, step = found
-    live = carry.state.get("derive/live")
+    live = carry.state["derive/live"]
     stop = (np.zeros(0, np.int32),) * 2 + (np.zeros(0, np.int64),)
-    if live is not None and len(live["source"]):
+    if len(live["source"]):
         begun = carry.keys(code[step == 0], source[step == 0], target[step == 0])
         ended = ~np.isin(live["key"], begun)
         stop = (
@@ -591,29 +602,53 @@ def derived_rows(graph, found, stop, budget):
     )
 
 
+@timed("operators.derive_begin")
+def derive_begin(graph, registry, spec, seed, limits, carry, held):
+    if derivation(registry, spec) is None:
+        return None
+    return derive_prepare(graph, registry, spec, carry)
+
+
+@timed("operators.derive_each")
+def derive_each(graph, registry, spec, seed, limits, carry, held):
+    if held is None:
+        return None
+    found, removed, budget = derive_steps(graph, registry, spec, seed, held, carry.step0, limits)
+    return found, removed, budget.facts
+
+
 @timed("operators.derive_finish")
-def derive_finish(graph, found, removed, budget, carry=None):
+def derive_finish(graph, registry, spec, seed, limits, carry, held):
+    if held is None:
+        return graph, None
+    (source, target, code, step), removed, facts = held
+    live = carry.state["derive/live"]
+    graph, position = carry.widened(graph, np.r_[live["source"], live["target"]])
+    found = (position[source].astype(source.dtype), position[target].astype(target.dtype), code, step)
     graph = prune(graph, ~removed, carry, "derive")
-    live = None if carry is None else carry.state.get("derive/live")
-    if not budget.facts and (live is None or not len(live["source"])):
-        if carry is not None:
-            carry.state["derive/live"] = None
+    if not facts and not len(live["source"]):
+        carry.state["derive/live"] = unlived()
+        return graph, None
+    return graph, (found, derive_handoff(carry, found, graph.steps, graph.entity_connected), facts)
+
+
+@timed("operators.derive_assemble")
+def derive_assemble(graph, registry, spec, seed, limits, carry, held):
+    graph, rest = held
+    if rest is None:
         return graph
-    stop = (np.zeros(0, np.int32),) * 2 + (np.zeros(0, np.int64),)
-    if carry is not None:
-        stop = derive_handoff(carry, found, graph.steps, graph.entity_connected)
+    found, stop, facts = rest
+    budget = GraphBudget(limits, fact_bytes(graph))
+    budget.facts = facts
     return derived_rows(graph, found, stop, budget)
 
 
-@timed("operators.derive")
-def derive(graph, registry, spec, seed, limits, carry):
-    if derivation(registry, spec) is None:
-        return graph
-    recency = derive_prepare(graph, registry, spec, carry)
-    found, removed, budget = derive_steps(
-        graph, registry, spec, seed, recency, 0 if carry is None else carry.step0, limits
-    )
-    return derive_finish(graph, found, removed, budget, carry)
+def recent(registry, spec):
+    return {"derive/recency": runs()}
+
+
+def living(registry, spec):
+    return {"prune/derive": pruned(), "derive/live": unlived()}
 
 
 DERIVE = OPERATIONS.register(
@@ -621,7 +656,12 @@ DERIVE = OPERATIONS.register(
     Operation(
         namespace="graphspec",
         name="derive",
-        function=derive,
+        phases=(
+            Phase("begin", derive_begin, recent, None),
+            Phase("each", derive_each, None, None),
+            Phase("finish", derive_finish, living, None),
+            Phase("assemble", derive_assemble, None, None),
+        ),
         parameters=stated,
         reads=(),
         splits=(),
@@ -636,6 +676,6 @@ DERIVE = OPERATIONS.register(
             ),
         ),
         changes=("facts",),
-        version=2,
+        version=3,
     ),
 )

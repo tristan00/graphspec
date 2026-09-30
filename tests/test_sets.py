@@ -9,7 +9,7 @@ import support
 from conftest import SPLITS, Inline
 from graphspec import ABOUT, HELD, STORAGE, inspect
 from graphspec.budgets import GraphLimits
-from graphspec.engine import transform
+from graphspec.engine import segments
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -502,7 +502,7 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
     dense = Graph.load(held.view(index, cfg)).dense()
     values = {"nodes/point/filter": "degree", "nodes/point/min_degree": 2, **STORED["node"]}
     steps = support.steps(registry, values)[0]
-    derived = transform.derive(dense, registry, steps, GraphLimits("cpu"), None)
+    derived = segments.whole(dense, registry, steps, GraphLimits("cpu"), None)
     points = registry.kind("point")
     before = int((np.asarray(dense.kinds)[dense.obs_entity] == points).sum())
     after = int((np.asarray(derived.kinds)[derived.obs_entity] == points).sum())
@@ -523,14 +523,14 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
         match="the count nodes/degree of the operation graphspec.nodes counts degree and refuses the edges "
         "joining sets of the kind gathering",
     ):
-        transform.derive(dense, registry, steps, GraphLimits("cpu"), None)
+        segments.whole(dense, registry, steps, GraphLimits("cpu"), None)
     monkeypatch.setattr(NODES, "requires", (Count("nodes/degree", "degree", degree.active, "stored", "refuses"),))
     with pytest.raises(
         ValueError,
         match="nodes/degree of the operation graphspec.nodes counts degree and refuses the edges of the table "
         "note, which are about edges",
     ):
-        transform.derive(dense, registry, steps, GraphLimits("cpu"), None)
+        segments.whole(dense, registry, steps, GraphLimits("cpu"), None)
 
 
 @pytest.fixture

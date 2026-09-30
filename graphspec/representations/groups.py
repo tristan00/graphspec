@@ -4,9 +4,8 @@ import time
 
 import numpy as np
 
-from graphspec.budgets import GraphBudget
 from graphspec.infra.timing import timed
-from graphspec.infra.workspace import allocate, block_rows, changed, finite
+from graphspec.infra.workspace import allocate, block_rows, changed
 from graphspec.operations.kernels import first_rows
 from graphspec.operations.parameters import enabled
 from graphspec.schema.declaration import BOUNDARIES
@@ -15,7 +14,7 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 1
+VERSION = 2
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALK_STREAM, PERIOD_STREAM = 16, 32
@@ -180,7 +179,7 @@ def carried_rows(link, entity, x_table):
 
 
 @timed("base")
-def base(graph, registry, spec, link=None):
+def base(graph, registry, spec, link):
     steps, kinds = graph.steps, graph.kinds
     step, entity, reference = graph.obs_step, graph.obs_entity, graph.obs_ref
     lookup = step.astype(np.int64) * len(kinds) + entity
@@ -232,7 +231,7 @@ def base(graph, registry, spec, link=None):
     valued = registry.value_group[codes]
     for place, group in enumerate(registry.valued):
         use = valued == place
-        attribute_row[use] = np.arange(int(use.sum())) + (0 if link is None else link.attributes.get(group, 0))
+        attribute_row[use] = np.arange(int(use.sum())) + link.attributes[group]
         chosen, width = values[use], len(registry.attributes(group))
         rows = np.full((len(chosen), width), np.nan, np.float32)
         rows[chosen >= 0] = graph.value_table[chosen[chosen >= 0], :width]
@@ -252,17 +251,14 @@ def base(graph, registry, spec, link=None):
         altered[order[1:]] = (owners[1:] != owners[:-1]) | referenced_change(
             graph.x_table, reference[order[1:]], reference[order[:-1]]
         )
-    last = np.full(len(kinds), -1, np.int64)
-    initial = (EMPTY, EMPTY, EMPTY, EMPTY)
-    if link is not None:
-        heads = order[np.r_[True, entity[order][1:] != entity[order][:-1]]] if len(order) else order
-        prior_rows, prior_x = carried_rows(link, entity[heads], graph.x_table)
-        carried = prior_rows >= 0
-        altered[heads[carried]] = np.any(
-            np.asarray(graph.x_table)[reference[heads[carried]]] != prior_x[carried], axis=1
-        )
-        last[:] = carried_rows(link, np.arange(len(kinds)), graph.x_table)[0]
-        initial = link.replay_keys(graph)
+    heads = order[np.r_[True, entity[order][1:] != entity[order][:-1]]] if len(order) else order
+    prior_rows, prior_x = carried_rows(link, entity[heads], graph.x_table)
+    carried = prior_rows >= 0
+    altered[heads[carried]] = np.any(
+        np.asarray(graph.x_table)[reference[heads[carried]]] != prior_x[carried], axis=1
+    )
+    last = carried_rows(link, np.arange(len(kinds)), graph.x_table)[0]
+    initial = link.replay_keys(graph)
     events, table = replay(
         entity,
         step,
@@ -275,7 +271,7 @@ def base(graph, registry, spec, link=None):
         seen,
         graph.name,
         last,
-        0 if link is None else link.obs0,
+        link.obs0,
         initial,
     )
     arrays.update(
@@ -306,8 +302,7 @@ def base(graph, registry, spec, link=None):
         period=graph.period.astype(np.int32),
         **referred(graph, registry, rows, found),
     )
-    if link is not None:
-        link.remember(graph, entity, reference, table)
+    link.remember(graph, entity, reference, table)
     return arrays
 
 
@@ -431,38 +426,6 @@ def coupling_edges(entity, step, spec, steps, rows, entities, budget):
     )
 
 
-def grouped(period):
-    return np.cumsum(np.r_[0, np.diff(period) != 0]).astype(np.int32)
-
-
-@timed("coupling")
-def coupling(arrays, registry, spec, budget):
-    step, entity = arrays["step"], arrays["entity"]
-    source, target = coupling_edges(
-        entity, step, spec, len(arrays["period"]), len(entity), len(arrays["entity_kind"]), budget
-    )
-    budget.retain(len(source), "temporal coupling")
-    lookback = spec["coupling/periods"]
-    held = arrays["period"]
-    return dict(
-        coupling=np.stack((source, target), 1).astype(np.int32).reshape(-1, 2),
-        coupling_boundaries=observation_boundaries(
-            entity,
-            step,
-            grouped(held)[step],
-            held[step],
-            lookback,
-            spec["coupling/period_window"],
-            len(arrays["entity_kind"]),
-            int(grouped(held)[-1]) + 1,
-            registry,
-            budget,
-        )
-        if lookback
-        else np.zeros((0, 4), np.int32),
-    )
-
-
 def observation_boundaries(entity, step, groups, period, lookback, window, entities, count, registry, budget):
     shape = (count, entities)
     budget.workspace(shape[0] * shape[1] * 8, "observation boundary tables")
@@ -504,34 +467,6 @@ def event_edges(events, member, spec, entities, budget):
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
     return kernels.event_dag(
         source, target, ticks, member, chosen, windowed, window, cap, entities, budget.pair_limit
-    )
-
-
-@timed("event_graph")
-def event_graph(arrays, registry, spec, budget):
-    events = np.asarray(arrays["events"])
-    member = event_members(events, spec)
-    before, after = event_edges(events, member, spec, len(arrays["entity_kind"]), budget)
-    budget.retain(len(before), "event graph")
-    lookback = spec["events/periods"]
-    held = arrays["period"]
-    moments = events[:, 2] // 2
-    return dict(
-        event_dag=np.stack((before, after), 1).astype(np.int32).reshape(-1, 2),
-        event_member=member,
-        event_boundaries=event_boundaries(
-            events,
-            member,
-            grouped(held)[moments].astype(np.int64),
-            held[moments],
-            lookback,
-            spec["events/period_window"],
-            len(arrays["entity_kind"]),
-            registry,
-            budget,
-        )
-        if lookback
-        else np.zeros((0, 4), np.int32),
     )
 
 
@@ -639,31 +574,6 @@ def walk_arrays(ids, offsets, events, roots, identities, moments, prior, first, 
     )
 
 
-def prior_periods(membership, moments):
-    return membership[moments][:, None] - np.arange(1, PERIOD_LOOKBACK + 1)
-
-
-@timed("walks")
-def walks(arrays, spec, seed, budget):
-    roots = np.asarray(arrays["member_entity"], np.int64)
-    moments = np.asarray(arrays["row_step"], np.int64)[np.asarray(arrays["member_row"], np.int64)]
-    prior = prior_periods(arrays["period_membership"], moments)
-    return walk_arrays(
-        np.asarray(arrays["neighbor_ids"]),
-        np.asarray(arrays["neighbor_offsets"]),
-        np.asarray(arrays["events"]),
-        roots,
-        roots,
-        moments,
-        prior,
-        arrays["period_starts"][prior.clip(0)].astype(np.int64),
-        arrays["period_ends"][prior.clip(0)].astype(np.int64),
-        spec,
-        seed,
-        budget,
-    )
-
-
 def mixed_sizes(rows, moments, trace, changes, bundles, seen, carried=0):
     groups = (rows + carried) // trace if trace else 0
     limit = rows + (rows if changes else 0) + groups + (moments if bundles else 0) + seen
@@ -707,167 +617,3 @@ def mixed_features(
     return features
 
 
-@timed("mixed")
-def mixed(arrays, spec, budget, values):
-    x, entity, offsets = observed_features(arrays), arrays["entity"], arrays["snapshot_offsets"]
-    changes, trace, bundles = spec["mixed/changes"], spec["mixed/trace"], spec["mixed/bundles"]
-    rows, moments = len(entity), len(offsets) - 1
-    placed = np.searchsorted(np.asarray(arrays["event_step"], np.int64), np.arange(moments + 1))
-    entities = len(arrays["entity_kind"])
-    order = np.argsort(entity, kind="stable")
-    prior = np.full(rows, -1, np.int64)
-    if rows > 1:
-        same = entity[order][1:] == entity[order][:-1]
-        prior[order[1:][same]] = order[:-1][same]
-    altered = np.zeros(rows, bool)
-    if changes:
-        seen = np.flatnonzero(prior >= 0)
-        altered[seen] = changed(x, seen, prior[seen])
-    limit, wires, holders = mixed_sizes(rows, moments, trace, changes, bundles, int(placed[-1]))
-    budget.pairs(wires, "mixed representation edges")
-    budget.workspace(limit * (32 + x.shape[1] * 2) + wires * 12 + holders * 4, "mixed representation")
-    span = trace if trace > 0 else 1
-    kind, tick, owner, mode, fill, member_offset, member_id, source, target, flag, _ = kernels.bundled(
-        np.ascontiguousarray(entity, np.int64),
-        np.ascontiguousarray(offsets, np.int64),
-        prior,
-        altered,
-        np.asarray(arrays["event_first"], np.int64),
-        np.asarray(arrays["event_task"], np.int64),
-        placed,
-        trace,
-        bundles,
-        limit,
-        wires,
-        holders,
-        np.int64(0),
-        np.int64(0),
-        np.full(entities, -1, np.int64),
-        np.empty((entities, span), np.int64),
-        np.empty((entities, span), np.int64),
-        np.zeros(entities, np.int64),
-        np.int64(-1),
-    )
-    features = mixed_features(
-        kind,
-        mode,
-        fill,
-        member_offset,
-        member_id,
-        lambda ids: x[ids],
-        x.shape[1],
-        values,
-        arrays["task"],
-        offsets,
-        spec,
-    )
-    return dict(
-        mixed_x=features.reshape(-1, x.shape[1]),
-        mixed_kind=kind,
-        mixed_tick=tick,
-        mixed_entity=owner,
-        mixed_edges=np.stack((source, target, flag), 1).astype(np.int32).reshape(-1, 3),
-        mixed_member_ids=member_id,
-        mixed_member_offsets=member_offset,
-    )
-
-
-@timed("build")
-def build(graph, registry, spec, groups, seed, limits):
-    started = time.perf_counter()
-    budget = GraphBudget(limits)
-    arrays = base(graph, registry, spec)
-    parts = (
-        ("periods", True, lambda: periods(arrays, len(registry.events), budget)),
-        ("coupling", "coupling" in groups, lambda: coupling(arrays, registry, spec, budget)),
-        ("events", "events" in groups, lambda: event_graph(arrays, registry, spec, budget)),
-        ("neighbors", "neighbors" in groups or "walks" in groups, lambda: neighbors(arrays, spec)),
-        ("walks", "walks" in groups, lambda: walks(arrays, spec, seed, budget)),
-        ("mixed", "mixed" in groups, lambda: mixed(arrays, spec, budget, registry.values)),
-    )
-    for name, wanted, make in parts:
-        if wanted:
-            clock = time.perf_counter()
-            arrays.update(make())
-            LOG.info(
-                "representation group exit graph=%s group=%s seconds=%.3f",
-                graph.name,
-                name,
-                time.perf_counter() - clock,
-            )
-    LOG.info(
-        "representation exit graph=%s seconds=%.3f events=%d groups=%s",
-        graph.name,
-        time.perf_counter() - started,
-        len(arrays["events"]),
-        "+".join(groups),
-    )
-    return arrays
-
-
-@timed("validate")
-def validate(arrays, graph, registry, spec, groups):
-    x, step, events, entity = arrays["x_table"], arrays["step"], arrays["events"], arrays["entity"]
-    reference = arrays["x_ref"]
-    if len(reference) != len(entity) or (
-        len(reference) and (reference.min() < 0 or reference.max() >= len(x))
-    ):
-        raise ValueError("observation feature references out of range in graph %s" % graph.name)
-    if not finite(x):
-        raise ValueError("nonfinite observation features in graph %s" % graph.name)
-    sizes = np.asarray([len(arrays["attributes_" + group]) for group in registry.valued] + [-1], np.int64)
-    limits = sizes[registry.value_group]
-    fault = kernels.misplaced_attributes(
-        np.asarray(arrays["spatial"]), np.asarray(arrays["spatial_attribute_row"]), limits
-    )
-    if fault >= 0:
-        raise ValueError("attribute rows of relation code %d are missing, unexpected or out of range" % fault)
-    period = arrays["period"]
-    if "coupling" in groups:
-        source, destination = arrays["coupling"].T
-        if np.any(step[source] >= step[destination]) or np.any(entity[source] != entity[destination]):
-            raise ValueError(
-                "coupling edges of graph %s must link an entity to its own earlier observation" % graph.name
-            )
-        source, destination, relation, gaps = arrays["coupling_boundaries"].T
-        if (
-            np.any(entity[source] != entity[destination])
-            or np.any(period[step[source]] >= period[step[destination]])
-            or not np.isin(relation, boundary_codes(registry)[1:]).all()
-            or not np.array_equal(gaps, period[step[destination]] - period[step[source]])
-            or np.any(
-                step[destination] - step[source] >= spec["coupling/period_window"]
-                if spec["coupling/periods"]
-                else False
-            )
-        ):
-            raise ValueError("coupling boundary edges of graph %s are invalid" % graph.name)
-    if "events" in groups:
-        member = arrays["event_member"]
-        source, destination = arrays["event_dag"].T
-        if np.any(events[source, 2] >= events[destination, 2]) or not (
-            member[source].all() and member[destination].all()
-        ):
-            raise ValueError(
-                "event graph of graph %s links a later, simultaneous or excluded event" % graph.name
-            )
-        if kernels.check_boundaries(
-            np.asarray(arrays["event_boundaries"]),
-            np.asarray(events),
-            np.asarray(member),
-            np.asarray(period),
-            boundary_codes(registry)[1:],
-        ):
-            raise ValueError("event boundary edges of graph %s are invalid" % graph.name)
-    if "walks" in groups:
-        moments = np.asarray(arrays["row_step"], np.int64)[np.asarray(arrays["member_row"], np.int64)]
-        for name, limit in (
-            ("walks", moments[:, None] * 2),
-            ("period_walks", moments[:, None, None] * 2),
-        ):
-            walks = arrays[name]
-            times = np.where(walks >= 0, events[np.maximum(walks, 0), 2], -1)
-            if np.any(times[..., 0] > limit) or np.any(
-                (np.diff(times, axis=-1) >= 0) & (times[..., 1:] >= 0)
-            ):
-                raise ValueError("%s of graph %s are not strictly causal" % (name, graph.name))

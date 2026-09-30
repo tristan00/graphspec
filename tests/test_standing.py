@@ -110,16 +110,16 @@ UNVERSIONED = (
     "graphspec/infra/windows_files.py",
 )
 RECORDED = {
-    "graphspec.periods": (1, "56ed1084b6272d26936b375c15f5203677acdbe5b499ee77fef7b32bada0c1d3"),
-    "graphspec.window": (1, "2f8df436d8da3c963d6bdc1d9d008c29e0f608d311d0fd0f0278b7f8b1796ff3"),
-    "graphspec.nodes": (1, "5ed315c77113a836ef96165f31e4184eaa773385d304a054fe0f36357177f00e"),
-    "graphspec.derive": (2, "bf38bc5cee21784f709ce3f9214440f45d857cf7cedd1038f8bd46ad26bc8819"),
-    "graphspec.relations": (1, "97620c6198716cab3515933561725b23d3b1ad4f72b7e54a609840606e82d5d9"),
-    "graphspec.edges": (2, "cb893aab6fdd4510733b4ece07baace30d7fa6b7239e37aa95eeec528bf883d0"),
-    "graphspec.merging": (1, "2228453653e2a1dd185aeaf286e723d233b0558444f442567e3c204d582b61af"),
-    "derivation": (1, "ad3fc54a8ea7e27e537bcd00ced40f4b557fbdf546cb62a3665060b2d73a44a0"),
-    "views": (3, "03798a23431fad468747a703ad1222912bf647cd94f823c0ae99b4d6e950cae9"),
-    "representations": (1, "dc258a628494e976bae585dd68a7c23e0ee98873f20fcb09ea0f44d65aaab97a"),
+    "graphspec.periods": (2, "75c06165ecf386d8ef23765f2f54d1d83b7144f234b3f4bd2600b17a429f2e04"),
+    "graphspec.window": (2, "5df2d7255ba6a2a3d4b53205ebfff639fffcb70d08bb3adb28bf428b55e20130"),
+    "graphspec.nodes": (2, "ddcb85c87fdc609e4379cab46e5b1bb9b0335d7115e61a7f82023c588b82a122"),
+    "graphspec.derive": (3, "92403cf521fe1cde0829a1e46bd17ba7d9a5b6867c581ec7ade87c6cfce228b7"),
+    "graphspec.relations": (2, "6d8f67db2181d1900d9355a757273e4f374d0cdb5926eaf03f56619681618c4e"),
+    "graphspec.edges": (3, "bc6b37c2fa003a4c18c273a5b08df146cc23f45b017cafbea99e690b55447105"),
+    "graphspec.merging": (2, "77c55f00419d3b722fa8cc38df2dcb8d03074d3a6adc9958219349aab7765252"),
+    "derivation": (2, "bd24eec0f40858922b19e2a64e630ad27c65628424287b3d8f3e1f376957c226"),
+    "views": (4, "626c932959a8799a412f24b788b1ec56ff6e61f72f314ed7d39dc8c04b287365"),
+    "representations": (2, "3ebe479597382bb88e90431b35a36e7af00e49243c5c42ae4272d9b1cf324c45"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }
 
@@ -536,9 +536,10 @@ def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_
     window = {name: VERSIONED[name] for name in ("graphspec.window",)}
     source = (ROOT / window["graphspec.window"][0]).read_text(encoding="utf-8")
     write(tmp_path, window["graphspec.window"][0], source + "\nEDITED = 1\n")
+    version = held["graphspec.window"]
     assert unrecorded(tmp_path, window, RECORDED, held) == [
-        "the code of graphspec.window changed and its version 1 did not; raise it"
+        "the code of graphspec.window changed and its version %d did not; raise it" % version
     ]
-    assert unrecorded(tmp_path, window, RECORDED, dict(held, **{"graphspec.window": 2}))[0].startswith(
-        "record graphspec.window at version 2 with the digest "
+    assert unrecorded(tmp_path, window, RECORDED, dict(held, **{"graphspec.window": version + 1}))[0].startswith(
+        "record graphspec.window at version %d with the digest " % (version + 1)
     )

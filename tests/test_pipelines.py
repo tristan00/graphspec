@@ -10,14 +10,14 @@ import pytest
 import support
 
 from conftest import SPLITS, Inline
-from graphspec import OPERATIONS, Operation
+from graphspec import OPERATIONS, Operation, Phase
 from graphspec.budgets import GraphLimits
-from graphspec.engine import transform
+from graphspec.engine import segments, transform
+from graphspec.engine.segments import Derivation
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
-from graphspec.representations import groups as representations
 from graphspec.views.graph import Dense
 from tuning.bank.bank import Deriver
 from tuning.fits.training import fit
@@ -56,10 +56,10 @@ ADDED = dict(
 )
 CHANGED = dict(events="9249781", key="9249781", task="9249781", walks="c390954", period_walks="c390954")
 WINDOW = dict(scheme="window", unit="step", window=3)
-PROBE = '''from graphspec import OPERATIONS, Operation
+PROBE = '''from graphspec import OPERATIONS, Operation, Phase
 
 
-def probe(graph, registry, settings, seed, limits, carry):
+def probe(graph, registry, settings, seed, limits, carry, held):
     return graph
 
 
@@ -68,7 +68,8 @@ def stated(registry):
 
 
 OPERATIONS.register(
-    "probe.edited", Operation("probe", "edited", probe, stated, (), (), (), ("time",), VERSION)
+    "probe.edited",
+    Operation("probe", "edited", (Phase("probe", probe, None, None),), stated, (), (), (), ("time",), VERSION),
 )
 '''
 
@@ -154,18 +155,21 @@ def test_a_search_draws_which_operations_are_present_and_their_parameters_never_
 def sighted():
     seen = {}
 
-    def blind(graph, registry, settings, seed, limits, carry):
+    def blind(graph, registry, settings, seed, limits, carry, held):
         settings.split("trained")
         return graph
 
-    def looking(graph, registry, settings, seed, limits, carry):
+    def looking(graph, registry, settings, seed, limits, carry, held):
         seen["trained"] = settings.split("trained")
         settings.split("scored")
         return graph
 
     found = [
-        Operation("test", "blind", blind, lambda registry: (), (), (), (), ("time",), 1),
-        Operation("test", "looking", looking, lambda registry: (), (), ("trained",), (), ("time",), 1),
+        Operation("test", "blind", (Phase("blind", blind, None, None),), lambda registry: (), (), (), (), ("time",), 1),
+        Operation(
+            "test", "looking", (Phase("looking", looking, None, None),), lambda registry: (), (), ("trained",), (),
+            ("time",), 1,
+        ),
     ]
     for operation in found:
         OPERATIONS.register(operation.name, operation)
@@ -184,10 +188,10 @@ def test_an_operation_receives_only_the_splits_it_states_it_may_read(bank, sight
         KeyError, match="the operation test.blind reads the split trained, which it does not state it may read; "
         "it states none"
     ):
-        transform.derive(dense, registry, blind, GraphLimits("cpu"), partitions)
+        segments.whole(dense, registry, blind, GraphLimits("cpu"), partitions)
     looking = pipeline.resolved(registry, [dict(operation="test.looking", parameters={})])
     with pytest.raises(KeyError, match="the operation test.looking reads the split scored, which it does not"):
-        transform.derive(dense, registry, looking, GraphLimits("cpu"), partitions)
+        segments.whole(dense, registry, looking, GraphLimits("cpu"), partitions)
     rows = np.asarray(dense.label_row, np.int64)
     wanted = np.unique(np.asarray(dense.label_task)[partitions[rows] == 0])
     assert len(wanted) and np.array_equal(sighted["trained"], wanted)
@@ -252,10 +256,13 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
         for name in entry["graphs"]:
             graph = Dense(name, [], len(stored[0][name]["period"]), **stored[0][name])
             for index, step in enumerate(steps):
-                graph = transform.derive(graph, registry, (step,), GraphLimits("cpu"), None)
+                graph = segments.whole(graph, registry, (step,), GraphLimits("cpu"), None)
                 if fixture.holds(names, index + 1):
                     assert fixture.differing(graph.arrays, stored[index + 1][name]) == [], (entry["name"], step.name)
-            arrays = representations.build(graph, registry, spec, chosen, transform.SEED, GraphLimits("cpu"))
+            represented = Derivation.begun(
+                [graph], registry, (), spec, chosen, transform.SEED, GraphLimits("cpu"), None, 0
+            )
+            arrays = represented.continued(graph.steps, None).arrays()
             now, then = fixture.content(arrays), fixture.content(drawn[name])
             assert sorted(set(then) - set(now)) == sorted(GONE) and sorted(set(now) - set(then)) == sorted(ADDED)
             differing = {key for key in set(now) & set(then) if not identical(now[key], then[key])}

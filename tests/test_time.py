@@ -842,13 +842,13 @@ def test_periods_are_a_view_and_need_not_increase(banks):
     dense = turned.dense()
     assert dense.period.tolist() == [3, 3, 1, 1, 2, 2]
     from graphspec.budgets import GraphLimits
-    from graphspec.engine import transform
+    from graphspec.engine import segments
 
     every = support.steps(held.registry, {"time/periods": "every", "time/period_length": 4})[0]
-    derived = transform.derive(dense, support.fitted(held), every, GraphLimits("cpu"), None)
+    derived = segments.whole(dense, support.fitted(held), every, GraphLimits("cpu"), None)
     assert derived.period.tolist() == [0, 0, 0, 0, 1, 1]
     kept = support.steps(held.registry, {})[0]
-    assert transform.derive(dense, held.registry, kept, GraphLimits("cpu"), None).period.tolist() == [
+    assert segments.whole(dense, support.fitted(held), kept, GraphLimits("cpu"), None).period.tolist() == [
         3,
         3,
         1,

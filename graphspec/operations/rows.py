@@ -4,7 +4,7 @@ from graphspec.infra.timing import timed
 from graphspec.infra.workspace import allocate, scatter, take
 
 from . import kernels
-from .state import Table
+from .state import EMPTY, Table
 
 FACTS = ("fact_source", "fact_target", "fact_code", "fact_step", "fact_present", "fact_ref")
 OBSERVATIONS = ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
@@ -54,17 +54,8 @@ def extend(graph, source, target, code, step, present, references):
     return graph.replace(**merged)
 
 
-def identities(carry, entity):
-    return entity if carry is None else carry.glob[entity]
-
-
 @timed("operators.prune")
-def prune(graph, kept, carry=None, name=None):
-    if carry is None:
-        if kept.all():
-            return graph
-        ids, count = kernels.keyed(graph.fact_source, graph.fact_target, graph.fact_code)
-        return select(graph, FACTS, kernels.orphans(ids, graph.fact_present, kept, count))
+def prune(graph, kept, carry, name):
     return select(
         graph,
         FACTS,
@@ -81,8 +72,16 @@ def prune(graph, kept, carry=None, name=None):
     )
 
 
+def pruned():
+    return Table(EMPTY, state=np.zeros(0, np.int8))
+
+
+def runs():
+    return Table(EMPTY, last=EMPTY, current=EMPTY, begun=EMPTY)
+
+
 def prune_mask(fact_source, fact_target, fact_code, fact_present, kept, connected, carry, name):
-    table = carry.table("prune/" + name)
+    table = carry.state["prune/" + name]
     keys = carry.keys(fact_code, fact_source, fact_target)
     state = table.lookup("state", keys, 0)
     carried = np.flatnonzero(state > 0)
@@ -107,11 +106,9 @@ def prune_mask(fact_source, fact_target, fact_code, fact_present, kept, connecte
 
 def run_state(carry, name, graph, ids, count, step, keys):
     last, current, begun = np.full(count, -2, np.int64), np.zeros(count, np.int64), np.zeros(count, np.int64)
-    if carry is None:
-        return kernels.runs(ids, step, last, current, begun), None
     group_key = np.zeros(count, np.int64)
     group_key[ids] = keys
-    table = carry.table(name)
+    table = carry.state[name]
     found = table.find(group_key)
     use = found >= 0
     if use.any():
@@ -129,9 +126,6 @@ def run_state(carry, name, graph, ids, count, step, keys):
 
 
 def open_runs(carry, name, pieces):
-    pieces = [piece for piece in pieces if piece is not None]
-    if carry is None:
-        return
     carry.state[name] = Table(
         np.concatenate([piece[0] for piece in pieces] + [np.zeros(0, np.int64)]),
         **{

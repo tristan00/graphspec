@@ -18,8 +18,22 @@ class Step:
         self.parameters, self.read = parameters, read
         self.spec = dict(read, **parameters)
 
-    def __call__(self, graph, registry, seed, limits, carry, partitions):
-        return self.operation(graph, registry, self.spec, seed, limits, carry, partitions)
+    def __call__(self, graph, registry, seed, limits, carry, state, partitions):
+        return self.operation(graph, registry, self.spec, seed, limits, carry, state, partitions)
+
+    def initial(self, registry):
+        return self.operation.initial(registry, self.spec)
+
+    def phase(self, place, graph, registry, seed, limits, carry, held, state, part, partitions):
+        return self.operation.phase(
+            place, graph, registry, self.spec, seed, limits, carry, held, state, part, partitions
+        )
+
+    def parts(self, place, registry):
+        phase = self.operation.phases[place]
+        if phase.parts is None:
+            return None
+        return phase.named(registry, self.operation.settings(registry, self.spec, None, None))
 
     def entry(self):
         started = time.perf_counter()

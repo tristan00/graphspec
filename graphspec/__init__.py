@@ -7,9 +7,10 @@ from .build.calls import GraphTables, write_task
 from .build.forms import FORMS
 from .build.output import Stage
 from .descriptions.inspect import inspect
-from .operations.operation import OPERATIONS, Operation
+from .operations.operation import OPERATIONS, Operation, Phase
 from .operations.sets import STORAGE
 from .registries import ship
+from .representations.registry import REPRESENTATIONS, Representation
 from .schema.declaration import EdgeType, Registry
 from .schema.references import SORTS
 from .schema.schema import ENCODERS, HELD, TYPES, Schema
@@ -25,6 +26,7 @@ __all__ = [
     "FORMS",
     "HELD",
     "OPERATIONS",
+    "REPRESENTATIONS",
     "SEES",
     "SEVERAL",
     "SORTS",
@@ -36,6 +38,8 @@ __all__ = [
     "Registry",
     "GraphTables",
     "Operation",
+    "Phase",
+    "Representation",
     "Schema",
     "Stage",
     "inspect",

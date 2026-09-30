@@ -5,7 +5,7 @@ import numpy as np
 
 from graphspec.infra.timing import timed
 
-from .operation import OPERATIONS, Operation
+from .operation import OPERATIONS, Operation, Phase
 from .parameters import enabled, flag
 from .rows import FACTS, grouped, select
 
@@ -32,7 +32,7 @@ def stated(registry):
 
 
 @timed("operators.relations")
-def relations(graph, registry, spec, seed, limits, carry):
+def relations(graph, registry, spec, seed, limits, carry, held):
     dropped = [group for group in registry.groups if not enabled(spec, "relations/%s/keep" % group)]
     if not dropped:
         return graph
@@ -44,12 +44,12 @@ RELATIONS = OPERATIONS.register(
     Operation(
         namespace="graphspec",
         name="relations",
-        function=relations,
+        phases=(Phase("relations", relations, None, None),),
         parameters=stated,
         reads=(),
         splits=(),
         requires=(),
         changes=("facts",),
-        version=1,
+        version=2,
     ),
 )

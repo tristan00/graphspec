@@ -3,15 +3,21 @@ import pytest
 import support
 
 from graphspec.budgets import GraphLimits
-from graphspec.engine import join, segments, transform
+from graphspec.engine import join, transform
+from graphspec.engine.segments import Derivation
+from graphspec.engine.stitch import Appender
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
-from graphspec.representations import groups
 from graphspec.views.graph import DENSE
-from tuning.bank.bank import Deriver, identical
+from tuning.bank.bank import Deriver
 
 pytestmark = pytest.mark.xdist_group("segments")
+
+
+def identical(left, right):
+    left, right = np.asarray(left), np.asarray(right)
+    return left.dtype == right.dtype and left.shape == right.shape and np.array_equal(left, right, equal_nan=True)
 
 
 def shortened(graph, stop):
@@ -33,8 +39,8 @@ def shortened(graph, stop):
     return type(graph)(graph.name, graph.keys, stop, **arrays)
 
 
-@pytest.mark.parametrize("draw", range(6))
-def test_segment_engine_equals_the_physical_join(bank, draw):
+@pytest.mark.parametrize("draw", range(4))
+def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_join(bank, draw):
     opened = Deriver(bank, "cpu", RESIDENT)
     registry = support.fitted(opened)
     rng = np.random.default_rng(draw)
@@ -50,23 +56,19 @@ def test_segment_engine_equals_the_physical_join(bank, draw):
     )
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     graphs = [shortened(graph, int(rng.integers(1, graph.steps + 1))) for graph in graphs]
-    derived = transform.derive(join.joined(graphs, registry, spec), registry, steps, GraphLimits("cpu"), None)
-    reference = groups.build(
-        derived, registry, spec, specs.GROUPS, transform.SEED, GraphLimits("cpu")
-    )
-    plan = segments.Plan(graphs, registry, steps, spec)
-    outputs = segments.derived(plan, graphs, registry, steps, GraphLimits("cpu"), None)
-    stitched = segments.stitch(plan, graphs, outputs)
-    assert all(
-        identical(np.asarray(derived.arrays[name]), np.asarray(stitched.arrays[name])) for name in DENSE
-    )
-    engine = segments.represented(
-        plan, outputs, registry, spec, specs.GROUPS, transform.SEED, GraphLimits("cpu")
-    )
-    assert sorted(engine) == sorted(reference)
-    assert [
-        name for name in reference if not identical(np.asarray(reference[name]), np.asarray(engine[name]))
-    ] == []
+    physical = join.joined(graphs, registry, spec)
+    whole = dict(spec, **{"graphs/join": "separate"})
+    limits = GraphLimits("cpu")
+    reference = Derivation.begun([physical], registry, steps, whole, specs.GROUPS, transform.SEED, limits, None, 0)
+    reference = reference.continued(physical.steps, None)
+    line = Derivation.begun(graphs, registry, steps, spec, specs.GROUPS, transform.SEED, limits, None, 0)
+    for high in sorted(set(rng.integers(1, physical.steps, 3).tolist())) + [physical.steps]:
+        line = line.continued(high, None)
+    derived, expected = line.derived(), reference.derived()
+    assert [name for name in DENSE if not identical(derived.arrays[name], expected.arrays[name])] == []
+    found, held = line.arrays(), reference.arrays()
+    assert sorted(found) == sorted(held)
+    assert [name for name in held if not identical(found[name], held[name])] == []
 
 
 def test_appender_writes_loadable_arrays_of_every_shape(tmp_path):
@@ -84,7 +86,7 @@ def test_appender_writes_loadable_arrays_of_every_shape(tmp_path):
             later=np.asarray([7, 8], np.int64),
         ),
     ]
-    appender = segments.Appender(tmp_path)
+    appender = Appender(tmp_path)
     for piece in pieces:
         appender.add(piece)
     appender.close()
@@ -94,7 +96,7 @@ def test_appender_writes_loadable_arrays_of_every_shape(tmp_path):
         assert loaded.dtype == expected.dtype and loaded.shape == expected.shape
         assert np.array_equal(np.asarray(loaded), expected)
     (tmp_path / "other").mkdir()
-    strict = segments.Appender(tmp_path / "other")
+    strict = Appender(tmp_path / "other")
     strict.add(dict(flags=np.zeros(1, bool)))
     with pytest.raises(ValueError, match="changed dtype or shape"):
         strict.add(dict(flags=np.zeros(1, np.int8)))

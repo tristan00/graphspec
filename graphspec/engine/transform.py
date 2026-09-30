@@ -3,16 +3,15 @@ import time
 
 import numpy as np
 
-from graphspec.infra.timing import measure, timed
+from graphspec.infra.timing import measure
 from graphspec.operations import sets
-from graphspec.representations import groups as representations
 from graphspec.views import view as views
 from graphspec.views.graph import conforms, referring, unobserved, unresolved, verify_dense
 from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
 SEED = 0x6772617068
-VERSION = 1
+VERSION = 2
 REMOVES = "references"
 
 
@@ -45,28 +44,30 @@ def kept(operation, before, graph, registry):
     )
 
 
-def applied(step, graph, registry, limits, carry, partitions):
-    if carry is None:
-        return step(graph, registry, SEED, limits, None, partitions)
-    held = carry.state
-    carry.state = held.setdefault(step.name, {})
-    try:
-        return step(graph, registry, SEED, limits, carry, partitions)
-    finally:
-        carry.state = held
+def checked(step, before, graph, registry):
+    started = time.perf_counter()
+    if graph is not before:
+        kept(step.operation, before, graph, registry)
+        conforms(graph, registry, tuple(part for part in step.operation.changes if part != REMOVES))
+    LOG.debug("checked exit step=%s seconds=%.4f", step.name, time.perf_counter() - started)
+    return graph
 
 
-@timed("graph_transform")
-def derive(graph, registry, steps, limits, partitions, carry=None, known=None, check=True):
-    started, given = time.perf_counter(), graph
+def initial(registry, steps):
+    started = time.perf_counter()
+    result = {step.name: step.initial(registry) for step in steps}
+    LOG.debug("initial exit steps=%d seconds=%.4f", len(steps), time.perf_counter() - started)
+    return result
+
+
+def derive(graph, registry, steps, limits, partitions, carry, states):
+    started, found = time.perf_counter(), {}
     for step in steps:
         clock = time.perf_counter()
         with measure(step.name):
-            before, graph = graph, applied(step, graph, registry, limits, carry, partitions)
-            if graph is not before:
-                kept(step.operation, before, graph, registry)
-            if check and graph is not before:
-                conforms(graph, registry, tuple(part for part in step.operation.changes if part != REMOVES))
+            before = graph
+            graph, found[step.name] = step(graph, registry, SEED, limits, carry, states[step.name], partitions)
+            checked(step, before, graph, registry)
         LOG.info(
             "stage exit stage=%s graph=%s seconds=%.3f facts=%d observations=%d",
             step.name,
@@ -75,26 +76,10 @@ def derive(graph, registry, steps, limits, partitions, carry=None, known=None, c
             len(graph.fact_step),
             len(graph.obs_step),
         )
-    if check and graph is not given:
-        with measure("verify"):
-            verify_dense(graph, registry, known)
+    with measure("verify"):
+        verify_dense(graph, registry, carry.known)
     LOG.info("derive exit graph=%s seconds=%.3f", graph.name, time.perf_counter() - started)
-    return graph
-
-
-@timed("materialize")
-def materialize(graph, registry, steps, spec, groups, limits, partitions):
-    started = time.perf_counter()
-    derived = derive(graph, registry, steps, limits, partitions)
-    arrays = representations.build(derived, registry, spec, groups, SEED, limits)
-    representations.validate(arrays, derived, registry, spec, groups)
-    LOG.info(
-        "materialize exit graph=%s seconds=%.3f arrays=%d",
-        graph.name,
-        time.perf_counter() - started,
-        len(arrays),
-    )
-    return arrays
+    return graph, found
 
 
 VALIDATED = "first"

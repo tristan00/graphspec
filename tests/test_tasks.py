@@ -9,7 +9,7 @@ import support
 from conftest import inline
 from graphspec import OPERATIONS, SEES, SORTS
 from graphspec.budgets import GraphLimits
-from graphspec.engine import transform
+from graphspec.engine import segments, transform
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -550,7 +550,7 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
     found = {}
     for choice in ("keep", "remove"):
         steps = support.steps(held.registry, {"nodes/site/keep": False, "nodes/referenced": choice})[0]
-        derived = transform.derive(dense, held.fitted(cfg), steps, GraphLimits("cpu"), None)
+        derived = segments.whole(dense, held.fitted(cfg), steps, GraphLimits("cpu"), None)
         kept = derived.obs_entity[np.isin(derived.obs_entity, sites)]
         found[choice] = sorted({dense.keys[entity] for entity in kept.tolist()})
         assert not np.isin(derived.fact_source, sites).any() and not np.isin(derived.fact_target, sites).any()
@@ -563,7 +563,7 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
         "(link|group|route|part|couple) of the task "
         r"\d+ of the kind (wide|joint) of graph one and does not state that it may remove a referenced node",
     ):
-        transform.derive(dense, held.fitted(cfg), steps, GraphLimits("cpu"), None)
+        segments.whole(dense, held.fitted(cfg), steps, GraphLimits("cpu"), None)
     strict = support.registry("strict", ["maker"], [])
     assert strict.stops.all()
     names = {parameter.name: parameter for parameter in support.parameters(strict, ())}

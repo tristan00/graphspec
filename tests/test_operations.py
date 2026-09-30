@@ -6,11 +6,12 @@ import numpy as np
 import pytest
 import support
 
-from graphspec import OPERATIONS, Operation
+from graphspec import OPERATIONS, Operation, Phase
 from graphspec.budgets import GraphLimits
-from graphspec.engine import transform
+from graphspec.engine import segments, transform
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
+from graphspec.operations.nodes import NODES
 from graphspec.operations.operation import listed
 from graphspec.operations.pipeline import resolved
 from graphspec.operations.window import WINDOW
@@ -22,11 +23,11 @@ pytestmark = pytest.mark.xdist_group("operations")
 SHIFT = specs.number("test/shift", 0, 4, 1)
 
 
-def shifted(graph, registry, settings, seed, limits, carry):
+def shifted(graph, registry, settings, seed, limits, carry, held):
     return graph.replace(period=(graph.period + settings["test/shift"]).astype(graph.period.dtype))
 
 
-def stray(graph, registry, settings, seed, limits, carry):
+def stray(graph, registry, settings, seed, limits, carry, held):
     return graph.replace(period=graph.period + settings["time/window"])
 
 
@@ -35,7 +36,7 @@ def stated(registry):
 
 
 def made(name, function):
-    return Operation("test", name, function, stated, (), (), (), ("time",), 2)
+    return Operation("test", name, (Phase("apply", function, None, None),), stated, (), (), (), ("time",), 2)
 
 
 @pytest.fixture
@@ -61,7 +62,13 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         splits=[],
         requires=[],
         changes=["time"],
+        phases=[dict(name="apply", carries=False, parts=False)],
     )
+    assert [phase["name"] for phase in found["graphspec.derive"]["phases"]] == ["begin", "each", "finish", "assemble"]
+    assert [(phase["carries"], phase["parts"]) for phase in found["graphspec.edges"]["phases"]] == [
+        (True, True),
+        (True, False),
+    ]
     assert set(support.SEVEN) <= set(found)
     assert [parameter["name"] for parameter in found["graphspec.periods"]["parameters"]] == [
         "time/periods",
@@ -77,15 +84,18 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         made("a.b", shifted)
     dense = support.shown(held, 0).dense()
     steps = resolved(registry, [dict(operation="test.shift", parameters={"test/shift": 3})])
-    moved = transform.derive(dense, registry, steps, GraphLimits("cpu"), None)
+    moved = segments.whole(dense, registry, steps, GraphLimits("cpu"), None)
     assert np.array_equal(moved.period, dense.period + 3) and moved.obs_step is dense.obs_step
+    carry, opened = segments.opening(dense)
     with pytest.raises(KeyError, match="the operation test.stray reads time/window, which is none of the parameters"):
         OPERATIONS.named("test.stray")(
-            dense, registry, {"test/shift": 3}, transform.SEED, GraphLimits("cpu"), None, None
+            opened, registry, {"test/shift": 3}, transform.SEED, GraphLimits("cpu"), carry, {}, None
         )
     lacking = {"time/scheme": "window", "time/unit": "step"}
     with pytest.raises(KeyError, match="the operation graphspec.window reads time/window, which the spec does not"):
-        WINDOW(dense, registry, lacking, transform.SEED, GraphLimits("cpu"), None, None)
+        WINDOW(
+            opened, registry, lacking, transform.SEED, GraphLimits("cpu"), carry, WINDOW.initial(registry, lacking), None
+        )
     kind = registry.nodes[0]
     nodes = support.pipelined(registry, {}, ("graphspec.nodes",))[0][0]["parameters"]
     idle = dict(nodes, **{"nodes/%s/keep" % kind: False})
@@ -94,7 +104,7 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         match="the parameter nodes/%s/filter, read by the operation graphspec.nodes, is inactive under its "
         "condition and stated by the spec" % kind,
     ):
-        OPERATIONS.named("graphspec.nodes")(dense, registry, idle, transform.SEED, GraphLimits("cpu"), None, None)
+        NODES(opened, registry, idle, transform.SEED, GraphLimits("cpu"), carry, NODES.initial(registry, nodes), None)
     LOG.info("registered operation exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -122,8 +132,9 @@ def test_each_operation_called_alone_on_the_fixture_gives_the_arrays_of_its_stag
                 given = Dense(name, [], len(stored[index][name]["period"]), **stored[index][name])
             else:
                 given = carried[name]
+            carry, given = segments.opening(given)
             before = {key: np.array(value) for key, value in given.arrays.items()}
-            result = step(given, registry, transform.SEED, GraphLimits("cpu"), None, None)
+            result, _ = step(given, registry, transform.SEED, GraphLimits("cpu"), carry, step.initial(registry), None)
             assert all(identical(before[key], given.arrays[key]) for key in DENSE), (label, name)
             if fixture.holds(names, index + 1):
                 assert fixture.differing(result.arrays, stored[index + 1][name]) == [], (label, name)
