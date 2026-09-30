@@ -39,7 +39,7 @@ def write_json(path, value):
         temporary = Path(stream.name)
         try:
             with stream:
-                json.dump(value, stream, indent=2, allow_nan=False)
+                stream.write(json.dumps(value, indent=2, allow_nan=False))
             replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
