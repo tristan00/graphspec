@@ -7,9 +7,11 @@ from graphspec.engine import join, segments
 from graphspec.engine.segments import Derivation
 from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
+from graphspec.infra.hashing import hashed, token
 from graphspec.operations.periods import PERIODS
 from tuning.bank.bank import Bank, Deriver, distinct
 from tuning.bank.variants import prepare
+from tuning.batches.batching import Shuffle, batches, identities
 from tuning.batches.inputs import recipe
 
 configuration = support.configuration
@@ -34,10 +36,15 @@ def test_single_join_builds_one_graph_per_group_and_keeps_every_block(bank):
     assert opened.groups(single) == [[0, 1, 2], [3]]
     assert opened.graphs(single) == [0, 1]
     assert sorted(opened.sizes(single)) == [0, 1]
+    keys = identities(opened, single)
+    names = [graph["name"] for graph in opened.viewed(single).graphs]
+    assert keys[1] == int(hashed(np.asarray([token(names[3])], np.uint64))[0]) and len(set(keys.values())) == 2
     for partition in (0, 1):
         blocks = opened.blocks(partition, 4, single)
         assert {block[0] for block in blocks} == {0, 1}
         assert len(blocks) == len(opened.blocks(partition, 4, separate))
+        shuffled = batches(blocks, 2, opened.sizes(single), Shuffle(5, 0, keys), frame_budget=1024)
+        assert sorted(block for group in shuffled for block in group) == sorted(blocks)
 
 
 def test_single_join_groups_graphs_within_their_split(bank):
