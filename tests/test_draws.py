@@ -23,7 +23,7 @@ from tuning.batches import inputs
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("draws")
-GROUPS = ("neighbors", "walks")
+GROUPS = ("coupling", "events", "neighbors", "walks")
 SAMPLED = 2
 LIMITS = GraphLimits("cpu")
 DRAWN = {
@@ -56,6 +56,7 @@ TIED = {
     "relations/parallel": "merge",
 }
 WALKS = {"walks/bias": 0.5, "walks/fanout": 3, "walks/window": 6}
+CAPS = {"coupling/scheme": "window", "coupling/window": 4, "coupling/cap": 1, "events/cap": 1}
 JOINED = {"graphs/join": "single", "graphs/join_size": 2}
 GENERATORS = (
     (np.random, ("default_rng", "Generator", "RandomState", "seed", "random", "rand", "choice", "permutation")),
@@ -87,7 +88,7 @@ def stated(registry, values, graph):
     entries, rest = support.pipelined(registry, values, support.SEVEN)
     assert rest == {}
     result = pipeline.resolved(registry, entries), specs.configured(
-        specs.settings(registry, GROUPS), dict(WALKS, **graph)
+        specs.settings(registry, GROUPS), dict(WALKS, **CAPS, **graph)
     )
     LOG.debug("stated exit settings=%d seconds=%.4f", len(graph), time.perf_counter() - started)
     return result

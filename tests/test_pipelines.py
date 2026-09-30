@@ -87,7 +87,7 @@ PIPELINED = {
     ("08_heat_sdrf_untyped_events", "stage_5_relations"): "338b837255b54882",
     ("08_heat_sdrf_untyped_events", "stage_6_edge_filters"): "338b837255b54882",
     ("08_heat_sdrf_untyped_events", "stage_7_relation_merging"): "fa2d103b805371d2",
-    ("08_heat_sdrf_untyped_events", "representation"): "f0ad7e8744ae4a51",
+    ("08_heat_sdrf_untyped_events", "representation"): "c4acd8ab30aaf187",
     ("09_fosr_drop_cap_walks", "stage_5_relations"): "d16ae7e1c28d6021",
     ("09_fosr_drop_cap_walks", "stage_6_edge_filters"): "c66da097643429b8",
     ("09_fosr_drop_cap_walks", "stage_7_relation_merging"): "c66da097643429b8",

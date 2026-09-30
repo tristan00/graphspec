@@ -36,7 +36,8 @@ def piece(shown, state):
     halo = np.flatnonzero(known & (recent["events"][:, 2] >= 2 * work["first_step"] - spec["events/window"]))
     count = len(halo)
     values, ext = extended(recent, halo, events)
-    before, after = event_edges(ext, np.r_[known[halo], member], spec, len(values), budget)
+    identity = np.r_[recent["identity"][halo], shown.work["identity"]]
+    before, after = event_edges(ext, identity, np.r_[known[halo], member], spec, len(values), budget)
     kept = after >= count
     before = resolved(before[kept], count, recent["id"][halo], events0)
     after = events0 + after[kept].astype(np.int64) - count

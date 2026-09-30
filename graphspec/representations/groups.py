@@ -15,7 +15,7 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 5
+VERSION = 6
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"
@@ -463,11 +463,21 @@ def event_members(events, spec):
     return np.isin(events[:, 3], [EVENT_KINDS.index(kind) for kind in spec["events/kinds"].split("+")])
 
 
-def event_edges(events, member, spec, entities, budget):
+def event_edges(events, identity, member, spec, entities, budget):
     chosen, windowed, window, cap = event_setting(spec)
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
     return kernels.event_dag(
-        source, target, ticks, member, chosen, windowed, window, cap, entities, budget.pair_limit
+        source,
+        target,
+        ticks,
+        np.ascontiguousarray(identity, np.uint64),
+        member,
+        chosen,
+        windowed,
+        window,
+        cap,
+        entities,
+        budget.pair_limit,
     )
 
 

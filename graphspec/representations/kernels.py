@@ -720,7 +720,7 @@ def replayed(
 
 
 @njit(cache=True)
-def group_index(source, target, ticks, member, entities):
+def group_index(source, target, ticks, identity, member, entities):
     events = len(ticks)
     belongs = np.empty(events, np.int64)
     groups = 0
@@ -769,6 +769,11 @@ def group_index(source, target, ticks, member, entities):
             entries[entry_fill[who]] = row
             entry_fill[who] += 1
             group_hi[group_fill[who] - 1] = entry_fill[who]
+    for slot in range(group_offset[entities]):
+        lo, hi = group_lo[slot], group_hi[slot]
+        if hi - lo > 1:
+            segment = entries[lo:hi].copy()
+            entries[lo:hi] = segment[np.argsort(identity[segment], kind="mergesort")]
     return belongs, group_offset, group_lo, group_hi, group_tick, entries
 
 
@@ -841,10 +846,10 @@ def dag_row(
 
 
 @njit(cache=True, parallel=True)
-def event_dag(source, target, ticks, member, lags, windowed, window, cap, entities, max_pairs):
+def event_dag(source, target, ticks, identity, member, lags, windowed, window, cap, entities, max_pairs):
     events = len(ticks)
     belongs, group_offset, group_lo, group_hi, group_tick, entries = group_index(
-        source, target, ticks, member, entities
+        source, target, ticks, identity, member, entities
     )
     counts = np.zeros(events, np.int64)
     for row in prange(events):
