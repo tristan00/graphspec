@@ -39,6 +39,7 @@ DRAWN = {
     "edges/rewire/drop": 0.2,
 }
 WALKS = {"walks/bias": 0.5, "walks/fanout": 3, "walks/window": 6}
+JOINED = {"graphs/join": "single", "graphs/join_size": 2}
 GENERATORS = (
     (np.random, ("default_rng", "Generator", "RandomState", "seed", "random", "rand", "choice", "permutation")),
     (torch, ("Generator", "manual_seed", "rand", "randn", "randint", "randperm", "multinomial", "bernoulli")),
@@ -53,14 +54,14 @@ class Unread:
         raise AssertionError("a derivation read the device")
 
 
-def stated(registry, values, joined):
+def stated(registry, values, graph):
     started = time.perf_counter()
     entries, rest = support.pipelined(registry, values, support.SEVEN)
     assert rest == {}
-    unlinked = {"graphs/connect/" + kind: False for kind in registry.nodes}
-    graph = dict(WALKS, **({"graphs/join": "single", "graphs/join_size": 2, **unlinked} if joined else {}))
-    result = pipeline.resolved(registry, entries), specs.configured(specs.settings(registry, GROUPS), graph)
-    LOG.debug("stated exit joined=%s seconds=%.4f", joined, time.perf_counter() - started)
+    result = pipeline.resolved(registry, entries), specs.configured(
+        specs.settings(registry, GROUPS), dict(WALKS, **graph)
+    )
+    LOG.debug("stated exit settings=%d seconds=%.4f", len(graph), time.perf_counter() - started)
     return result
 
 
@@ -110,7 +111,7 @@ def drawn(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     registry = support.fitted(opened)
     graphs = [support.shown(opened, index).dense() for index in range(2)]
-    steps, spec = stated(registry, DRAWN, False)
+    steps, spec = stated(registry, DRAWN, {})
     return registry, graphs, derived(graphs[:1], registry, steps, spec, [], LIMITS)
 
 
@@ -118,15 +119,19 @@ def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_so
     started = time.perf_counter()
     registry, graphs, reference = drawn
     moved = [permuted(graph, seed) for seed, graph in enumerate(graphs)]
-    steps, spec = stated(registry, DRAWN, False)
-    found = derived(moved[:1], registry, steps, spec, [4, 9], LIMITS)
-    assert differing(found, reference) == []
-    assert len(reference["variant/walks"]) and len(reference["facts"])
-    steps, spec = stated(registry, DRAWN, True)
+    steps, spec = stated(registry, DRAWN, {})
+    assert differing(derived(moved[:1], registry, steps, spec, [4, 9], LIMITS), reference) == []
+    assert len(reference["variant/walks"]) and registry.code("rewire") in reference["facts"][:, 2]
+    unlinked = dict(JOINED, **{"graphs/connect/" + kind: False for kind in registry.nodes})
+    steps, spec = stated(registry, DRAWN, unlinked)
     whole = derived(graphs, registry, steps, spec, [], LIMITS)
     turned = derived(moved[::-1], registry, steps, spec, [5, graphs[1].steps + 2], LIMITS)
     assert differing(turned, whole) == []
-    steps, spec = stated(registry, dict(DRAWN, **{"derive/rewiring": "fosr"}), False)
+    steps, spec = stated(registry, DRAWN, dict(JOINED, **{"graphs/connect_fraction": 0.5}))
+    linked = derived(graphs, registry, steps, spec, [], LIMITS)
+    assert differing(derived(moved, registry, steps, spec, [graphs[0].steps + 3], LIMITS), linked) == []
+    assert set(linked["entities"][:, -1].tolist()) == {0, 1}
+    steps, spec = stated(registry, dict(DRAWN, **{"derive/rewiring": "fosr"}), {})
     fosr = derived(graphs[1:], registry, steps, spec, [], LIMITS)
     assert differing(derived(moved[1:], registry, steps, spec, [7], LIMITS), fosr) == []
     LOG.info("permuted draws exit seconds=%.3f", time.perf_counter() - started)
@@ -137,15 +142,15 @@ def test_no_draw_reads_a_random_generator_or_a_device(drawn, monkeypatch):
     for module, names in GENERATORS:
         for name in names:
             monkeypatch.setattr(module, name, lambda *args, name=name, **kwargs: pytest.fail("a draw used " + name))
-    steps, spec = stated(registry, DRAWN, False)
+    steps, spec = stated(registry, DRAWN, {})
     assert differing(derived(graphs[:1], registry, steps, spec, [6], Unread()), reference) == []
 
 
 @pytest.mark.gpu
 def test_the_arrays_of_every_draw_are_equal_on_cpu_and_on_gpu(drawn):
     registry, graphs, reference = drawn
-    steps, spec = stated(registry, DRAWN, False)
+    steps, spec = stated(registry, DRAWN, {})
     assert differing(derived(graphs[:1], registry, steps, spec, [], GraphLimits("cuda")), reference) == []
-    steps, spec = stated(registry, dict(DRAWN, **{"derive/rewiring": "fosr"}), False)
+    steps, spec = stated(registry, dict(DRAWN, **{"derive/rewiring": "fosr"}), {})
     on = [derived(graphs[1:], registry, steps, spec, [], GraphLimits(device)) for device in ("cpu", "cuda")]
     assert differing(on[1], on[0]) == []
