@@ -211,6 +211,32 @@ def ground():
     return place
 
 
+def ground_banks(root, place):
+    import fixture
+
+    from graphspec.sources import synthetic
+    from tuning.bank.build import build
+
+    started = time.perf_counter()
+    for entry in fixture.configurations(place)[0]:
+        source = entry["source"]
+        held = root / source["name"]
+        if not held.exists():
+            held.mkdir()
+            shape, settings = fixture.shaped(source)
+            task = synthetic.generate(held, "source", source["graphs"], source["seed"], shape, **settings)
+            build(task, held / "bank", 1, ("train",))
+    LOG.debug("ground banks exit seconds=%.4f", time.perf_counter() - started)
+
+
+@pytest.fixture(scope="session")
+def grounded(ground):
+    import fixture
+
+    root = shared("ground", lambda made: ground_banks(made, ground))
+    return {entry["source"]["name"]: root / entry["source"]["name"] for entry in fixture.configurations(ground)[0]}
+
+
 def stated(directory, view):
     from support import several
 

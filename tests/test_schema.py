@@ -21,7 +21,6 @@ from graphspec.schema.schema import VALUE, Encoding, Schema, fitted
 from graphspec.sources import synthetic
 from graphspec.views.graph import conforms
 from tuning.bank.bank import Deriver
-from tuning.bank.build import build
 from tuning.fits.training import fit
 from tuning.statement import state
 
@@ -364,28 +363,12 @@ def test_a_bank_of_version_7_is_refused_with_an_error_naming_its_version(ground)
         inspect(old)
 
 
-@pytest.fixture(scope="module")
-def built(ground, tmp_path_factory):
-    started = time.perf_counter()
-    found = {}
-    for entry in fixture.configurations(ground)[0]:
-        source = entry["source"]
-        if source["name"] not in found:
-            root = tmp_path_factory.mktemp("ground-" + source["name"])
-            shape, settings = fixture.shaped(source)
-            task = synthetic.generate(root, "source", source["graphs"], source["seed"], shape, **settings)
-            build(task, root / "bank", 1, ("train",))
-            found[source["name"]] = root
-    LOG.info("built exit sources=%d seconds=%.3f", len(found), time.perf_counter() - started)
-    return found
-
-
 @pytest.mark.parametrize("place", range(10))
 def test_the_inputs_of_a_configuration_of_the_fixture_are_equal_under_the_names_of_version_8(
-    ground, built, place
+    ground, grounded, place
 ):
     entry = fixture.configurations(ground)[0][place]
-    root = built[entry["source"]["name"]]
+    root = grounded[entry["source"]["name"]]
     started = time.perf_counter()
     schema, level = Schema(fixture.shaped(entry["source"])[0]["schema"]), entry["source"]["level"]
     old = fixture.tables(ground / entry["folder"] / entry["files"]["staged"], schema, level)
@@ -406,11 +389,11 @@ def test_the_inputs_of_a_configuration_of_the_fixture_are_equal_under_the_names_
 
 
 @pytest.mark.parametrize("place", range(2))
-def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(ground, built, place):
+def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(ground, grounded, place):
     entries, joined = fixture.configurations(ground)
     entry = joined[place]
     source = {held["name"]: held for held in entries}[entry["configuration"]]["source"]
-    opened = Deriver(built[source["name"]] / "bank", "cpu", RESIDENT)
+    opened = Deriver(grounded[source["name"]] / "bank", "cpu", RESIDENT)
     started = time.perf_counter()
     spec = specs.configured(specs.space(opened.registry, tuple(entry["groups"])), entry["values"])
     assert spec == fixture.spec(entry["spec"])
