@@ -4,7 +4,7 @@ import shutil
 import sys
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from contextlib import contextmanager
 from importlib import import_module
 from pathlib import Path
@@ -135,19 +135,25 @@ def shared(name, make):
     return root
 
 
+def gone(place):
+    started = time.perf_counter()
+    if place.is_dir():
+        shutil.rmtree(place)
+    else:
+        place.unlink()
+    LOG.debug("gone exit place=%s seconds=%.4f", place, time.perf_counter() - started)
+    return place
+
+
 def cleared(checkout):
     started = time.perf_counter()
-    removed = []
+    places = []
     for worker in sorted(checkout.iterdir()):
-        places = [place for place in sorted(worker.iterdir()) if place.name != "cache"]
+        places += [place for place in sorted(worker.iterdir()) if place.name != "cache"]
         if (worker / "cache").is_dir():
             places += [place for place in sorted((worker / "cache").iterdir()) if place.name != "numba"]
-        for place in places:
-            if place.is_dir():
-                shutil.rmtree(place)
-            else:
-                place.unlink()
-            removed.append(place)
+    with ThreadPoolExecutor(8) as pool:
+        removed = list(pool.map(gone, places))
     LOG.debug("cleared exit removed=%d seconds=%.4f", len(removed), time.perf_counter() - started)
     return removed
 
