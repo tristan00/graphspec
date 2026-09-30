@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import logging
 import re
 import time
@@ -53,6 +54,73 @@ LAYERS = {
     "tuning/dashboard.py": ("tuning/searches",),
     "tuning/__main__.py": ("tuning/api.py", "tuning/dashboard.py"),
     "tuning/__init__.py": ("tuning/api.py", "tuning/dashboard.py"),
+}
+VERSIONED = {
+    "graphspec.periods": ("graphspec/operations/periods.py",),
+    "graphspec.window": ("graphspec/operations/window.py",),
+    "graphspec.nodes": ("graphspec/operations/nodes.py",),
+    "graphspec.derive": ("graphspec/operations/derive.py",),
+    "graphspec.relations": ("graphspec/operations/relations.py",),
+    "graphspec.edges": ("graphspec/operations/edges.py",),
+    "graphspec.merging": ("graphspec/operations/merging.py",),
+    "derivation": (
+        "graphspec/engine",
+        "graphspec/operations/__init__.py",
+        "graphspec/operations/kernels.py",
+        "graphspec/operations/operation.py",
+        "graphspec/operations/parameters.py",
+        "graphspec/operations/pipeline.py",
+        "graphspec/operations/rows.py",
+        "graphspec/operations/state.py",
+        "graphspec/infra/compute.py",
+        "graphspec/infra/hashing.py",
+        "graphspec/infra/workspace.py",
+    ),
+    "views": (
+        "graphspec/facts",
+        "graphspec/schema",
+        "graphspec/views",
+        "graphspec/operations/sets.py",
+        "tuning/bank/bank.py",
+    ),
+    "representations": ("graphspec/representations",),
+    "index": ("graphspec/build/staged.py",),
+}
+UNVERSIONED = (
+    "graphspec/__init__.py",
+    "graphspec/budgets.py",
+    "graphspec/registries.py",
+    "graphspec/build/__init__.py",
+    "graphspec/build/calls.py",
+    "graphspec/build/forms.py",
+    "graphspec/build/output.py",
+    "graphspec/build/parse.py",
+    "graphspec/descriptions",
+    "graphspec/sources",
+    "graphspec/infra/__init__.py",
+    "graphspec/infra/arrays.py",
+    "graphspec/infra/code.py",
+    "graphspec/infra/database.py",
+    "graphspec/infra/files.py",
+    "graphspec/infra/log.py",
+    "graphspec/infra/processes",
+    "graphspec/infra/runtime.py",
+    "graphspec/infra/serve.py",
+    "graphspec/infra/timing.py",
+    "graphspec/infra/windows_files.py",
+)
+RECORDED = {
+    "graphspec.periods": (1, "56ed1084b6272d26936b375c15f5203677acdbe5b499ee77fef7b32bada0c1d3"),
+    "graphspec.window": (1, "2f8df436d8da3c963d6bdc1d9d008c29e0f608d311d0fd0f0278b7f8b1796ff3"),
+    "graphspec.nodes": (1, "5ed315c77113a836ef96165f31e4184eaa773385d304a054fe0f36357177f00e"),
+    "graphspec.derive": (2, "bf38bc5cee21784f709ce3f9214440f45d857cf7cedd1038f8bd46ad26bc8819"),
+    "graphspec.relations": (1, "97620c6198716cab3515933561725b23d3b1ad4f72b7e54a609840606e82d5d9"),
+    "graphspec.edges": (2, "cb893aab6fdd4510733b4ece07baace30d7fa6b7239e37aa95eeec528bf883d0"),
+    "graphspec.merging": (1, "2228453653e2a1dd185aeaf286e723d233b0558444f442567e3c204d582b61af"),
+    "derivation": (1, "ad3fc54a8ea7e27e537bcd00ced40f4b557fbdf546cb62a3665060b2d73a44a0"),
+    "views": (3, "03798a23431fad468747a703ad1222912bf647cd94f823c0ae99b4d6e950cae9"),
+    "representations": (1, "dc258a628494e976bae585dd68a7c23e0ee98873f20fcb09ea0f44d65aaab97a"),
+    "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }
 
 
@@ -405,4 +473,72 @@ def test_every_module_sits_in_a_group_and_imports_only_the_groups_below_it(tmp_p
             ("graphspec/views/seen.py", 2, "graphspec/views", "graphspec/operations"),
             ("tuning/families/layers.py", 1, "tuning/families", "tuning/bank"),
         ],
+    )
+
+
+def listed(root, places):
+    started = time.perf_counter()
+    found = sorted(
+        path.relative_to(root).as_posix()
+        for place in places
+        for path in ((root / place).rglob("*.py") if (root / place).is_dir() else [root / place])
+    )
+    LOG.debug("listed exit modules=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def digested(root, places):
+    started = time.perf_counter()
+    value = hashlib.sha256()
+    for place in listed(root, places):
+        value.update(place.encode())
+        value.update((root / place).read_bytes().replace(b"\r\n", b"\n"))
+    LOG.debug("digested exit places=%d seconds=%.4f", len(places), time.perf_counter() - started)
+    return value.hexdigest()
+
+
+def versions():
+    from graphspec import OPERATIONS
+    from graphspec.build.staged import INDEX
+    from graphspec.engine.transform import VERSION as DERIVATION
+    from graphspec.representations.groups import VERSION as REPRESENTATIONS
+    from tuning.bank.bank import VIEW
+
+    started = time.perf_counter()
+    found = {name: OPERATIONS.named(name).version for name in OPERATIONS.names() if name.startswith("graphspec.")}
+    found.update(derivation=DERIVATION, views=VIEW, representations=REPRESENTATIONS, index=INDEX)
+    LOG.debug("versions exit units=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def unrecorded(root, units, recorded, held):
+    started = time.perf_counter()
+    found = []
+    for name, places in units.items():
+        version, digest = held[name], digested(root, places)
+        if name in recorded and recorded[name] == (version, digest):
+            continue
+        if name in recorded and recorded[name][0] == version:
+            found.append("the code of %s changed and its version %d did not; raise it" % (name, version))
+        else:
+            found.append("record %s at version %d with the digest %s" % (name, version, digest))
+    LOG.debug("unrecorded exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_with_its_version(tmp_path):
+    held = versions()
+    assert sorted(held) == sorted(VERSIONED)
+    placed = [place for places in VERSIONED.values() for place in listed(ROOT, places)] + listed(ROOT, UNVERSIONED)
+    assert len(placed) == len(set(placed))
+    assert sorted(set(listed(ROOT, ("graphspec",))) - set(placed)) == []
+    assert unrecorded(ROOT, VERSIONED, RECORDED, held) == []
+    window = {name: VERSIONED[name] for name in ("graphspec.window",)}
+    source = (ROOT / window["graphspec.window"][0]).read_text(encoding="utf-8")
+    write(tmp_path, window["graphspec.window"][0], source + "\nEDITED = 1\n")
+    assert unrecorded(tmp_path, window, RECORDED, held) == [
+        "the code of graphspec.window changed and its version 1 did not; raise it"
+    ]
+    assert unrecorded(tmp_path, window, RECORDED, dict(held, **{"graphspec.window": 2}))[0].startswith(
+        "record graphspec.window at version 2 with the digest "
     )
