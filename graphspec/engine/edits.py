@@ -109,10 +109,10 @@ class Edit:
 
 
 def matched(left, right):
-    left, right = np.asarray(left, np.int64).reshape(len(left), -1), np.asarray(right, np.int64)
+    left, right = np.asarray(left, np.int64), np.asarray(right, np.int64)
     if not len(left) or not len(right):
         return np.zeros(len(left), bool), np.zeros(len(right), bool)
-    _, inverse = np.unique(np.r_[left, right.reshape(len(right), -1)], axis=0, return_inverse=True)
+    _, inverse = np.unique(np.r_[left, right], axis=0, return_inverse=True)
     inverse = inverse.reshape(-1)
     size = int(inverse.max()) + 1
     found = np.zeros(size, bool), np.zeros(size, bool)
@@ -158,7 +158,8 @@ def edited(graph, edit):
     removed = edit.removed["facts"]
     named = ("fact_step", "fact_code", "fact_source", "fact_target")
     present, gone = matched(
-        np.stack([removed[name.split("_")[1]] for name in named], 1), np.stack([graph.arrays[name] for name in named], 1)
+        np.stack([removed[name.split("_")[1]] for name in named], 1),
+        np.stack([graph.arrays[name] for name in named], 1),
     )
     if not present.all():
         raise ValueError(
@@ -167,11 +168,11 @@ def edited(graph, edit):
             % tuple([graph.name] + [removed[name][~present][0] for name in ("code", "source", "target", "step")])
         )
     added = edit.added["observations"]
-    x = np.asarray(added["x"]).reshape(len(added["x"]), -1)
-    if len(x) and x.shape[1] != graph.x_table.shape[1]:
+    x = np.asarray(added["x"])
+    if x.ndim != 2 or x.shape[1] != graph.x_table.shape[1]:
         raise ValueError(
-            "an edit of graph %s adds values of observations %d wide and the graph holds them %d wide"
-            % (graph.name, x.shape[1], graph.x_table.shape[1])
+            "an edit of graph %s adds values of observations of the shape %s and the graph holds them %d wide"
+            % (graph.name, x.shape, graph.x_table.shape[1])
         )
     grown = dict(
         obs_entity=added["entity"],
@@ -187,13 +188,13 @@ def edited(graph, edit):
     arrays.update(ordered(observed, observed["obs_step"]))
     arrays["x_table"] = np.concatenate((graph.x_table, x.astype(graph.x_table.dtype)))
     added = edit.added["facts"]
-    values = np.asarray(added["values"], np.float64).reshape(len(added["values"]), -1)
-    if len(values) and values.shape[1] != graph.value_table.shape[1]:
+    values = np.asarray(added["values"], np.float64)
+    if values.ndim != 2 or values.shape[1] != graph.value_table.shape[1]:
         raise ValueError(
-            "an edit of graph %s adds values of facts %d wide and the graph holds them %d wide"
-            % (graph.name, values.shape[1], graph.value_table.shape[1])
+            "an edit of graph %s adds values of facts of the shape %s and the graph holds them %d wide"
+            % (graph.name, values.shape, graph.value_table.shape[1])
         )
-    valued = ~np.isnan(values).all(1) if len(values) else np.zeros(0, bool)
+    valued = ~np.isnan(values).all(1)
     grown = dict(
         fact_source=added["source"],
         fact_target=added["target"],

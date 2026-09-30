@@ -21,7 +21,7 @@ from graphspec.views.graph import Dense, Graph, verify_dense
 
 from . import transform
 from .segments import Plan, features, opened, unified
-from .stitch import Appender
+from .stitch import BUFFERED, Appender
 
 LOG = logging.getLogger(__name__)
 PIPE = {}
@@ -220,7 +220,7 @@ def represent_task(job, index):
     )
     keep(job, stage, index, state, False)
     if "appender" not in work:
-        work["appender"] = Appender(work["destination"])
+        work["appender"] = Appender(work["destination"], BUFFERED)
     work["appender"].add(piece)
     if index == len(work["paths"]) - 1:
         appender = work.pop("appender")

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from graphspec.infra.files import Arrays
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import DENSE, Dense
 
@@ -13,6 +14,7 @@ MOMENTS = ("obs_step", "fact_step", "task_step")
 TASKED = ("member_task", "label_task")
 GROUP = ("kinds", "entity_token", "entity_connected", "x_table", "value_table")
 HEADER = 128
+BUFFERED = 64 << 20
 
 
 def header(dtype, shape):
@@ -28,33 +30,69 @@ def header(dtype, shape):
 
 
 class Appender:
-    def __init__(self, directory):
-        self.directory, self.streams, self.kinds, self.rows = Path(directory), {}, {}, {}
+    def __init__(self, directory, limit):
+        self.directory, self.limit, self.size = Path(directory), limit, 0
+        self.kinds, self.rows, self.held, self.streams = {}, {}, {}, None
 
     def add(self, piece):
         started = time.perf_counter()
         for name, values in piece.items():
-            if name not in self.streams:
-                values = np.asarray(values)
-                self.kinds[name], self.rows[name] = (values.dtype, values.shape[1:]), 0
-                self.streams[name] = open(self.directory / (name + ".npy"), "wb")
-                self.streams[name].write(bytes(HEADER))
-            dtype, trailing = self.kinds[name]
-            if np.asarray(values).dtype != dtype or np.shape(values)[1:] != trailing:
-                raise ValueError("segment array %s changed dtype or shape" % name)
             values = np.ascontiguousarray(values)
+            if name not in self.kinds:
+                self.kinds[name], self.rows[name] = (values.dtype, values.shape[1:]), 0
+                if self.streams is None:
+                    self.held[name] = []
+                else:
+                    self.opened(name)
+            if values.dtype != self.kinds[name][0] or values.shape[1:] != self.kinds[name][1]:
+                raise ValueError("segment array %s changed dtype or shape" % name)
             self.rows[name] += len(values)
-            if values.size:
+            if self.streams is None:
+                self.held[name].append(values)
+                self.size += values.nbytes
+            elif values.size:
                 self.streams[name].write(values.data)
+        if self.streams is None and self.size > self.limit:
+            self.spill()
         LOG.debug("appender add exit arrays=%d seconds=%.4f", len(piece), time.perf_counter() - started)
 
-    def close(self):
-        for name, stream in self.streams.items():
-            dtype, trailing = self.kinds[name]
-            stream.seek(0)
-            stream.write(header(dtype, (self.rows[name],) + trailing))
-            stream.close()
+    def opened(self, name):
+        self.streams[name] = open(self.directory / (name + ".npy"), "wb")
+        self.streams[name].write(bytes(HEADER))
+
+    def spill(self):
+        started = time.perf_counter()
         self.streams = {}
+        for name, parts in self.held.items():
+            self.opened(name)
+            for part in parts:
+                if part.size:
+                    self.streams[name].write(part.data)
+        self.held = {}
+        LOG.debug("appender spill exit arrays=%d seconds=%.4f", len(self.streams), time.perf_counter() - started)
+
+    def abandon(self):
+        if self.streams is not None:
+            for stream in self.streams.values():
+                stream.close()
+        self.streams, self.held = {}, {}
+
+    def close(self):
+        started = time.perf_counter()
+        if self.streams is None:
+            result = {name: np.concatenate(parts) for name, parts in self.held.items()}
+            for name, values in result.items():
+                np.save(self.directory / (name + ".npy"), values, allow_pickle=False)
+            self.held = {}
+        else:
+            for name, stream in self.streams.items():
+                dtype, trailing = self.kinds[name]
+                stream.seek(0)
+                stream.write(header(dtype, (self.rows[name],) + trailing))
+                stream.close()
+            self.streams, result = {}, Arrays(self.directory)
+        LOG.debug("appender close exit arrays=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
 
 
 def joined(pieces):

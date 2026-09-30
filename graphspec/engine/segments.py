@@ -3,7 +3,6 @@ import time
 
 import numpy as np
 
-from graphspec.infra.files import Arrays
 from graphspec.infra.timing import measure
 from graphspec.operations.state import EMPTY, ENTITIES, Entities, Segment
 from graphspec.representations import base as representations
@@ -12,7 +11,7 @@ from graphspec.views.graph import Dense
 
 from . import join, transform
 from .edits import cut, edited
-from .stitch import Appender, joined, stitched
+from .stitch import BUFFERED, Appender, joined, stitched
 
 LOG = logging.getLogger(__name__)
 
@@ -334,7 +333,7 @@ def build(members, registry, steps, spec, groups, seed, limits, partitions, dest
     plan = Plan(members, unified(members, registry, spec), 0)
     source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
     state = source.initial()
-    appender = Appender(destination)
+    appender = Appender(destination, BUFFERED)
     try:
         for member, graph in enumerate(members):
             clock = time.perf_counter()
@@ -345,11 +344,13 @@ def build(members, registry, steps, spec, groups, seed, limits, partitions, dest
                 appender.add(segment.piece)
             LOG.info("segment build exit index=%d seconds=%.3f", member, time.perf_counter() - clock)
         appender.add(representations.ended(source.chosen, state["representations"]))
-    finally:
-        appender.close()
+    except BaseException:
+        appender.abandon()
+        raise
+    written = appender.close()
     with measure("stitch"):
         arrays = representations.stitched(
-            Arrays(destination),
+            written,
             np.concatenate([np.asarray(features(member)).astype(np.float16, copy=False) for member in members]),
             plan.entities.kinds,
             plan.entities.tokens,

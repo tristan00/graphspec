@@ -1,8 +1,10 @@
 import numpy as np
 import pyarrow as pa
 
+from graphspec import Operation, Phase, Representation
 from graphspec.infra.timing import timed
 from graphspec.operations.sets import Form, node
+from graphspec.operations.state import EMPTY, Table
 from graphspec.schema.references import Sort
 from graphspec.schema.time import NEVER
 from graphspec.views.view import Tasks
@@ -96,5 +98,47 @@ def ready():
     return None
 
 
+@timed("registered.tallied")
+def tallied(graph, registry, settings, seed, limits, carry, held):
+    total = carry.state["total"] + np.cumsum(np.bincount(graph.obs_step, minlength=graph.steps))
+    carry.state = dict(total=int(total[-1]))
+    return graph.replace(period=total.astype(graph.period.dtype))
+
+
+def untallied(registry, settings):
+    return dict(total=0)
+
+
+def unstated(registry):
+    return ()
+
+
+def uncounted(registry, spec):
+    return dict(seen=Table(EMPTY, count=EMPTY))
+
+
+def unlooking(spec):
+    return 0, 0
+
+
+@timed("registered.running")
+def running(shown, state):
+    entity = shown.own["entity"].astype(np.int64)
+    order = np.argsort(entity, kind="stable")
+    before = np.empty(len(entity), np.int64)
+    before[order] = np.arange(len(entity)) - np.searchsorted(entity[order], entity[order])
+    seen = state["seen"]
+    held, totals = np.unique(entity, return_counts=True)
+    state["seen"] = seen.replaced(held, held, count=seen.lookup("count", held, 0) + totals)
+    return dict(running=seen.lookup("count", entity, 0) + before)
+
+
+def unchecked(arrays, name, registry, spec):
+    if np.any(arrays["running"] < 0):
+        raise ValueError("a running count of graph %s is negative" % name)
+
+
 TRIPLE = Sort(True, False, 3, 3, True)
 STORED = Form(node, True, True)
+TALLY = Operation("test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), 1)
+RUNNING = Representation("test.running", uncounted, unlooking, running, None, None, unchecked)
