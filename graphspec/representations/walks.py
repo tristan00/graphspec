@@ -41,9 +41,7 @@ def piece(shown, state):
     identity = np.r_[recent["identity"][halo], work["identity"]]
     values, (left, right, local_roots) = localized(ext[:, 0], ext[:, 1], roots.reshape(-1))
     ext[:, 0], ext[:, 1] = left, right
-    ids, offsets = neighbor_lists(ext, neighbor_members(ext, spec), len(values))
-    owner = np.repeat(np.arange(len(values)), np.diff(offsets))
-    ids = ids[np.lexsort((identity[ids], ext[ids, 2], owner))]
+    ids, offsets = neighbor_lists(ext, neighbor_members(ext, spec), len(values), identity)
     held = moments - shown.carry.step0
     keys = hashed(
         np.where(roots >= 0, shown.carry.entities.tokens[np.maximum(roots, 0)], 0),

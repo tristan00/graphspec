@@ -2,16 +2,17 @@ import numpy as np
 from numba import njit, prange, types
 from numba.typed import Dict
 
-from graphspec.infra.hashing import mixed
+from graphspec.infra.hashing import mixed, uniform
 
 
 @njit(cache=True)
-def uniform(seed, stream, first, second, third):
-    value = mixed(np.uint64(seed ^ stream))
-    value = mixed(value ^ np.uint64(np.int64(first)))
-    value = mixed(value ^ np.uint64(np.int64(second)))
-    value = mixed(value ^ np.uint64(np.int64(third)))
-    return np.float64(value >> np.uint64(11)) / np.float64(1 << 53)
+def rooted(drawn, keyed, entity, cutoff):
+    tokens, step_token, step_time = keyed[0], keyed[1], keyed[2]
+    moment = cutoff // 2
+    value = mixed(mixed(drawn) ^ np.uint64(tokens[entity]))
+    value = mixed(value ^ step_token[moment])
+    value = mixed(value ^ np.uint64(step_time[moment]))
+    return mixed(value ^ np.uint64(cutoff % 2))
 
 
 @njit(cache=True)
@@ -44,23 +45,23 @@ def bound(neighbor_ids, ticks, lo, hi, value):
 
 @njit(cache=True)
 def neighbors(
-    neighbor_ids, neighbor_offsets, ticks, entity, cutoff, floor, count, mode, decay, seed, stream, out
+    neighbor_ids, neighbor_offsets, ticks, entity, cutoff, floor, count, mode, decay, drawn, keyed, out
 ):
     lo = bound(neighbor_ids, ticks, neighbor_offsets[entity], neighbor_offsets[entity + 1], floor)
     hi = bound(neighbor_ids, ticks, lo, neighbor_offsets[entity + 1], cutoff)
     if mode == 0 or hi - lo <= count:
-        start = max(lo, hi - count)
-        for slot in range(hi - start):
-            out[slot] = neighbor_ids[start + slot]
-        return hi - start
+        first = max(lo, hi - count)
+        for slot in range(hi - first):
+            out[slot] = neighbor_ids[first + slot]
+        return hi - first
+    identity, root = keyed[3], rooted(drawn, keyed, entity, cutoff)
     keys = np.empty(hi - lo)
     for slot in range(hi - lo):
         candidate = neighbor_ids[lo + slot]
-        draw = uniform(seed, stream, entity, cutoff, candidate)
-        draw = min(draw + 2.0**-54, 1 - 2.0**-53)
+        draw = min(uniform(mixed(root ^ identity[candidate])) + 2.0**-54, 1 - 2.0**-53)
         logit = 0.0 if mode == 1 else -decay * (cutoff - ticks[candidate]) / 2.0
         keys[slot] = logit - np.log(-np.log(draw))
-    order = np.argsort(-keys)
+    order = np.argsort(-keys, kind="mergesort")
     chosen = np.sort(order[:count])
     for slot in range(count):
         out[slot] = neighbor_ids[lo + chosen[slot]]
@@ -69,7 +70,7 @@ def neighbors(
 
 @njit(cache=True, parallel=True)
 def neighbor_table(
-    neighbor_ids, neighbor_offsets, ticks, entities, cutoffs, floor, count, mode, decay, seed, stream
+    neighbor_ids, neighbor_offsets, ticks, entities, cutoffs, floor, count, mode, decay, drawn, keyed
 ):
     ids = np.full((len(entities), count), -1, np.int32)
     sizes = np.zeros(len(entities), np.int64)
@@ -84,8 +85,8 @@ def neighbor_table(
             count,
             mode,
             decay,
-            seed,
-            stream,
+            drawn,
+            keyed,
             ids[row],
         )
     return ids, sizes
@@ -125,8 +126,8 @@ def partners(
     count,
     mode,
     decay,
-    seed,
-    stream,
+    drawn,
+    keyed,
     scratch,
 ):
     if entity in memo:
@@ -141,8 +142,8 @@ def partners(
         count,
         mode,
         decay,
-        seed,
-        stream,
+        drawn,
+        keyed,
         scratch,
     )
     result = np.empty(size, np.int64)
@@ -177,8 +178,8 @@ def two_hop(
     count,
     mode,
     decay,
-    seed,
-    stream,
+    drawn,
+    keyed,
     scratch,
 ):
     first = partners(
@@ -193,8 +194,8 @@ def two_hop(
         count,
         mode,
         decay,
-        seed,
-        stream,
+        drawn,
+        keyed,
         scratch,
     )
     take = max(1, int(count**0.5))
@@ -214,8 +215,8 @@ def two_hop(
                 count,
                 mode,
                 decay,
-                seed,
-                stream,
+                drawn,
+                keyed,
                 scratch,
             )
         )
@@ -234,8 +235,8 @@ def two_hop(
             count,
             mode,
             decay,
-            seed,
-            stream,
+            drawn,
+            keyed,
             scratch,
         ):
             collected[fill] = value
@@ -264,11 +265,13 @@ def history(
     count,
     mode,
     decay,
-    seed,
-    stream,
+    drawn,
+    keyed,
     structure,
+    symmetric,
     selected,
 ):
+    tokens = keyed[0]
     members = len(roots)
     observed = np.full((members, count), -1, np.int64)
     interaction = np.zeros((members, count), np.bool_)
@@ -297,8 +300,8 @@ def history(
             count,
             mode,
             decay,
-            seed,
-            stream,
+            drawn,
+            keyed,
             scratch,
         )
         chosen = scratch[:size].copy()
@@ -315,8 +318,10 @@ def history(
             gap[i, slot] = cutoff - events[event, 2]
             if structure:
                 column = 0
-                for end in range(2):
-                    endpoint = np.int64(events[event, end])
+                left, right = np.int64(events[event, 0]), np.int64(events[event, 1])
+                if events[event, 3] == 1 and symmetric[events[event, 6]] and tokens[right] < tokens[left]:
+                    left, right = right, left
+                for endpoint in (left, right):
                     for which in range(2):
                         anchor = anchors[which]
                         if anchor >= 0:
@@ -332,8 +337,8 @@ def history(
                                 count,
                                 mode,
                                 decay,
-                                seed,
-                                stream,
+                                drawn,
+                                keyed,
                                 scratch,
                             )
                             second = partners(
@@ -348,8 +353,8 @@ def history(
                                 count,
                                 mode,
                                 decay,
-                                seed,
-                                stream,
+                                drawn,
+                                keyed,
                                 scratch,
                             )
                             structural[i, slot, column] = occurrences(second, endpoint) / max(len(second), 1)
@@ -367,8 +372,8 @@ def history(
                                     count,
                                     mode,
                                     decay,
-                                    seed,
-                                    stream,
+                                    drawn,
+                                    keyed,
                                     scratch,
                                 ),
                                 two_hop(
@@ -383,8 +388,8 @@ def history(
                                     count,
                                     mode,
                                     decay,
-                                    seed,
-                                    stream,
+                                    drawn,
+                                    keyed,
                                     scratch,
                                 ),
                             )
@@ -405,8 +410,8 @@ def paired(
     count,
     mode,
     decay,
-    seed,
-    stream,
+    drawn,
+    keyed,
     selected,
 ):
     rows = len(lefts)
@@ -433,8 +438,8 @@ def paired(
             count,
             mode,
             decay,
-            seed,
-            stream,
+            drawn,
+            keyed,
             scratch,
         )
         left_events = scratch[:size].copy()
@@ -450,8 +455,8 @@ def paired(
             count,
             mode,
             decay,
-            seed,
-            stream,
+            drawn,
+            keyed,
             scratch,
         )
         second = partners(
@@ -466,8 +471,8 @@ def paired(
             count,
             mode,
             decay,
-            seed,
-            stream,
+            drawn,
+            keyed,
             scratch,
         )
         shared = 0

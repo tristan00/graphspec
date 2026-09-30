@@ -34,6 +34,8 @@ VARIANT = dict(
     members=("member_row", "member_name", "member_entity", "member_observed", "member_place"),
     whole=("whole_row", "whole_name"),
     events=("events",),
+    event_identity=("event_identity",),
+    step_keys=("step_time", "step_token"),
     period=("period",),
     period_index=("period_starts", "period_ends", "period_numbers"),
     period_membership=("period_membership",),
@@ -255,6 +257,10 @@ class Spaces:
             return rows(through(self.rows, arrays["whole_row"]), arrays["whole_name"])
         if group == "events":
             return rows(self.events)
+        if group == "event_identity":
+            return rows(event, arrays["event_identity"])
+        if group == "step_keys":
+            return rows(keys.steps, arrays["step_time"], arrays["step_token"])
         if group == "period":
             return rows(keys.steps, keys.period(arrays["period"]))
         if group == "period_index":

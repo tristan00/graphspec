@@ -119,7 +119,7 @@ RECORDED = {
     "graphspec.merging": (2, "77c55f00419d3b722fa8cc38df2dcb8d03074d3a6adc9958219349aab7765252"),
     "derivation": (8, "4211c02e75d6c7604feb542a1c4f5b5e832b74a42ba90ec72ea1afb8f7cf6ae7"),
     "views": (8, "9e6512b78178415dca43dfc753d24ca40b852a17f3547225c6eab290128077f2"),
-    "representations": (4, "ba3c3f4c6d0df26f200aade98a39210b0e01e3e2916de0e3277e87a529bedb44"),
+    "representations": (5, "073ed02aad615032fa06ba059cfc200cbc87c058d61a08f19095624c38c1c8ea"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }
 

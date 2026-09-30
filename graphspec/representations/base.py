@@ -250,6 +250,11 @@ def represented(carry, graph, registry, spec, chosen, seed, limits, states):
     arrays = base(graph, registry, spec, link)
     own, work = own_arrays(arrays, carry, before, graph)
     work["identity"] = identities(own["events"], carry, graph, registry, before["tasks"])
+    own.update(
+        event_identity=work["identity"],
+        step_time=np.asarray(graph.step_time, np.int64),
+        step_token=np.asarray(graph.step_token, np.uint64),
+    )
     shown = Shown(carry, graph, arrays, own, work, before, registry, spec, seed, budget)
     piece, found = dict(own), dict(base=state)
     for entry in chosen:

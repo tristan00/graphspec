@@ -15,7 +15,7 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 4
+VERSION = 5
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"
@@ -498,12 +498,12 @@ def neighbor_members(events, spec):
     return use
 
 
-def neighbor_lists(events, use, entities):
+def neighbor_lists(events, use, entities, identity):
     ids = np.flatnonzero(use)
     source, target = events[ids, 0], events[ids, 1]
     distinct = target != source
     owner, event = np.r_[source, target[distinct]], np.r_[ids, ids[distinct]]
-    order = np.lexsort((event, owner))
+    order = np.lexsort((event, identity[event], events[event, 2], owner))
     return (
         event[order].astype(np.int32),
         np.r_[0, np.cumsum(np.bincount(owner, minlength=entities))].astype(np.int64),
@@ -513,7 +513,9 @@ def neighbor_lists(events, use, entities):
 @timed("neighbors")
 def neighbors(arrays, spec):
     events = arrays["events"]
-    ids, offsets = neighbor_lists(events, neighbor_members(events, spec), len(arrays["entity_kind"]))
+    ids, offsets = neighbor_lists(
+        events, neighbor_members(events, spec), len(arrays["entity_kind"]), np.asarray(arrays["event_identity"])
+    )
     return dict(neighbor_ids=ids, neighbor_offsets=offsets)
 
 

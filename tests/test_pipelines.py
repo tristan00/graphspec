@@ -55,6 +55,9 @@ ADDED = dict(
     row_task="9249781",
     event_task="9249781",
     event_step="9249781",
+    event_identity="follow-up of 2.8",
+    step_time="follow-up of 2.8",
+    step_token="follow-up of 2.8",
 )
 CHANGED = dict(events="9249781", key="9249781", task="9249781", walks="c390954", period_walks="c390954")
 PIPELINED = {
@@ -104,6 +107,14 @@ OPERATIONS.register(
 def identical(left, right):
     left, right = np.asarray(left), np.asarray(right)
     return left.dtype == right.dtype and left.shape == right.shape and np.array_equal(left, right, equal_nan=True)
+
+
+def listed(found):
+    if "neighbor_ids" not in found:
+        return found
+    ids, offsets = np.asarray(found["neighbor_ids"]), np.asarray(found["neighbor_offsets"])
+    owner = np.repeat(np.arange(len(offsets) - 1), np.diff(offsets))
+    return dict(found, neighbor_ids=ids[np.lexsort((ids, owner))])
 
 
 def test_a_pipeline_is_stated_as_its_operations_in_order_and_read_back_as_stated(bank, tmp_path, statement):
@@ -298,7 +309,7 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
                 [graph], registry, (), spec, chosen, transform.SEED, GraphLimits("cpu"), None, 0
             )
             arrays = derivation.continued(graph.steps, None).arrays()
-            now, then = fixture.content(arrays), fixture.content(represented[name])
+            now, then = listed(fixture.content(arrays)), listed(fixture.content(represented[name]))
             assert sorted(set(then) - set(now)) == sorted(GONE) and sorted(set(now) - set(then)) == sorted(ADDED)
             replaced = fixture.drawn(entry, "representation")
             differing = {key for key in set(now) & set(then) if not identical(now[key], then[key])}

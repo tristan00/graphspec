@@ -1,11 +1,12 @@
 import logging
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import support
 import torch
-from keyed import Keys, dense_keyed, differing, variant_part
+from keyed import Keys, Spaces, dense_keyed, differing, rows, through, variant_part
 
 from graphspec.budgets import GraphLimits
 from graphspec.engine import transform
@@ -16,10 +17,12 @@ from graphspec.operations import pipeline
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import Dense
 from tuning.bank.bank import Deriver
+from tuning.batches import inputs
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("draws")
-GROUPS = ("walks",)
+GROUPS = ("neighbors", "walks")
+SAMPLED = 2
 LIMITS = GraphLimits("cpu")
 DRAWN = {
     "time/periods": "every",
@@ -52,6 +55,17 @@ class Unread:
     @property
     def device(self):
         raise AssertionError("a derivation read the device")
+
+
+class Held:
+    def __init__(self, arrays):
+        self.arrays = arrays
+
+    def numpy(self, key):
+        return np.asarray(self.arrays[key])
+
+    def column(self, key, index):
+        return np.ascontiguousarray(self.numpy(key)[:, index])
 
 
 def stated(registry, values, graph):
@@ -93,17 +107,89 @@ def permuted(graph, seed):
     return result
 
 
-def derived(members, registry, steps, spec, cuts, limits):
+def variant(members, registry, steps, spec, cuts, limits):
     started = time.perf_counter()
     derivation = Derivation.begun(members, registry, steps, spec, GROUPS, transform.SEED, limits, None, 0)
     for high in cuts + [sum(member.steps for member in members)]:
         derivation = derivation.continued(high, None)
-    dense, arrays = derivation.derived(), derivation.arrays()
-    keys = Keys(dense, registry)
-    variant = variant_part(arrays, keys, list(arrays))
-    result = dict(dense_keyed(dense, keys), **{"variant/" + name: held for name, held in variant.items()})
-    LOG.info("keyed exit graphs=%d cuts=%d seconds=%.3f", len(members), len(cuts), time.perf_counter() - started)
+    result = derivation.derived(), derivation.arrays()
+    LOG.info("variant exit graphs=%d cuts=%d seconds=%.3f", len(members), len(cuts), time.perf_counter() - started)
     return result
+
+
+def keyed(found, registry):
+    started = time.perf_counter()
+    dense, arrays = found
+    keys = Keys(dense, registry)
+    held = variant_part(arrays, keys, list(arrays))
+    result = dict(dense_keyed(dense, keys), **{"variant/" + name: value for name, value in held.items()})
+    LOG.debug("keyed exit arrays=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def derived(members, registry, steps, spec, cuts, limits):
+    return keyed(variant(members, registry, steps, spec, cuts, limits), registry)
+
+
+def levels(tree):
+    found = []
+    while tree is not None:
+        found.append(("x", tree["x"].segments[0][2][0][1]))
+        found += [(name, tree[name]) for name in ("mask", "gap", "relation") if name in tree]
+        tree = tree.get("child")
+    return found
+
+
+def sampled(found, registry, order):
+    started = time.perf_counter()
+    dense, arrays = found
+    keys = Keys(dense, registry)
+    spaces, held = Spaces(arrays, keys), Held(arrays)
+    spec = {"neighbors/order": order, "neighbors/decay": 0.5}
+    window = SimpleNamespace(graph=0, held=held, start=0, registry=registry, cfg=dict(graph=spec))
+    owner, kinds = arrays["member_row"], arrays["row_kind"]
+    pair = inputs.paired(registry, kinds, owner, arrays["member_name"])
+    b = dict(
+        member_row=owner,
+        member_entity=arrays["member_entity"],
+        row_steps=arrays["row_step"].astype(np.int64),
+        row_kind=kinds,
+        pair=pair,
+        partner=inputs.partnered(pair, len(owner)),
+    )
+    history = inputs.history_inputs(window, b, SAMPLED, True, None)
+    cutoffs = b["row_steps"][owner] * 2 + 1
+    tree = inputs.tree(
+        0, held, b["member_entity"].astype(np.int64), cutoffs, 0, SAMPLED, 2, registry, spec, transform.SEED
+    )
+    x, task = (piece[1] for piece in history["history_x"].segments[0][2])
+    common = through(keys.entities, history["common_ids"])
+    place = np.argsort(common, axis=1, kind="stable")
+    result = dict(
+        history=rows(
+            spaces.member,
+            through(keys.entities, history["history_ids"]),
+            through(spaces.observations, x),
+            through(keys.tasks, task),
+            *(history[name] for name in ("history_mask", "history_gap", "history_relation", "occurrence", "structure")),
+        ),
+        common=rows(
+            spaces.rows,
+            np.take_along_axis(common, place, 1),
+            np.take_along_axis(history["common_frequency"], place, 1),
+            *(history[name] for name in ("common_stats", "pair_gap", "pair_mask")),
+        ),
+        tree=rows(
+            spaces.member,
+            *(
+                (through(spaces.observations, value) if name == "x" else value).reshape(len(owner), -1)
+                for name, value in levels(tree)
+            ),
+        ),
+    )
+    full = history["history_mask"].all(1)
+    LOG.info("sampled exit order=%s full=%d seconds=%.3f", order, int(full.sum()), time.perf_counter() - started)
+    return result, int(full.sum())
 
 
 @pytest.fixture(scope="module")
@@ -115,18 +201,25 @@ def drawn(bank):
     return registry, graphs, derived(graphs[:1], registry, steps, spec, [], LIMITS)
 
 
-def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_sorting_by_key(drawn):
+@pytest.fixture(scope="module")
+def unlinked(drawn):
+    registry, graphs, _ = drawn
+    moved = [permuted(graph, seed) for seed, graph in enumerate(graphs)]
+    separate = dict(JOINED, **{"graphs/connect/" + kind: False for kind in registry.nodes})
+    steps, spec = stated(registry, DRAWN, separate)
+    whole = variant(graphs, registry, steps, spec, [], LIMITS)
+    turned = variant(moved[::-1], registry, steps, spec, [5, graphs[1].steps + 2], LIMITS)
+    return moved, whole, turned
+
+
+def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_sorting_by_key(drawn, unlinked):
     started = time.perf_counter()
     registry, graphs, reference = drawn
-    moved = [permuted(graph, seed) for seed, graph in enumerate(graphs)]
+    moved, whole, turned = unlinked
     steps, spec = stated(registry, DRAWN, {})
     assert differing(derived(moved[:1], registry, steps, spec, [4, 9], LIMITS), reference) == []
     assert len(reference["variant/walks"]) and registry.code("rewire") in reference["facts"][:, 2]
-    unlinked = dict(JOINED, **{"graphs/connect/" + kind: False for kind in registry.nodes})
-    steps, spec = stated(registry, DRAWN, unlinked)
-    whole = derived(graphs, registry, steps, spec, [], LIMITS)
-    turned = derived(moved[::-1], registry, steps, spec, [5, graphs[1].steps + 2], LIMITS)
-    assert differing(turned, whole) == []
+    assert differing(keyed(turned, registry), keyed(whole, registry)) == []
     steps, spec = stated(registry, DRAWN, dict(JOINED, **{"graphs/connect_fraction": 0.5}))
     linked = derived(graphs, registry, steps, spec, [], LIMITS)
     assert differing(derived(moved, registry, steps, spec, [graphs[0].steps + 3], LIMITS), linked) == []
@@ -135,6 +228,16 @@ def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_so
     fosr = derived(graphs[1:], registry, steps, spec, [], LIMITS)
     assert differing(derived(moved[1:], registry, steps, spec, [7], LIMITS), fosr) == []
     LOG.info("permuted draws exit seconds=%.3f", time.perf_counter() - started)
+
+
+@pytest.mark.parametrize("order", ["recent", "uniform"])
+def test_the_neighbours_a_batch_reads_are_equal_when_entities_are_renumbered_or_graphs_reordered(
+    drawn, unlinked, order
+):
+    registry = drawn[0]
+    _, whole, turned = unlinked
+    found, full = sampled(whole, registry, order)
+    assert full and differing(sampled(turned, registry, order)[0], found) == []
 
 
 def test_no_draw_reads_a_random_generator_or_a_device(drawn, monkeypatch):

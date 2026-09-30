@@ -8,13 +8,15 @@ import torch
 from graphspec import Registry
 from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import Resident, between
+from graphspec.infra.hashing import salted
+from graphspec.operations.rows import keyed_relations
 from graphspec.schema.references import SORTS
 
 from . import gather
 from .tensors import Frames, Host, array, features, features_at, gathered, joined
 
 LOG = logging.getLogger(__name__)
-NEIGHBOURS = 8
+NEIGHBOURS = "tuning.batches/neighbors"
 ORDERS = dict(recent=0, uniform=1, decay=2)
 
 
@@ -23,7 +25,14 @@ def sampling(spec):
     return ORDERS[order], spec["neighbors/decay"] if order == "decay" else 0.0
 
 
-def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, stream, tokens=None):
+def keyed(held):
+    started = time.perf_counter()
+    result = tuple(held.numpy(name) for name in ("entity_token", "step_token", "step_time", "event_identity"))
+    LOG.debug("keyed exit events=%d seconds=%.4f", len(result[3]), time.perf_counter() - started)
+    return result
+
+
+def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, seed, tokens=None):
     started = time.perf_counter()
     mode, decay = sampling(spec)
     events, ticks = held.numpy("events"), held.column("events", 2)
@@ -33,10 +42,11 @@ def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, st
         held.numpy("observation_offsets"),
         held.numpy("step"),
     )
+    drawn, identified = salted(seed, NEIGHBOURS), keyed(held)
     levels = []
     for _ in range(depth):
         table, sizes = gather.neighbor_table(
-            ids, offsets, ticks, entities, cutoffs, floor, count, mode, decay, stream, NEIGHBOURS
+            ids, offsets, ticks, entities, cutoffs, floor, count, mode, decay, drawn, identified
         )
         children, times, mask, gaps, relation = gather.tree_level(
             events, table, sizes, entities, cutoffs, count, registry.marker("non_relation")
@@ -81,7 +91,7 @@ def history_inputs(window, b, count, include_structure, selected):
         held.numpy("neighbor_offsets"),
         held.column("events", 2),
     )
-    sampled = (start, count, mode, decay, SEED, NEIGHBOURS)
+    sampled = (start, count, mode, decay, salted(SEED, NEIGHBOURS), keyed(held))
     observed, interaction, task_row, mask, gap, ids, relation, structural = gather.history(
         *shared,
         entity,
@@ -89,6 +99,7 @@ def history_inputs(window, b, count, include_structure, selected):
         moments[rows],
         *sampled,
         include_structure,
+        keyed_relations(window.registry)[1],
         chosen[rows],
     )
     common_ids, common_frequency, common_stats, pair_gaps, pair_mask = gather.paired(
@@ -618,7 +629,6 @@ def tree_inputs(b, window):
 
     graph, start = window.graph, window.start
     held, registry, cfg, tokens = window.held, window.registry, window.cfg, window.tokens
-    spec, stream = cfg["graph"], SEED
     moment = b["row_steps"][b["member_row"]] + start
     b["tree"] = tree(
         graph,
@@ -629,8 +639,8 @@ def tree_inputs(b, window):
         neighbors(cfg["model"]),
         cfg["model"]["tree/depth"],
         registry,
-        spec,
-        stream,
+        cfg["graph"],
+        SEED,
         tokens,
     )
 
