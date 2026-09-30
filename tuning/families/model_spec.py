@@ -224,6 +224,10 @@ def shared_frames(spec):
     return spec["view"] == "snapshot" and spec["snapshot/temporal"] != "coupling_edges"
 
 
+def temporal(spec, modes):
+    return spec["view"] == "snapshot" and spec["snapshot/temporal"] in modes
+
+
 def row_local(spec):
     return spec["view"] in ("tree", "walks", "sequence", "mixed", "event_graph")
 

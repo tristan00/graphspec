@@ -238,21 +238,22 @@ def frame_inputs(window, start, stop):
 
 
 def snapshot_inputs(b, window):
-    from tuning.families.model_spec import shared_frames
+    from tuning.families.model_spec import shared_frames, temporal
 
+    spec = window.cfg["model"]
     start, lo, hi, held = window.start, window.lo, window.hi, window.held
     entity = held.numpy("entity")[lo:hi]
     step = held.numpy("step")[lo:hi] - start
     b.update(entity=array(entity, torch.long), step=array(step, torch.long))
-    if shared_frames(window.cfg["model"]):
+    if shared_frames(spec):
         b["window"] = window
     else:
         b.update(observed_inputs(window, lo, hi))
-    if window.cfg["model"]["snapshot/temporal"] == "graph_sequence":
+    if temporal(spec, ("graph_sequence",)):
         b.update(frame_inputs_of(window))
     if "window" not in b:
         spatial_inputs(b, window)
-    elif window.cfg["model"]["snapshot/temporal"] in ("graph_cell", "evolving"):
+    elif temporal(spec, ("graph_cell", "evolving")):
         spatial_inputs(b, window)
         for key in ("relation", "attributes", "attribute_edges"):
             del b[key]
