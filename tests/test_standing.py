@@ -2,9 +2,13 @@ import ast
 import logging
 import re
 import time
+from functools import lru_cache
 from pathlib import Path
 
+import pytest
+
 LOG = logging.getLogger(__name__)
+pytestmark = pytest.mark.xdist_group("standing")
 ROOT = Path(__file__).parent.parent
 CODE = ("graphspec", "tuning")
 NAMED = ("graphspec", "tuning")
@@ -77,14 +81,23 @@ def called(node):
     return node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", None)
 
 
+@lru_cache(maxsize=None)
+def parsed(source):
+    started = time.perf_counter()
+    tree = ast.parse(source)
+    LOG.debug("parsed exit characters=%d seconds=%.4f", len(source), time.perf_counter() - started)
+    return tree
+
+
 def timing(tree):
     started = time.perf_counter()
-    found = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and called(node.func) in TIMERS:
-            found = True
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            found = found or any(called(entry) in MARKS for entry in node.decorator_list)
+    found = any(
+        called(node.func) in TIMERS
+        if isinstance(node, ast.Call)
+        else isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(called(entry) in MARKS for entry in node.decorator_list)
+        for node in ast.walk(tree)
+    )
     LOG.debug("timing exit found=%s seconds=%.4f", found, time.perf_counter() - started)
     return found
 
@@ -93,7 +106,7 @@ def untimed(root, folders):
     started = time.perf_counter()
     found = []
     for place, source in sources(root, folders):
-        tree = ast.parse(source)
+        tree = parsed(source)
         defines = any(
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not compiled(node)
             for node in ast.walk(tree)
@@ -127,7 +140,7 @@ def spelled(pieces, joint, change):
 def mentions(source):
     started = time.perf_counter()
     names, strings = [], []
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.walk(parsed(source)):
         if isinstance(node, ast.Import):
             names.extend((alias.name, node.lineno) for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
@@ -205,7 +218,7 @@ def imports(modules):
     known, found = {place for place, _ in modules}, []
     for place, source in modules:
         package = place[: -len(".py")].split("/")[:-1]
-        for node in statements(ast.parse(source)):
+        for node in statements(parsed(source)):
             targets = []
             if isinstance(node, ast.Import):
                 targets = [resolved(known, alias.name) for alias in node.names]

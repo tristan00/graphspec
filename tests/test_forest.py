@@ -7,6 +7,8 @@ from tuning.searches import selector, space, surrogates
 from tuning.searches.surrogates import COMPLETION_WEIGHT, Forest, log_expected_improvement
 from tuning.statement import state
 
+pytestmark = pytest.mark.xdist_group("candidates")
+
 
 def test_log_expected_improvement_matches_the_closed_form_and_stays_finite_far_away():
     mean = np.array([0.5, 1.0, 1.5, 9.0, 1.0])
@@ -62,7 +64,6 @@ def test_failed_trials_train_the_completion_forest():
         Forest(x, losses, [False] * 40, 3)
 
 
-@pytest.mark.xdist_group("candidates")
 def test_forest_suggest_records_ranked_candidates_and_fixed_parameters(bank, candidate_pool, monkeypatch):
     registry = Bank(bank).registry
     observations, failures = [], []

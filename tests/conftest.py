@@ -1,7 +1,9 @@
 import logging
 import os
 import shutil
+import sys
 import time
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from importlib import import_module
@@ -9,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from graphspec.infra.files import read_json, write_json
 from graphspec.infra.processes import locks
 from graphspec.infra.processes.locks import Lock, LockBusy
 
@@ -17,6 +20,9 @@ LOG = logging.getLogger(__name__)
 SUITE = {"heavy": "heavy-tests-" + os.environ.get("PYTEST_XDIST_WORKER", "serial")}
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
+HOME = Path(os.environ["GRAPHSPEC_HOME"])
+RECORD = HOME.parent.parent / (HOME.parent.name + ".durations.json")
+SPENT = {}
 
 
 def suite_singleton(name, message, original=locks.singleton):
@@ -30,9 +36,34 @@ locks.singleton = suite_singleton
 
 
 def pytest_configure(config):
+    started = time.perf_counter()
     config.addinivalue_line("markers", "gpu: the test is about the GPU and is skipped where none is present")
+    config.option.loadscopereorder = False
+    LOG.debug("configure exit seconds=%.4f", time.perf_counter() - started)
 
 
+def unit(nodeid):
+    started = time.perf_counter()
+    found = nodeid.rsplit("@", 1)[1] if nodeid.rfind("@") > nodeid.rfind("]") else nodeid
+    LOG.debug("unit exit unit=%s seconds=%.6f", found, time.perf_counter() - started)
+    return found
+
+
+def ordered(items):
+    started = time.perf_counter()
+    spent = read_json(RECORD) if RECORD.exists() else {}
+    units = [unit(item.nodeid) for item in items]
+    counts, first = Counter(units), {}
+    for position, name in enumerate(units):
+        first.setdefault(name, position)
+    rank = {name: (-spent.get(name, 0.0), -counts[name], first[name]) for name in counts}
+    items[:] = [item for _, item in sorted(zip(units, items), key=lambda pair: rank[pair[0]])]
+    LOG.debug(
+        "ordered exit units=%d recorded=%d seconds=%.4f", len(counts), len(spent), time.perf_counter() - started
+    )
+
+
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items):
     import torch
 
@@ -42,7 +73,24 @@ def pytest_collection_modifyitems(items):
     if not torch.cuda.is_available():
         for item in marked:
             item.add_marker(absent)
+    if WORKER:
+        ordered(items)
     LOG.debug("gpu marks exit marked=%d seconds=%.4f", len(marked), time.perf_counter() - started)
+
+
+def pytest_runtest_logreport(report):
+    started = time.perf_counter()
+    name = unit(report.nodeid)
+    SPENT[name] = SPENT.get(name, 0.0) + report.duration
+    LOG.debug("spent exit unit=%s seconds=%.6f", name, time.perf_counter() - started)
+
+
+def pytest_sessionfinish(session):
+    started = time.perf_counter()
+    if not WORKER and session.config.pluginmanager.has_plugin("dsession"):
+        held = read_json(RECORD) if RECORD.exists() else {}
+        write_json(RECORD, {**held, **{name: round(seconds, 4) for name, seconds in SPENT.items()}})
+    LOG.debug("durations recorded exit units=%d seconds=%.4f", len(SPENT), time.perf_counter() - started)
 
 
 @contextmanager
@@ -107,10 +155,14 @@ def cleared(checkout):
 @pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config):
     started = time.perf_counter()
-    if not WORKER:
-        if suite().exists():
-            shutil.rmtree(suite())
-        cleared(Path(os.environ["GRAPHSPEC_HOME"]).parent)
+    if WORKER:
+        LOG.debug("worker ends without finalizing seconds=%.4f", time.perf_counter() - started)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+    if suite().exists():
+        shutil.rmtree(suite())
+    cleared(Path(os.environ["GRAPHSPEC_HOME"]).parent)
     LOG.debug("suite removed seconds=%.4f", time.perf_counter() - started)
 
 

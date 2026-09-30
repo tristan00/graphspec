@@ -10,6 +10,8 @@ from tuning.searches import selector, space, surrogates
 from tuning.searches.surrogates import Search
 from tuning.statement import state
 
+pytestmark = pytest.mark.xdist_group("candidates")
+
 
 @pytest.fixture(autouse=True)
 def cpu_threads():
@@ -62,7 +64,6 @@ def test_failed_trials_train_feasibility_without_fake_objective_values():
     )
 
 
-@pytest.mark.xdist_group("candidates")
 def test_history_and_candidates_preserve_parameters_and_condition_on_random_values(
     bank, candidate_pool, monkeypatch
 ):
