@@ -6,9 +6,11 @@ import numpy as np
 from numba import njit
 
 from graphspec.budgets import GraphBudget
+from graphspec.infra.hashing import hashed
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import finite
 from graphspec.operations.parameters import enabled
+from graphspec.operations.rows import keyed_relations
 from graphspec.operations.state import EMPTY, Table
 from graphspec.views.spans import encode
 
@@ -82,7 +84,33 @@ def recent(history, name):
 
 
 EMPTY_OBS = dict(entity=EMPTY, step=EMPTY, group=EMPTY, period=EMPTY, row=EMPTY)
-EMPTY_EVENTS = dict(events=np.zeros((0, 9), np.int32), id=EMPTY, group=EMPTY, period=EMPTY)
+EMPTY_EVENTS = dict(
+    events=np.zeros((0, 9), np.int32), id=EMPTY, group=EMPTY, period=EMPTY, identity=np.zeros(0, np.uint64)
+)
+
+
+@timed("representations.identities")
+def identities(events, carry, graph, registry, tasks0):
+    events = np.asarray(events, np.int64)
+    kind, local = events[:, 3], events[:, 2] // 2 - carry.step0
+    relation, task = kind == 1, kind == 2
+    first, second = carry.entities.tokens[events[:, 0]], carry.entities.tokens[events[:, 1]]
+    code = np.where(relation, events[:, 6], 0)
+    tokens, symmetric = keyed_relations(registry)
+    symmetric = relation & symmetric[code]
+    keys = np.zeros(len(events), np.int64)
+    keys[task] = np.asarray(graph.task_key, np.int64)[events[task, 7] - tasks0]
+    return hashed(
+        kind,
+        np.where(symmetric, np.minimum(first, second), first),
+        np.where(symmetric, np.maximum(first, second), second),
+        np.where(relation, tokens[code], np.where(task, events[:, 6], 0).astype(np.uint64)),
+        np.where(relation, events[:, 7] * 2 + events[:, 8], 0),
+        keys,
+        np.asarray(graph.step_time)[local],
+        np.asarray(graph.step_token)[local],
+        events[:, 2] % 2,
+    )
 
 
 class Link:
@@ -221,6 +249,7 @@ def represented(carry, graph, registry, spec, chosen, seed, limits, states):
     link = Link(carry, state)
     arrays = base(graph, registry, spec, link)
     own, work = own_arrays(arrays, carry, before, graph)
+    work["identity"] = identities(own["events"], carry, graph, registry, before["tasks"])
     shown = Shown(carry, graph, arrays, own, work, before, registry, spec, seed, budget)
     piece, found = dict(own), dict(base=state)
     for entry in chosen:
@@ -242,6 +271,7 @@ def represented(carry, graph, registry, spec, chosen, seed, limits, states):
             id=before["events"] + np.arange(count, dtype=np.int64),
             group=work["event_group"].astype(np.int64),
             period=work["event_period"],
+            identity=work["identity"],
         ),
         last_step=next_step - 1,
         last_group=work["groups"] - 1,

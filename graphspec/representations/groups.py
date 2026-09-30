@@ -4,6 +4,7 @@ import time
 
 import numpy as np
 
+from graphspec.infra.hashing import hashed, salted
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import allocate, block_rows, changed
 from graphspec.operations.kernels import first_rows
@@ -14,10 +15,10 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 3
+VERSION = 4
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
-WALK_STREAM, PERIOD_STREAM = 16, 32
+WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"
 EMPTY = np.zeros(0, np.int64)
 
 
@@ -516,32 +517,32 @@ def neighbors(arrays, spec):
     return dict(neighbor_ids=ids, neighbor_offsets=offsets)
 
 
-def walk_arrays(ids, offsets, events, roots, identities, moments, prior, first, last, spec, seed, budget):
+def walk_arrays(ids, offsets, events, identity, roots, keys, moments, prior, first, last, spec, seed, budget):
     bias, window, fanout = spec["walks/bias"], spec["walks/window"], spec["walks/fanout"]
     count = len(moments)
     budget.workspace(
         count * WALK_SAMPLES * (1 + PERIOD_LOOKBACK) * (64 + WALK_HOPS * 4), "sampled walk representations"
     )
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
+    identity = np.ascontiguousarray(identity, np.uint64)
     member, draw = (
         axis.reshape(-1) for axis in np.meshgrid(np.arange(count), np.arange(WALK_SAMPLES), indexing="ij")
     )
-    identity = np.stack((identities[member], moments[member], draw), 1)
     result = kernels.walked(
         ids,
         offsets,
         source,
         target,
         ticks,
+        identity,
         roots[member],
         np.maximum(0, (moments[member] - window + 1) * 2),
         moments[member] * 2 + 1,
         np.ones(len(member), np.bool_),
-        identity,
+        hashed(keys[member], draw),
         fanout,
         bias,
-        seed,
-        WALK_STREAM,
+        salted(seed, WALKS),
         WALK_HOPS,
     )
     member, back, draw = (
@@ -550,22 +551,21 @@ def walk_arrays(ids, offsets, events, roots, identities, moments, prior, first, 
             np.arange(count), np.arange(PERIOD_LOOKBACK), np.arange(WALK_SAMPLES), indexing="ij"
         )
     )
-    identity = np.stack((identities[member], moments[member], back, draw), 1)
     period_walks = kernels.walked(
         ids,
         offsets,
         source,
         target,
         ticks,
+        identity,
         roots[member],
         2 * first[member, back],
         2 * last[member, back] + 2,
         np.ascontiguousarray(prior[member, back] >= 0),
-        identity,
+        hashed(keys[member], back, draw),
         fanout,
         bias,
-        seed,
-        PERIOD_STREAM,
+        salted(seed, PERIOD_WALKS),
         WALK_HOPS,
     )
     return dict(

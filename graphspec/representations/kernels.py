@@ -1,7 +1,9 @@
 import numpy as np
 from numba import njit, prange
 
-from graphspec.infra.hashing import mixed
+from graphspec.infra.hashing import mixed, uniform
+
+TINY = 2.0**-54
 
 
 @njit(cache=True)
@@ -23,15 +25,15 @@ def walked(
     source,
     target,
     ticks,
+    identity,
     roots,
     floors,
     cutoffs,
     active,
-    identity,
+    keys,
     fanout,
     bias,
-    seed,
-    stream,
+    start,
     hops,
 ):
     result = np.full((len(roots), hops), -1, np.int32)
@@ -39,7 +41,7 @@ def walked(
         if not active[row]:
             continue
         current, cutoff, floor = roots[row], cutoffs[row], floors[row]
-        weights = np.empty(fanout, np.float64)
+        walk = mixed(mixed(start) ^ keys[row])
         for hop in range(hops):
             lo = lower(ids, offsets, ticks, current, floor)
             hi = lower(ids, offsets, ticks, current, cutoff)
@@ -47,30 +49,15 @@ def walked(
                 lo = hi - fanout
             if hi <= lo:
                 break
-            value = mixed(np.uint64(seed ^ (stream + hop)))
-            for column in range(identity.shape[1]):
-                value = mixed(value ^ np.uint64(identity[row, column]))
-            draw = np.float64(value >> np.uint64(11)) / np.float64(1 << 53)
-            count = hi - lo
-            best = -np.inf
-            for slot in range(count):
-                logit = -bias * (cutoff - ticks[ids[lo + slot]]) / 2.0
-                weights[slot] = logit
-                if logit > best:
-                    best = logit
-            total = 0.0
-            for slot in range(count):
-                weights[slot] = np.exp(weights[slot] - best)
-                total += weights[slot]
-            wanted = draw * total
-            cumulative, index = 0.0, 0
-            for slot in range(count):
-                cumulative += weights[slot]
-                if cumulative <= wanted:
-                    index += 1
-            if index > count - 1:
-                index = count - 1
-            event = ids[lo + index]
+            value = mixed(walk ^ np.uint64(hop))
+            best, chosen = -np.inf, lo
+            for slot in range(lo, hi):
+                event = ids[slot]
+                draw = max(uniform(mixed(value ^ identity[event])), TINY)
+                score = -bias * (cutoff - ticks[event]) / 2.0 - np.log(-np.log(draw))
+                if score > best:
+                    best, chosen = score, slot
+            event = ids[chosen]
             result[row, hop] = event
             current = target[event] if source[event] == current else source[event]
             cutoff = ticks[event]

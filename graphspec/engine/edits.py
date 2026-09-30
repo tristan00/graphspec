@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 from graphspec.schema.references import MEMBERS
-from graphspec.views.graph import LABELS, TASKS, Dense
+from graphspec.views.graph import LABELS, PER_STEP, TASKS, Dense
 
 LOG = logging.getLogger(__name__)
 OBSERVED = ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
@@ -50,7 +50,7 @@ def cut(graph, low, high):
         for name in names:
             arrays[name] = np.asarray(graph.arrays[name])[chosen]
         arrays[owner] = (arrays[owner] - first).astype(tasks.dtype)
-    for name in ("period", "step_graph"):
+    for name in PER_STEP:
         arrays[name] = np.asarray(graph.arrays[name])[low:high]
     arrays["x_table"], arrays["obs_ref"], rows = compact(graph.x_table, arrays["obs_ref"])
     arrays["value_table"], arrays["fact_ref"], values = compact(graph.value_table, arrays["fact_ref"])

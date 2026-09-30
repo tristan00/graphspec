@@ -11,7 +11,7 @@ from .derive import anchoring
 from .operation import OPERATIONS, Count, Operation, Phase
 from .parameters import DIRECTIONS, choice, differs, enabled, holds, number, real
 from .relations import relating
-from .rows import DROP, RANDOM, open_runs, prune, pruned, run_state, runs
+from .rows import DROP, RANDOM, keyed_relations, open_runs, prune, pruned, run_state, runs
 
 LOG = logging.getLogger(__name__)
 EMITTED = ("project", "complete", "hop", "diffusion", "rewire")
@@ -140,16 +140,24 @@ def endpoints(graph, registry, spec, rows):
     )
 
 
-def undropped(graph, registry, spec, seed, name, rows, carry):
-    code, _, first, second = endpoints(graph, registry, spec, rows)
-    return unit(seed, DROP, carry.glob[first], carry.glob[second], code) >= spec["edges/%s/drop" % name]
+@timed("operators.keyed_ends")
+def keyed_ends(graph, registry, rows, both, carry):
+    source, target = carry.tokens(graph.fact_source[rows]), carry.tokens(graph.fact_target[rows])
+    return (
+        np.where(both, np.minimum(source, target), source),
+        np.where(both, np.maximum(source, target), target),
+        keyed_relations(registry)[0][graph.fact_code[rows]],
+        graph.step_token[graph.fact_step[rows]],
+    )
 
 
 def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
     prefix = "edges/%s/" % name
     step, present = graph.fact_step[rows], graph.fact_present[rows]
     code, both, first, second = endpoints(graph, registry, spec, rows)
-    kept = undropped(graph, registry, spec, seed, name, rows, carry)
+    kept = np.ones(len(rows), bool)
+    if spec[prefix + "drop"] > 0:
+        kept = unit(seed, DROP, *keyed_ends(graph, registry, rows, both, carry)) >= spec[prefix + "drop"]
     stated = np.flatnonzero(kept & present)
     ids, count = kernels.keyed(code[stated], first[stated], second[stated])
     keys = carry.keys(code[stated], first[stated], second[stated])
@@ -169,7 +177,8 @@ def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
     if order == "recent":
         primary, secondary = -begun, rows[stated]
     elif order == "random":
-        primary, secondary = unit(seed, RANDOM, carry.glob[low], carry.glob[high], code[stated]), rows[stated]
+        drawn = unit(seed, RANDOM, *keyed_ends(graph, registry, rows[stated], both[stated], carry))
+        primary, secondary = drawn, rows[stated]
     else:
         reference = graph.fact_ref[rows[stated]]
         value = np.where(
@@ -226,6 +235,6 @@ EDGES = OPERATIONS.register(
         splits=(),
         requires=(Count("edges/cap", "degree", capping, "stored", "stored"),),
         changes=("facts",),
-        version=3,
+        version=4,
     ),
 )

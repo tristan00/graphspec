@@ -4,6 +4,7 @@ import time
 import numpy as np
 
 from graphspec.facts.stored import GROUPS, encoded, ranks, unheld
+from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema import time as clock
@@ -437,6 +438,8 @@ def view(facts, registry, held, several):
         period=grouped(facts, held, steps)
         if schema.tasks["grouping"] is not None
         else np.arange(steps, dtype=np.int32),
+        step_time=np.asarray(held["moments"], np.int64),
+        step_token=np.full(steps, token(facts.name), np.uint64),
         **observed,
         **spans.fact_spans(
             step[order].astype(np.int32),

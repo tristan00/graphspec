@@ -183,7 +183,7 @@ def phase_task(job, index, name):
     state = state_of(job, stage, index) if stage.carried else None
     glob = carry.glob
     result, state = step.phase(
-        stage.phase, graph, registry, transform.SEED, limits, carry, held, state, stage.part, PIPE["partitions"]
+        stage.phase, graph, registry, PIPE["seed"], limits, carry, held, state, stage.part, PIPE["partitions"]
     )
     if stage.part is not None:
         if carry.glob is not glob:
@@ -255,7 +255,7 @@ TASKS = dict(expand=expand_task, open=open_task, represent=represent_task, stitc
 
 def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
     started = time.perf_counter()
-    plans = [Plan(job["members"], unified(job["members"], registry, spec), 0) for job in jobs]
+    plans = [Plan(job["members"], unified(job["members"], registry, spec, seed), 0) for job in jobs]
     stages = staging(steps, registry)
     named = {stage.name: stage for stage in stages}
     sizes = [len(job["members"]) for job in jobs]

@@ -104,7 +104,8 @@ def nodes(graph, registry, spec, seed, limits, carry, held):
                 remember(carry, "nodes/activity", graph, count)
             passed[members] = counts[mode][members] >= spec[prefix + "min_activity"]
         elif mode == "sample":
-            passed[members] = unit(seed, SAMPLE, carry.glob[obs_entity[members]]) < spec[prefix + "sample"]
+            drawn = unit(seed, SAMPLE, carry.tokens(obs_entity[members]), graph.step_token[obs_step[members]])
+            passed[members] = drawn < spec[prefix + "sample"]
         else:
             minimum[members] = spec[prefix + "core"]
     structural = allowed[obs_entity] & passed
@@ -158,6 +159,6 @@ NODES = OPERATIONS.register(
             )
         ),
         changes=("observations", "facts", "references"),
-        version=2,
+        version=3,
     ),
 )

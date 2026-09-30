@@ -3,25 +3,25 @@ import time
 
 import numpy as np
 
+from graphspec.infra.hashing import unit
 from graphspec.infra.workspace import allocate, block_rows
 from graphspec.views import spans
 from graphspec.views.graph import DENSE, Dense, verify_dense
 
 LOG = logging.getLogger(__name__)
-SCALE = float(1 << 53)
+CONNECT = "graphs/connect"
 
 
 def parameters(spec):
     return {name: value for name, value in spec.items() if name.startswith("graphs/")}
 
 
-def unify(graphs, registry, spec):
+def unify(graphs, registry, spec, seed):
     started = time.perf_counter()
     connect = np.asarray([spec["graphs/connect/" + kind] for kind in registry.nodes], bool)
     kinds = np.concatenate([np.asarray(graph.kinds) for graph in graphs]).astype(np.int64)
     tokens = np.concatenate([np.asarray(graph.entity_token) for graph in graphs]).astype(np.uint64)
-    sampled = (tokens % np.uint64(1 << 53)).astype(np.float64) / SCALE < spec["graphs/connect_fraction"]
-    connected = connect[kinds] & sampled
+    connected = connect[kinds] & (unit(seed, CONNECT, tokens) < spec["graphs/connect_fraction"])
     chosen = np.flatnonzero(connected)
     group, count = spans.identity(np.stack((kinds[chosen], tokens[chosen].view(np.int64)), 1))
     first = np.full(count, len(kinds), np.int64)
@@ -48,12 +48,12 @@ def unify(graphs, registry, spec):
     )
 
 
-def joined(graphs, registry, spec):
+def joined(graphs, registry, spec, seed):
     started = time.perf_counter()
     graphs = tuple(graphs)
     if not graphs:
         raise ValueError("joining requires at least one graph")
-    maps, kinds, tokens, connected = unify(graphs, registry, spec)
+    maps, kinds, tokens, connected = unify(graphs, registry, spec, seed)
     step_offsets = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     task_offsets = np.r_[0, np.cumsum([len(graph.task_key) for graph in graphs])]
     period_offsets = np.r_[0, np.cumsum([int(graph.period.max(initial=-1)) + 1 for graph in graphs])]

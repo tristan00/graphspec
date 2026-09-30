@@ -32,10 +32,10 @@ def alone(member):
     return [np.arange(len(kinds))], kinds, np.asarray(member.entity_token).astype(np.uint64), connected
 
 
-def unified(members, registry, spec):
+def unified(members, registry, spec, seed):
     started = time.perf_counter()
     if spec["graphs/join"] == "single":
-        result = join.unify(members, registry, spec)
+        result = join.unify(members, registry, spec, seed)
     elif len(members) != 1:
         raise ValueError("graphs that are not joined are derived one at a time; %d were given" % len(members))
     else:
@@ -181,6 +181,7 @@ def advanced(source, member, graph, low, high, edit, state):
         dense,
         source.registry,
         source.steps,
+        source.seed,
         source.limits,
         source.partitions,
         carry,
@@ -224,7 +225,7 @@ class Derivation:
                 "a derivation begins from graphs in the form the operations work on, Graph.dense(); found %s"
                 % ", ".join(strangers)
             )
-        plan = Plan(members, unified(members, registry, spec), room)
+        plan = Plan(members, unified(members, registry, spec, seed), room)
         source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
         result = cls(source, None, 0, source.initial(), ())
         LOG.info("derivation begun exit graphs=%d seconds=%.3f", len(members), time.perf_counter() - started)
@@ -317,12 +318,12 @@ class Derivation:
         return result
 
 
-def whole(graph, registry, steps, limits, partitions):
+def whole(graph, registry, steps, seed, limits, partitions):
     started = time.perf_counter()
     plan = Plan([graph], alone(graph), 0)
     carry, dense, _, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, (0, 0), EMPTY)
     states = transform.initial(registry, steps)
-    derived, _ = transform.derive(dense, registry, steps, limits, partitions, carry, states, False)
+    derived, _ = transform.derive(dense, registry, steps, seed, limits, partitions, carry, states, False)
     LOG.info("whole exit graph=%s seconds=%.3f", graph.name, time.perf_counter() - started)
     return derived
 
@@ -337,7 +338,7 @@ def opening(graph):
 
 def variant(members, registry, steps, spec, groups, seed, limits, partitions, destination):
     started = time.perf_counter()
-    plan = Plan(members, unified(members, registry, spec), 0)
+    plan = Plan(members, unified(members, registry, spec, seed), 0)
     source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
     state = source.initial()
     appender = Appender(destination, BUFFERED)

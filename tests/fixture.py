@@ -7,6 +7,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from graphspec.infra.files import read_json
+from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
 from graphspec.schema.schema import EDGE, LINK, OBSERVED, TARGET, TASK
 from graphspec.sources import synthetic
@@ -45,6 +46,7 @@ DERIVED = dict(
     turn_observation_keys="period_observation_keys",
     turn_walks="period_walks",
 )
+CONTENT = (("obs_ref", "x_table", "obs_x"), ("fact_ref", "value_table", "fact_values"), ("x_ref", "x_table", "x"))
 RELATIONS_FIRST = dict(
     configurations=("09_fosr_drop_cap_walks",),
     order=(
@@ -80,6 +82,20 @@ def configurations(place):
 
 def labels(place):
     return tuple(read(place)["stages"])
+
+
+def drawn(entry, stage):
+    started = time.perf_counter()
+    held = {DERIVED.get(name, name) for name in entry["random"]["depends"].get(Path(stage).stem, [])}
+    result = sorted(held | {name for reference, _, name in CONTENT if reference in held})
+    LOG.debug(
+        "drawn exit name=%s stage=%s arrays=%d seconds=%.6f",
+        entry["name"],
+        stage,
+        len(result),
+        time.perf_counter() - started,
+    )
+    return result
 
 
 def order(entry):
@@ -408,11 +424,7 @@ def renamed(arrays, level):
 
 def content(arrays):
     result = dict(arrays)
-    for reference, table, name in (
-        ("obs_ref", "x_table", "obs_x"),
-        ("fact_ref", "value_table", "fact_values"),
-        ("x_ref", "x_table", "x"),
-    ):
+    for reference, table, name in CONTENT:
         if reference in result and table in result:
             rows, values = np.asarray(result.pop(reference)), np.asarray(result[table])
             found = np.full((len(rows),) + values.shape[1:], np.nan, np.float32)
@@ -439,6 +451,17 @@ def differing(left, right):
     return found
 
 
+def stepped(names, graph):
+    started = time.perf_counter()
+    graph = np.asarray(graph, np.int64)
+    result = dict(
+        step_time=np.arange(len(graph), dtype=np.int64) - np.searchsorted(graph, graph),
+        step_token=np.asarray([token(name) for name in names], np.uint64)[graph],
+    )
+    LOG.debug("stepped exit graphs=%d seconds=%.4f", len(names), time.perf_counter() - started)
+    return result
+
+
 def arrays(path, level):
     started = time.perf_counter()
     graphs = {}
@@ -446,7 +469,11 @@ def arrays(path, level):
         for key in held.files:
             graph, name = key.split("/", 1)
             graphs.setdefault(graph, {})[name] = held[key]
-    result = {graph: renamed(found, level) for graph, found in graphs.items()}
+    result = {}
+    for graph, found in graphs.items():
+        result[graph] = renamed(found, level)
+        if "step_graph" in result[graph]:
+            result[graph].update(stepped([graph], result[graph]["step_graph"]))
     LOG.debug("arrays exit path=%s graphs=%d seconds=%.4f", path, len(result), time.perf_counter() - started)
     return result
 
@@ -459,6 +486,7 @@ def joined(path, level, members):
     if len(members) != len(steps) or LEVELS[level] == "node":
         raise ValueError("the joined input of the fixture holds one task at every step of every graph")
     result = renamed(found, level)
+    result.update(stepped(members, result["step_graph"]))
     LOG.debug("joined exit path=%s seconds=%.4f", path, time.perf_counter() - started)
     return result
 

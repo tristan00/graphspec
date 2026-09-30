@@ -76,6 +76,10 @@ class Segment:
     def keys(self, code, source, target):
         return encode(code, self.glob[source], self.glob[target], self.base)
 
+    @timed("carry.segment.tokens")
+    def tokens(self, entity):
+        return self.entities.tokens[self.glob[np.asarray(entity, np.int64)]].astype(np.uint64)
+
     @timed("carry.segment.local")
     def local(self, entity):
         entity = np.asarray(entity, np.int64)

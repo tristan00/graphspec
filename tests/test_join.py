@@ -66,8 +66,8 @@ def test_unconnected_entities_end_with_their_graph(bank):
     unlinked = {"graphs/connect/%s" % kind: False for kind in opened.registry.nodes}
     steps, spec = joined_spec(opened, **{"time/scheme": "state"}, **unlinked)
     graphs = [support.shown(opened, index).dense() for index in range(4)]
-    combined = join.joined(graphs, support.fitted(opened), spec)
-    derived = segments.whole(combined, support.fitted(opened), steps, GraphLimits("cpu"), None)
+    combined = join.joined(graphs, support.fitted(opened), spec, SEED)
+    derived = segments.whole(combined, support.fitted(opened), steps, SEED, GraphLimits("cpu"), None)
     home = np.full(len(derived.kinds), -1)
     home[combined.obs_entity] = combined.step_graph[combined.obs_step]
     assert not derived.entity_connected.any()
@@ -82,7 +82,9 @@ def test_every_periods_restart_at_each_graph(bank):
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     registry = support.fitted(opened)
     periods = tuple(step for step in steps if step.operation is PERIODS)
-    combined = segments.whole(join.joined(graphs, registry, spec), registry, periods, GraphLimits("cpu"), None)
+    combined = segments.whole(
+        join.joined(graphs, registry, spec, SEED), registry, periods, SEED, GraphLimits("cpu"), None
+    )
     starts = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     for first, last in zip(starts[:-1], starts[1:]):
         local = combined.period[first:last] - combined.period[first]

@@ -6,6 +6,8 @@ from numba import njit, prange
 
 from .timing import timed
 
+SCALE = 9007199254740992.0
+
 
 @lru_cache(maxsize=200000)
 def token(text):
@@ -20,22 +22,46 @@ def mixed(value):
     return value ^ (value >> np.uint64(31))
 
 
+@njit(cache=True, inline="always")
+def uniform(value):
+    return np.float64(value >> np.uint64(11)) / SCALE
+
+
 @njit(cache=True, parallel=True)
-def units(start, columns):
+def folded(start, columns):
     count = columns.shape[1]
-    result = np.empty(count, np.float64)
+    result = np.empty(count, np.uint64)
     for row in prange(count):
         value = mixed(start)
         for column in range(columns.shape[0]):
             value = mixed(value ^ columns[column, row])
-        result[row] = np.float64(value >> np.uint64(11)) / 9007199254740992.0
+        result[row] = value
     return result
 
 
-@timed("hashing.unit")
-def unit(seed, stream, *columns):
+def stacked(columns):
     count = len(columns[0])
-    stacked = np.empty((len(columns), count), np.uint64)
+    result = np.empty((len(columns), count), np.uint64)
     for position, column in enumerate(columns):
-        stacked[position] = np.asarray(column, np.int64).astype(np.uint64)
-    return units(np.uint64(seed ^ stream), stacked)
+        column = np.asarray(column)
+        result[position] = column if column.dtype == np.uint64 else column.astype(np.int64).astype(np.uint64)
+    return result
+
+
+@timed("hashing.salted")
+def salted(seed, salt):
+    if type(seed) is not int or type(salt) is not str:
+        raise TypeError(
+            "a draw is keyed by a stated seed, a whole number, and a salt naming it, found %r and %r" % (seed, salt)
+        )
+    return np.uint64((seed ^ token(salt)) & 0xFFFFFFFFFFFFFFFF)
+
+
+@timed("hashing.hashed")
+def hashed(*columns):
+    return folded(np.uint64(0), stacked(columns))
+
+
+@timed("hashing.unit")
+def unit(seed, salt, *columns):
+    return (folded(salted(seed, salt), stacked(columns)) >> np.uint64(11)).astype(np.float64) / SCALE

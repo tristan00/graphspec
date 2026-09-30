@@ -19,7 +19,7 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import Arrays
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
-from graphspec.views.graph import DENSE, Graph
+from graphspec.views.graph import DENSE, PER_STEP, Graph
 from tuning.bank.bank import Deriver
 
 LOG = logging.getLogger(__name__)
@@ -35,6 +35,8 @@ VALUES = {
     "nodes/team/min_degree": 1,
     "nodes/item/filter": "activity",
     "nodes/item/min_activity": 2,
+    "nodes/place/filter": "sample",
+    "nodes/place/sample": 0.7,
     "derive/project:visits:targets:place:place": True,
     "derive/project_cap": 8,
     "derive/complete/team": True,
@@ -89,7 +91,7 @@ def shortened(graph, stop):
         group = name.split("_", 1)[0]
         if group in kept:
             arrays[name] = np.asarray(arrays[name])[kept[group]]
-        elif name in ("period", "step_graph"):
+        elif name in PER_STEP:
             arrays[name] = np.asarray(arrays[name])[:stop]
     return type(graph)(graph.name, graph.keys, stop, **arrays)
 
@@ -112,7 +114,7 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
     )
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     graphs = [shortened(graph, int(rng.integers(1, graph.steps + 1))) for graph in graphs]
-    physical = join.joined(graphs, registry, spec)
+    physical = join.joined(graphs, registry, spec, transform.SEED)
     whole = dict(spec, **{"graphs/join": "separate"})
     limits = GraphLimits("cpu")
     reference = Derivation.begun([physical], registry, steps, whole, specs.GROUPS, transform.SEED, limits, None, 0)
@@ -227,7 +229,7 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     assert sorted(step.operation.name for step in steps) == sorted(OPERATIONS.names())
     assert sorted(GROUPS) == sorted(REPRESENTATIONS.names())
     for step in steps:
-        alone = segments.whole(graph, registry, (step,), LIMITS, None)
+        alone = segments.whole(graph, registry, (step,), transform.SEED, LIMITS, None)
         assert [name for name in DENSE if not identical(alone.arrays[name], graph.arrays[name])], step.name
     moment = graph.steps - 1
     changes = edits(graph, moment)

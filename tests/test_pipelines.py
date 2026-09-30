@@ -3,8 +3,10 @@ import importlib
 import logging
 import sys
 import time
+from pathlib import Path
 
 import fixture
+import keyed
 import numpy as np
 import pytest
 import support
@@ -55,6 +57,31 @@ ADDED = dict(
     event_step="9249781",
 )
 CHANGED = dict(events="9249781", key="9249781", task="9249781", walks="c390954", period_walks="c390954")
+PIPELINED = {
+    ("02_periods_sample_coupling", "stage_3_nodes"): "e6f9e7752a4d6e9d",
+    ("02_periods_sample_coupling", "stage_4_derived_relations"): "e6f9e7752a4d6e9d",
+    ("02_periods_sample_coupling", "stage_5_relations"): "e6f9e7752a4d6e9d",
+    ("02_periods_sample_coupling", "stage_6_edge_filters"): "e6f9e7752a4d6e9d",
+    ("02_periods_sample_coupling", "stage_7_relation_merging"): "e6f9e7752a4d6e9d",
+    ("02_periods_sample_coupling", "representation"): "38c6360a41ae17eb",
+    ("05_sample_drop_neighbors", "stage_3_nodes"): "48d24f17b5931ed2",
+    ("05_sample_drop_neighbors", "stage_4_derived_relations"): "48d24f17b5931ed2",
+    ("05_sample_drop_neighbors", "stage_5_relations"): "48d24f17b5931ed2",
+    ("05_sample_drop_neighbors", "stage_6_edge_filters"): "679e314692102003",
+    ("05_sample_drop_neighbors", "stage_7_relation_merging"): "679e314692102003",
+    ("05_sample_drop_neighbors", "representation"): "96e3bca1f6206874",
+    ("06_project_complete_walks", "representation"): "387f61ce66ea3de3",
+    ("08_heat_sdrf_untyped_events", "stage_4_derived_relations"): "74471ce3abaab517",
+    ("08_heat_sdrf_untyped_events", "stage_5_relations"): "74471ce3abaab517",
+    ("08_heat_sdrf_untyped_events", "stage_6_edge_filters"): "74471ce3abaab517",
+    ("08_heat_sdrf_untyped_events", "stage_7_relation_merging"): "cb0ad09d1dc8597f",
+    ("08_heat_sdrf_untyped_events", "representation"): "1278db6ac370de81",
+    ("09_fosr_drop_cap_walks", "stage_5_relations"): "d16ae7e1c28d6021",
+    ("09_fosr_drop_cap_walks", "stage_6_edge_filters"): "c66da097643429b8",
+    ("09_fosr_drop_cap_walks", "stage_7_relation_merging"): "c66da097643429b8",
+    ("09_fosr_drop_cap_walks", "representation"): "69b32f3a6c013b29",
+    ("10_untyped_merge_all", "representation"): "3bc7be8c2d281609",
+}
 WINDOW = dict(scheme="window", unit="step", window=3)
 PROBE = '''from graphspec import OPERATIONS, Operation, Phase
 
@@ -188,10 +215,10 @@ def test_an_operation_receives_only_the_splits_it_states_it_may_read(bank, sight
         KeyError, match="the operation test.blind reads the split trained, which it does not state it may read; "
         "it states none"
     ):
-        segments.whole(dense, registry, blind, GraphLimits("cpu"), partitions)
+        segments.whole(dense, registry, blind, transform.SEED, GraphLimits("cpu"), partitions)
     looking = pipeline.resolved(registry, [dict(operation="test.looking", parameters={})])
     with pytest.raises(KeyError, match="the operation test.looking reads the split scored, which it does not"):
-        segments.whole(dense, registry, looking, GraphLimits("cpu"), partitions)
+        segments.whole(dense, registry, looking, transform.SEED, GraphLimits("cpu"), partitions)
     rows = np.asarray(dense.label_row, np.int64)
     wanted = np.unique(np.asarray(dense.label_task)[partitions[rows] == 0])
     assert len(wanted) and np.array_equal(sighted["trained"], wanted)
@@ -235,7 +262,7 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
 ):
     started = time.perf_counter()
     held, _ = fixture.configurations(ground)
-    labels = fixture.labels(ground)
+    labels, pins = fixture.labels(ground), {}
     for entry in held:
         opened = Deriver(grounded[entry["source"]["name"]] / "bank", "cpu", RESIDENT)
         registry = support.fitted(opened)
@@ -250,27 +277,42 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
         spec = specs.configured(specs.settings(opened.registry, chosen), rest)
         level, folder = entry["source"]["level"], ground / entry["folder"]
         stored = [fixture.arrays(folder / name, level) for name in [entry["files"]["input"]] + entry["files"]["stages"]]
-        drawn = fixture.arrays(folder / entry["files"]["representation"], level)
+        represented = fixture.arrays(folder / entry["files"]["representation"], level)
         names = [step.name for step in steps]
         assert len(names) == len(labels) and fixture.holds(names, len(names))
+        found = {}
         for name in entry["graphs"]:
             graph = Dense(name, [], len(stored[0][name]["period"]), **stored[0][name])
             for index, step in enumerate(steps):
-                graph = segments.whole(graph, registry, (step,), GraphLimits("cpu"), None)
+                graph = segments.whole(graph, registry, (step,), transform.SEED, GraphLimits("cpu"), None)
                 if fixture.holds(names, index + 1):
-                    assert fixture.differing(graph.arrays, stored[index + 1][name]) == [], (entry["name"], step.name)
-            represented = Derivation.begun(
+                    stage = Path(entry["files"]["stages"][index]).stem
+                    replaced = fixture.drawn(entry, stage)
+                    assert set(fixture.differing(graph.arrays, stored[index + 1][name])) <= set(replaced), (
+                        entry["name"],
+                        step.name,
+                    )
+                    if replaced:
+                        found.setdefault(stage, []).append(keyed.pinned(graph, registry, replaced))
+            derivation = Derivation.begun(
                 [graph], registry, (), spec, chosen, transform.SEED, GraphLimits("cpu"), None, 0
             )
-            arrays = represented.continued(graph.steps, None).arrays()
-            now, then = fixture.content(arrays), fixture.content(drawn[name])
+            arrays = derivation.continued(graph.steps, None).arrays()
+            now, then = fixture.content(arrays), fixture.content(represented[name])
             assert sorted(set(then) - set(now)) == sorted(GONE) and sorted(set(now) - set(then)) == sorted(ADDED)
+            replaced = fixture.drawn(entry, "representation")
             differing = {key for key in set(now) & set(then) if not identical(now[key], then[key])}
-            assert differing <= set(CHANGED), (entry["name"], name, sorted(differing))
+            assert differing <= set(CHANGED) | set(replaced), (entry["name"], name, sorted(differing))
             assert level == "node" or not {"key", "task"} & differing
-            events, held = np.asarray(now["events"]), np.asarray(then["events"])
-            assert identical(np.delete(events, 7, 1), np.delete(held, 7, 1))
-            assert identical(events[events[:, 3] != 2], held[events[:, 3] != 2])
+            if replaced:
+                own = sorted(set(replaced) & set(arrays))
+                found.setdefault("representation", []).append(keyed.pinned(graph, registry, own, arrays))
+            if "events" not in replaced:
+                events, held = np.asarray(now["events"]), np.asarray(then["events"])
+                assert identical(np.delete(events, 7, 1), np.delete(held, 7, 1))
+                assert identical(events[events[:, 3] != 2], held[events[:, 3] != 2])
+        pins.update({(entry["name"], stage): keyed.combined(held) for stage, held in found.items()})
+    assert pins == PIPELINED
     LOG.info("fixture pipeline exit seconds=%.3f", time.perf_counter() - started)
 
 

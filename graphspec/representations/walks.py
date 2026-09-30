@@ -3,6 +3,8 @@ import time
 
 import numpy as np
 
+from graphspec.infra.hashing import hashed
+
 from .base import localized, resolved
 from .groups import PERIOD_LOOKBACK, neighbor_lists, neighbor_members, walk_arrays
 from .neighbors import adjacency
@@ -36,15 +38,25 @@ def piece(shown, state):
     halo = np.flatnonzero(neighbor_members(recent["events"], spec) & (recent["events"][:, 2] >= floor))
     count = len(halo)
     ext = np.r_[recent["events"][halo], own["events"]].astype(np.int32)
+    identity = np.r_[recent["identity"][halo], work["identity"]]
     values, (left, right, local_roots) = localized(ext[:, 0], ext[:, 1], roots.reshape(-1))
     ext[:, 0], ext[:, 1] = left, right
     ids, offsets = neighbor_lists(ext, neighbor_members(ext, spec), len(values))
+    owner = np.repeat(np.arange(len(values)), np.diff(offsets))
+    ids = ids[np.lexsort((identity[ids], ext[ids, 2], owner))]
+    held = moments - shown.carry.step0
+    keys = hashed(
+        np.where(roots >= 0, shown.carry.entities.tokens[np.maximum(roots, 0)], 0),
+        np.asarray(shown.graph.step_time)[held],
+        np.asarray(shown.graph.step_token)[held],
+    )
     result = walk_arrays(
         ids,
         offsets,
         ext,
+        identity,
         local_roots.reshape(roots.shape),
-        roots,
+        keys,
         moments,
         prior,
         first[prior.clip(0)].astype(np.int64),

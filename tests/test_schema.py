@@ -11,7 +11,7 @@ import support
 
 from graphspec import ENCODERS, TYPES, inspect
 from graphspec.build.parse import distinct
-from graphspec.engine import join
+from graphspec.engine import join, transform
 from graphspec.facts.stored import VERSION, Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -402,6 +402,7 @@ def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(g
         name: value for name, value in recorded.items() if name.startswith("graphs/")
     }
     members = [support.shown(opened, graph["index"]).dense() for graph in opened.manifest["graphs"]]
-    held = fixture.joined(ground / entry["folder"] / entry["files"]["input"], source["level"], members)
-    assert fixture.differing(join.joined(members, support.fitted(opened), spec).arrays, held) == []
+    held = fixture.joined(ground / entry["folder"] / entry["files"]["input"], source["level"], entry["members"])
+    joined = join.joined(members, support.fitted(opened), spec, transform.SEED)
+    assert fixture.differing(joined.arrays, held) == []
     LOG.info("fixture joined exit name=%s seconds=%.3f", entry["name"], time.perf_counter() - started)

@@ -20,8 +20,11 @@ FACTS = ("fact_source", "fact_target", "fact_code", "fact_start", "fact_stop", "
 ORDER = ("order_step", "order_position", "order_span")
 REMOVALS = ("removal_source", "removal_target", "removal_code", "removal_step", "removal_values")
 STATED = ("obs_values", "task_values", "graph_values")
+STEPPED = ("period", "step_time", "step_token")
+PER_STEP = ("step_graph",) + STEPPED
 ARRAYS = (
-    ("kinds", "entity_token", "entity_held", "period")
+    ("kinds", "entity_token", "entity_held")
+    + STEPPED
     + OBSERVATIONS
     + FACTS
     + ORDER
@@ -32,7 +35,8 @@ ARRAYS = (
     + STATED
 )
 DENSE = (
-    ("kinds", "entity_token", "entity_connected", "period", "step_graph")
+    ("kinds", "entity_token", "entity_connected")
+    + PER_STEP
     + ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
     + ("fact_source", "fact_target", "fact_code", "fact_step", "fact_present", "fact_ref")
     + ("x_table", "value_table")
@@ -74,8 +78,8 @@ class Shown(Arrays):
             kinds=np.asarray(self.kinds),
             entity_token=np.asarray(self.entity_token),
             entity_connected=np.zeros(len(self.kinds), bool),
-            period=np.asarray(self.period),
             step_graph=np.zeros(self.steps, np.int32),
+            **{name: np.asarray(self.arrays[name]) for name in STEPPED},
             obs_entity=entity,
             obs_step=step,
             obs_ref=reference,
@@ -254,6 +258,8 @@ def verify_dense(graph, registry, known=None):
         raise ValueError("graph %s requires one token and flag per entity and at least one step" % name)
     if len(graph.step_graph) != steps or np.any(np.diff(graph.step_graph) < 0):
         raise ValueError("graph %s needs one joined graph per step, never decreasing" % name)
+    if len(graph.step_time) != steps or len(graph.step_token) != steps:
+        raise ValueError("graph %s does not state the time and the graph of every step" % name)
     if np.any(graph.kinds < 0) or np.any(graph.kinds >= len(registry.nodes)):
         raise ValueError("graph %s names undeclared node types" % name)
     if graph.x_table.shape[1] != registry.features or graph.task_x.shape[1] != registry.features:
@@ -469,6 +475,8 @@ def verify(graph, registry):
         )
     if len(graph.period) != steps:
         raise ValueError("graph %s does not state a period for every step" % name)
+    if len(graph.step_time) != steps or len(graph.step_token) != steps:
+        raise ValueError("graph %s does not state the time and the graph of every step" % name)
     LOG.debug("verify exit graph=%s seconds=%.4f", name, time.perf_counter() - started)
 
 

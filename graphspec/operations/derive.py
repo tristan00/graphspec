@@ -4,6 +4,7 @@ import time
 import numpy as np
 
 from graphspec.budgets import GraphBudget, GraphCapacityError
+from graphspec.infra.hashing import unit
 from graphspec.infra.timing import timed
 from graphspec.schema.declaration import HOPS, completion, hop
 
@@ -28,6 +29,7 @@ from .state import EMPTY
 
 LOG = logging.getLogger(__name__)
 BLOCK = 1 << 22
+TINY = 2.0**-54
 
 
 def anchoring(registry):
@@ -363,13 +365,44 @@ def curvature_extreme(groups, adjacencies, found, maximum=False):
     return best
 
 
+@timed("operators.canonical_rewire")
+def canonical_rewire(spec, present, u, v, tokens, moment, seed, budget):
+    order = np.argsort(tokens[present], kind="stable")
+    canonical, rank = present[order], np.empty(len(order), np.int64)
+    rank[order] = np.arange(len(order))
+    first, second = rank[np.searchsorted(present, u)], rank[np.searchsorted(present, v)]
+    low, high = np.minimum(first, second), np.maximum(first, second)
+    pairs = np.lexsort((high, low))
+    size = len(tokens)
+
+    def drawn(iteration, left, right):
+        left, right = tokens[canonical[left]], tokens[canonical[right]]
+        count = len(left)
+        return unit(
+            seed,
+            REWIRE,
+            np.full(count, moment[0], np.uint64),
+            np.full(count, moment[1], np.int64),
+            np.full(count, iteration, np.int64),
+            np.minimum(left, right),
+            np.maximum(left, right),
+        )
+
+    (a, b), cut = rewire(spec, np.arange(len(order)), low[pairs], high[pairs], len(order), drawn, budget)
+    a, b = canonical[a], canonical[b]
+    added = np.sort(np.minimum(a, b).astype(np.int64) * size + np.maximum(a, b))
+    a, b = canonical[cut // len(order)], canonical[cut % len(order)]
+    cut = np.sort(np.minimum(a, b).astype(np.int64) * size + np.maximum(a, b))
+    return ((added // size).astype(present.dtype), (added % size).astype(present.dtype)), cut
+
+
 @timed("operators.rewire")
-def rewire(spec, present, u, v, entities, rng, budget):
+def rewire(spec, present, u, v, entities, drawn, budget):
     budget.pairs(spec["derive/rewiring_budget"], "rewiring")
     groups, adjacencies = component_adjacencies(present, u, v, budget, spec["derive/rewiring"] + " rewiring")
     originals = [adjacency.copy() for adjacency in adjacencies]
     found = {}
-    for _ in range(spec["derive/rewiring_budget"]):
+    for iteration in range(spec["derive/rewiring_budget"]):
         if spec["derive/rewiring"] == "fosr":
             best = fosr(adjacencies, found, budget.limits.device)
             if best is None:
@@ -396,8 +429,9 @@ def rewire(spec, present, u, v, entities, rng, budget):
                 - value
             )
             scaled = np.asarray(gains) * spec["derive/sdrf_temperature"]
-            probability = np.exp(scaled - scaled.max())
-            k, partner = chosen[int(rng.choice(len(chosen), p=probability / probability.sum()))]
+            members = groups[label]
+            draws = np.maximum(drawn(iteration, members[chosen[:, 0]], members[chosen[:, 1]]), TINY)
+            k, partner = chosen[int(np.argmax(scaled - np.log(-np.log(draws))))]
             adjacency[k, partner] = adjacency[partner, k] = True
             del found[label]
         best = curvature_extreme(groups, adjacencies, found, maximum=True)
@@ -456,7 +490,7 @@ def derive_prepare(graph, registry, spec, carry):
 
 
 @timed("operators.derive_steps")
-def derive_steps(graph, registry, spec, seed, recency, step0, limits):
+def derive_steps(graph, registry, spec, seed, recency, carry, limits):
     projected, selected, within = derivation(registry, spec)
     steps, entities = graph.steps, len(graph.kinds)
     stated = derivable(graph, registry)
@@ -465,6 +499,7 @@ def derive_steps(graph, registry, spec, seed, recency, step0, limits):
     budget = GraphBudget(limits, fact_bytes(graph))
     chunks, removed, memo = [], np.zeros(len(graph.fact_step), bool), {}
     closed, diffusion, rewired = closing(spec), diffusing(spec), rewiring(spec)
+    tokens = carry.tokens(np.arange(entities)) if rewired else None
     for step in range(steps):
         span = np.arange(fact_bounds[step], fact_bounds[step + 1])
         rows = span[stated[span]]
@@ -519,14 +554,8 @@ def derive_steps(graph, registry, spec, seed, recency, step0, limits):
             budget.retain(len(diffused[0]), "diffusion")
             found.append(diffused)
         if rewired:
-            (a, b), cut = rewire(
-                spec,
-                present,
-                u,
-                v,
-                entities,
-                np.random.default_rng([seed, REWIRE, step + step0]),
-                budget,
+            (a, b), cut = canonical_rewire(
+                spec, present, u, v, tokens, (graph.step_token[step], graph.step_time[step]), seed, budget
             )
             budget.retain(len(a), "rewiring")
             found.append((a, b, np.full(len(a), registry.code("rewire"), np.int64)))
@@ -613,7 +642,7 @@ def derive_begin(graph, registry, spec, seed, limits, carry, held):
 def derive_each(graph, registry, spec, seed, limits, carry, held):
     if held is None:
         return None
-    found, removed, budget = derive_steps(graph, registry, spec, seed, held, carry.step0, limits)
+    found, removed, budget = derive_steps(graph, registry, spec, seed, held, carry, limits)
     return found, removed, budget.facts
 
 
@@ -676,6 +705,6 @@ DERIVE = OPERATIONS.register(
             ),
         ),
         changes=("facts",),
-        version=3,
+        version=4,
     ),
 )

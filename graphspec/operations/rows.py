@@ -1,14 +1,37 @@
+import logging
+import time
+from weakref import WeakKeyDictionary
+
 import numpy as np
 
+from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import allocate, scatter, take
 
 from . import kernels
 from .state import EMPTY, Table
 
+LOG = logging.getLogger(__name__)
 FACTS = ("fact_source", "fact_target", "fact_code", "fact_step", "fact_present", "fact_ref")
 OBSERVATIONS = ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
-SAMPLE, DROP, RANDOM, REWIRE = 1, 2, 3, 4
+SAMPLE = "graphspec.nodes/sample"
+DROP = "graphspec.edges/drop"
+RANDOM = "graphspec.edges/cap_order"
+REWIRE = "graphspec.derive/rewiring"
+KEYED = WeakKeyDictionary()
+
+
+def keyed_relations(registry):
+    if registry not in KEYED:
+        started = time.perf_counter()
+        tokens, symmetric = np.zeros(registry.relations, np.uint64), np.zeros(registry.relations, bool)
+        for edge in registry.edges:
+            tokens[edge.code], symmetric[edge.code] = token(edge.name), edge.symmetric
+        KEYED[registry] = tokens, symmetric
+        LOG.debug(
+            "keyed relations exit relations=%d seconds=%.4f", len(registry.edges), time.perf_counter() - started
+        )
+    return KEYED[registry]
 
 
 def counted(counts):

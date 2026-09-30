@@ -112,14 +112,14 @@ UNVERSIONED = (
 RECORDED = {
     "graphspec.periods": (2, "75c06165ecf386d8ef23765f2f54d1d83b7144f234b3f4bd2600b17a429f2e04"),
     "graphspec.window": (2, "5df2d7255ba6a2a3d4b53205ebfff639fffcb70d08bb3adb28bf428b55e20130"),
-    "graphspec.nodes": (2, "ddcb85c87fdc609e4379cab46e5b1bb9b0335d7115e61a7f82023c588b82a122"),
-    "graphspec.derive": (3, "92403cf521fe1cde0829a1e46bd17ba7d9a5b6867c581ec7ade87c6cfce228b7"),
+    "graphspec.nodes": (3, "1e9a117b30eb8bc3d0bd81007234a3157f7aecff9206039a32afd6d6a4e97f04"),
+    "graphspec.derive": (4, "a6c78dd73d580d0f15ba29bb19e4fde857f9a846f56cb098862a6d0a0b0e787f"),
     "graphspec.relations": (2, "6d8f67db2181d1900d9355a757273e4f374d0cdb5926eaf03f56619681618c4e"),
-    "graphspec.edges": (3, "bc6b37c2fa003a4c18c273a5b08df146cc23f45b017cafbea99e690b55447105"),
+    "graphspec.edges": (4, "d49cba9f8ee77ce35e94c02b4bbd62057587289bbf8bf2d1ef58ef60672b1e25"),
     "graphspec.merging": (2, "77c55f00419d3b722fa8cc38df2dcb8d03074d3a6adc9958219349aab7765252"),
-    "derivation": (7, "36cc03b4ff6451f0526c1c305a417781412b73e99606c5f57251204a78383c39"),
-    "views": (7, "5eada51487d77457ea82ca9ff3a9f0a3b01495d1579bb6e01a6a71b144bf66b8"),
-    "representations": (3, "b0295a21cab50fe886bf12348affaf7b138a7960034c54a69de4117cb9a2704f"),
+    "derivation": (8, "4211c02e75d6c7604feb542a1c4f5b5e832b74a42ba90ec72ea1afb8f7cf6ae7"),
+    "views": (8, "9e6512b78178415dca43dfc753d24ca40b852a17f3547225c6eab290128077f2"),
+    "representations": (4, "ba3c3f4c6d0df26f200aade98a39210b0e01e3e2916de0e3277e87a529bedb44"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }
 
