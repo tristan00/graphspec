@@ -174,11 +174,11 @@ def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
     (_, begun), piece = run_state(carry, "edges/cap", graph, ids, count, step[stated], keys)
     pieces["edges/cap"].append(piece)
     order = spec[prefix + "cap_order"]
+    ends = keyed_ends(graph, registry, rows[stated], both[stated], carry)
     if order == "recent":
-        primary, secondary = -begun, rows[stated]
+        primary, secondary = -begun, np.zeros(len(stated))
     elif order == "random":
-        drawn = unit(seed, RANDOM, *keyed_ends(graph, registry, rows[stated], both[stated], carry))
-        primary, secondary = drawn, rows[stated]
+        primary, secondary = unit(seed, RANDOM, *ends), np.zeros(len(stated))
     else:
         reference = graph.fact_ref[rows[stated]]
         value = np.where(
@@ -195,11 +195,12 @@ def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
     pair_step, pair_code, pair_low, pair_high, mode = (np.zeros(count, np.int64) for _ in range(5))
     pair_step[pair], pair_code[pair], pair_low[pair], pair_high[pair] = step[stated], code[stated], low, high
     mode[pair] = np.where(both[stated], 2, 1 if holds(spec, DIRECTION, "inverse") else 0)
+    pair_first, pair_second, pair_relation = (np.zeros(count, np.uint64) for _ in range(3))
+    pair_first[pair], pair_second[pair], pair_relation[pair] = ends[0], ends[1], ends[2]
     extra = np.flatnonzero((mode == 1) | ((mode == 2) & (pair_low != pair_high)))
     owners = np.r_[np.arange(count), extra]
     flag = np.r_[np.zeros(count, np.int64), mode[extra] == 1]
     owner = np.r_[pair_high, pair_low[extra]]
-    part = np.r_[np.zeros(count, np.int64), np.ones(len(extra), np.int64)]
     group, groups = kernels.keyed(
         (pair_step[owners] * registry.relations + registry.grouped[pair_code[owners]]) * 2 + flag,
         owner,
@@ -210,9 +211,9 @@ def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
         groups,
         best[owners],
         earliest[owners],
-        part,
-        pair_low[owners],
-        pair_high[owners],
+        pair_first[owners],
+        pair_second[owners],
+        pair_relation[owners],
         spec[prefix + "cap"],
     )
     capped = np.ones(count, bool)
@@ -235,6 +236,6 @@ EDGES = OPERATIONS.register(
         splits=(),
         requires=(Count("edges/cap", "degree", capping, "stored", "stored"),),
         changes=("facts",),
-        version=4,
+        version=5,
     ),
 )

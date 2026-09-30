@@ -125,14 +125,14 @@ def recalled(memo, name, inputs, budget, compute):
 
 
 @timed("operators.project")
-def project(graph, registry, edge, source, target, code, recency, cap, budget, memo):
+def project(graph, registry, edge, source, target, code, recency, cap, tokens, budget, memo):
     group, side, first, second = edge.origin[1:]
     use = np.flatnonzero(np.isin(code, registry.coded[group]))
     members, owners = (source[use], target[use]) if side == "sources" else (target[use], source[use])
     ages = recency[use]
 
     def compute():
-        order = np.lexsort((np.arange(len(use)), ages, owners))
+        order = np.lexsort((tokens[members], ages, owners))
         pairs = kernels.project_pairs(
             members[order],
             owners[order],
@@ -253,15 +253,27 @@ def diffusion_scores(adjacency, spec, device):
     return scores
 
 
+@timed("operators.ranked")
+def ranked(present, u, v, tokens):
+    order = np.argsort(tokens[present], kind="stable")
+    canonical, rank = present[order], np.empty(len(order), np.int64)
+    rank[order] = np.arange(len(order))
+    first, second = rank[np.searchsorted(present, u)], rank[np.searchsorted(present, v)]
+    low, high = np.minimum(first, second), np.maximum(first, second)
+    pairs = np.lexsort((high, low))
+    return canonical, low[pairs], high[pairs]
+
+
 @timed("operators.diffuse")
-def diffuse(registry, spec, present, u, v, entities, budget):
+def diffuse(registry, spec, present, u, v, tokens, budget):
     from graphspec.infra import compute
 
     count = len(present)
     if count < 2:
         return np.zeros(0, np.int32), np.zeros(0, np.int32), np.zeros(0, np.int64)
+    canonical, low, high = ranked(present, u, v, tokens)
     sources, targets, retained = [], [], 0
-    for members, source, target in component_edges(present, u, v):
+    for members, source, target in component_edges(np.arange(count), low, high):
         budget.dense(len(members), "diffusion")
         budget.pairs(
             retained + len(members) * min(spec["derive/diffusion_top_k"], len(members) - 1),
@@ -271,11 +283,11 @@ def diffuse(registry, spec, present, u, v, entities, budget):
         adjacency[source, target] = adjacency[target, source] = True
         scores = diffusion_scores(adjacency, spec, budget.limits.device)
         width = min(spec["derive/diffusion_top_k"], len(members) - 1)
-        chosen, ranked = compute.top(scores, width, budget.limits.device)
-        valid = np.isfinite(ranked)
+        chosen, scored = compute.top(scores, width, budget.limits.device)
+        valid = np.isfinite(scored)
         rows = np.broadcast_to(np.arange(len(members))[:, None], chosen.shape)
-        sources.append(present[members[rows[valid]]])
-        targets.append(present[members[chosen[valid]]])
+        sources.append(canonical[members[rows[valid]]])
+        targets.append(canonical[members[chosen[valid]]])
         retained += int(valid.sum())
     source = np.concatenate(sources + [np.zeros(0, np.int32)]).astype(np.int32)
     target = np.concatenate(targets + [np.zeros(0, np.int32)]).astype(np.int32)
@@ -367,13 +379,8 @@ def curvature_extreme(groups, adjacencies, found, maximum=False):
 
 @timed("operators.canonical_rewire")
 def canonical_rewire(spec, present, u, v, tokens, moment, seed, budget):
-    order = np.argsort(tokens[present], kind="stable")
-    canonical, rank = present[order], np.empty(len(order), np.int64)
-    rank[order] = np.arange(len(order))
-    first, second = rank[np.searchsorted(present, u)], rank[np.searchsorted(present, v)]
-    low, high = np.minimum(first, second), np.maximum(first, second)
-    pairs = np.lexsort((high, low))
-    size = len(tokens)
+    canonical, low, high = ranked(present, u, v, tokens)
+    size, width = len(tokens), len(canonical)
 
     def drawn(iteration, left, right):
         left, right = tokens[canonical[left]], tokens[canonical[right]]
@@ -388,10 +395,10 @@ def canonical_rewire(spec, present, u, v, tokens, moment, seed, budget):
             np.maximum(left, right),
         )
 
-    (a, b), cut = rewire(spec, np.arange(len(order)), low[pairs], high[pairs], len(order), drawn, budget)
+    (a, b), cut = rewire(spec, np.arange(width), low, high, width, drawn, budget)
     a, b = canonical[a], canonical[b]
     added = np.sort(np.minimum(a, b).astype(np.int64) * size + np.maximum(a, b))
-    a, b = canonical[cut // len(order)], canonical[cut % len(order)]
+    a, b = canonical[cut // width], canonical[cut % width]
     cut = np.sort(np.minimum(a, b).astype(np.int64) * size + np.maximum(a, b))
     return ((added // size).astype(present.dtype), (added % size).astype(present.dtype)), cut
 
@@ -499,7 +506,7 @@ def derive_steps(graph, registry, spec, seed, recency, carry, limits):
     budget = GraphBudget(limits, fact_bytes(graph))
     chunks, removed, memo = [], np.zeros(len(graph.fact_step), bool), {}
     closed, diffusion, rewired = closing(spec), diffusing(spec), rewiring(spec)
-    tokens = carry.tokens(np.arange(entities)) if rewired else None
+    tokens = carry.tokens(np.arange(entities))
     for step in range(steps):
         span = np.arange(fact_bounds[step], fact_bounds[step + 1])
         rows = span[stated[span]]
@@ -518,6 +525,7 @@ def derive_steps(graph, registry, spec, seed, recency, carry, limits):
                 graph.fact_code[rows],
                 recency[rows],
                 spec["derive/project_cap"],
+                tokens,
                 budget,
                 memo,
             )
@@ -549,7 +557,7 @@ def derive_steps(graph, registry, spec, seed, recency, carry, limits):
                 "diffusion",
                 (present, u, v),
                 budget,
-                lambda: diffuse(registry, spec, present, u, v, entities, budget),
+                lambda: diffuse(registry, spec, present, u, v, tokens, budget),
             )
             budget.retain(len(diffused[0]), "diffusion")
             found.append(diffused)
@@ -705,6 +713,6 @@ DERIVE = OPERATIONS.register(
             ),
         ),
         changes=("facts",),
-        version=4,
+        version=5,
     ),
 )

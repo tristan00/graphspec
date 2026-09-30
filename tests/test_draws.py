@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import support
 import torch
-from keyed import Keys, Spaces, dense_keyed, differing, rows, through, variant_part
+from keyed import Keys, Spaces, dense_keyed, differing, labelled, rows, through, variant_part
 
 from graphspec.budgets import GraphLimits
 from graphspec.engine import transform
@@ -14,6 +14,7 @@ from graphspec.engine.segments import Derivation
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
+from graphspec.operations.rows import FACTS
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import Dense
 from tuning.bank.bank import Deriver
@@ -40,6 +41,18 @@ DRAWN = {
     "edges/near/cap_order": "random",
     "edges/hop:2/drop": 0.3,
     "edges/rewire/drop": 0.2,
+}
+TIED = {
+    "derive/project:visits:sources:person:person": True,
+    "derive/project_cap": 2,
+    "derive/hops": 2,
+    "derive/diffusion": "ppr",
+    "derive/diffusion_top_k": 1,
+    "edges/visits/cap": 1,
+    "edges/visits/cap_order": "recent",
+    "edges/hop:2/cap": 1,
+    "edges/hop:2/cap_order": "recent",
+    "relations/parallel": "merge",
 }
 WALKS = {"walks/bias": 0.5, "walks/fanout": 3, "walks/window": 6}
 JOINED = {"graphs/join": "single", "graphs/join_size": 2}
@@ -101,6 +114,11 @@ def permuted(graph, seed):
         arrays[reference] = np.where(held >= 0, rows[np.maximum(held, 0)], -1).astype(held.dtype)
     order = np.lexsort((arrays["obs_entity"], arrays["obs_step"]))
     for name in ("obs_entity", "obs_step", "obs_ref", "obs_anchor"):
+        arrays[name] = np.asarray(arrays[name])[order]
+    step, present = np.asarray(arrays["fact_step"]), np.asarray(arrays["fact_present"])
+    edge = labelled(step, present, arrays["fact_code"], arrays["fact_source"], arrays["fact_target"])
+    order = np.lexsort((np.arange(len(edge)), rng.random(len(edge))[edge], ~present, step))
+    for name in FACTS:
         arrays[name] = np.asarray(arrays[name])[order]
     result = Dense(graph.name, keys, graph.steps, **arrays)
     LOG.debug("permuted exit graph=%s seconds=%.4f", graph.name, time.perf_counter() - started)
@@ -227,6 +245,9 @@ def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_so
     steps, spec = stated(registry, dict(DRAWN, **{"derive/rewiring": "fosr"}), {})
     fosr = derived(graphs[1:], registry, steps, spec, [], LIMITS)
     assert differing(derived(moved[1:], registry, steps, spec, [7], LIMITS), fosr) == []
+    steps, spec = stated(registry, TIED, {})
+    tied = derived(graphs[:1], registry, steps, spec, [], LIMITS)
+    assert differing(derived(moved[:1], registry, steps, spec, [4], LIMITS), tied) == []
     LOG.info("permuted draws exit seconds=%.3f", time.perf_counter() - started)
 
 

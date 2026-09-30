@@ -38,8 +38,20 @@ OPERATED = {
         stage_6_edge_filters="9805b03cc6068921",
         stage_7_relation_merging="a258779988471d56",
     ),
+    "06_project_complete_walks": dict(
+        stage_4_derived_relations="a0aa6fadad7ea7a7",
+        stage_5_relations="23a434263df17f37",
+        stage_6_edge_filters="b0444a588d12dc19",
+        stage_7_relation_merging="2447fdee246af294",
+    ),
+    "07_periods_hops_ppr_coupling": dict(
+        stage_4_derived_relations="252100c0f13eb1a4",
+        stage_5_relations="6b4890f3ab4d1317",
+        stage_6_edge_filters="6b4890f3ab4d1317",
+        stage_7_relation_merging="6b4890f3ab4d1317",
+    ),
     "08_heat_sdrf_untyped_events": dict(
-        stage_4_derived_relations="74471ce3abaab517",
+        stage_4_derived_relations="338b837255b54882",
         stage_5_relations="5a343dffbea92b49",
         stage_6_edge_filters="5a343dffbea92b49",
         stage_7_relation_merging="834608be78db1971",

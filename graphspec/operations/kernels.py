@@ -430,20 +430,20 @@ def smallest(ids, values, groups):
 
 
 @njit(cache=True)
-def precedes(a, b, best, earliest, part, low, high):
+def precedes(a, b, best, earliest, first, second, relation):
     if best[a] != best[b]:
         return best[a] < best[b]
     if earliest[a] != earliest[b]:
         return earliest[a] < earliest[b]
-    if part[a] != part[b]:
-        return part[a] < part[b]
-    if low[a] != low[b]:
-        return low[a] < low[b]
-    return high[a] < high[b]
+    if first[a] != first[b]:
+        return first[a] < first[b]
+    if second[a] != second[b]:
+        return second[a] < second[b]
+    return relation[a] < relation[b]
 
 
 @njit(cache=True)
-def within_cap(groups, count, best, earliest, part, low, high, cap):
+def within_cap(groups, count, best, earliest, first, second, relation, cap):
     entries = len(groups)
     sizes = np.zeros(count + 1, np.int64)
     for entry in range(entries):
@@ -472,18 +472,18 @@ def within_cap(groups, count, best, earliest, part, low, high, cap):
                 size += 1
                 while child > 0:
                     parent = (child - 1) // 2
-                    if not precedes(heap[parent], heap[child], best, earliest, part, low, high):
+                    if not precedes(heap[parent], heap[child], best, earliest, first, second, relation):
                         break
                     heap[parent], heap[child] = heap[child], heap[parent]
                     child = parent
-            elif precedes(item, heap[0], best, earliest, part, low, high):
+            elif precedes(item, heap[0], best, earliest, first, second, relation):
                 heap[0] = item
                 parent = 0
                 while True:
                     left, right, worst = 2 * parent + 1, 2 * parent + 2, parent
-                    if left < size and precedes(heap[worst], heap[left], best, earliest, part, low, high):
+                    if left < size and precedes(heap[worst], heap[left], best, earliest, first, second, relation):
                         worst = left
-                    if right < size and precedes(heap[worst], heap[right], best, earliest, part, low, high):
+                    if right < size and precedes(heap[worst], heap[right], best, earliest, first, second, relation):
                         worst = right
                     if worst == parent:
                         break

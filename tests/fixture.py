@@ -47,6 +47,23 @@ DERIVED = dict(
     turn_walks="period_walks",
 )
 CONTENT = (("obs_ref", "x_table", "obs_x"), ("fact_ref", "value_table", "fact_values"), ("x_ref", "x_table", "x"))
+FACTED = ("fact_code", "fact_present", "fact_ref", "fact_source", "fact_step", "fact_target")
+TIED = {
+    "06_project_complete_walks": dict(
+        stage_4_derived_relations=("fact_source", "fact_target"),
+        stage_5_relations=("fact_source", "fact_target"),
+        stage_6_edge_filters=FACTED,
+        stage_7_relation_merging=FACTED,
+        representation=("events", "neighbor_ids", "neighbor_offsets", "spatial", "spatial_attribute_row", "spatial_step"),
+    ),
+    "07_periods_hops_ppr_coupling": dict(
+        stage_4_derived_relations=FACTED,
+        stage_5_relations=FACTED,
+        stage_6_edge_filters=FACTED,
+        stage_7_relation_merging=FACTED,
+        representation=("events", "spatial"),
+    ),
+}
 RELATIONS_FIRST = dict(
     configurations=("09_fosr_drop_cap_walks",),
     order=(
@@ -86,7 +103,9 @@ def labels(place):
 
 def drawn(entry, stage):
     started = time.perf_counter()
-    held = {DERIVED.get(name, name) for name in entry["random"]["depends"].get(Path(stage).stem, [])}
+    stem = Path(stage).stem
+    held = {DERIVED.get(name, name) for name in entry["random"]["depends"].get(stem, [])}
+    held |= set(TIED.get(entry["name"], {}).get(stem, ()))
     result = sorted(held | {name for reference, _, name in CONTENT if reference in held})
     LOG.debug(
         "drawn exit name=%s stage=%s arrays=%d seconds=%.6f",

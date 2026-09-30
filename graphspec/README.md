@@ -146,12 +146,12 @@ Computed at each step from the present facts of the graph it is given. Projectio
 | Parameter | Range | Effect |
 |---|---|---|
 | `derive/project:<table>:<side>:<A>:<B>` | on, off | Adds that projection. Offered for every projection the bank declares. |
-| `derive/project_cap` | 0–64 | Only each counterpart's `cap` most recently started relations of the step take part, counting parallel facts once; 0 takes all. Offered when a projection is on. |
+| `derive/project_cap` | 0–64 | Only each counterpart's `cap` most recently started relations of the step take part, counting parallel facts once, relations started at one step ranked by the token of the member; 0 takes all. Offered when a projection is on. |
 | `derive/complete/<type>` | on, off | Completes that type: every pair of observed entities of the completed types at a step is linked. Offered for every type. |
 | `derive/complete_within/<type>` | on, off | Links completed entities only when they share a neighbour of that type; with several types on, a shared neighbour of any of them is enough. Offered while a relation of the bank joins this type to a completed type. |
 | `derive/hops` | 1–3 | Adds `hop:2` up to `hop:k`. Offered where the bank states a relation. |
 | `derive/diffusion` | none, ppr, heat | Scores pairs by personalised PageRank α(I−(1−α)T)⁻¹ or the heat kernel exp(−t(I−T)), with T the symmetric-normalised adjacency of the step's observed entities. Each entity links to its highest-scoring non-adjacent entities in its own connected component. Computed per component in float64; the infra layer chooses the device by component size. Offered where the bank states a relation. |
-| `derive/diffusion_top_k` | 1–16 | Neighbours per entity. Offered with diffusion. |
+| `derive/diffusion_top_k` | 1–16 | Neighbours per entity. The scores of a component are computed with its entities in the order of their tokens, and equal scores are cut in that order. Offered with diffusion. |
 | `derive/ppr_alpha` | 0.05–0.5 | α. Offered with ppr. |
 | `derive/heat_time` | 0.5–5 | t. Offered with heat. |
 | `derive/rewiring` | none, sdrf, fosr | fosr works inside connected components. Each addition goes to the component with the smallest spectral gap, at the non-edge that minimises the product of degree-scaled second-eigenvector entries of the component's self-looped normalised adjacency. sdrf takes the edge of lowest balanced Forman curvature. It adds an edge between the two neighbourhoods, sampled by softmax of temperature × curvature gain with Gumbel numbers drawn from the keys of the pair's ends, the time and graph of the step and the iteration, and removes the most curved edge above the threshold. Both order the entities of a step by their keys, so ties go to the first by key. Curvature runs in a numba kernel, and fosr reuses a component's decomposition until an edge changes it. Offered where the bank states a relation. |
@@ -180,7 +180,7 @@ Every relation stated, table of relations taken from a column, relation of a set
 | `edges/<table>/drop` | 0–0.9 | A draw keyed by the keys of a pair's ends, its relation's name and its graph's name removes that fraction of entity pairs, with all their rows. |
 | `edges/<table>/persistence` | 1–8 | A present fact is kept from the p-th consecutive step it is stated; facts stated twice at one step share a position. |
 | `edges/<table>/cap` | 0–64 | At most c neighbours per entity and step, with parallel facts counted once; 0 keeps all. A directed reading caps destinations, inverse caps destinations and sources separately, and symmetric caps each entity with a pair counted once. A pair stays only if it ranks within c at every capped end. |
-| `edges/<table>/cap_order` | recent, random, largest:&lt;attribute&gt; | Which facts a cap keeps: latest run start, a draw keyed as the drop's, or the largest value of one of the table's attributes. Offered when the cap is on. |
+| `edges/<table>/cap_order` | recent, random, largest:&lt;attribute&gt; | Which facts a cap keeps: latest run start, a draw keyed as the drop's, or the largest value of one of the table's attributes, then the latest run start. Pairs still equal are ranked by the tokens of their ends, ordered where the pair is read symmetrically, then by the hash of their relation's name, never by row or entity number. Offered when the cap is on. |
 
 Relations read symmetrically count their two directions as one pair in every edge filter.
 
@@ -191,7 +191,7 @@ Whenever a stage removes present facts, it also removes absent rows left without
 | Parameter | Range | Effect |
 |---|---|---|
 | `relations/types` | typed, untyped | untyped replaces every base relation with `untyped` and drops attributes. Its absent row stays only when no underlying relation between the pair is still present. Offered where the bank states a relation. |
-| `relations/parallel` | keep, merge | merge keeps the last of identical facts stated at one step. Offered where the bank states a relation. |
+| `relations/parallel` | keep, merge | merge keeps the last of identical facts stated at one step, last in the order the rule for ties, then the time they hold from, give facts about one edge; facts of relations made untyped carry no values, so which of them is kept changes nothing. Offered where the bank states a relation. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 
