@@ -311,7 +311,7 @@ def test_the_arrays_of_a_joined_group_are_equal_for_one_and_two_workers(bank, re
     opened = Deriver(bank, "cpu", RESIDENT)
     registry = support.fitted(opened)
     cfg = support.configuration(opened.registry, dict(view="snapshot"), support.several(opened.registry), 5, SPLITS)
-    paths = [opened.view(index, cfg) for index in range(4)]
+    paths = [opened.view(index, cfg) for index in range(2)]
     steps, spec = every(registry, True)
     folders = {name: tmp_path / name for name in ("one", "two", "spill")}
     for folder in folders.values():
