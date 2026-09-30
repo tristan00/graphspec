@@ -232,22 +232,10 @@ def running(directory, view):
 
     started = time.perf_counter()
     cfg = stated(directory, view)
-    prepare(directory, cfg, 1, "cpu")
     packer = Packer(Deriver(directory, "cpu", RESIDENT), cfg, "cpu", 1)
+    prepare(directory, cfg, 1, "cpu")
     LOG.debug("running exit view=%s seconds=%.4f", view, time.perf_counter() - started)
     return cfg, packer
-
-
-def warmed(held):
-    from tuning.batches.batching import batches
-    from tuning.families.periods import blocks as period_blocks
-
-    started = time.perf_counter()
-    for cfg, packer in held:
-        opened = packer.bank
-        blocks = period_blocks(opened, opened.blocks(0, cfg["graph"]["time/history"], cfg), cfg)
-        list(packer.stream(batches(blocks, 2, opened.sizes(cfg), 5, frame_budget=1024)[:1]))
-    LOG.debug("packers warm exit seconds=%.4f", time.perf_counter() - started)
 
 
 def closed(held):
@@ -269,7 +257,6 @@ def warmup(request):
 @pytest.fixture(scope="session")
 def packers(bank):
     held = {view: running(bank, view) for view in ("snapshot", "event_graph")}
-    warmed(held.values())
     yield held
     closed(held.values())
 
