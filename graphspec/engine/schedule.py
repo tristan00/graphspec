@@ -253,7 +253,7 @@ def stitch_task(job, index):
 TASKS = dict(expand=expand_task, open=open_task, represent=represent_task, stitch=stitch_task)
 
 
-def built(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
+def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
     started = time.perf_counter()
     plans = [Plan(job["members"], unified(job["members"], registry, spec), 0) for job in jobs]
     stages = staging(steps, registry)

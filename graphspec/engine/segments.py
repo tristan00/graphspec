@@ -328,7 +328,7 @@ def opening(graph):
     return carry, dense
 
 
-def build(members, registry, steps, spec, groups, seed, limits, partitions, destination):
+def variant(members, registry, steps, spec, groups, seed, limits, partitions, destination):
     started = time.perf_counter()
     plan = Plan(members, unified(members, registry, spec), 0)
     source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
@@ -363,7 +363,7 @@ def build(members, registry, steps, spec, groups, seed, limits, partitions, dest
         )
     representations.validate(arrays, plan.name, registry, spec, source.chosen)
     LOG.info(
-        "segments build exit seconds=%.3f segments=%d observations=%d events=%d",
+        "variant exit seconds=%.3f segments=%d observations=%d events=%d",
         time.perf_counter() - started,
         len(members),
         state["representations"]["base"]["obs"],

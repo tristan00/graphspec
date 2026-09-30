@@ -35,7 +35,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 4
+VIEW = 5
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -519,7 +519,7 @@ class Deriver(Bank):
                 paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
                 members = [Graph.load(path, mapped=True) for path in paths]
                 jobs.append(dict(members=members, paths=paths, spill=spill, destination=temporary))
-            schedule.built(
+            schedule.variants(
                 jobs, self.fitted(cfg), steps, spec, chosen, SEED, workers, self.limits(), self.partitions(cfg)
             )
             for (temporary, final), job in zip(folders, jobs):
@@ -593,7 +593,7 @@ class Deriver(Bank):
             with Workspace(destination):
                 try:
                     members = [Graph.load(self.view(member, cfg), mapped=True) for member in indices]
-                    segments.build(
+                    segments.variant(
                         members,
                         self.fitted(cfg),
                         steps,

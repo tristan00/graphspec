@@ -317,9 +317,9 @@ def test_the_arrays_of_a_joined_group_are_equal_for_one_and_two_workers(bank, re
     for folder in folders.values():
         folder.mkdir()
     members = [Graph.load(path, mapped=True) for path in paths]
-    segments.build(members, registry, steps, spec, GROUPS, transform.SEED, LIMITS, None, folders["one"])
+    segments.variant(members, registry, steps, spec, GROUPS, transform.SEED, LIMITS, None, folders["one"])
     job = dict(members=members, paths=paths, spill=folders["spill"], destination=folders["two"])
-    schedule.built([job], registry, steps, spec, GROUPS, transform.SEED, 2, LIMITS, None)
+    schedule.variants([job], registry, steps, spec, GROUPS, transform.SEED, 2, LIMITS, None)
     one, two = Arrays(folders["one"]), Arrays(folders["two"])
     assert sorted(one) == sorted(two) and "running" in one
     assert [name for name in one if not identical(one[name], two[name])] == []
