@@ -1,6 +1,7 @@
 import logging
 import time
 from collections import Counter
+from weakref import WeakKeyDictionary
 
 import numpy as np
 
@@ -11,6 +12,7 @@ LOG = logging.getLogger(__name__)
 CHANGES = CHECKED + ("references",)
 SPLITS = ("trained", "scored")
 TREATMENTS = ("stored", "refuses")
+STATED = WeakKeyDictionary()
 EDGES = dict(
     sets="the edges joining sets of the kind %s", about="the edges of the table %s, which are about edges"
 )
@@ -197,12 +199,16 @@ class Operation:
         LOG.debug("operation exit name=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
     def stated(self, registry):
+        held = STATED.setdefault(registry, {})
+        if self in held:
+            return held[self]
         started = time.perf_counter()
         found = tuple(self.parameters(registry))
         counted = Counter(parameter.name for parameter in found)
         twice = sorted(name for name, count in counted.items() if count > 1)
         if twice:
             raise ValueError("the operation %s states the parameters %s twice" % (self.name, ", ".join(twice)))
+        held[self] = found
         LOG.debug(
             "stated exit operation=%s parameters=%d seconds=%.4f",
             self.name,

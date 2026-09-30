@@ -35,7 +35,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 5
+VIEW = 6
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -585,14 +585,15 @@ class Deriver(Bank):
     @timed("arrays")
     def arrays(self, index, cfg):
         root, steps, spec, chosen = self.variant(cfg)
-        indices = self.groups(cfg)[index] if self.joining(cfg) else [index]
+        joining = self.joining(cfg)
+        indices = self.groups(cfg)[index] if joining else [index]
 
         def build(destination):
             started = time.perf_counter()
             self.stamp(cfg)
             with Workspace(destination):
                 try:
-                    members = [Graph.load(self.view(member, cfg), mapped=True) for member in indices]
+                    members = [Graph.load(self.view(member, cfg), mapped=joining) for member in indices]
                     segments.variant(
                         members,
                         self.fitted(cfg),
