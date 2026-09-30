@@ -80,8 +80,8 @@ def narrow_group(parameters, bounds):
     return specs.narrow(parameters, applicable)
 
 
+@timed("selector.check_bounds")
 def check_bounds(registry, bounds, template):
-    started = time.perf_counter()
     if "max_seconds" in bounds:
         raise ValueError(
             "the bounds hold max_seconds; the seconds of a trial are those of the statement and no other"
@@ -102,7 +102,6 @@ def check_bounds(registry, bounds, template):
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
     specs.narrow(parameters, bounds)
     stepped(registry, narrow_group(specs.settings(registry, ()), bounds))
-    emit("bounds_checked", bounds=len(bounds), seconds=time.perf_counter() - started)
 
 
 def training(config):

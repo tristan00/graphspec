@@ -11,6 +11,7 @@ import numpy as np
 
 from graphspec.infra.log import emit
 from graphspec.infra.processes.processes import guarded, spawned
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.registries import carried, restored
@@ -59,8 +60,8 @@ def flatten(config, template):
 
 
 class Space:
+    @timed("space.made")
     def __init__(self, registry, bounds, seconds, history, template):
-        started = time.perf_counter()
         self.registry, self.bounds, self.template = registry, bounds, template
         self.models, self.training = spaces(registry, bounds)
         self.pipeline = pipeline_space(registry, template, bounds)
@@ -86,7 +87,6 @@ class Space:
             **{p.name: p for p in self.pipeline},
             self.runtime.name: self.runtime,
         }
-        emit("space_made", parameters=len(self.parameters), seconds=time.perf_counter() - started)
         self.width = sum(len(p.options) if p.options else 2 for p in self.parameters.values())
 
     def importance(self, weights):
