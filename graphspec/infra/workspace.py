@@ -17,13 +17,13 @@ MEMORY_BYTES = 64 << 20
 
 class Workspace:
     def __init__(self, directory, memory_bytes=MEMORY_BYTES):
-        self.directory = output_path(directory)
+        self.directory = directory
         self.memory_bytes = memory_bytes
         self.arrays = []
 
     def __enter__(self):
         self.started = time.perf_counter()
-        self.temporary = tempfile.TemporaryDirectory(prefix="arrays-", dir=self.directory)
+        self.temporary = None
         self.token = ACTIVE.set(self)
         return self
 
@@ -35,16 +35,24 @@ class Workspace:
                 array._mmap.close()
         finally:
             self.arrays.clear()
-            self.temporary.cleanup()
+            if self.temporary is not None:
+                self.temporary.cleanup()
         LOG.info("workspace exit bytes=%d seconds=%.3f", size, time.perf_counter() - self.started)
+
+
+def held(shape, dtype):
+    workspace = ACTIVE.get()
+    return workspace is None or math.prod(shape) * np.dtype(dtype).itemsize <= workspace.memory_bytes
 
 
 def allocate(shape, dtype):
     shape = tuple(shape)
     dtype = np.dtype(dtype)
-    workspace = ACTIVE.get()
-    if workspace is None or math.prod(shape) * dtype.itemsize <= workspace.memory_bytes:
+    if held(shape, dtype):
         return np.empty(shape, dtype)
+    workspace = ACTIVE.get()
+    if workspace.temporary is None:
+        workspace.temporary = tempfile.TemporaryDirectory(prefix="arrays-", dir=output_path(workspace.directory))
     path = Path(workspace.temporary.name) / ("array_%06d.npy" % len(workspace.arrays))
     result = np.lib.format.open_memmap(path, mode="w+", dtype=dtype, shape=shape)
     workspace.arrays.append(result)
@@ -61,10 +69,11 @@ def concatenate(values):
         raise ValueError("concatenation requires at least one array")
     if any(value.shape[1:] != values[0].shape[1:] for value in values):
         raise ValueError("concatenated arrays must have matching trailing dimensions")
-    if ACTIVE.get() is None:
-        return np.concatenate(values)
     shape = (sum(len(value) for value in values),) + values[0].shape[1:]
-    result = allocate(shape, np.result_type(*(value.dtype for value in values)))
+    dtype = np.result_type(*(value.dtype for value in values))
+    if held(shape, dtype):
+        return np.concatenate(values)
+    result = allocate(shape, dtype)
     offset = 0
     for value in values:
         for start in range(0, len(value), block_rows(value)):
@@ -81,6 +90,8 @@ def take(values, indices):
     if indices.dtype == np.bool_ and len(indices) != len(values):
         raise IndexError("boolean row selector must match the array length")
     count = int(np.count_nonzero(indices)) if indices.dtype == np.bool_ else len(indices)
+    if held((count,) + values.shape[1:], values.dtype):
+        return values[indices]
     result = allocate((count,) + values.shape[1:], values.dtype)
     offset = 0
     for start in range(0, len(indices), block_rows(values)):
