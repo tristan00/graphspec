@@ -9,10 +9,11 @@ from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.views.view import STEPS
+from tuning.families.model_spec import TRAINING, describe, groups
+from tuning.families.model_spec import space as model_space
+from tuning.measures import objective
 
-from . import objective, tpe
-from .model_spec import TRAINING, describe, groups
-from .model_spec import space as model_space
+from . import tpe
 from .records import Run, Status
 
 SURROGATES = ("botorch", "forest")

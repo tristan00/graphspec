@@ -116,7 +116,7 @@ def pytest_unconfigure(config):
 
 def synthetic_bank(root, level):
     from graphspec.sources.synthetic import generate, uniform
-    from tuning.build import build
+    from tuning.bank.build import build
 
     started = time.perf_counter()
     task = generate(root, "tiny", 4, 1, uniform(4, 2, level), **SETTINGS)
@@ -137,7 +137,7 @@ def path_bank():
 @pytest.fixture(scope="session")
 def varied(tmp_path_factory):
     from graphspec.sources import synthetic
-    from tuning.build import build
+    from tuning.bank.build import build
 
     root = tmp_path_factory.mktemp("varied")
     task = synthetic.generate(root, "varied", 4, 1, synthetic.varied("task"), **SETTINGS)
@@ -156,8 +156,8 @@ def ground():
 def stated(directory, view):
     from support import several
 
-    from tuning.data import Bank
-    from tuning.model_spec import configuration
+    from tuning.bank.bank import Bank
+    from tuning.families.model_spec import configuration
 
     started = time.perf_counter()
     registry = Bank(directory).registry
@@ -168,9 +168,9 @@ def stated(directory, view):
 
 def running(directory, view):
     from graphspec.infra.arrays import RESIDENT
-    from tuning.data import Deriver
-    from tuning.packing import Packer
-    from tuning.variants import prepare
+    from tuning.bank.bank import Deriver
+    from tuning.bank.variants import prepare
+    from tuning.batches.packing import Packer
 
     started = time.perf_counter()
     cfg = stated(directory, view)
@@ -181,8 +181,8 @@ def running(directory, view):
 
 
 def warmed(held):
-    from tuning.batching import batches
-    from tuning.periods import blocks as period_blocks
+    from tuning.batches.batching import batches
+    from tuning.families.periods import blocks as period_blocks
 
     started = time.perf_counter()
     for cfg, packer in held:
@@ -240,8 +240,8 @@ class Inline:
         self.bank, self.cfg = bank, cfg
 
     def stream(self, groups):
-        from tuning.batching import recipe_batch
-        from tuning.tensors import materialise
+        from tuning.batches.batching import recipe_batch
+        from tuning.batches.tensors import materialise
 
         started = time.perf_counter()
         for group in groups:
@@ -257,7 +257,7 @@ def inline(directory, views, monkeypatch):
 
     started = time.perf_counter()
     torch.optim.AdamW([torch.nn.Parameter(torch.zeros(1))])
-    monkeypatch.setattr("tuning.packing.Packer", Inline)
+    monkeypatch.setattr("tuning.batches.packing.Packer", Inline)
     result = {view: dict(stated(directory, view), epochs=1) for view in views}
     LOG.debug("inline exit views=%d seconds=%.4f", len(views), time.perf_counter() - started)
     return result
@@ -275,11 +275,11 @@ def varied_packed(varied, monkeypatch):
 
 @pytest.fixture(scope="session")
 def candidate_pool():
-    from tuning import space
+    from tuning.searches import space
 
     executor = ProcessPoolExecutor(2)
     for _ in range(2):
-        executor.submit(import_module, "tuning.space")
+        executor.submit(import_module, "tuning.searches.space")
     space.POOL["executor"] = executor
     yield executor
     executor.shutdown()

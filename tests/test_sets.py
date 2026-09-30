@@ -21,11 +21,11 @@ from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
 from graphspec.views.view import sequences, view
 from graphspec.views.visible import unstated
-from tuning.build import build
-from tuning.data import Deriver
-from tuning.model_spec import configuration
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
+from tuning.families.model_spec import configuration
+from tuning.fits.training import fit
 from tuning.statement import state
-from tuning.training import fit
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("sets")
@@ -539,7 +539,7 @@ def packed(monkeypatch):
 
     started = time.perf_counter()
     torch.optim.AdamW([torch.nn.Parameter(torch.zeros(1))])
-    monkeypatch.setattr("tuning.packing.Packer", Inline)
+    monkeypatch.setattr("tuning.batches.packing.Packer", Inline)
     LOG.debug("packed exit seconds=%.4f", time.perf_counter() - started)
 
 

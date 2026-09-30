@@ -11,7 +11,7 @@ from graphspec import GraphTables, Stage, write_task
 from graphspec.build.staged import Staged
 from graphspec.infra.processes.locks import heavy_job
 from graphspec.infra.runtime import output_path
-from tuning.build import build, open_source
+from tuning.bank.build import build, open_source
 
 
 def test_output_cannot_be_inside_source_tree():

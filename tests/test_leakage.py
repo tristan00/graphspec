@@ -11,9 +11,9 @@ from graphspec.infra.timing import timed
 from graphspec.schema.schema import VERSION, Schema
 from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
-from tuning.build import build
-from tuning.data import Deriver
-from tuning.model_spec import configuration
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
+from tuning.families.model_spec import configuration
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("leakage")
@@ -293,9 +293,9 @@ def test_a_graph_without_tasks_builds_and_a_choice_of_steps_that_cannot_show_it_
 
 
 def test_a_search_offers_a_choice_of_steps_only_where_it_shows_every_graph_of_the_bank(banks):
-    from tuning.model_spec import configured
-    from tuning.selector import check_bounds, graph_space, random_suggest
-    from tuning.space import Space
+    from tuning.families.model_spec import configured
+    from tuning.searches.selector import check_bounds, graph_space, random_suggest
+    from tuning.searches.space import Space
 
     registry = Deriver(banks["seen"], "cpu", RESIDENT).registry
     found = {p.name: p for p in graph_space(registry, configured(registry, dict(view="snapshot")), {})}

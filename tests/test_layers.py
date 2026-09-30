@@ -1,6 +1,6 @@
 import torch
 
-from tuning.layers import Groups, Spatial, segment_matmul
+from tuning.families.layers import Groups, Spatial, segment_matmul
 
 
 def edge_loop(h, source, destination, relation, weights):

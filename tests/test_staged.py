@@ -6,7 +6,7 @@ from graphspec.facts.stored import STORED, Facts
 from graphspec.infra.files import write_json
 from graphspec.schema.schema import Schema
 from graphspec.sources.synthetic import Counter, graph_rows, uniform
-from tuning.build import build
+from tuning.bank.build import build
 
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SHAPE = uniform(4, 2, "task")

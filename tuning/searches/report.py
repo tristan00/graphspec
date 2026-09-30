@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from graphspec.infra.files import JsonCache, write_csv, write_json, write_jsonl
 from graphspec.infra.log import emit
 from graphspec.infra.runtime import output_path
+from tuning.families.model_spec import describe
+from tuning.measures import objective
 
-from . import objective
-from .model_spec import describe
 from .records import Run, Status
 
 

@@ -14,13 +14,13 @@ from graphspec.operations import parameters as specs
 from graphspec.schema.schema import VERSION, Schema
 from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
-from tuning.batching import batches, pack_batch
-from tuning.build import build
-from tuning.data import Deriver
-from tuning.events import KINDS
-from tuning.inputs import couples
-from tuning.model_spec import VIEWS, configuration, views
-from tuning.models import build as network
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
+from tuning.batches.batching import batches, pack_batch
+from tuning.batches.inputs import couples
+from tuning.families.event_graph import KINDS
+from tuning.families.model_spec import VIEWS, configuration, views
+from tuning.families.models import build as network
 
 LOG = logging.getLogger(__name__)
 SPLITS = dict(trained=["train"], scored=["test"], sees=dict(train=[], test=[]))

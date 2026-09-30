@@ -3,7 +3,7 @@ import subprocess
 import pytest
 
 from graphspec.infra.files import read_json, write_json
-from tuning import budget
+from tuning.fits import budget
 
 
 def test_parent_stops_preparation_even_when_heartbeat_stalls(tmp_path, monkeypatch):

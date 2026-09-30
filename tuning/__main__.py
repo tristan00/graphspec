@@ -10,9 +10,9 @@ def main():
     commands = {
         "inspect": ("graphspec.descriptions.inspect", "main"),
         "synthetic": ("graphspec.sources.synthetic", "main"),
-        "build": ("tuning.build", "main"),
-        "search": ("tuning.run", "main"),
-        "check": ("tuning.check_models", "main"),
+        "build": ("tuning.bank.build", "main"),
+        "search": ("tuning.searches.run", "main"),
+        "check": ("tuning.fits.check", "main"),
         "database": ("graphspec.sources.ladybug", "main"),
         "dashboard": ("tuning.dashboard", "main"),
     }

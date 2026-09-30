@@ -21,11 +21,11 @@ from graphspec.schema.time import ALWAYS, NEVER
 from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
 from graphspec.views.visible import Looking
-from tuning.build import build
-from tuning.data import Deriver
-from tuning.model_spec import VIEWS, configuration, views
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
+from tuning.families.model_spec import VIEWS, configuration, views
+from tuning.fits.training import fit
 from tuning.statement import state
-from tuning.training import fit
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("tasks")
@@ -430,7 +430,7 @@ def test_a_sort_checks_the_members_a_task_names():
 
 @timed("tasks.batched")
 def batched(held, cfg):
-    from tuning.batching import pack_batch
+    from tuning.batches.batching import pack_batch
 
     blocks = held.blocks(0, cfg["graph"]["time/history"], cfg)
     return [pack_batch(held, [block], cfg, "cpu") for block in blocks]
@@ -574,9 +574,9 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
 
 
 def test_a_search_offers_every_family_under_every_context_for_references_of_every_sort(bank):
-    from tuning.model_spec import configured
-    from tuning.selector import check_bounds, graph_space, random_suggest
-    from tuning.space import Space
+    from tuning.families.model_spec import configured
+    from tuning.searches.selector import check_bounds, graph_space, random_suggest
+    from tuning.searches.space import Space
 
     held, _ = opened(bank)
     registry = held.registry

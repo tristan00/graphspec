@@ -13,10 +13,10 @@ from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from tuning import api
-from tuning.data import Bank, Deriver
-from tuning.run import flags, run
+from tuning.bank.bank import Bank, Deriver
+from tuning.fits.training import fit
+from tuning.searches.run import flags, run
 from tuning.statement import Statement, names, state
-from tuning.training import fit
 
 LOG = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ def test_a_bank_opened_to_read_cannot_derive_and_deriving_states_its_device(bank
 
 def test_the_key_of_a_variant_holds_the_device(bank):
     from conftest import SPLITS
-    from tuning.model_spec import configuration
+    from tuning.families.model_spec import configuration
 
     cfg = configuration(Bank(bank).registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
     central, graphic = Deriver(bank, "cpu", RESIDENT), Deriver(bank, "cuda", RESIDENT)

@@ -4,10 +4,10 @@ import time
 import numpy as np
 
 from graphspec.infra.timing import timed
+from tuning.bank.bank import ROWS
+from tuning.families.periods import enabled
 
-from .data import ROWS
 from .inputs import frame_inputs, recipe
-from .periods import enabled
 from .tensors import Frames, Host, joined, length, materialise
 
 LOG = logging.getLogger(__name__)

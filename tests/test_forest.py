@@ -2,10 +2,10 @@ import numpy as np
 import pytest
 
 from graphspec.infra.files import read_json
-from tuning import selector, space, surrogates
-from tuning.data import Bank
+from tuning.bank.bank import Bank
+from tuning.searches import selector, space, surrogates
+from tuning.searches.surrogates import COMPLETION_WEIGHT, Forest, log_expected_improvement
 from tuning.statement import state
-from tuning.surrogates import COMPLETION_WEIGHT, Forest, log_expected_improvement
 
 
 def test_log_expected_improvement_matches_the_closed_form_and_stays_finite_far_away():

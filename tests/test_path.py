@@ -8,9 +8,9 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, write_json
 from graphspec.schema.schema import TARGET
 from graphspec.sources.synthetic import Counter, graph_rows, uniform
-from tuning.build import build
-from tuning.data import Deriver
-from tuning.model_spec import configuration
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
+from tuning.families.model_spec import configuration
 
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SHAPE = uniform(4, 2, "path")
@@ -101,9 +101,9 @@ def expected_points(opened, block):
 
 
 def test_path_windows_carry_every_point_of_their_step(path_bank):
-    from tuning.batching import recipe_batch
-    from tuning.inputs import recipe
-    from tuning.model_spec import configuration
+    from tuning.batches.batching import recipe_batch
+    from tuning.batches.inputs import recipe
+    from tuning.families.model_spec import configuration
 
     opened = Deriver(path_bank, "cpu", RESIDENT)
     cfg = configuration(opened.registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
@@ -126,9 +126,9 @@ def test_path_windows_carry_every_point_of_their_step(path_bank):
 
 
 def test_path_windows_join_like_the_windows_of_numbers(path_bank):
-    from tuning.inputs import recipe
-    from tuning.model_spec import configuration
-    from tuning.variants import prepare
+    from tuning.bank.variants import prepare
+    from tuning.batches.inputs import recipe
+    from tuning.families.model_spec import configuration
 
     opened = Deriver(path_bank, "cpu", RESIDENT)
     single = configuration(
@@ -166,7 +166,7 @@ def test_path_windows_join_like_the_windows_of_numbers(path_bank):
 def test_path_loss_averages_within_task_and_series_then_tasks_then_series():
     import torch
 
-    from tuning.training import path_loss
+    from tuning.fits.training import path_loss
 
     predictions = torch.tensor([1.0, 3.0, 1.0, 2.0, 4.0, 2.0])
     targets = torch.zeros(6)
@@ -181,7 +181,7 @@ def test_path_loss_averages_within_task_and_series_then_tasks_then_series():
 
 
 def test_path_score_is_the_training_loss_on_validation_points():
-    from tuning.training import path_score, score
+    from tuning.fits.training import path_score, score
 
     targets = np.array([2.0, 1.0, -1.0, 4.0, 2.0])
     predictions = np.array([1.0, 1.0, 1.0, 0.0, 0.0])
@@ -200,7 +200,7 @@ def test_path_score_is_the_training_loss_on_validation_points():
 def test_validation_loss_matches_the_training_loss_on_the_same_points():
     import torch
 
-    from tuning.training import path_loss, path_score
+    from tuning.fits.training import path_loss, path_score
 
     rng = np.random.default_rng(4)
     owners = np.repeat(np.arange(6), 4)
@@ -225,7 +225,7 @@ def test_validation_loss_matches_the_training_loss_on_the_same_points():
 
 
 def test_objective_blends_series_losses_by_their_weights(path_bank):
-    from tuning import objective
+    from tuning.measures import objective
 
     opened = Deriver(path_bank, "cpu", RESIDENT)
     assert objective.weights(opened, None) == {"level": 1.0, "trend": 1.0}
@@ -269,11 +269,11 @@ def test_objective_blends_series_losses_by_their_weights(path_bank):
 def test_path_heads_emit_one_value_per_point(path_bank, model):
     import torch
 
-    from tuning.batching import pack_batch
-    from tuning.model_spec import configuration
-    from tuning.models import build
-    from tuning.periods import blocks as period_blocks
-    from tuning.training import loss
+    from tuning.batches.batching import pack_batch
+    from tuning.families.model_spec import configuration
+    from tuning.families.models import build
+    from tuning.families.periods import blocks as period_blocks
+    from tuning.fits.training import loss
 
     opened = Deriver(path_bank, "cpu", RESIDENT)
     cfg = configuration(opened.registry, dict(model, hidden=8), {"time/history": 2}, 11, SPLITS)

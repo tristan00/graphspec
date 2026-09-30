@@ -4,8 +4,8 @@ import pytest
 import torch
 from torch import nn
 
-from tuning.layers import CausalAttention, normalization
-from tuning.neighbors import WalkNet
+from tuning.families.layers import CausalAttention, normalization
+from tuning.families.walks import WalkNet
 
 
 def assert_finite_gradients(module, values):

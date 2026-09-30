@@ -7,7 +7,7 @@ from graphspec.infra import workspace
 from graphspec.infra.arrays import MappedRows, join_tensors
 from graphspec.infra.files import ArrayStore, save_arrays
 from graphspec.representations.groups import periods
-from tuning.period_inputs import prior_rows, profiles
+from tuning.batches.period_inputs import prior_rows, profiles
 
 
 def test_sparse_period_lookup_matches_dense_history():

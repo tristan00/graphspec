@@ -12,7 +12,7 @@ from graphspec.infra.processes.processes import parallel
 from graphspec.infra.timing import Timeline, measure
 from graphspec.registries import carried, restored
 
-from .data import Bank, Deriver
+from .bank import Bank, Deriver
 
 WORKER = {}
 

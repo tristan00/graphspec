@@ -8,7 +8,7 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
 from graphspec.representations import groups
 from graphspec.views.graph import DENSE
-from tuning.data import Deriver, identical
+from tuning.bank.bank import Deriver, identical
 
 
 def shortened(graph, stop):

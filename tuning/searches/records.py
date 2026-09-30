@@ -6,8 +6,7 @@ from pathlib import Path
 from graphspec.infra.files import JsonCache, sha256_json
 from graphspec.infra.processes.processes import command
 from graphspec.infra.timing import timed
-
-from . import objective
+from tuning.measures import objective
 
 VERSION = 9
 
@@ -40,7 +39,7 @@ def child(directory: Path, name: str) -> Path:
 def worker_alive(directory: Path, running: dict) -> bool:
     invocation = command(running["worker_pid"])
     expected = child(directory, running["trial"])
-    if "tuning.run" not in invocation or "worker" not in invocation or "--output" not in invocation:
+    if "tuning.searches.run" not in invocation or "worker" not in invocation or "--output" not in invocation:
         return False
     position = invocation.index("--output") + 1
     return position < len(invocation) and Path(invocation[position]).resolve() == expected
@@ -159,7 +158,7 @@ class Run:
         if state is None or state["status"] != Status.RUNNING:
             return state
         invocation = command(state["pid"])
-        module = "tuning.run" in invocation or ("graphspec" in invocation and "search" in invocation)
+        module = "tuning.searches.run" in invocation or ("graphspec" in invocation and "search" in invocation)
         if module and "run" in invocation and "--output" in invocation:
             index = invocation.index("--output") + 1
             if index < len(invocation) and Path(invocation[index]).resolve() == self.directory:

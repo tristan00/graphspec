@@ -8,13 +8,13 @@ import torch
 from conftest import SPLITS
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
-from tuning.batching import pack_batch
-from tuning.data import Deriver
-from tuning.layers import CausalAttention, TimeEncoding
-from tuning.model_spec import configuration, configured, samples, space, views
-from tuning.models import build
-from tuning.packing import Packer
-from tuning.periods import blocks as period_blocks
+from tuning.bank.bank import Deriver
+from tuning.batches.batching import pack_batch
+from tuning.batches.packing import Packer
+from tuning.families.layers import CausalAttention, TimeEncoding
+from tuning.families.model_spec import configuration, configured, samples, space, views
+from tuning.families.models import build
+from tuning.families.periods import blocks as period_blocks
 
 
 def registry(events=True, signals=2):
@@ -186,7 +186,7 @@ def test_packer_waits_on_worker_exit_events_without_polling(monkeypatch):
     packer.results = []
     packer.processes = [SimpleNamespace(sentinel=41, pid=12, exitcode=3)]
     observed = []
-    monkeypatch.setattr("tuning.packing.wait", lambda handles: observed.append(handles) or [41])
+    monkeypatch.setattr("tuning.batches.packing.wait", lambda handles: observed.append(handles) or [41])
     with pytest.raises(RuntimeError, match="exited before returning"):
         packer.receive()
     assert observed == [[41]]

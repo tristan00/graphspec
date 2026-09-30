@@ -6,10 +6,10 @@ import pytest
 import torch
 
 from graphspec.infra.arrays import Bundle, Slot, shared, slot_bytes, views
-from tuning.batching import batches, recipe_batch
-from tuning.packing import Packer
-from tuning.periods import blocks as period_blocks
-from tuning.tensors import materialise
+from tuning.batches.batching import batches, recipe_batch
+from tuning.batches.packing import Packer
+from tuning.batches.tensors import materialise
+from tuning.families.periods import blocks as period_blocks
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -170,9 +170,9 @@ def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
 def test_mixed_nodes_without_an_entity_carry_no_token(bank):
     from conftest import SPLITS
     from graphspec.infra.arrays import RESIDENT
-    from tuning.data import Deriver
-    from tuning.inputs import recipe
-    from tuning.model_spec import configuration
+    from tuning.bank.bank import Deriver
+    from tuning.batches.inputs import recipe
+    from tuning.families.model_spec import configuration
 
     opened = Deriver(bank, "cpu", RESIDENT)
     cfg = configuration(

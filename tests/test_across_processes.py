@@ -18,12 +18,12 @@ from graphspec.infra.timing import timed
 from graphspec.registries import carried, restored
 from graphspec.schema.schema import VERSION
 from graphspec.sources import synthetic
-from tuning.build import build
-from tuning.data import Deriver
-from tuning.model_spec import configuration
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
+from tuning.bank.variants import prepare
+from tuning.families.model_spec import configuration
+from tuning.fits.training import fit
 from tuning.statement import state
-from tuning.training import fit
-from tuning.variants import prepare
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("workers")

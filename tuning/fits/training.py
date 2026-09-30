@@ -16,16 +16,16 @@ from graphspec.infra.log import emit
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.operations.parameters import digest
-
-from .data import PACKAGES
+from tuning.bank.bank import PACKAGES
 
 if TYPE_CHECKING:
     from torch import Tensor, nn
     from torch.optim import Optimizer
 
+    from tuning.bank.bank import Deriver
+    from tuning.batches.packing import Packer
+
     from .budget import FitBudget
-    from .data import Deriver
-    from .packing import Packer
 
 Block = Sequence[int]
 
@@ -125,11 +125,10 @@ class TrainingSession:
         import torch
 
         from graphspec.infra.arrays import RESIDENT
-
-        from .data import Deriver
-        from .model_spec import describe
-        from .models import build
-        from .variants import prepare
+        from tuning.bank.bank import Deriver
+        from tuning.bank.variants import prepare
+        from tuning.families.model_spec import describe
+        from tuning.families.models import build
 
         self.entered = time.perf_counter()
         self.directory = output_path(directory)
@@ -180,8 +179,8 @@ class TrainingSession:
 
     @timed("schedule")
     def schedule(self, training_blocks: Sequence[Block], batch_size: int) -> Schedule:
-        from .batching import batches
-        from .periods import blocks as period_blocks
+        from tuning.batches.batching import batches
+        from tuning.families.periods import blocks as period_blocks
 
         if sorted(map(tuple, training_blocks)) != sorted(self.bank.blocks(0, self.history, self.config)):
             raise ValueError("training blocks must cover the entire frozen training partition")
@@ -319,7 +318,7 @@ class TrainingSession:
     def verify_checkpoint(self, predictions: Tensor, batch: dict):
         import torch
 
-        from .models import build
+        from tuning.families.models import build
 
         with measure("checkpoint_read"):
             loaded = torch.load(
@@ -335,8 +334,8 @@ class TrainingSession:
 
         self.budget.pulse("evaluation")
 
-        from .batching import batches
-        from .periods import blocks as period_blocks
+        from tuning.batches.batching import batches
+        from tuning.families.periods import blocks as period_blocks
 
         values, indices = [], []
         with measure("validation_schedule"):
@@ -455,9 +454,10 @@ class TrainingSession:
 
 
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, statement):
+    from tuning.batches.packing import Packer
+    from tuning.statement import stated as checked
+
     from .budget import FitBudget
-    from .packing import Packer
-    from .statement import stated as checked
 
     stated = checked(statement)
     compute.require(stated.device)

@@ -5,15 +5,15 @@ from pathlib import Path
 import pytest
 
 from graphspec.infra.files import JsonCache, read_json, sha256_json, write_json
-from tuning import run as runner
-from tuning.budget import FitBudget
-from tuning.records import VERSION, Outcome, Run, Status
+from tuning.fits.budget import FitBudget
+from tuning.searches import run as runner
+from tuning.searches.records import VERSION, Outcome, Run, Status
 from tuning.statement import state as stated
 
 
 def test_fit_progress_survives_failure_with_partial_timings(tmp_path, monkeypatch):
     clock = [10.0]
-    monkeypatch.setattr("tuning.budget.time.perf_counter", lambda: clock[0])
+    monkeypatch.setattr("tuning.fits.budget.time.perf_counter", lambda: clock[0])
     with pytest.raises(RuntimeError, match="failed batch"):
         with FitBudget(tmp_path, 100, 300) as budget:
             clock[0] = 13.0
@@ -34,7 +34,7 @@ def test_fit_progress_survives_failure_with_partial_timings(tmp_path, monkeypatc
 
 def test_preparation_failure_preserves_its_stage_and_elapsed_time(tmp_path, monkeypatch):
     clock = [10.0]
-    monkeypatch.setattr("tuning.budget.time.perf_counter", lambda: clock[0])
+    monkeypatch.setattr("tuning.fits.budget.time.perf_counter", lambda: clock[0])
     with pytest.raises(MemoryError):
         with FitBudget(tmp_path, 100, 300):
             clock[0] = 14.0
@@ -47,7 +47,7 @@ def test_preparation_failure_preserves_its_stage_and_elapsed_time(tmp_path, monk
 
 def test_active_measurement_is_saved_before_it_finishes(tmp_path, monkeypatch):
     clock = [10.0]
-    monkeypatch.setattr("tuning.budget.time.perf_counter", lambda: clock[0])
+    monkeypatch.setattr("tuning.fits.budget.time.perf_counter", lambda: clock[0])
     with pytest.raises(MemoryError):
         with FitBudget(tmp_path, 100, 300) as budget:
             budget.pulse("training")
@@ -67,7 +67,7 @@ def test_active_measurement_is_saved_before_it_finishes(tmp_path, monkeypatch):
 
 
 def plan_at(directory):
-    from tuning.selector import seeds
+    from tuning.searches.selector import seeds
 
     items = []
     for position, name in enumerate(("opaque-first", "opaque-second")):
@@ -158,7 +158,7 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
 
     monkeypatch.setattr(runner, "WorkerProcess", Worker)
     monkeypatch.setattr(
-        "tuning.budget.wait_worker",
+        "tuning.fits.budget.wait_worker",
         lambda process, deadline, directory, preparation: process.wait(
             timeout=max(0.0, deadline - time.perf_counter())
         ),
@@ -166,8 +166,8 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
     monkeypatch.setattr(runner, "training_layout", layout)
     monkeypatch.setattr(runner, "snapshot", lambda *args: None)
     monkeypatch.setattr(runner, "report", lambda *args: [])
-    monkeypatch.setattr("tuning.data.Deriver", Deriver)
-    monkeypatch.setattr("tuning.variants.prune", lambda *args: None)
+    monkeypatch.setattr("tuning.bank.bank.Deriver", Deriver)
+    monkeypatch.setattr("tuning.bank.variants.prune", lambda *args: None)
 
 
 def test_timeout_is_recorded_then_joined_before_the_next_trial(tmp_path, monkeypatch, statement):
@@ -191,7 +191,7 @@ def test_timeout_is_recorded_then_joined_before_the_next_trial(tmp_path, monkeyp
 def test_the_seconds_of_the_statement_control_deadline_and_all_terminal_records(
     tmp_path, monkeypatch, statement
 ):
-    from tuning.selector import seeds
+    from tuning.searches.selector import seeds
 
     statement = dict(statement, seconds=45)
     plan = plan_at(tmp_path)
@@ -207,7 +207,7 @@ def test_the_seconds_of_the_statement_control_deadline_and_all_terminal_records(
         deadlines.append(deadline - time.perf_counter())
         return process.wait(timeout=1)
 
-    monkeypatch.setattr("tuning.budget.wait_worker", wait)
+    monkeypatch.setattr("tuning.fits.budget.wait_worker", wait)
     runner.execute(tmp_path, plan, False, None, stated(statement))
     assert all(44 < deadline <= 45 for deadline in deadlines) and len(deadlines) == 2
     assert read_json(tmp_path / "opaque-first" / "timeout.json")["budget"] == 45

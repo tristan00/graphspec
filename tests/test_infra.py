@@ -8,7 +8,8 @@ import pytest
 
 from graphspec.build import output
 from graphspec.infra import code, files, runtime
-from tuning import api, build
+from tuning import api
+from tuning.bank import build
 
 
 def test_the_identities_of_compiled_functions_start_far_from_one_and_differ_between_seedings():
@@ -65,7 +66,7 @@ def test_the_suite_clears_what_it_made_under_its_homes_except_compiled_code(tmp_
 
 def test_the_caches_of_a_bank_are_keyed_by_the_code_that_made_them(bank, monkeypatch):
     from graphspec.build import staged
-    from tuning import data
+    from tuning.bank import bank as data
 
     assert data.CODE == code.digest(data.PACKAGES)
     assert staged.CODE == code.digest((Path(staged.__file__).parents[1],))

@@ -12,8 +12,8 @@ from urllib.request import urlopen
 from graphspec.infra.files import read_json, sha256_json
 from graphspec.infra.serve import HttpError
 from tuning.dashboard import Dashboard, create_server
-from tuning.records import VERSION
-from tuning.selector import load_history
+from tuning.searches.records import VERSION
+from tuning.searches.selector import load_history
 
 
 def write(path, value):
@@ -187,7 +187,7 @@ class DashboardTests(unittest.TestCase):
         write(
             self.run / "trial_000007" / "fit_progress.json", dict(phase="training", recorded_at=time.time())
         )
-        with patch("tuning.records.worker_alive", return_value=True):
+        with patch("tuning.searches.records.worker_alive", return_value=True):
             trial = self.dashboard.snapshot({"id": "search-alpha"})["trials"][-1]
             self.assertEqual(trial["status"], "running")
             self.assertEqual(trial["progress"]["phase"], "training")
@@ -230,12 +230,12 @@ class DashboardTests(unittest.TestCase):
             self.dashboard.routes()["/api/run"]({"id": "search-alpha"})
 
     def test_report_exports_each_recorded_time_limit(self):
-        from tuning.report import report
+        from tuning.searches.report import report
 
         for index, budget in ((0, 600), (5, 1200)):
             path = self.run / f"trial_{index:06d}" / "trial.json"
             write(path, dict(json.loads(path.read_text()), budget=budget))
-        with patch("tuning.report.describe", return_value="fixture"):
+        with patch("tuning.searches.report.describe", return_value="fixture"):
             report(self.run)
         with (self.run / "results.csv").open(newline="", encoding="utf-8") as stream:
             rows = list(csv.DictReader(stream))

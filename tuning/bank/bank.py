@@ -37,7 +37,7 @@ from graphspec.views.view import finished, sampled, sequences, view
 from graphspec.views.visible import STATEMENT, Looking
 
 LOG = logging.getLogger(__name__)
-PACKAGES = (Path(__file__).parent, Path(__file__).parent.parent / "graphspec")
+PACKAGES = (Path(__file__).parents[1], Path(__file__).parents[2] / "graphspec")
 CODE = digest(PACKAGES)
 ROWS = 1024
 JOINED_RESIDENT = 4 << 30
@@ -455,7 +455,7 @@ class Bank:
         return result
 
     def stated(self, cfg):
-        from .model_spec import groups
+        from tuning.families.model_spec import groups
 
         chosen = groups(cfg["model"])
         key = (chosen, specs.digest(cfg["graph"]))
@@ -467,7 +467,7 @@ class Bank:
 
     @timed("blocks")
     def blocks(self, partition, history, cfg):
-        from .model_spec import windowed
+        from tuning.families.model_spec import windowed
 
         started = time.perf_counter()
         partitions = self.partitions(cfg)

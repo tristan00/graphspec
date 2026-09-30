@@ -6,10 +6,10 @@ from graphspec.budgets import GraphLimits
 from graphspec.engine import join, transform
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import stages
-from tuning.data import Bank, Deriver, distinct, identical
-from tuning.inputs import recipe
-from tuning.model_spec import configuration
-from tuning.variants import prepare
+from tuning.bank.bank import Bank, Deriver, distinct, identical
+from tuning.bank.variants import prepare
+from tuning.batches.inputs import recipe
+from tuning.families.model_spec import configuration
 
 
 def test_single_join_builds_one_graph_per_group_and_keeps_every_block(bank):

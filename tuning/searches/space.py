@@ -13,9 +13,9 @@ from graphspec.infra.log import emit
 from graphspec.infra.processes.processes import guarded, spawned
 from graphspec.operations import parameters as specs
 from graphspec.registries import carried, restored
+from tuning.families.model_spec import TRAINING, groups
+from tuning.families.model_spec import space as model_space
 
-from .model_spec import TRAINING, groups
-from .model_spec import space as model_space
 from .selector import check_bounds, graph_space, metadata, narrow_group, runtime_parameter, spaces, stepped
 
 CANDIDATES = 10000

@@ -8,7 +8,7 @@ LOG = logging.getLogger(__name__)
 
 
 def build_bank(task, output, workers, trained):
-    from .build import build
+    from .bank.build import build
 
     started = time.perf_counter()
     result = build(task, output, workers, trained)
@@ -17,7 +17,7 @@ def build_bank(task, output, workers, trained):
 
 
 def open_bank(path):
-    from .data import Bank
+    from .bank.bank import Bank
 
     started = time.perf_counter()
     result = Bank(path)
@@ -28,8 +28,8 @@ def open_bank(path):
 def configuration(bank, model=None, graph=None, training=None, *, seed, splits):
     from graphspec.operations.parameters import configured
 
-    from .model_spec import TRAINING
-    from .model_spec import configuration as configure
+    from .families.model_spec import TRAINING
+    from .families.model_spec import configuration as configure
 
     started = time.perf_counter()
     registry = open_bank(bank).registry
@@ -43,8 +43,8 @@ def configuration(bank, model=None, graph=None, training=None, *, seed, splits):
 def fit(bank, config, output, statement):
     from graphspec.infra import compute
 
+    from .fits.training import fit as train
     from .statement import state
-    from .training import fit as train
 
     started = time.perf_counter()
     stated = state(statement)

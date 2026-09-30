@@ -1,7 +1,7 @@
 import torch
 
-from tuning.layers import KeyEmbedding, Spatial, TimeEncoding, chebyshev
-from tuning.model_spec import space
+from tuning.families.layers import KeyEmbedding, Spatial, TimeEncoding, chebyshev
+from tuning.families.model_spec import space
 
 
 def test_chebyshev_matches_dense_polynomial():
@@ -50,8 +50,8 @@ def test_time_encoding_modes():
 
 
 def test_model_space_offers_the_additions(bank):
-    from tuning.data import Bank
-    from tuning.model_spec import configured
+    from tuning.bank.bank import Bank
+    from tuning.families.model_spec import configured
 
     registry = Bank(bank).registry
     names = {parameter.name for parameter in space(registry)}

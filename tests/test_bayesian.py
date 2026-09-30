@@ -5,10 +5,10 @@ import pytest
 import torch
 
 from graphspec.infra.files import read_json
-from tuning import selector, space, surrogates
-from tuning.data import Bank
+from tuning.bank.bank import Bank
+from tuning.searches import selector, space, surrogates
+from tuning.searches.surrogates import Search
 from tuning.statement import state
-from tuning.surrogates import Search
 
 
 @pytest.fixture(autouse=True)

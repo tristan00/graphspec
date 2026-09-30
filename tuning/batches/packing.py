@@ -16,9 +16,9 @@ from graphspec.infra.log import configure
 from graphspec.infra.processes.processes import worker_threads
 from graphspec.infra.timing import Timeline, measure, timed
 from graphspec.registries import carried, restored
+from tuning.bank.bank import Deriver
 
 from .batching import recipe_batch
-from .data import Deriver
 from .tensors import keys, prepare, resolve
 
 LOG = logging.getLogger(__name__)

@@ -4,12 +4,16 @@ import time
 from graphspec.operations.parameters import canonical
 
 from .affinity import AffinityNet
-from .events import EventGraphNet, MemoryNet, ProjectionNet
-from .message_net import MixedNet
+from .event_graph import EventGraphNet
+from .memory import MemoryNet
+from .mixed import MixedNet
 from .model_spec import describe, space
-from .neighbors import SequenceNet, TreeNet, WalkNet
+from .projection import ProjectionNet
+from .sequence import SequenceNet
 from .signal import SignalNet
 from .snapshot import SnapshotNet
+from .tree import TreeNet
+from .walks import WalkNet
 
 LOG = logging.getLogger(__name__)
 NETS = dict(

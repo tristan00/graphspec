@@ -7,10 +7,10 @@ from optuna.distributions import IntDistribution
 from graphspec.infra.files import read_json, write_json
 from graphspec.operations import parameters as specs
 from graphspec.representations.groups import lags
-from tuning.data import Bank
-from tuning.model_spec import space
-from tuning.run import run
-from tuning.selector import distribution, random_suggest, suggest
+from tuning.bank.bank import Bank
+from tuning.families.model_spec import space
+from tuning.searches.run import run
+from tuning.searches.selector import distribution, random_suggest, suggest
 from tuning.statement import state
 
 
@@ -244,7 +244,7 @@ def test_random_epoch_ranges_persist_and_use_inclusive_integer_draws(bank, tmp_p
     "bound", [0, -1, True, 1.5, 600, {"low": 1200, "high": 600}, {"low": 600, "high": 1200}]
 )
 def test_bounds_that_hold_the_seconds_of_a_trial_are_refused_naming_them(bank, tmp_path, bound):
-    from tuning.selector import check_bounds
+    from tuning.searches.selector import check_bounds
 
     registry = Bank(bank).registry
     with pytest.raises(ValueError, match="the bounds hold max_seconds"):
@@ -262,7 +262,7 @@ def test_bounds_that_hold_the_seconds_of_a_trial_are_refused_naming_them(bank, t
 
 @pytest.mark.parametrize("seconds", [0, -1, True, 1.5, None])
 def test_seconds_of_a_trial_outside_their_meaning_are_refused(seconds):
-    from tuning.selector import runtime_parameter
+    from tuning.searches.selector import runtime_parameter
 
     with pytest.raises(ValueError, match="max_seconds is %r and must be a positive integer" % (seconds,)):
         runtime_parameter(seconds)
@@ -323,7 +323,7 @@ def test_a_plan_on_disk_that_lacks_a_field_stops_naming_it(bank, tmp_path, field
 
 
 def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path, statement):
-    from tuning.selector import append_trial
+    from tuning.searches.selector import append_trial
 
     registry = Bank(bank).registry
     plan = dict(
@@ -358,8 +358,8 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path, s
 
 
 def test_tpe_good_set_is_the_best_hundred_trials():
-    from tuning import tpe
-    from tuning.selector import SETTINGS
+    from tuning.searches import tpe
+    from tuning.searches.selector import SETTINGS
 
     study = tpe.study(1, SETTINGS, [])
     assert study.sampler._gamma(410) == 100
@@ -392,7 +392,7 @@ def test_a_new_run_stores_the_choices_of_the_search_as_stated(bank, tmp_path):
 
 
 def test_score_histograms_survive_nearly_identical_predictions():
-    from tuning.space import histogram
+    from tuning.searches.space import histogram
 
     nearly = [0.25, 0.25 + 5e-17, 0.25 + 1e-16]
     assert histogram(nearly)["counts"] == [3]

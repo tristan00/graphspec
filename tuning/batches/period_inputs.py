@@ -4,9 +4,9 @@ import torch
 from graphspec.engine.transform import SEED
 from graphspec.infra.timing import timed
 from graphspec.representations.groups import tick_span
+from tuning.families.periods import lookback
 
 from .inputs import tree
-from .periods import lookback
 from .tensors import Features, array, features, gathered, joined, length
 
 

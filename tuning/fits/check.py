@@ -11,17 +11,17 @@ from graphspec.infra.log import configure, emit
 from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.runtime import output_path
 from graphspec.operations import parameters as specs
+from tuning.bank.bank import Deriver
+from tuning.batches.batching import pack_batch
+from tuning.families.model_spec import configuration, describe, groups, samples
+from tuning.families.models import build
+from tuning.statement import seen
 
-from .batching import pack_batch
-from .data import Deriver
-from .model_spec import configuration, describe, groups, samples
-from .models import build
-from .statement import seen
 from .training import loss
 
 
 def probe(bank, block, cfg, device):
-    from .periods import blocks as period_blocks
+    from tuning.families.periods import blocks as period_blocks
 
     started = time.perf_counter()
     b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, device)

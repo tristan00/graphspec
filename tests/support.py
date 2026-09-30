@@ -401,7 +401,7 @@ def several(registry):
 def shown(opened, index):
     from conftest import SPLITS
     from graphspec.views.graph import Graph
-    from tuning.model_spec import configuration
+    from tuning.families.model_spec import configuration
 
     started = time.perf_counter()
     cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)
@@ -412,7 +412,7 @@ def shown(opened, index):
 
 def fitted(opened):
     from conftest import SPLITS
-    from tuning.model_spec import configuration
+    from tuning.families.model_spec import configuration
 
     started = time.perf_counter()
     cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)

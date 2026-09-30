@@ -188,7 +188,7 @@ class Window:
 
     @classmethod
     def open(cls, bank, block, cfg):
-        from .model_spec import row_local, windowed
+        from tuning.families.model_spec import row_local, windowed
 
         graph, start, stop, _, _, row_lo, row_hi = block
         held = bank.resident(graph, cfg, "cpu")
@@ -226,7 +226,7 @@ def frame_inputs(window, start, stop):
 
 
 def snapshot_inputs(b, window):
-    from .model_spec import shared_frames
+    from tuning.families.model_spec import shared_frames
 
     start, lo, hi, held = window.start, window.lo, window.hi, window.held
     entity = held.numpy("entity")[lo:hi]
@@ -516,7 +516,7 @@ def dag_inputs(b, window, left, right, position):
 
 
 def walks_inputs(b, window, context):
-    from .periods import enabled, lookback
+    from tuning.families.periods import enabled, lookback
 
     graph, start = window.graph, window.start
     held, cfg, tokens = window.held, window.cfg, window.tokens
@@ -614,7 +614,7 @@ def base_inputs(bank, block, window):
 
 
 def tree_inputs(b, window):
-    from .model_spec import neighbors
+    from tuning.families.model_spec import neighbors
 
     graph, start = window.graph, window.start
     held, registry, cfg, tokens = window.held, window.registry, window.cfg, window.tokens
@@ -636,7 +636,7 @@ def tree_inputs(b, window):
 
 
 def neighbor_history_inputs(b, window, blocks):
-    from .model_spec import neighbors
+    from tuning.families.model_spec import neighbors
 
     tokens = window.tokens
     b.update(
@@ -720,8 +720,9 @@ def affinity_inputs(b, window):
 
 
 def prepare_context(window, b):
+    from tuning.families.periods import enabled
+
     from .period_inputs import add
-    from .periods import enabled
 
     result = {}
     if enabled(window.cfg):
@@ -789,7 +790,7 @@ def entity_space(b, window, blocks):
 
 
 def recipe(bank, block, cfg):
-    from .model_spec import blocks as model_blocks
+    from tuning.families.model_spec import blocks as model_blocks
 
     started = time.perf_counter()
     window = Window.open(bank, block, cfg)

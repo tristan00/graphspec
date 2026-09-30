@@ -20,10 +20,10 @@ from graphspec.schema.declaration import EXTRAS
 from graphspec.schema.schema import VALUE, Encoding, Schema, fitted
 from graphspec.sources import synthetic
 from graphspec.views.graph import conforms
-from tuning.build import build
-from tuning.data import Deriver
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
+from tuning.fits.training import fit
 from tuning.statement import state
-from tuning.training import fit
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("schema")

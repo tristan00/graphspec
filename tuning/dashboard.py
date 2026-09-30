@@ -8,8 +8,8 @@ from graphspec.infra.log import configure
 from graphspec.infra.runtime import home
 from graphspec.infra.serve import HttpError, serve, server
 
-from . import objective
-from .records import Run, Status
+from .measures import objective
+from .searches.records import Run, Status
 
 LOG = logging.getLogger(__name__)
 WEB = Path(__file__).with_name("web")

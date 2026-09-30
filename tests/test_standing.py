@@ -22,7 +22,7 @@ COMPILERS = ("njit", "jit")
 LOADERS = ("import_module", "__import__", "run_module")
 LOCAL = re.compile(r"(^|[\\/])local([\\/]|$)")
 INFRA = "graphspec/infra"
-GROUPED = ("graphspec",)
+GROUPED = ("graphspec", "tuning")
 LAYERS = {
     INFRA: (),
     "graphspec/registries.py": (),
@@ -37,6 +37,18 @@ LAYERS = {
     "graphspec/engine": ("graphspec/representations",),
     "graphspec/descriptions": ("graphspec/engine", "graphspec/sources"),
     "graphspec/__init__.py": ("graphspec/descriptions",),
+    "tuning/statement.py": ("graphspec/__init__.py",),
+    "tuning/families": ("tuning/statement.py",),
+    "tuning/bank": ("tuning/families",),
+    "tuning/batches": ("tuning/bank",),
+    "tuning/measures": ("tuning/batches",),
+    "tuning/descriptions": ("tuning/measures",),
+    "tuning/fits": ("tuning/descriptions",),
+    "tuning/searches": ("tuning/fits",),
+    "tuning/api.py": ("tuning/searches",),
+    "tuning/dashboard.py": ("tuning/searches",),
+    "tuning/__main__.py": ("tuning/api.py", "tuning/dashboard.py"),
+    "tuning/__init__.py": ("tuning/api.py", "tuning/dashboard.py"),
 }
 
 
@@ -342,21 +354,25 @@ def test_every_module_sits_in_a_group_and_imports_only_the_groups_below_it(tmp_p
         write(tmp_path, place + "/__init__.py", "")
     for place in ("registries", "infra/files", "operations/sets", "views/graph", "engine/transform"):
         write(tmp_path, "graphspec/%s.py" % place, "VALUE = 1\n")
-    write(tmp_path, "tuning/run.py", "from graphspec.infra.files import VALUE\n")
+    write(tmp_path, "tuning/searches/run.py", "from graphspec.infra.files import VALUE\n")
+    write(tmp_path, "tuning/bank/bank.py", "from graphspec.views.graph import VALUE\n")
+    write(tmp_path, "tuning/families/layers.py", "from ..bank import bank\n")
+    write(tmp_path, "tuning/loose.py", "VALUE = 1\n")
     write(tmp_path, "graphspec/loose.py", "from graphspec.infra.files import VALUE\n")
     write(tmp_path, "graphspec/views/seen.py", "from .graph import VALUE\nfrom graphspec.operations.sets import VALUE\n")
     write(tmp_path, "graphspec/views/late.py", "def work():\n    from ..engine import transform\n\n    return transform\n")
     write(tmp_path, "graphspec/engine/fine.py", "from graphspec.infra import files\nfrom graphspec.views import graph\n")
     write(tmp_path, "graphspec/infra/pools.py", "from ..registries import VALUE\nfrom .files import VALUE as SAME\n")
-    write(tmp_path, "graphspec/infra/processes/inside.py", "def work():\n    import tuning.run\n\n    return 1\n")
+    write(tmp_path, "graphspec/infra/processes/inside.py", "def work():\n    import tuning.searches.run\n\n    return 1\n")
     write(tmp_path, "graphspec/infra/whole.py", "from graphspec import registries\nfrom graphspec.infra import files\n")
     assert layered(tmp_path, CODE) == (
-        ["graphspec/loose.py"],
+        ["graphspec/loose.py", "tuning/loose.py"],
         [
             ("graphspec/infra/pools.py", 1, INFRA, "graphspec/registries.py"),
-            ("graphspec/infra/processes/inside.py", 2, INFRA, "tuning/run.py"),
+            ("graphspec/infra/processes/inside.py", 2, INFRA, "tuning/searches"),
             ("graphspec/infra/whole.py", 1, INFRA, "graphspec/registries.py"),
             ("graphspec/views/late.py", 2, "graphspec/views", "graphspec/engine"),
             ("graphspec/views/seen.py", 2, "graphspec/views", "graphspec/operations"),
+            ("tuning/families/layers.py", 1, "tuning/families", "tuning/bank"),
         ],
     )
