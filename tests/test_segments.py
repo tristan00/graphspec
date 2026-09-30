@@ -1,6 +1,7 @@
 import gc
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -317,10 +318,17 @@ def test_the_arrays_of_a_joined_group_are_equal_for_one_and_two_workers(bank, re
     folders = {name: tmp_path / name for name in ("one", "two", "spill")}
     for folder in folders.values():
         folder.mkdir()
-    members = [Graph.load(path, mapped=True) for path in paths]
-    segments.variant(members, registry, steps, spec, GROUPS, transform.SEED, LIMITS, None, folders["one"])
-    job = dict(members=members, paths=paths, spill=folders["spill"], destination=folders["two"])
-    schedule.variants([job], registry, steps, spec, GROUPS, transform.SEED, 2, LIMITS, None)
+    job = dict(
+        members=[Graph.load(path, mapped=True) for path in paths],
+        paths=paths,
+        spill=folders["spill"],
+        destination=folders["two"],
+    )
+    with ThreadPoolExecutor(1) as beside:
+        both = beside.submit(schedule.variants, [job], registry, steps, spec, GROUPS, transform.SEED, 2, LIMITS, None)
+        members = [Graph.load(path, mapped=True) for path in paths]
+        segments.variant(members, registry, steps, spec, GROUPS, transform.SEED, LIMITS, None, folders["one"])
+        both.result()
     one, two = Arrays(folders["one"]), Arrays(folders["two"])
     assert sorted(one) == sorted(two) and "running" in one
     assert [name for name in one if not identical(one[name], two[name])] == []
