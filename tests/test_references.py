@@ -28,20 +28,8 @@ MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
 TIMES, THIRD, KIND, VALUE = 4, 1, 3, 2
 FEW, MANY, CROWDED = 5, 50, (0, 1, 1, 2)
 EDGES = ("snapshot", "event_graph", "memory", "projection", "sequence", "tree", "walks")
-SHARED = dict(
-    snapshot="plain",
-    signal="plain",
-    affinity="plain",
-    memory="neighbors",
-    projection="neighbors",
-    sequence="neighbors",
-    tree="neighbors",
-)
-FAMILIES = [
-    pytest.param(family, marks=pytest.mark.xdist_group("references-" + SHARED.get(family, family)))
-    for family in VIEWS
-]
 NETS, HELD, OPENED = {}, {}, {}
+pytestmark = pytest.mark.xdist_group("references")
 
 
 @timed("references.stated")
@@ -246,7 +234,7 @@ def compared(banks, family, graph):
     return [stated[row] for row in rows], [changed[row] for row in rows]
 
 
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", VIEWS)
 def test_every_family_reads_the_references_of_a_task_as_a_set_keyed_by_name(banks, family):
     registry = opened(banks, "stated").registry
     assert family in views(registry) and couples(registry) == {0: (0, 1), 1: (0, 1)}
@@ -256,19 +244,18 @@ def test_every_family_reads_the_references_of_a_task_as_a_set_keyed_by_name(bank
     assert len(reordered) == TIMES and reordered == {row: stated[row] for row in reordered}
 
 
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", VIEWS)
 def test_the_kind_of_a_task_reaches_every_family(banks, family):
     stated, changed = compared(banks, family, "main")
     assert stated[KIND] != changed[KIND]
 
 
-@pytest.mark.parametrize("family", [family for family in FAMILIES if family.values[0] in EDGES])
+@pytest.mark.parametrize("family", [family for family in VIEWS if family in EDGES])
 def test_the_value_of_a_relation_taken_from_a_column_reaches_every_family_that_reads_edges(banks, family):
     stated, changed = compared(banks, family, "main")
     assert stated[:THIRD] == changed[:THIRD] and stated[VALUE] != changed[VALUE]
 
 
-@pytest.mark.xdist_group("references-event_graph")
 def test_the_kinds_of_event_and_the_relations_never_share_a_slot(banks):
     held = opened(banks, "stated")
     registry = held.registry
@@ -311,7 +298,6 @@ def sizes(banks, name):
     return dict(values=len(registry.groups["links"]), parameters=len(space), arrays=sorted(arrays), weights=weights)
 
 
-@pytest.mark.xdist_group("references-plain")
 def test_a_relation_taken_from_a_column_has_the_parameters_arrays_and_weights_of_its_table(banks):
     banks = dict(banks, wide=shared("references-wide", made(WIDE)) / "wide")
     few, many = sizes(banks, "stated"), sizes(banks, "wide")
@@ -320,7 +306,6 @@ def test_a_relation_taken_from_a_column_has_the_parameters_arrays_and_weights_of
     assert "attributes_links" in few["arrays"] and set(few["weights"]) == set(VIEWS)
 
 
-@pytest.mark.xdist_group("references-plain")
 def test_a_frame_of_a_sequence_over_graphs_reads_every_task_seen_as_an_event_at_its_step(banks):
     held = opened(banks, "stated")
     assert set(views(held.registry)) == set(VIEWS)
@@ -343,7 +328,7 @@ def test_a_frame_of_a_sequence_over_graphs_reads_every_task_seen_as_an_event_at_
     assert all(torch.isfinite(parameter.grad).all() for parameter in net.parameters() if parameter.grad is not None)
 
 
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", VIEWS)
 def test_the_attributes_of_a_graph_reach_every_family(banks, family):
     stated, changed = compared(banks, family, "era")
     assert all(left != right for left, right in zip(stated, changed))

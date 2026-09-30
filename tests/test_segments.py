@@ -10,6 +10,8 @@ from graphspec.representations import groups
 from graphspec.views.graph import DENSE
 from tuning.bank.bank import Deriver, identical
 
+pytestmark = pytest.mark.xdist_group("segments")
+
 
 def shortened(graph, stop):
     arrays = dict(graph.arrays)

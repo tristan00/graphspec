@@ -16,6 +16,8 @@ from tuning.families.model_spec import configuration, configured, samples, space
 from tuning.families.models import build
 from tuning.families.periods import blocks as period_blocks
 
+pytestmark = pytest.mark.xdist_group("model_config")
+
 
 def registry(events=True, signals=2):
     kinds = dict(ask=dict(target=dict(kind="number"), references=("unit",), absent="stop"))
