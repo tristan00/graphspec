@@ -183,6 +183,7 @@ CASES = dict(
         schema=stated(NAMES), graphs=[graph("main", changed=True), graph("era", era=2.0, times=CROWDED)]
     ),
     reordered=lambda: dict(schema=stated(("r4", "r5", "r2", "r0", "r3", "r1")), graphs=[graph("main")]),
+    turned=lambda: dict(schema=stated(NAMES), graphs=[graph("era", times=CROWDED), graph("main")]),
     renumbered=lambda: dict(
         schema=stated(NAMES),
         graphs=[graph("era", times=CROWDED, listed=RENUMBERED), graph("main", listed=RENUMBERED)],
@@ -253,6 +254,11 @@ def test_every_family_reads_the_references_of_a_task_as_a_set_keyed_by_name(bank
     assert stated[:THIRD] == changed[:THIRD] and stated[THIRD] != changed[THIRD]
     reordered, stated = predicted(banks, family, "reordered"), predicted(banks, family, "stated")
     assert len(reordered) == TIMES and reordered == {row: stated[row] for row in reordered}
+
+
+def test_reordering_the_graphs_of_a_bank_leaves_the_predictions_of_the_projection_family_equal(banks):
+    turned, stated = predicted(banks, "projection", "turned"), predicted(banks, "projection", "stated")
+    assert len(turned) == 2 * TIMES and turned == stated
 
 
 @timed("references.epoch")
