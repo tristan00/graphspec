@@ -1,5 +1,6 @@
 import logging
 import time
+from weakref import WeakKeyDictionary
 
 import numpy as np
 from numba import njit
@@ -42,6 +43,7 @@ DENSE = (
 CHANGES = ("time", "observations", "facts")
 ENCODED = ("obs_x", "task_x", "entity_held")
 SHOWN = tuple(name for name in ARRAYS if name not in ENCODED)
+JOINS = WeakKeyDictionary()
 
 
 class Shown(Arrays):
@@ -106,6 +108,22 @@ class Dense(Arrays):
     NAMES = DENSE
 
 
+def joining(registry):
+    if registry in JOINS:
+        return JOINS[registry]
+    started = time.perf_counter()
+    nodes, found = len(registry.nodes), []
+    for edge in registry.edges:
+        for source, target in edge.pairs:
+            ends = {(registry.kind(source), registry.kind(target))}
+            if edge.symmetric:
+                ends.add((registry.kind(target), registry.kind(source)))
+            found += [(edge.code * nodes + first) * nodes + second for first, second in ends]
+    JOINS[registry] = np.unique(np.asarray(found, np.int64))
+    LOG.debug("joining exit relations=%d seconds=%.4f", len(registry.edges), time.perf_counter() - started)
+    return JOINS[registry]
+
+
 def conforms(graph, registry, changed):
     started = time.perf_counter()
     unknown = sorted(set(changed) - set(CHANGES))
@@ -123,18 +141,14 @@ def conforms(graph, registry, changed):
         found = np.asarray(graph.fact_code)
         if np.any(found < 0) or np.any(found >= registry.relations) or not registry.canonical[found].all():
             raise ValueError("graph %s holds facts of relations its schema does not state" % name)
-        pairs = kinds[graph.fact_source].astype(np.int64) * len(registry.nodes) + kinds[graph.fact_target]
-        for code in np.unique(found).tolist():
-            edge = registry.by_code[code]
-            allowed = {(registry.kind(source), registry.kind(target)) for source, target in edge.pairs}
-            if edge.symmetric:
-                allowed |= {(target, source) for source, target in allowed}
-            allowed = np.asarray([source * len(registry.nodes) + target for source, target in allowed])
-            if not np.isin(pairs[found == code], allowed).all():
-                raise ValueError(
-                    "graph %s holds a fact of %s between kinds of node the relation does not join"
-                    % (name, edge.name)
-                )
+        nodes = len(registry.nodes)
+        pairs = (found.astype(np.int64) * nodes + kinds[graph.fact_source]) * nodes + kinds[graph.fact_target]
+        lost = ~np.isin(pairs, joining(registry))
+        if lost.any():
+            raise ValueError(
+                "graph %s holds a fact of %s between kinds of node the relation does not join"
+                % (name, registry.by_code[int(found[lost].min())].name)
+            )
     LOG.debug(
         "conforms exit graph=%s changed=%s seconds=%.4f",
         name,

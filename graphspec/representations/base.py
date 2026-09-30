@@ -59,9 +59,9 @@ def shifted(values, base):
 
 
 def localized(*columns):
-    values, inverse = np.unique(
-        np.concatenate([np.asarray(column, np.int64) for column in columns] + [EMPTY]), return_inverse=True
-    )
+    held = np.concatenate([np.asarray(column, np.int64) for column in columns] + [EMPTY])
+    values = np.unique(held)
+    inverse = np.searchsorted(values, held)
     parts, offset = [], 0
     for column in columns:
         parts.append(inverse[offset : offset + len(column)].astype(np.int64))

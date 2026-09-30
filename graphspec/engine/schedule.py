@@ -3,7 +3,7 @@ import heapq
 import logging
 import pickle
 import time
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import numba
@@ -346,8 +346,8 @@ def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partiti
                         LOG.info("segments represented job=%d seconds=%.3f", job, time.perf_counter() - started)
                         heapq.heappush(waiting, (-1, RANK["stitch"], job, "stitch", (index,)))
     finally:
-        for executor in executors:
-            executor.shutdown(cancel_futures=True)
+        with ThreadPoolExecutor(workers) as closing:
+            list(closing.map(lambda executor: executor.shutdown(cancel_futures=True), executors))
     LOG.info(
         "segments parallel build exit seconds=%.3f groups=%d segments=%d workers=%d stages=%d busy=%s",
         time.perf_counter() - started,

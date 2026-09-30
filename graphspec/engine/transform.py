@@ -11,7 +11,7 @@ from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
 SEED = 0x6772617068
-VERSION = 5
+VERSION = 6
 REMOVES = "references"
 
 
@@ -60,8 +60,8 @@ def initial(registry, steps):
     return result
 
 
-def derive(graph, registry, steps, limits, partitions, carry, states):
-    started, found = time.perf_counter(), {}
+def derive(graph, registry, steps, limits, partitions, carry, states, edited):
+    started, found, given = time.perf_counter(), {}, graph
     for step in steps:
         clock = time.perf_counter()
         with measure(step.name):
@@ -76,8 +76,9 @@ def derive(graph, registry, steps, limits, partitions, carry, states):
             len(graph.fact_step),
             len(graph.obs_step),
         )
-    with measure("verify"):
-        verify_dense(graph, registry, carry.known)
+    if edited or graph is not given:
+        with measure("verify"):
+            verify_dense(graph, registry, carry.known)
     LOG.info("derive exit graph=%s seconds=%.3f", graph.name, time.perf_counter() - started)
     return graph, found
 

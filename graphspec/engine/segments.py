@@ -178,7 +178,14 @@ def advanced(source, member, graph, low, high, edit, state):
             source.plan, member, graph, low, high, edit, state["entities"], state["added"], state["seen"]
         )
     derived, steps = transform.derive(
-        dense, source.registry, source.steps, source.limits, source.partitions, carry, state["steps"]
+        dense,
+        source.registry,
+        source.steps,
+        source.limits,
+        source.partitions,
+        carry,
+        state["steps"],
+        edit is not None,
     )
     with measure("represent"):
         piece, held = representations.represented(
@@ -315,7 +322,7 @@ def whole(graph, registry, steps, limits, partitions):
     plan = Plan([graph], alone(graph), 0)
     carry, dense, _, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, (0, 0), EMPTY)
     states = transform.initial(registry, steps)
-    derived, _ = transform.derive(dense, registry, steps, limits, partitions, carry, states)
+    derived, _ = transform.derive(dense, registry, steps, limits, partitions, carry, states, False)
     LOG.info("whole exit graph=%s seconds=%.3f", graph.name, time.perf_counter() - started)
     return derived
 

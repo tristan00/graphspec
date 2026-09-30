@@ -2,13 +2,14 @@ import logging
 import os
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from functools import wraps
 from pathlib import Path
 
 from .files import write_json
 
 CURRENT = None
+UNMEASURED = nullcontext()
 
 
 class Timeline:
@@ -108,14 +109,9 @@ class Timeline:
                 write_json(self.path, self.snapshot())
 
 
-@contextmanager
 def measure(name):
     recorder = CURRENT
-    if recorder is None:
-        yield
-    else:
-        with recorder.measure(name):
-            yield
+    return UNMEASURED if recorder is None else recorder.measure(name)
 
 
 def timed(name):
