@@ -16,7 +16,7 @@ FACTS = 4 << 20
 CHUNK = 64
 
 
-def batches(blocks, size, sizes, seed=None, frame_budget=None, chunk=CHUNK):
+def batches(blocks, size, sizes, seed, frame_budget=None, chunk=CHUNK):
     started = time.perf_counter()
     if size < 1 or chunk < 1 or (frame_budget is not None and frame_budget < 1):
         raise ValueError("batch size, chunk size and frame budget must be positive")

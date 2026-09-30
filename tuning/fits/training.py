@@ -343,6 +343,7 @@ class TrainingSession:
                 period_blocks(self.bank, self.bank.blocks(1, self.history, self.config), self.config),
                 schedule.batch_size,
                 schedule.sizes,
+                None,
                 frame_budget=1024,
             )
         stream = self.budget.batches(packer.stream(validation), "validation_pack")

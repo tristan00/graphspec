@@ -222,7 +222,7 @@ def predicted(banks, family, name):
         with torch.inference_mode():
             for graph in sorted({block[0] for block in blocks}):
                 chosen = [block for block in blocks if block[0] == graph]
-                for group in batches(chosen, len(chosen), held.sizes(cfg), frame_budget=1024):
+                for group in batches(chosen, len(chosen), held.sizes(cfg), None, frame_budget=1024):
                     b = pack_batch(held, group, cfg, "cpu")
                     rows = [held.rows[row]["graph"] + "/%d" % held.rows[row]["ticket"] for row in b["rows"]]
                     found.update(zip(rows, NETS[family](b).tolist()))
@@ -275,7 +275,7 @@ def test_the_kinds_of_event_and_the_relations_never_share_a_slot(banks):
     net.layers[0].register_forward_pre_hook(lambda module, args: found.append(args[2]))
     blocks = [block for partition in (0, 1) for block in held.blocks(partition, 2, cfg)]
     with torch.inference_mode():
-        for group in batches(blocks, len(blocks), held.sizes(cfg), frame_budget=1024):
+        for group in batches(blocks, len(blocks), held.sizes(cfg), None, frame_budget=1024):
             net(pack_batch(held, group, cfg, "cpu"))
     slots = set(torch.cat(found).tolist())
     assert registry.relations > 4 and registry.marker("period_context") in slots
@@ -331,7 +331,9 @@ def test_a_frame_of_a_sequence_over_graphs_reads_every_task_seen_as_an_event_at_
     net = network(cfg, held.fitted(cfg))
     era = [graph["index"] for graph in held.viewed(cfg).graphs if graph["name"] == "era"]
     blocks = [block for partition in (0, 1) for block in held.blocks(partition, 2, cfg) if block[0] in era]
-    found = [pack_batch(held, group, cfg, "cpu") for group in batches(blocks, 1, held.sizes(cfg), frame_budget=1024)]
+    found = [
+        pack_batch(held, group, cfg, "cpu") for group in batches(blocks, 1, held.sizes(cfg), None, frame_budget=1024)
+    ]
     b = next(batch for batch in found if torch.bincount(batch["frame_event"]).max() == 2)
     frame = int(torch.bincount(b["frame_event"]).argmax())
     second = (b["frame_event"] == frame).nonzero().flatten()[1]

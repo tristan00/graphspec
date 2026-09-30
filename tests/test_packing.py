@@ -167,6 +167,12 @@ def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
     assert sorted(block for group in groups for block in group) == sorted(map(tuple, blocks))
 
 
+def test_batches_are_formed_only_under_a_seed_the_caller_states():
+    blocks = [[0, 0, 2, 1, 0, 0, 2], [1, 0, 2, 1, 0, 0, 1]]
+    with pytest.raises(TypeError, match="seed"):
+        batches(blocks, 4, {0: (5, 1.0), 1: (5, 1.0)}, frame_budget=1024)
+
+
 def test_mixed_nodes_without_an_entity_carry_no_token(bank):
     from support import configuration
 
