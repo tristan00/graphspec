@@ -42,11 +42,7 @@ class ProjectionNet(nn.Module):
     def structural(self, b):
         spec = self.cfg["model"]
         hops, width, decay = spec["projection/hops"], spec["projection/width"], spec["projection/decay"]
-        basis = []
-        for graph, size in zip(b["graphs"], b["entity_sizes"]):
-            generator = torch.Generator().manual_seed(self.cfg["seed"] + graph)
-            basis.append(torch.randn(size, width, generator=generator).to(b["task"].device) / math.sqrt(width))
-        basis = torch.cat(basis)
+        basis = b["projection_basis"] / math.sqrt(width)
         state = basis.new_zeros(b["entities"], hops + 1, width)
         state[:, 0] = basis
         groups = {tick: (start, end) for tick, start, end in b["event_groups"]}

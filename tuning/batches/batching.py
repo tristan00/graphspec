@@ -250,6 +250,7 @@ def recipe_batch(bank, blocks, cfg):
         "walk_period_kind",
         "walk_end_time",
         "entity_token",
+        "projection_basis",
         "token",
         "history_token",
         "walk_token",

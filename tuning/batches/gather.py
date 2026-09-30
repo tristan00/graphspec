@@ -15,6 +15,18 @@ def rooted(drawn, keyed, entity, cutoff):
     return mixed(value ^ np.uint64(cutoff % 2))
 
 
+@njit(cache=True, parallel=True)
+def gaussian(drawn, tokens, homes, width):
+    result = np.empty((len(tokens), width), np.float32)
+    for row in prange(len(tokens)):
+        value = mixed(mixed(mixed(drawn) ^ np.uint64(tokens[row])) ^ homes[row])
+        for column in range(width):
+            first = max(uniform(mixed(value ^ np.uint64(2 * column))), 2.0**-53)
+            second = uniform(mixed(value ^ np.uint64(2 * column + 1)))
+            result[row, column] = np.sqrt(-2.0 * np.log(first)) * np.cos(2.0 * np.pi * second)
+    return result
+
+
 @njit(cache=True)
 def latest(observation_ids, observation_offsets, step, entities, cutoffs):
     result = np.full(len(entities), -1, np.int32)

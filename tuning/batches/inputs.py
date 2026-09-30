@@ -17,6 +17,7 @@ from .tensors import Frames, Host, array, features, features_at, gathered, joine
 
 LOG = logging.getLogger(__name__)
 NEIGHBOURS = "tuning.batches/neighbors"
+BASIS = "tuning.families/projection"
 ORDERS = dict(recent=0, uniform=1, decay=2)
 
 
@@ -754,6 +755,20 @@ def context_inputs(b, window, blocks, context):
         history_tokens(b, window)
 
 
+def basis(window, entities):
+    started = time.perf_counter()
+    held, cfg = window.held, window.cfg
+    offsets, order, step = held.numpy("observation_offsets"), held.numpy("observation_ids"), held.numpy("step")
+    observed = offsets[entities + 1] > offsets[entities]
+    homes = np.zeros(len(entities), np.uint64)
+    homes[observed] = held.numpy("step_token")[step[order[offsets[entities[observed]]]]]
+    result = gather.gaussian(
+        salted(cfg["seed"], BASIS), held.numpy("entity_token")[entities], homes, cfg["model"]["projection/width"]
+    )
+    LOG.debug("basis exit entities=%d seconds=%.4f", len(entities), time.perf_counter() - started)
+    return result
+
+
 def entity_space(b, window, blocks):
     graph, held, start = window.graph, window.held, window.start
     fields = [key for key in ("entity", "history_ids", "common_ids", "member_entity") if key in b]
@@ -782,6 +797,8 @@ def entity_space(b, window, blocks):
     )
     if window.tokens is not None:
         b["entity_token"] = array(window.tokens if space is None else window.tokens[space])
+    if window.cfg["model"]["view"] == "projection":
+        b["projection_basis"] = basis(window, np.arange(size) if space is None else space.astype(np.int64))
     if "snapshot" in blocks:
         count = window.hi - window.lo
         align = np.full((b["frames"], size), b["observations"], np.int64)
