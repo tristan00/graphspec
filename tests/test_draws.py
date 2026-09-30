@@ -8,6 +8,7 @@ import support
 import torch
 from keyed import Keys, Spaces, dense_keyed, differing, labelled, rows, through, variant_part
 
+from conftest import SPLITS
 from graphspec.budgets import GraphLimits
 from graphspec.engine import transform
 from graphspec.engine.segments import Derivation
@@ -17,7 +18,7 @@ from graphspec.operations import pipeline
 from graphspec.operations.rows import FACTS
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import Dense
-from tuning.bank.bank import Deriver
+from tuning.bank.bank import Deriver, grouped
 from tuning.batches import inputs
 
 LOG = logging.getLogger(__name__)
@@ -214,37 +215,52 @@ def sampled(found, registry, order):
 def drawn(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
     registry = support.fitted(opened)
-    graphs = [support.shown(opened, index).dense() for index in range(2)]
+    views = [support.shown(opened, index).dense() for index in range(4)]
+    cfg = support.configuration(
+        opened.registry, dict(view="snapshot"), dict(support.several(opened.registry), **JOINED), 5, SPLITS
+    )
     steps, spec = stated(registry, DRAWN, {})
-    return registry, graphs, derived(graphs[:1], registry, steps, spec, [], LIMITS)
+    reference = derived(views[:1], registry, steps, spec, [], LIMITS)
+    return registry, views, reference, (opened.viewed(cfg).graphs, opened.groups(cfg))
 
 
 @pytest.fixture(scope="module")
 def unlinked(drawn):
-    registry, graphs, _ = drawn
-    moved = [permuted(graph, seed) for seed, graph in enumerate(graphs)]
+    registry, views, _, _ = drawn
+    moved = [permuted(graph, seed) for seed, graph in enumerate(views)]
     separate = dict(JOINED, **{"graphs/connect/" + kind: False for kind in registry.nodes})
     steps, spec = stated(registry, DRAWN, separate)
-    whole = variant(graphs, registry, steps, spec, [], LIMITS)
-    turned = variant(moved[::-1], registry, steps, spec, [5, graphs[1].steps + 2], LIMITS)
+    whole = variant(views[:2], registry, steps, spec, [], LIMITS)
+    turned = variant(moved[1::-1], registry, steps, spec, [5, views[1].steps + 2], LIMITS)
     return moved, whole, turned
 
 
 def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_sorting_by_key(drawn, unlinked):
     started = time.perf_counter()
-    registry, graphs, reference = drawn
+    registry, views, reference, (entries, groups) = drawn
     moved, whole, turned = unlinked
+    graphs = views[:2]
     steps, spec = stated(registry, DRAWN, {})
     assert differing(derived(moved[:1], registry, steps, spec, [4, 9], LIMITS), reference) == []
     assert len(reference["variant/walks"]) and registry.code("rewire") in reference["facts"][:, 2]
     assert differing(keyed(turned, registry), keyed(whole, registry)) == []
     steps, spec = stated(registry, DRAWN, dict(JOINED, **{"graphs/connect_fraction": 0.5}))
     linked = derived(graphs, registry, steps, spec, [], LIMITS)
-    assert differing(derived(moved, registry, steps, spec, [graphs[0].steps + 3], LIMITS), linked) == []
+    assert differing(derived(moved[:2], registry, steps, spec, [graphs[0].steps + 3], LIMITS), linked) == []
     assert set(linked["entities"][:, -1].tolist()) == {0, 1}
+    order = [2, 0, 3, 1]
+    keys = [(0, 1)] * len(entries)
+    turned = grouped([dict(entries[old], index=new) for new, old in enumerate(order)], keys, 2)
+    assert grouped(entries, keys, 2) == groups
+    assert [[entries[order[new]]["name"] for new in group] for group in turned] == [
+        [entries[index]["name"] for index in group] for group in groups
+    ]
+    last = derived([views[index] for index in groups[-1]], registry, steps, spec, [], LIMITS)
+    placed = [moved[order[new]] for new in turned[-1]]
+    assert differing(derived(placed, registry, steps, spec, [5], LIMITS), last) == []
     steps, spec = stated(registry, dict(DRAWN, **{"derive/rewiring": "fosr"}), {})
     fosr = derived(graphs[1:], registry, steps, spec, [], LIMITS)
-    assert differing(derived(moved[1:], registry, steps, spec, [7], LIMITS), fosr) == []
+    assert differing(derived(moved[1:2], registry, steps, spec, [7], LIMITS), fosr) == []
     steps, spec = stated(registry, TIED, {})
     tied = derived(graphs[:1], registry, steps, spec, [], LIMITS)
     assert differing(derived(moved[:1], registry, steps, spec, [4], LIMITS), tied) == []
@@ -262,19 +278,19 @@ def test_the_neighbours_a_batch_reads_are_equal_when_entities_are_renumbered_or_
 
 
 def test_no_draw_reads_a_random_generator_or_a_device(drawn, monkeypatch):
-    registry, graphs, reference = drawn
+    registry, views, reference, _ = drawn
     for module, names in GENERATORS:
         for name in names:
             monkeypatch.setattr(module, name, lambda *args, name=name, **kwargs: pytest.fail("a draw used " + name))
     steps, spec = stated(registry, DRAWN, {})
-    assert differing(derived(graphs[:1], registry, steps, spec, [6], Unread()), reference) == []
+    assert differing(derived(views[:1], registry, steps, spec, [6], Unread()), reference) == []
 
 
 @pytest.mark.gpu
 def test_the_arrays_of_every_draw_are_equal_on_cpu_and_on_gpu(drawn):
-    registry, graphs, reference = drawn
+    registry, views, reference, _ = drawn
     steps, spec = stated(registry, DRAWN, {})
-    assert differing(derived(graphs[:1], registry, steps, spec, [], GraphLimits("cuda")), reference) == []
+    assert differing(derived(views[:1], registry, steps, spec, [], GraphLimits("cuda")), reference) == []
     steps, spec = stated(registry, dict(DRAWN, **{"derive/rewiring": "fosr"}), {})
-    on = [derived(graphs[1:], registry, steps, spec, [], GraphLimits(device)) for device in ("cpu", "cuda")]
+    on = [derived(views[1:2], registry, steps, spec, [], GraphLimits(device)) for device in ("cpu", "cuda")]
     assert differing(on[1], on[0]) == []

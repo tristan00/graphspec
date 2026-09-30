@@ -35,7 +35,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 8
+VIEW = 9
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -61,6 +61,18 @@ def layout(index, rows, steps, labels, partitions, partition, history, windowed)
     LOG.debug(
         "layout exit graph=%d blocks=%d seconds=%.4f", index, len(result), time.perf_counter() - started
     )
+    return result
+
+
+def grouped(graphs, keys, size):
+    started = time.perf_counter()
+    found = {}
+    for key, graph in sorted(
+        zip(keys, graphs), key=lambda pair: (pair[0], pair[1]["name"], pair[1]["observer"], pair[1]["split"])
+    ):
+        found.setdefault(key, []).append(graph["index"])
+    result = [members[start : start + size] for members in found.values() for start in range(0, len(members), size)]
+    LOG.debug("grouped exit graphs=%d groups=%d seconds=%.4f", len(graphs), len(result), time.perf_counter() - started)
     return result
 
 
@@ -394,16 +406,9 @@ class Bank:
         )
         if size not in self._groups:
             started = time.perf_counter()
-            splits, partitions = {}, self.partitions(cfg)
-            for graph in viewed.graphs:
-                rows = viewed.labels[graph["index"]][0]
-                key = tuple(np.unique(partitions[rows]).tolist())
-                splits.setdefault(key, []).append(graph["index"])
-            self._groups[size] = [
-                members[start : start + size[-1]]
-                for _, members in sorted(splits.items())
-                for start in range(0, len(members), size[-1])
-            ]
+            partitions = self.partitions(cfg)
+            keys = [tuple(np.unique(partitions[viewed.labels[graph["index"]][0]]).tolist()) for graph in viewed.graphs]
+            self._groups[size] = grouped(viewed.graphs, keys, size[-1])
             LOG.info(
                 "bank groups exit seconds=%.3f size=%d groups=%d",
                 time.perf_counter() - started,
