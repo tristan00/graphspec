@@ -8,7 +8,7 @@ from graphspec.budgets import GraphBudget
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import allocate, block_rows, changed, finite
 from graphspec.operations.kernels import first_rows
-from graphspec.operations.stages import enabled
+from graphspec.operations.parameters import enabled
 from graphspec.schema.declaration import BOUNDARIES
 from graphspec.schema.references import SORTS, ends
 

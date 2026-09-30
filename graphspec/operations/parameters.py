@@ -3,20 +3,18 @@ import itertools
 import logging
 import math
 import time
+from collections import Counter
 
 from graphspec.infra.files import sha256_json
-from graphspec.schema.declaration import HOPS
 from graphspec.schema.time import SEVERAL
 from graphspec.views.view import offered
 
 from . import sets
+from .operation import PIPELINE, ordered
 
 LOG = logging.getLogger(__name__)
 GROUPS = ("coupling", "events", "neighbors", "walks", "mixed")
 PACKING = ("time/history", "time/context", "neighbors/order", "neighbors/decay")
-FILTERS = ("none", "degree", "total_degree", "core", "activity", "sample")
-REFERRED = ("keep",)
-REMOVED = ("remove",)
 
 
 class Parameter:
@@ -116,20 +114,24 @@ def subsets(kinds):
     )
 
 
+def holds(spec, name, value):
+    return name in spec and spec[name] == value
+
+
+def enabled(spec, name):
+    return name in spec and spec[name]
+
+
 def equals(name, value):
-    return lambda spec: spec.get(name) == value
+    return lambda spec: holds(spec, name, value)
 
 
 def among(name, values):
-    return lambda spec: spec.get(name) in values
+    return lambda spec: name in spec and spec[name] in values
 
 
 def differs(name, value):
-    return lambda spec: spec.get(name, value) != value
-
-
-def counterparts(relation, position, kind):
-    return {pair[1 - position] for pair in relation.pairs if pair[position] == kind}
+    return lambda spec: name in spec and spec[name] != value
 
 
 def space(registry, groups):
@@ -138,180 +140,16 @@ def space(registry, groups):
     if unknown:
         raise ValueError("unknown representation groups: " + ", ".join(unknown))
     nodes, extras = registry.nodes, registry.extras
-    base = {group: registry.named[group] for group in registry.groups}
-
-    def kept(spec, kind):
-        return spec["nodes/%s/keep" % kind]
-
-    grouped = registry.schema.tasks["grouping"] is not None
-    ungrouped = "truth" if grouped else "steps"
-
-    def periodic(spec):
-        return spec["time/periods"] == "truth" or (
-            spec["time/periods"] == "every" and spec["time/period_length"] > 1
-        )
-
-    def projectable(spec, edge):
-        relation, position, first, second = (
-            base[edge.origin[1]],
-            ("sources", "targets").index(edge.origin[2]),
-            edge.origin[3],
-            edge.origin[4],
-        )
-        shared = counterparts(relation, position, first) & counterparts(relation, position, second)
-        return kept(spec, first) and kept(spec, second) and any(kept(spec, kind) for kind in shared)
-
-    def filtering(kind, modes):
-        return lambda spec: spec.get("nodes/%s/filter" % kind) in modes
-
-    def linked(spec):
-        return any(spec.get("relations/%s/keep" % group) for group in base)
-
-    joined = {}
-    for group, edge in base.items():
-        for pair in edge.pairs:
-            joined.setdefault(frozenset(pair), []).append("relations/%s/keep" % group)
-
-    def joins(spec, first, second):
-        return any(spec.get(name) for name in joined.get(frozenset((first, second)), ()))
-
-    def anchored(spec, first, second):
-        anchors = [kind for kind in nodes if spec.get("derive/complete_within/" + kind)]
-        return not anchors or any(joins(spec, kind, first) and joins(spec, kind, second) for kind in anchors)
-
-    emits = dict(
-        project=lambda spec, edge: spec.get("derive/" + edge.name),
-        complete=lambda spec, edge: (
-            spec.get("derive/complete/" + edge.origin[1])
-            and spec.get("derive/complete/" + edge.origin[2])
-            and anchored(spec, edge.origin[1], edge.origin[2])
-        ),
-        hop=lambda spec, edge: spec.get("derive/hops", 1) >= int(edge.origin[1]),
-        diffusion=lambda spec, edge: spec.get("derive/diffusion", "none") != "none",
-        rewire=lambda spec, edge: spec.get("derive/rewiring", "none") != "none",
-    )
-
-    def filters(name, condition, attributes):
-        prefix = "edges/%s/" % name
-        orders = ("recent", "random") + tuple("largest:" + attribute for attribute in attributes)
-        return [
-            real(prefix + "drop", 0.0, 0.9, 0.0, condition),
-            number(prefix + "persistence", 1, 8, 1, condition),
-            number(prefix + "cap", 0, 64, 0, condition),
-            choice(
-                prefix + "cap_order",
-                orders,
-                "recent",
-                lambda spec: condition(spec) and spec[prefix + "cap"] > 0,
-            ),
-        ]
-
-    projected = [edge for edge in registry.edges if edge.origin[0] == "project"]
-    parameters = [
-        number("time/history", 1, 32, 16),
-        choice("time/periods", (ungrouped, "every"), ungrouped),
-        number("time/period_length", 1 if extras["events"] else 2, 16, 4, equals("time/periods", "every")),
-        choice("time/scheme", ("window", "state"), "window"),
-        choice(
-            "time/unit",
-            ("step", "period"),
-            "step",
-            lambda spec: spec["time/scheme"] == "window" and periodic(spec),
-        ),
-        number(
-            "time/window",
-            1,
-            8,
-            1,
-            lambda spec: spec["time/scheme"] == "window" and spec.get("time/unit", "step") == "step",
-        ),
-        number("time/past_periods", 0, 3, 0, equals("time/unit", "period")),
-        number("time/context", 0, 3, 0),
-    ]
+    parameters = [number("time/history", 1, 32, 16), number("time/context", 0, 3, 0)]
     parameters += [choice("graphs/join", ("separate", "single"), "separate")]
     parameters += [number("graphs/join_size", 2, 4096, 8, equals("graphs/join", "single"))]
     parameters += [flag("graphs/connect/" + kind, True, equals("graphs/join", "single")) for kind in nodes]
     parameters.append(
         real("graphs/connect_fraction", 0.01, 1.0, 1.0, equals("graphs/join", "single"), log=True)
     )
-    parameters += [flag("nodes/%s/keep" % kind, True) for kind in nodes]
+    for operation in ordered(PIPELINE):
+        parameters += operation.stated(registry)
     parameters += [flag("nodes/untyped", False)] if len(nodes) > 1 else []
-    parameters += [
-        choice("nodes/referenced", REFERRED if registry.stops.any() else REFERRED + REMOVED, "keep")
-    ]
-    for kind in nodes:
-        prefix = "nodes/%s/" % kind
-        parameters += [
-            choice(prefix + "filter", FILTERS, "none", lambda spec, kind=kind: spec["nodes/%s/keep" % kind]),
-            number(prefix + "min_degree", 1, 16, 1, filtering(kind, ("degree", "total_degree"))),
-            number(prefix + "core", 2, 16, 2, filtering(kind, ("core",))),
-            number(prefix + "min_activity", 2, 16, 2, filtering(kind, ("activity",))),
-            real(prefix + "sample", 0.1, 0.9, 0.5, filtering(kind, ("sample",))),
-        ]
-    parameters += [
-        flag(
-            "relations/%s/keep" % group,
-            True,
-            lambda spec, edge=edge: any(
-                kept(spec, source) and kept(spec, target) for source, target in edge.pairs
-            ),
-        )
-        for group, edge in base.items()
-    ]
-    parameters += [
-        flag("derive/" + edge.name, False, lambda spec, edge=edge: projectable(spec, edge))
-        for edge in projected
-    ]
-    parameters.append(
-        number(
-            "derive/project_cap",
-            0,
-            64,
-            0,
-            lambda spec: any(spec.get("derive/" + edge.name) for edge in projected),
-        )
-    )
-    parameters += [
-        flag("derive/complete/" + kind, False, lambda spec, kind=kind: kept(spec, kind)) for kind in nodes
-    ]
-    parameters += [
-        flag(
-            "derive/complete_within/" + kind,
-            False,
-            lambda spec, kind=kind: (
-                kept(spec, kind)
-                and any(spec.get("derive/complete/" + other) and joins(spec, kind, other) for other in nodes)
-            ),
-        )
-        for kind in nodes
-    ]
-    parameters += [
-        number("derive/hops", 1, HOPS[-1], 1, linked),
-        choice("derive/diffusion", ("none", "ppr", "heat"), "none", linked),
-        number("derive/diffusion_top_k", 1, 16, 4, differs("derive/diffusion", "none")),
-        real("derive/ppr_alpha", 0.05, 0.5, 0.15, equals("derive/diffusion", "ppr")),
-        real("derive/heat_time", 0.5, 5.0, 2.0, equals("derive/diffusion", "heat")),
-        choice("derive/rewiring", ("none", "sdrf", "fosr"), "none", linked),
-        number("derive/rewiring_budget", 1, 64, 8, differs("derive/rewiring", "none")),
-        real("derive/sdrf_temperature", 1.0, 500.0, 115.0, equals("derive/rewiring", "sdrf"), log=True),
-        real("derive/sdrf_threshold", 0.1, 20.0, 1.0, equals("derive/rewiring", "sdrf"), log=True),
-    ]
-    parameters.append(choice("relations/direction", ("inverse", "symmetric", "directed"), "inverse", linked))
-    for group in base:
-        parameters += filters(
-            group,
-            lambda spec, group=group: bool(spec.get("relations/%s/keep" % group)),
-            registry.ordered(group),
-        )
-    for edge in registry.edges:
-        if edge.origin[0] in emits:
-            parameters += filters(
-                edge.name, lambda spec, edge=edge: bool(emits[edge.origin[0]](spec, edge)), ()
-            )
-    parameters += [
-        choice("relations/types", ("typed", "untyped"), "typed", linked),
-        choice("relations/parallel", ("keep", "merge"), "keep", linked),
-    ]
     tasks = ("task",) if extras["events"] else ()
     if "coupling" in groups:
         parameters += [
@@ -378,6 +216,10 @@ def space(registry, groups):
     parameters += [
         choice(sets.PARAMETER % kind, sets.offered(registry, kind), None) for kind in registry.schema.sets
     ]
+    counted = Counter(parameter.name for parameter in parameters)
+    twice = sorted(name for name, count in counted.items() if count > 1)
+    if twice:
+        raise ValueError("the parameters %s are stated twice" % ", ".join(twice))
     LOG.debug(
         "space exit seconds=%.4f parameters=%d groups=%s",
         time.perf_counter() - started,

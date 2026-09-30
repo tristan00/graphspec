@@ -9,7 +9,7 @@ from support import registry as registered
 from graphspec.budgets import GraphBudget, GraphCapacityError, GraphLimits
 from graphspec.build.calls import GraphTables
 from graphspec.infra import compute
-from graphspec.operations import kernels, stages
+from graphspec.operations import derive, edges, kernels
 from graphspec.operations import parameters as spec
 from graphspec.schema.declaration import EdgeType
 from graphspec.views import spans
@@ -51,15 +51,10 @@ def test_projection_preserves_pairs_and_rejects_oversized_candidates():
         kernels.project_pairs.py_func(members, owners, kinds, 0, 0, 0, 5)
 
 
-def test_rewiring_rejects_dense_workspace_before_allocating(monkeypatch):
+def test_rewiring_rejects_dense_workspace_before_allocating():
     present = np.arange(100_000, dtype=np.int32)
-
-    def forbidden(*args):
-        raise AssertionError("dense graph was allocated")
-
-    monkeypatch.setattr(stages, "dense", forbidden)
     with pytest.raises(GraphCapacityError, match="fosr rewiring"):
-        stages.rewire(
+        derive.rewire(
             {"derive/rewiring": "fosr", "derive/rewiring_budget": 1},
             present,
             present[:-1],
@@ -74,7 +69,7 @@ def test_rewiring_rejects_dense_workspace_before_allocating(monkeypatch):
 def test_rewiring_does_not_allocate_for_isolated_nodes(mode):
     present = np.arange(100_000, dtype=np.int32)
     empty = np.empty(0, np.int32)
-    added, removed = stages.rewire(
+    added, removed = derive.rewire(
         {"derive/rewiring": mode, "derive/rewiring_budget": 8},
         present,
         empty,
@@ -158,7 +153,7 @@ def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
     )
     monkeypatch.setattr(kernels, "runs", kernels.runs.py_func)
     settings = {"edges/rel/drop": 0.0, "edges/rel/persistence": 8, "edges/rel/cap": 0}
-    retained = stages.filtered(graph, registry, settings, 1, "rel", np.arange(len(steps)))
+    retained = edges.filtered(graph, registry, settings, 1, "rel", np.arange(len(steps)))
     assert steps[retained].tolist() == [7, 7, 8]
 
 

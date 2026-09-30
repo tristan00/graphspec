@@ -16,6 +16,8 @@ from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import sets
+from graphspec.operations.nodes import NODES
+from graphspec.operations.operation import Count
 from graphspec.schema.schema import VERSION, Encoding, Schema, fitted
 from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
@@ -505,30 +507,28 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
     before = int((np.asarray(dense.kinds)[dense.obs_entity] == points).sum())
     after = int((np.asarray(derived.kinds)[derived.obs_entity] == points).sum())
     assert 0 < after < before
-    assert set(transform.COUNTS) >= {
-        "nodes/degree",
-        "nodes/core",
-        "derive/hops",
-        "derive/diffusion",
-        "edges/cap",
-    }
-    monkeypatch.setitem(
-        transform.COUNTS, "nodes/degree", dict(counts="degree", active=transform.filtered("degree"))
-    )
+    counts = {count.name for _, operation in transform.STAGES for count in operation.requires}
+    assert counts >= {"nodes/degree", "nodes/core", "derive/hops", "derive/diffusion", "edges/cap"}
+    (degree,) = [count for count in NODES.requires if count.name == "nodes/degree"]
     with pytest.raises(
         ValueError,
-        match="the operation nodes/degree counts degree and states no treatment of the edges joining sets of the "
-        "kind gathering",
+        match="the count nodes/degree counts degree and states no treatment of the edges joining sets; "
+        "it states one of stored, refuses",
+    ):
+        Count("nodes/degree", "degree", degree.active, None, "stored")
+    refusing = Count("nodes/degree", "degree", degree.active, "refuses", "stored")
+    monkeypatch.setattr(NODES, "requires", (refusing,))
+    with pytest.raises(
+        ValueError,
+        match="the count nodes/degree of the operation graphspec.nodes counts degree and refuses the edges "
+        "joining sets of the kind gathering",
     ):
         transform.derive(dense, registry, spec, GraphLimits("cpu"))
-    monkeypatch.setitem(
-        transform.COUNTS,
-        "nodes/degree",
-        dict(counts="degree", active=transform.filtered("degree"), sets="stored", about="refuses"),
-    )
+    monkeypatch.setattr(NODES, "requires", (Count("nodes/degree", "degree", degree.active, "stored", "refuses"),))
     with pytest.raises(
         ValueError,
-        match="nodes/degree counts degree and refuses the edges of the table note, which are about edges",
+        match="nodes/degree of the operation graphspec.nodes counts degree and refuses the edges of the table "
+        "note, which are about edges",
     ):
         transform.derive(dense, registry, spec, GraphLimits("cpu"))
 

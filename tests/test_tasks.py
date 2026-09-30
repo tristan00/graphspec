@@ -543,10 +543,8 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
     names = {parameter.name: parameter for parameter in specs.space(held.registry, ())}
     assert names["nodes/referenced"].options == ("keep", "remove")
     assert names["nodes/referenced"].default == "keep"
-    assert transform.REMOVES in transform.CHANGES[dict(transform.STAGES)["nodes"]]
-    assert [name for name, stage in transform.STAGES if transform.REMOVES in transform.CHANGES[stage]] == [
-        "nodes"
-    ]
+    assert transform.REMOVES in dict(transform.STAGES)["nodes"].changes
+    assert [name for name, stage in transform.STAGES if transform.REMOVES in stage.changes] == ["nodes"]
     dense = shown(held, cfg, "one", None).dense()
     sites = np.flatnonzero(dense.kinds == held.registry.kind("site"))
     found = {}
@@ -560,10 +558,11 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
         assert not np.isin(derived.fact_source, sites).any() and not np.isin(derived.fact_target, sites).any()
         assert np.array_equal(derived.member_source, dense.member_source)
     assert found == dict(keep=["s0", "s1", "s2", "s3"], remove=[])
-    monkeypatch.setitem(transform.CHANGES, dict(transform.STAGES)["nodes"], ("observations", "facts"))
+    monkeypatch.setattr(dict(transform.STAGES)["nodes"], "changes", ("observations", "facts"))
     with pytest.raises(
         ValueError,
-        match="the stage nodes removes the node of the reference (link|group|route|part|couple) of the task "
+        match="the operation graphspec.nodes removes the node of the reference "
+        "(link|group|route|part|couple) of the task "
         r"\d+ of the kind (wide|joint) of graph one and does not state that it may remove a referenced node",
     ):
         transform.derive(dense, held.fitted(cfg), spec, GraphLimits("cpu"))

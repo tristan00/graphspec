@@ -5,7 +5,7 @@ from conftest import SPLITS
 from graphspec.budgets import GraphLimits
 from graphspec.engine import join, transform
 from graphspec.infra.arrays import RESIDENT
-from graphspec.operations import stages
+from graphspec.operations.periods import PERIODS
 from tuning.bank.bank import Bank, Deriver, distinct, identical
 from tuning.bank.variants import prepare
 from tuning.batches.inputs import recipe
@@ -74,7 +74,7 @@ def test_every_periods_restart_at_each_graph(bank):
     spec = joined_spec(opened, **{"time/periods": "every", "time/period_length": 5})
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     registry = support.fitted(opened)
-    combined = stages.periods(join.joined(graphs, registry, spec), registry, spec, 0)
+    combined = PERIODS(join.joined(graphs, registry, spec), registry, spec, 0, GraphLimits("cpu"), None)
     starts = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     for first, last in zip(starts[:-1], starts[1:]):
         local = combined.period[first:last] - combined.period[first]

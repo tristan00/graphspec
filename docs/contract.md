@@ -75,7 +75,7 @@ The engine reads nodes and edges between two nodes. What a set edge becomes is c
 | `node` | A node of its kind, with its facts as the values of the node, and for every fact and every member an edge from the node to the member, of the relation of the member's role, carrying the values of the member, with the interval, known time and observers of the fact | `<kind>.<role>`, one per role, from the kind of set edge to each kind of its members, directed, with the member columns |
 | `pairs` | For every fact, one edge between every two distinct members, carrying the values of the set edge's own columns, with the interval, known time and observers of the fact; the set edge is no node, and roles and member values are not read | `<kind>`, between the kinds of its members, without direction, with the columns of the set edge |
 
-These relations are relations of the registry like those stated: each has a code, is kept or dropped by `relations/<name>/keep`, filtered by the parameters of its edges and projected. A relation stated or taken whose name is one of them stops the build. The two form functions are `graphspec.operations.sets.node` and `graphspec.operations.sets.pairs`, with their entries in `graphspec.engine.transform.CHANGES`: `node` changes facts; `pairs` changes observations and facts and may remove a referenced set edge. A reference to a set edge under a form that makes no node resolves as a node not observed, by the kind's statement of `absent`.
+These relations are relations of the registry like those stated: each has a code, is kept or dropped by `relations/<name>/keep`, filtered by the parameters of its edges and projected. A relation stated or taken whose name is one of them stops the build. The two form functions are `graphspec.operations.sets.node` and `graphspec.operations.sets.pairs`: `node` adds facts; `pairs` adds facts and removes the observations of the set edges, so it may remove a referenced set edge. A reference to a set edge under a form that makes no node resolves as a node not observed, by the kind's statement of `absent`.
 
 **Nodes that hold graphs**
 
@@ -92,9 +92,9 @@ Neither shipped encoder reads the values of held edges, and no encoder of held g
 
 **Operations that count**
 
-Operations that count degree, core numbers, components or paths meet set edges and edges about edges in the form the pipeline chose. Each states in `graphspec.engine.transform.COUNTS` what it counts, when a pipeline makes it act, and its treatment of the edges joining sets and of the edges about edges: `stored`, it counts the form as ordinary nodes and edges; or `refuses`, it stops. Before a derivation, an operation that acts on a graph whose schema states either kind, and that states no treatment of it, stops with an error naming the operation and the kind or table; one that refuses stops the same way.
+Operations that count degree, core numbers, components or paths meet set edges and edges about edges in the form the pipeline chose. What an operation requires of the schema is a tuple of counts, `graphspec.operations.operation.Count(name, counts, active, sets, about)`: what it counts, a function of the registry and the settings of the operation that says when a pipeline makes it act, and its treatment of the edges joining sets and of the edges about edges: `stored`, it counts the form as ordinary nodes and edges; or `refuses`, it stops. A count that states no treatment of either stops where it is made, naming the count. An operation called on a graph whose schema states a kind or table that one of its acting counts refuses stops before it runs, with an error naming the count, the operation and the kind or table.
 
-| Operation | Counts | Set edges | Edges about edges |
+| Count | Counts | Set edges | Edges about edges |
 |---|---|---|---|
 | `nodes/degree`, `nodes/total_degree` | degree | stored: under `node` a member counts one edge per set edge it is in and a set edge's node counts its members and the edges about it; under `pairs` a member of a set edge of k members counts k − 1 | stored: one edge at the set edge's node and one at the other end |
 | `nodes/core` | core numbers | stored, as for degree | stored |
@@ -288,11 +288,30 @@ In the form the operations work on, `Graph.dense()`, `step_graph` names for ever
 | the two lists of rows of the training and the validation split | `indices`, the rows of every split by name |
 | `width` and `features` of one vector for every kind | `widths` per kind, `values`, `features` |
 
+**Operations**
+
+An operation takes a graph and parameters and returns a graph. Its input is never changed, and every array it leaves unchanged is the same object in its output, so an operation that changes nothing returns its input. An operation is a `graphspec.Operation(namespace, name, function, parameters, reads, splits, requires, changes, version)`, registered in `graphspec.OPERATIONS` under its namespace and name joined by a dot, as `OPERATIONS.register(operation.name, operation)`; a name registered twice stops with an error naming it. Every field is stated:
+
+| Field | What it states |
+|---|---|
+| `namespace`, `name` | Words without a dot; the library's operations are in the namespace `graphspec` |
+| `function` | `function(graph, registry, settings, seed, limits, carry)`, from the form the operations work on, `Graph.dense()`, to a graph of the same form; `carry` is the state a joined group's earlier graphs left it, or none |
+| `parameters` | A function from a registry to its parameters, each a `graphspec.operations.parameters.Parameter` with its range, its default and the condition under which it is active |
+| `reads` | The names of the operations whose parameters it reads as well as its own |
+| `splits` | The splits it may read, among `trained` and `scored`; the shipped operations read none |
+| `requires` | Its counts, above |
+| `changes` | What it changes among `time`, `observations` and `facts`, and `references` where it may remove a referenced node |
+| `version` | A whole number from 1 |
+
+The function receives the spec as `settings`, which hold the parameters the operation states and reads and no other: reading another parameter stops with an error naming it and the operation, and so does reading one the spec does not state. `name in settings` says whether a parameter is active under its condition, and stops where the spec states it while inactive or lacks it while active; no parameter is read with a default. `graphspec.operations.operation.listed(registry)` lists every registered operation with its parameters, what it reads, requires and changes, and its version.
+
+The shipped operations are applied by `graphspec.engine.transform.derive` in this order: `graphspec.periods`, `graphspec.window`, `graphspec.nodes`, `graphspec.derive`, `graphspec.relations`, `graphspec.edges`, `graphspec.merging`; `graphspec.derive` reads the parameters of `graphspec.relations`. The space of parameters of a bank, `graphspec.operations.parameters.space`, holds those of packing and joining, the parameters of these operations, each after those of the operations it reads, and those of representations, steps and forms of storage.
+
 **After an operation**
 
-Each of the seven stages, and each of the two shipped forms of storage, states what it changes among `time`, `observations` and `facts`, and whether it may remove a referenced node, as `references`; `graphspec.engine.transform.CHANGES` holds the statements. The schema is checked after a stage for what it changes alone: a group for every step; the width of node values and the kinds of node; relations the schema states, between kinds the relation joins. A stage that changes observations, does not state `references` and leaves a node that a reference names without its observation at the step of the task stops with an error naming the stage and the reference.
+The schema is checked after an operation for what it states it changes alone: a group for every step; the width of node values and the kinds of node; relations the schema states, between kinds the relation joins. An operation that changes observations, does not state `references` and leaves a node that a reference names without its observation at the step of the task stops with an error naming the operation and the reference.
 
-The stage of nodes states `references`. Its parameter `nodes/referenced` says what becomes of a referenced node that the stage would remove: `keep` leaves its observation at the step of the task, without its edges; `remove` removes it, and is offered where every kind of task states `absent` as `keep`.
+The operation `graphspec.nodes` states `references`. Its parameter `nodes/referenced` says what becomes of a referenced node that it would remove: `keep` leaves its observation at the step of the task, without its edges; `remove` removes it, and is offered where every kind of task states `absent` as `keep`.
 
 **The statement of a fit and the splits**
 

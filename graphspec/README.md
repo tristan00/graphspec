@@ -7,9 +7,9 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the seven stages (`stages.py`), forms of storage of set edges (`sets.py`), parameters (`parameters.py`), carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations (`operation.py`), the seven shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters (`parameters.py`), carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads (`groups.py`) and their kernels (`kernels.py`) |
-| `engine/` | Derivation of variants: stages in order (`transform.py`), segments (`segments.py`), joined graphs (`join.py`) |
+| `engine/` | Derivation of variants: operations in order (`transform.py`), segments (`segments.py`), joined graphs (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
 | `registries.py`, `budgets.py` | Registries of named entries; limits of a derivation |
 | `infra/` | Code that knows nothing of graphs: files, runtime home, timing, logs, hashing, dense algebra, arrays on the device, the digest of the code (`code.py`), and `processes/` with pools, workers, locks and platform code |
@@ -34,10 +34,11 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `views/graph.py` | `Graph` is a view as spans over steps, which `verify` checks; `Graph.dense()` expands the spans into the per-step working graph by reference. |
 | `views/view.py` | The choices of steps, registered; `sequences` gives the sequences of a graph and `view` shows the facts of a graph at the steps of one sequence as a `Graph`. |
 | `views/spans.py` | Interval primitives: encoding rows as spans, expanding spans to rows, fact order, coverage checks. |
-| `operations/parameters.py` | The spec space: conditional parameters generated from a registry and a set of representation groups, with `draw`, `canonical` and `digest`. |
-| `operations/stages.py` | One function per graph stage. |
+| `operations/parameters.py` | The spec space: conditional parameters generated from a registry and a set of representation groups, those of the operations taken from the registry of operations, with `draw`, `canonical` and `digest`. |
+| `operations/operation.py` | `Operation`, the registry `OPERATIONS`, the settings an operation reads its parameters through, its counts, `listed` and the order of the seven shipped operations. |
+| `operations/periods.py` … `operations/merging.py`, `operations/rows.py` | One module per shipped operation, each registering its operation with its parameters; the rows of facts and observations they select, extend and prune. |
 | `representations/groups.py` | Model inputs built from a derived graph, and their validation. |
-| `engine/transform.py` | `derive` runs the stages and verifies the graph after each; `materialize` adds the representations; `validate` shows every graph of a bank once. |
+| `engine/transform.py` | `derive` runs the registered operations in the order of the seven stages and verifies the graph after each; `materialize` adds the representations; `validate` shows every graph of a bank once. |
 | `engine/join.py` | `unify` gives the members of a joined group one entity numbering; `joined` concatenates them into one physical graph, the reference the segment engine is checked against. |
 | `engine/segments.py`, `operations/state.py` | The segment engine that builds a joined group graph by graph, described below. |
 | `operations/kernels.py`, `representations/kernels.py` | The numba kernels behind the stages and the representations; `verify`'s is in `views/graph.py`. |
@@ -90,7 +91,7 @@ The markers `non_relation` and `period_context` take codes above every relation.
 - Every hashed or sampled choice in the stages and representations uses one fixed seed, `transform.SEED`, so changing one parameter never reshuffles the random choices of another.
 - `materialized` drops the parameters read only when packing: `time/history`, `time/context`, `neighbors/order` and `neighbors/decay`. Its digest, with the groups, the device and what the splits may see, names a cached variant inside the folder of its bank, which is keyed by the fingerprint of the manifest and the digest of the sources of `graphspec` and `tuning`.
 
-**Stages.** `transform.derive` applies seven stages in a fixed order. Each stage reads the graph the stage before it produced. A stage that returns its input unchanged is not verified again, and a relation whose edge filters sit at their identity values is left untouched.
+**Stages.** `transform.derive` applies seven registered operations in a fixed order, `graphspec.periods` to `graphspec.merging`, one per stage below; each reads its parameters through the settings of [the contract](../docs/contract.md). Each stage reads the graph the stage before it produced. A stage that changes nothing returns its input, which is not verified again, and every array a stage leaves unchanged is shared with its input; a relation whose edge filters sit at their identity values is left untouched.
 
 1. Periods
 

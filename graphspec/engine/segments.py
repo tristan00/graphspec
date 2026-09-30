@@ -17,21 +17,18 @@ from graphspec.budgets import GraphBudget
 from graphspec.infra.files import Arrays
 from graphspec.infra.processes.processes import guarded, spawned, worker_threads
 from graphspec.infra.timing import measure, timed
-from graphspec.operations.stages import (
-    FACTS,
+from graphspec.operations.derive import (
+    DERIVE,
     derivation,
     derive_handoff,
     derive_prepare,
     derive_steps,
     derived_rows,
-    edges_mask,
-    edges_survive,
-    enabled,
-    fact_bytes,
-    filtered_names,
-    prune_mask,
-    select,
+    rewiring,
 )
+from graphspec.operations.edges import EDGES, edges_mask, edges_survive, filtered_names
+from graphspec.operations.parameters import enabled
+from graphspec.operations.rows import FACTS, fact_bytes, prune_mask, select
 from graphspec.operations.state import Segment, Table
 from graphspec.representations import groups as representations
 from graphspec.representations import kernels
@@ -889,6 +886,7 @@ RANK = dict(stitch=0, assemble=1, steps=2, expand=3)
 def attach(jobs, registry, spec, groups, seed, limits, threads):
     numba.set_num_threads(threads)
     PIPE.clear()
+    deriving, filtering = DERIVE.settings(registry, spec), EDGES.settings(registry, spec)
     PIPE.update(
         jobs=[
             dict(
@@ -906,7 +904,9 @@ def attach(jobs, registry, spec, groups, seed, limits, threads):
         groups=groups,
         seed=seed,
         limits=limits,
-        filtering=bool(filtered_names(registry, spec)),
+        deriving=deriving,
+        edges=filtering,
+        filtering=bool(filtered_names(registry, filtering)),
     )
 
 
@@ -1021,7 +1021,10 @@ def nodes_task(job, index):
     state = state_of(job, "nodes", index)
     graph, carry, known = unpacked(taken(job, index, "window"), state)
     graph = transform.derive(graph, registry, spec, limits, carry, known, transform.STAGES[2:3], False)
-    recency = derive_prepare(graph, registry, spec, carry) if derivation(registry, spec) is not None else None
+    deriving = PIPE["deriving"]
+    recency = None
+    if derivation(registry, deriving) is not None:
+        recency = derive_prepare(graph, registry, deriving, carry)
     value = packed(carry, graph, known, recency=recency)
     park(job, index, "nodes", value)
     park(job, index, "meta", dict(value, graph=None, recency=None, steps=graph.steps))
@@ -1033,14 +1036,20 @@ def steps_task(job, index):
     value = peek(job, index, "nodes")
     graph, carry, _ = unpacked(value, {})
     found, removed, budget = derive_steps(
-        graph, PIPE["registry"], PIPE["spec"], transform.SEED, value["recency"], carry.step0, PIPE["limits"]
+        graph,
+        PIPE["registry"],
+        PIPE["deriving"],
+        transform.SEED,
+        value["recency"],
+        carry.step0,
+        PIPE["limits"],
     )
     park(job, index, "steps", (found, removed, budget.facts))
 
 
 @staged
 def finish_task(job, index):
-    registry, spec, plan = PIPE["registry"], PIPE["spec"], PIPE["jobs"][job]["plan"]
+    registry, deriving, plan = PIPE["registry"], PIPE["deriving"], PIPE["jobs"][job]["plan"]
     state = state_of(job, "finish", index)
     meta = taken(job, index, "meta")
     carry = carried(meta, state)
@@ -1051,12 +1060,12 @@ def finish_task(job, index):
     known[position] = meta["known"]
     carry.glob = glob
     result = dict(glob=glob, position=position, known=known, deriving=False, kept=None, found=None)
-    if derivation(registry, spec) is not None:
+    if derivation(registry, deriving) is not None:
         (source, target, code, step), removed, facts = taken(job, index, "steps")
         source, target = position[source].astype(source.dtype), position[target].astype(target.dtype)
         connected = plan.connected[glob]
         result.update(deriving=True)
-        if spec.get("derive/rewiring", "none") != "none":
+        if rewiring(deriving):
             graph = relabelled(plan, unpacked(peek(job, index, "nodes"), {})[0], glob, position)
             result.update(
                 kept=prune_mask(
@@ -1100,11 +1109,11 @@ def assemble_task(job, index):
     if not PIPE["filtering"]:
         park(job, index, "assembled", packed(carry, graph, known))
         return {}
-    survives = edges_survive(graph, registry, spec, transform.SEED, carry)
+    survives = edges_survive(graph, registry, PIPE["edges"], transform.SEED, carry)
     park(job, index, "assembled", packed(carry, graph, known, survives=survives))
     rows = np.bincount(graph.fact_code, minlength=registry.relations)
     return dict(
-        rows={name: int(rows[registry.coded[name]].sum()) for name in filtered_names(registry, spec)}
+        rows={name: int(rows[registry.coded[name]].sum()) for name in filtered_names(registry, PIPE["edges"])}
     )
 
 
@@ -1113,7 +1122,7 @@ def edges_task(job, index, shard, names):
     value = peek(job, index, "assembled")
     state = state_of(job, "edges%d" % shard, index)
     graph, carry, _ = unpacked(value, state)
-    kept = edges_mask(graph, PIPE["registry"], PIPE["spec"], transform.SEED, carry, names, value["survives"])
+    kept = edges_mask(graph, PIPE["registry"], PIPE["edges"], transform.SEED, carry, names, value["survives"])
     park(job, index, "edges%d" % shard, kept)
     keep(job, "edges%d" % shard, index, state)
 
@@ -1204,8 +1213,11 @@ def balanced(rows, count):
 
 def build_parallel(jobs, registry, spec, groups, seed, workers, limits):
     started = time.perf_counter()
-    count = min(SHARDS, len(filtered_names(registry, spec)))
-    deriving = derivation(registry, spec) is not None
+    settings = {operation: operation.settings(registry, spec) for operation in (DERIVE, EDGES)}
+    for operation, held in settings.items():
+        operation.check(registry, held)
+    count = min(SHARDS, len(filtered_names(registry, settings[EDGES])))
+    deriving = derivation(registry, settings[DERIVE]) is not None
     stages = CHAIN[:3] + tuple("edges%d" % shard for shard in range(count)) + CHAIN[3:]
     plans = [Plan(job["members"], registry, spec) for job in jobs]
     sizes = [len(job["members"]) for job in jobs]
