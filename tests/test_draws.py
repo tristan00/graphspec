@@ -147,15 +147,20 @@ def keyed(found, registry):
 
 
 def derived(members, registry, steps, spec, cuts, limits):
-    return keyed(variant(members, registry, steps, spec, cuts, limits), registry)
+    started = time.perf_counter()
+    result = keyed(variant(members, registry, steps, spec, cuts, limits), registry)
+    LOG.debug("derived exit graphs=%d seconds=%.4f", len(members), time.perf_counter() - started)
+    return result
 
 
 def levels(tree):
+    started = time.perf_counter()
     found = []
     while tree is not None:
         found.append(("x", tree["x"].segments[0][2][0][1]))
         found += [(name, tree[name]) for name in ("mask", "gap", "relation") if name in tree]
         tree = tree.get("child")
+    LOG.debug("levels exit arrays=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return found
 
 

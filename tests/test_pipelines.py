@@ -119,11 +119,14 @@ def identical(left, right):
 
 
 def listed(found):
+    started = time.perf_counter()
     if "neighbor_ids" not in found:
         return found
     ids, offsets = np.asarray(found["neighbor_ids"]), np.asarray(found["neighbor_offsets"])
     owner = np.repeat(np.arange(len(offsets) - 1), np.diff(offsets))
-    return dict(found, neighbor_ids=ids[np.lexsort((ids, owner))])
+    result = dict(found, neighbor_ids=ids[np.lexsort((ids, owner))])
+    LOG.debug("listed exit ids=%d seconds=%.4f", len(ids), time.perf_counter() - started)
+    return result
 
 
 def test_a_pipeline_is_stated_as_its_operations_in_order_and_read_back_as_stated(bank, tmp_path, statement):
