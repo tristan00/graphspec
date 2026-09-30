@@ -45,6 +45,18 @@ DERIVED = dict(
     turn_observation_keys="period_observation_keys",
     turn_walks="period_walks",
 )
+RELATIONS_FIRST = dict(
+    configurations=("09_fosr_drop_cap_walks",),
+    order=(
+        "graphspec.periods",
+        "graphspec.window",
+        "graphspec.nodes",
+        "graphspec.relations",
+        "graphspec.derive",
+        "graphspec.edges",
+        "graphspec.merging",
+    ),
+)
 
 
 def read(place):
@@ -70,6 +82,24 @@ def labels(place):
     return tuple(read(place)["stages"])
 
 
+def order(entry):
+    from support import SEVEN
+
+    started = time.perf_counter()
+    result = RELATIONS_FIRST["order"] if entry["name"] in RELATIONS_FIRST["configurations"] else SEVEN
+    LOG.debug("order exit name=%s seconds=%.6f", entry["name"], time.perf_counter() - started)
+    return result
+
+
+def holds(names, count):
+    from support import SEVEN
+
+    started = time.perf_counter()
+    result = set(names[:count]) == set(SEVEN[:count])
+    LOG.debug("holds exit count=%d held=%s seconds=%.6f", count, result, time.perf_counter() - started)
+    return result
+
+
 def pipeline(registry, entry):
     from support import pipelined
 
@@ -77,7 +107,7 @@ def pipeline(registry, entry):
     values = spec(entry["values"])
     if "relations/direction" in values:
         values["edges/direction"] = values["relations/direction"]
-    result = pipelined(registry, values)
+    result = pipelined(registry, values, order(entry))
     LOG.debug("pipeline exit name=%s seconds=%.4f", entry["name"], time.perf_counter() - started)
     return result
 

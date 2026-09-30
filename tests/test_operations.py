@@ -20,7 +20,6 @@ from tuning.bank.bank import Deriver
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("operations")
 SHIFT = specs.number("test/shift", 0, 4, 1)
-READS_EVERY_RELATION = {("09_fosr_drop_cap_walks", "derived relations")}
 
 
 def shifted(graph, registry, settings, seed, limits, carry):
@@ -111,16 +110,24 @@ def test_each_operation_called_alone_on_the_fixture_gives_the_arrays_of_its_stag
     opened = Deriver(grounded[entry["source"]["name"]] / "bank", "cpu", RESIDENT)
     registry = support.fitted(opened)
     steps = resolved(registry, fixture.pipeline(opened.registry, entry)[0])
+    names = [step.name for step in steps]
+    assert len(names) == len(labels) and fixture.holds(names, len(names))
     level, folder = entry["source"]["level"], ground / entry["folder"]
     stored = [fixture.arrays(folder / name, level) for name in [entry["files"]["input"]] + entry["files"]["stages"]]
-    for index, (label, step) in enumerate(zip(labels, steps, strict=True)):
+    carried = {}
+    for index, step in enumerate(steps):
+        label = labels[support.SEVEN.index(step.name)]
         for name in entry["graphs"]:
-            given = Dense(name, [], len(stored[index][name]["period"]), **stored[index][name])
+            if fixture.holds(names, index):
+                given = Dense(name, [], len(stored[index][name]["period"]), **stored[index][name])
+            else:
+                given = carried[name]
             before = {key: np.array(value) for key, value in given.arrays.items()}
             result = step(given, registry, transform.SEED, GraphLimits("cpu"), None, None)
             assert all(identical(before[key], given.arrays[key]) for key in DENSE), (label, name)
-            if (entry["name"], label) not in READS_EVERY_RELATION:
+            if fixture.holds(names, index + 1):
                 assert fixture.differing(result.arrays, stored[index + 1][name]) == [], (label, name)
+            carried[name] = result
             copied = [
                 key
                 for key in DENSE

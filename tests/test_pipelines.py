@@ -26,7 +26,6 @@ from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("pipelines")
-READS_EVERY_RELATION = dict(at=("09_fosr_drop_cap_walks", "derived relations"), commit="1bf1d1a")
 GONE = dict(
     first="c390954",
     second="c390954",
@@ -248,18 +247,17 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
         level, folder = entry["source"]["level"], ground / entry["folder"]
         stored = [fixture.arrays(folder / name, level) for name in [entry["files"]["input"]] + entry["files"]["stages"]]
         drawn = fixture.arrays(folder / entry["files"]["representation"], level)
+        names = [step.name for step in steps]
+        assert len(names) == len(labels) and fixture.holds(names, len(names))
         for name in entry["graphs"]:
-            graph, reached = Dense(name, [], len(stored[0][name]["period"]), **stored[0][name]), False
-            for index, (label, step) in enumerate(zip(labels, steps, strict=True)):
+            graph = Dense(name, [], len(stored[0][name]["period"]), **stored[0][name])
+            for index, step in enumerate(steps):
                 graph = transform.derive(graph, registry, (step,), GraphLimits("cpu"), None)
-                reached = reached or (entry["name"], label) == READS_EVERY_RELATION["at"]
-                if not reached:
-                    assert fixture.differing(graph.arrays, stored[index + 1][name]) == [], (entry["name"], label)
+                if fixture.holds(names, index + 1):
+                    assert fixture.differing(graph.arrays, stored[index + 1][name]) == [], (entry["name"], step.name)
             arrays = representations.build(graph, registry, spec, chosen, transform.SEED, GraphLimits("cpu"))
             now, then = fixture.content(arrays), fixture.content(drawn[name])
             assert sorted(set(then) - set(now)) == sorted(GONE) and sorted(set(now) - set(then)) == sorted(ADDED)
-            if reached:
-                continue
             differing = {key for key in set(now) & set(then) if not identical(now[key], then[key])}
             assert differing <= set(CHANGED), (entry["name"], name, sorted(differing))
             assert level == "node" or not {"key", "task"} & differing
