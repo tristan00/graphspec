@@ -288,7 +288,8 @@ def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_las
             spent, fork = clocked(lambda: held.forked(graph.steps, (change,)))
             found["fork"].append(spent)
             forks += fork
-    history, last, fork = (float(np.median(found[name])) for name in ("history", "last", "fork"))
+    history, last = float(np.median(found["history"])), float(np.median(found["last"]))
+    fork = last + float(np.median(np.subtract(found["fork"], found["last"])))
     derived = [item for derivation in (held,) + forks for item in derivation.segments]
     assert [item.high - item.low for item in derived] == [moment] + [graph.steps - moment] * len(changes)
     assert all(fork.parent is held and fork.derivations()[:1] == held.derivations() for fork in forks)
