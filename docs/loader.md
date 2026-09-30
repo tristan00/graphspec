@@ -100,13 +100,25 @@ statement = dict(
 config = configuration(
     bank,
     model={"view": "snapshot", "hidden": 16},
-    graph={"time/history": 1},
+    pipeline=[
+        dict(operation="graphspec.window", parameters={"time/scheme": "window", "time/unit": "step", "time/window": 2}),
+    ],
+    graph={
+        "time/steps": "tasks",
+        "graphs/join": "separate",
+        "nodes/untyped": False,
+        "relations/direction": "inverse",
+        "time/history": 1,
+        "time/context": 0,
+    },
     training={"epochs": 1},
     seed=statement["seed"],
     splits={name: statement[name] for name in ("trained", "scored", "sees")},
 )
 result = fit(bank, config, runtime / "runs" / "example-fit", statement)
 ```
+
+The pipeline lists the operations the variant is made by, in the order they apply, each with every parameter it reads; `graph` holds the settings: the choice of steps, joining, how models read kinds and directed relations, the parameters of the representations the model reads, and what packing reads. Nothing is filled from a default: a parameter or a setting that is not stated stops the configuration with an error naming it, and a configuration without a pipeline stops the fit. [The contract](contract.md) states both under Pipelines.
 
 Put multiprocessing workflows inside a `main` function called under `if __name__ == "__main__":` when saving them as Python scripts. `fit` takes its statement, in which every field is required and an absent field stops the fit with an error naming it; it runs on the device the statement names, trains on the splits the statement names and scores every target of the splits it names for scoring after full training epochs. The same bank can also be passed to the search CLI; [tuning/README.md](../tuning/README.md) describes the model and graph parameter names.
 

@@ -7,9 +7,9 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations (`operation.py`), the seven shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters (`parameters.py`), carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the seven shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads (`groups.py`) and their kernels (`kernels.py`) |
-| `engine/` | Derivation of variants: operations in order (`transform.py`), segments (`segments.py`), joined graphs (`join.py`) |
+| `engine/` | Derivation of variants: the steps of a pipeline in order (`transform.py`), segments (`segments.py`), joined graphs (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
 | `registries.py`, `budgets.py` | Registries of named entries; limits of a derivation |
 | `infra/` | Code that knows nothing of graphs: files, runtime home, timing, logs, hashing, dense algebra, arrays on the device, the digest of the code (`code.py`), and `processes/` with pools, workers, locks and platform code |
@@ -34,11 +34,12 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `views/graph.py` | `Graph` is a view as spans over steps, which `verify` checks; `Graph.dense()` expands the spans into the per-step working graph by reference. |
 | `views/view.py` | The choices of steps, registered; `sequences` gives the sequences of a graph and `view` shows the facts of a graph at the steps of one sequence as a `Graph`. |
 | `views/spans.py` | Interval primitives: encoding rows as spans, expanding spans to rows, fact order, coverage checks. |
-| `operations/parameters.py` | The spec space: conditional parameters generated from a registry and a set of representation groups, those of the operations taken from the registry of operations, with `draw`, `canonical` and `digest`. |
-| `operations/operation.py` | `Operation`, the registry `OPERATIONS`, the settings an operation reads its parameters through, its counts, `listed` and the order of the seven shipped operations. |
+| `operations/parameters.py` | Conditional parameters, and the settings of a pipeline generated from a registry and a set of representation groups, with `draw`, `canonical` and `digest`. |
+| `operations/operation.py` | `Operation`, the registry `OPERATIONS`, the settings an operation reads its parameters and its splits through, its counts and `listed`. |
+| `operations/pipeline.py` | `resolved` checks a stated pipeline and gives its steps; `space`, `entries` and `flattened` give a search the presence and the parameters of every entry of a template under names that stay the same when another entry is added. |
 | `operations/periods.py` … `operations/merging.py`, `operations/rows.py` | One module per shipped operation, each registering its operation with its parameters; the rows of facts and observations they select, extend and prune. |
 | `representations/groups.py` | Model inputs built from a derived graph, and their validation. |
-| `engine/transform.py` | `derive` runs the registered operations in the order of the seven stages and verifies the graph after each; `materialize` adds the representations; `validate` shows every graph of a bank once. |
+| `engine/transform.py` | `derive` runs the steps of a pipeline in the order stated and verifies the graph after each; `materialize` adds the representations; `validate` shows every graph of a bank once. |
 | `engine/join.py` | `unify` gives the members of a joined group one entity numbering; `joined` concatenates them into one physical graph, the reference the segment engine is checked against. |
 | `engine/segments.py`, `operations/state.py` | The segment engine that builds a joined group graph by graph, described below. |
 | `operations/kernels.py`, `representations/kernels.py` | The numba kernels behind the stages and the representations; `verify`'s is in `views/graph.py`. |
@@ -55,7 +56,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 
 The stages work on `graph.Dense`, the per-step expansion: rows reference their features and attributes (`obs_ref`, `fact_ref`) in `x_table` and `value_table` instead of copying them, so a stage that copies or filters rows moves integers. `step_graph` and `entity_connected` carry the joined timeline (all zeros for a single graph).
 
-**Joined groups.** A joined group is never concatenated. `segments.build` transforms and represents one member graph at a time, as a segment of the group's timeline: its entities are numbered by the rank of their group id, so every sort and tie-break matches the whole group, and hashes and random streams receive group ids and group steps. Each stage and representation that looks back in time receives the state earlier graphs left it (`state.Segment.state`): window copies still open, running degree and activity counts, fact runs, orphan states, derived facts live at the boundary, typed relations still live, last observations, replay states, coupling tails and mixed chains. Lookbacks bounded in time (event DAG, boundaries, walks) read a halo of the recent rows instead. Every segment's rows are written with group ids and offsets, then stitched into the group's variant, which is bitwise equal to transforming and representing the physical join. When a split has few groups, `segments.build_parallel` spreads its groups over the workers, and the groups advance side by side. Each stage that carries state runs its segments in order: the time window, the node filters, the derived facts live at the boundary, the edge filters split by relation over up to three shards balanced by row count, relation merging, and the representations. A stage's carried state is small, so it is written beside the spill files after every segment and any idle worker runs the next segment of any stage; only the representations stay on one worker, which appends every segment's arrays straight into the group's variant files. Work without carried state runs wherever a worker is free: expanding graphs from spans, the per-step derivation, and assembling derived facts with the relation filter and the stateless edge drop. Stages hand segments to each other through one spill file each. The variant is verified once per segment after relation merging, and stitching only adds the group-level indexes. Budgets apply per segment, so a group's size is bounded by disk, not by the graph budget.
+**Joined groups.** A joined group is never concatenated. `segments.build` transforms and represents one member graph at a time, as a segment of the group's timeline: its entities are numbered by the rank of their group id, so every sort and tie-break matches the whole group, and hashes and random streams receive group ids and group steps. Each stage and representation that looks back in time receives the state earlier graphs left it (`state.Segment.state`): window copies still open, running degree and activity counts, fact runs, orphan states, derived facts live at the boundary, typed relations still live, last observations, replay states, coupling tails and mixed chains. Lookbacks bounded in time (event DAG, boundaries, walks) read a halo of the recent rows instead. Every segment's rows are written with group ids and offsets, then stitched into the group's variant, which is bitwise equal to transforming and representing the physical join. When a split has few groups, `segments.build_parallel` spreads its groups over the workers, and the groups advance side by side. Every entry of the pipeline is a stage that runs its segments in order with the state it carries, after a stage that numbers the entities of each segment and before the representations; a stage adds to a segment the entities its carried state names. A stage's carried state is small, so it is written beside the spill files after every segment and any idle worker runs the next segment of any stage; only the representations stay on one worker, which appends every segment's arrays straight into the group's variant files. Expanding graphs from spans runs wherever a worker is free. Stages hand segments to each other through one spill file each. The variant is verified once per segment after the last entry, and stitching only adds the group-level indexes. Budgets apply per segment, so a group's size is bounded by disk, not by the graph budget.
 
 **Relation vocabulary.** `declaration.registry` numbers node types and base relations in the order the schema states them, the relations an edge table takes from a column in sorted order at the place of their table, then declares every relation a spec can derive. A relation stated without direction is symmetric. A directed relation has a canonical and a reverse code; a symmetric relation has one.
 
@@ -83,15 +84,15 @@ The markers `non_relation` and `period_context` take codes above every relation.
 
 `declaration()` serialises everything and `fingerprint()` hashes it. The bank manifest, the run plan and every trial's `selection.json` pin that hash.
 
-**Spec.** A spec is a flat dictionary of graph-transform parameters. `parameters.space(registry, groups)` generates the parameters for one registry and the representation groups a model reads. Each parameter is active only under its condition; `nodes/<type>/min_degree`, for example, needs `nodes/<type>/filter` set to degree or total_degree.
+**Pipeline and settings.** A configuration states its pipeline, the operations in order with their parameters, and its settings, a flat dictionary of the rest: forms of storage, steps, joining, how models read kinds and directed relations, the parameters of the representation groups a model reads, and those read when packing; [the contract](../docs/contract.md) states both. `parameters.settings(registry, groups)` generates the settings for one registry and the representation groups a model reads; an operation generates its own parameters. Each parameter is active only under its condition; `nodes/<type>/min_degree`, for example, needs `nodes/<type>/filter` set to degree or total_degree.
 
 - `draw` walks the parameters in order and asks for a value for each active one.
 - `canonical` refuses a missing active parameter, an inactive or unknown one, and an out-of-range value.
 - `digest` is the SHA-256 of the sorted JSON.
-- Every hashed or sampled choice in the stages and representations uses one fixed seed, `transform.SEED`, so changing one parameter never reshuffles the random choices of another.
-- `materialized` drops the parameters read only when packing: `time/history`, `time/context`, `neighbors/order` and `neighbors/decay`. Its digest, with the groups, the device and what the splits may see, names a cached variant inside the folder of its bank, which is keyed by the fingerprint of the manifest and the digest of the sources of `graphspec` and `tuning`.
+- Every hashed or sampled choice in the operations and representations uses one fixed seed, `transform.SEED`, so changing one parameter never reshuffles the random choices of another.
+- `materialized` drops the settings read only when packing: `time/history`, `time/context`, `neighbors/order` and `neighbors/decay`. A cached variant is named by the key the contract states: the schema, the source, the pipeline with the version of every operation, the settings, the groups, what the splits may see, the device, the seed and the versions of the code of views, derivation and representations; no file is hashed.
 
-**Stages.** `transform.derive` applies seven registered operations in a fixed order, `graphspec.periods` to `graphspec.merging`, one per stage below; each reads its parameters through the settings of [the contract](../docs/contract.md). Each stage reads the graph the stage before it produced. A stage that changes nothing returns its input, which is not verified again, and every array a stage leaves unchanged is shared with its input; a relation whose edge filters sit at their identity values is left untouched.
+**Operations.** `transform.derive` applies the steps of a pipeline in the order it states; each operation reads its parameters through the settings of [the contract](../docs/contract.md) and the graph the step before it produced. A step that changes nothing returns its input, which is not verified again, and every array a step leaves unchanged is shared with its input; a relation whose edge filters sit at their identity values is left untouched. The seven shipped operations follow, numbered in the order the fixture of 1.2 applied them; a pipeline may state any of them, in any order, and one more than once. Rows marked as settings belong to the settings, not to an operation.
 
 1. Periods
 
@@ -105,11 +106,11 @@ The markers `non_relation` and `period_context` take codes above every relation.
 | Parameter | Range | Effect |
 |---|---|---|
 | `time/scheme` | window, state | Which earlier facts a snapshot holds. window: facts stated in the last w steps, or in the current period and the previous p periods. state: every earlier fact. In each scheme a fact leaves when it is removed or stated again, and an observation carries forward over the same span until the entity's next observation. Parallel facts are copied together. |
-| `time/unit` | step, period | What the window counts. Offered for window when periods span more than one step: truth periods, or every with a length above 1. |
+| `time/unit` | step, period | What the window counts: steps, or the periods of the graph it is given. Offered for window. |
 | `time/window` | 1–8 | w. Offered for window counted in steps. |
 | `time/past_periods` | 0–3 | p, counted in distinct periods whatever their numbers. Offered for window counted in periods. |
-| `time/history` | 1–32 | Steps in each training window; read when packing. |
-| `time/context` | 0–3 | Earlier periods replayed before each training window; read when packing. |
+| `time/history` | 1–32 | A setting: steps in each training window; read when packing. |
+| `time/context` | 0–3 | A setting: earlier periods replayed before each training window; read when packing. |
 
 3. Nodes
 
@@ -117,37 +118,37 @@ Every unprotected type has its own switch and filter.
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `graphs/join` | separate, single | separate transforms every truth graph on its own. single joins truth graphs in groups of `graphs/join_size` onto one timeline: graphs follow each other in time, periods keep increasing across them, labels and splits keep their rows, and entities of connected types with the same key become one entity so graphs meet through the entities they share. A connected entity, and a fact between two connected entities, carries across the boundaries between graphs under every stage's rules; every other entity and fact ends with its own graph. `every` periods restart at each graph. |
+| `graphs/join` | separate, single | A setting, as are the three below. separate transforms every truth graph on its own. single joins truth graphs in groups of `graphs/join_size` onto one timeline: graphs follow each other in time, periods keep increasing across them, labels and splits keep their rows, and entities of connected types with the same key become one entity so graphs meet through the entities they share. A connected entity, and a fact between two connected entities, carries across the boundaries between graphs under every stage's rules; every other entity and fact ends with its own graph. `every` periods restart at each graph. |
 | `graphs/join_size` | 2–4096 | How many truth graphs one joined graph holds. Graphs are grouped in bank order among graphs whose rows fall in the same splits, so a graph-level split never mixes training and validation graphs in one joined graph. Offered for single. |
 | `graphs/connect/<type>` | on, off | Whether entities of the type are unified by key when joining. Offered for single. |
 | `graphs/connect_fraction` | 0.01–1, logarithmic | The share of keys that are unified, chosen by a hash of the key; the rest stay per graph. Offered for single. |
 | `nodes/<type>/keep` | on, off | Removes the entities of the type and every fact that touches them. |
 | `nodes/referenced` | keep, and remove where every kind of task keeps an absent node | What becomes of a node that a reference names and that the stage would remove at the step of the task: kept as an anchor, or removed. |
-| `nodes/untyped` | on, off | Gives every entity one kind in the model inputs. The stages still read types, and features are untouched. Offered with more than one node type. |
+| `nodes/untyped` | on, off | A setting: gives every entity one kind in the model inputs. The operations still read types, and features are untouched. Offered with more than one node type. |
 | `nodes/<type>/filter` | none, degree, total_degree, core, activity, sample | Removes observations of the type's entities that fail the filter, and the facts that lose an endpoint. Offered while the type is kept. |
 | `nodes/<type>/min_degree` | 1–16 | degree: an observation stays if its entity has at least that many stated incident facts among kept types at that step, a self-loop counting once. total_degree: counted over every step so far. |
 | `nodes/<type>/core` | 2–16 | core: observations of every core-filtered type are removed together, repeatedly, while their incident facts to still-kept observations at that step, a self-loop counting once, number fewer than their type's threshold. Observations that failed another filter do not count. |
-| `nodes/<type>/min_activity` | 2–16 | activity: an entity stays from its n-th observation, counting the copies stage 2 carried forward. |
+| `nodes/<type>/min_activity` | 2–16 | activity: an entity stays from its n-th observation, counting the copies an earlier window carried forward. |
 | `nodes/<type>/sample` | 0.1–0.9 | sample: a seeded hash keeps that fraction of the type's entities for the whole graph. |
 
 With `nodes/referenced` set to keep, an observation that a reference of a task names at the step of the task is never removed; when its type is removed or it fails its type's filter, it stays as an anchor, marked in `obs_anchor`: no present fact touches it and no derivation links it, while removals of relations its entity held earlier still end at its step. Representations built on observations (coupling, events, mixed) include anchors like any other observation.
 
 4. Derived relations
 
-Computed at each step from the present facts that survive stage 3. Completion anchors, hops, diffusion and rewiring read the base relations that `relations/<table>/keep` keeps, as undirected pairs. A projection reads its own relations even when they are removed.
+Computed at each step from the present facts of the graph it is given. Projections, completion anchors, hops, diffusion and rewiring read the base relations that graph holds, as undirected pairs: a relation an earlier step removed is not read, and one a later step removes is.
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `derive/project:<table>:<side>:<A>:<B>` | on, off | Adds that projection. Offered while A, B and a counterpart type their FROM/TO pairs share are kept. |
+| `derive/project:<table>:<side>:<A>:<B>` | on, off | Adds that projection. Offered for every projection the bank declares. |
 | `derive/project_cap` | 0–64 | Only each counterpart's `cap` most recently started relations of the step take part, counting parallel facts once; 0 takes all. Offered when a projection is on. |
-| `derive/complete/<type>` | on, off | Completes that type: every pair of observed entities of the completed types at a step is linked. Offered while the type is kept. |
-| `derive/complete_within/<type>` | on, off | Links completed entities only when they share a neighbour of that type; with several types on, a shared neighbour of any of them is enough. Offered while this type is kept and a kept base relation joins it to a completed type. |
-| `derive/hops` | 1–3 | Adds `hop:2` up to `hop:k`. Offered while a base relation is kept. |
-| `derive/diffusion` | none, ppr, heat | Scores pairs by personalised PageRank α(I−(1−α)T)⁻¹ or the heat kernel exp(−t(I−T)), with T the symmetric-normalised adjacency of the step's observed entities. Each entity links to its highest-scoring non-adjacent entities in its own connected component. Computed per component in float64; the infra layer chooses the device by component size. Offered while a base relation is kept. |
+| `derive/complete/<type>` | on, off | Completes that type: every pair of observed entities of the completed types at a step is linked. Offered for every type. |
+| `derive/complete_within/<type>` | on, off | Links completed entities only when they share a neighbour of that type; with several types on, a shared neighbour of any of them is enough. Offered while a relation of the bank joins this type to a completed type. |
+| `derive/hops` | 1–3 | Adds `hop:2` up to `hop:k`. Offered where the bank states a relation. |
+| `derive/diffusion` | none, ppr, heat | Scores pairs by personalised PageRank α(I−(1−α)T)⁻¹ or the heat kernel exp(−t(I−T)), with T the symmetric-normalised adjacency of the step's observed entities. Each entity links to its highest-scoring non-adjacent entities in its own connected component. Computed per component in float64; the infra layer chooses the device by component size. Offered where the bank states a relation. |
 | `derive/diffusion_top_k` | 1–16 | Neighbours per entity. Offered with diffusion. |
 | `derive/ppr_alpha` | 0.05–0.5 | α. Offered with ppr. |
 | `derive/heat_time` | 0.5–5 | t. Offered with heat. |
-| `derive/rewiring` | none, sdrf, fosr | fosr works inside connected components. Each addition goes to the component with the smallest spectral gap, at the non-edge that minimises the product of degree-scaled second-eigenvector entries of the component's self-looped normalised adjacency. sdrf takes the edge of lowest balanced Forman curvature. It adds an edge between the two neighbourhoods, sampled by softmax of temperature × curvature gain, and removes the most curved edge above the threshold. Curvature runs in a numba kernel, and fosr reuses a component's decomposition until an edge changes it. Offered while a base relation is kept. |
+| `derive/rewiring` | none, sdrf, fosr | fosr works inside connected components. Each addition goes to the component with the smallest spectral gap, at the non-edge that minimises the product of degree-scaled second-eigenvector entries of the component's self-looped normalised adjacency. sdrf takes the edge of lowest balanced Forman curvature. It adds an edge between the two neighbourhoods, sampled by softmax of temperature × curvature gain, and removes the most curved edge above the threshold. Curvature runs in a numba kernel, and fosr reuses a component's decomposition until an edge changes it. Offered where the bank states a relation. |
 | `derive/rewiring_budget` | 1–64 | Iterations per step. Offered with rewiring. |
 | `derive/sdrf_temperature` | 1–500, log | Sampling temperature. Offered with sdrf. |
 | `derive/sdrf_threshold` | 0.1–20, log | Curvature above which an edge is removed. Offered with sdrf. |
@@ -160,15 +161,16 @@ Derivation stops with an error once a variant's derived facts exceed the budget 
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `relations/<table>/keep` | on, off | Removes a relation stated, every relation of a table taken from a column, or a relation of a set edge. Offered while both types of one of its FROM/TO pairs are kept. |
-| `relations/direction` | inverse, symmetric, directed | How directed relations are read: both directions with the reverse code, both directions with one code, or the stated direction only. Symmetric relations are always read both ways. Offered while a base relation is kept. |
+| `relations/<table>/keep` | on, off | Removes a relation stated, every relation of a table taken from a column, or a relation of a set edge. Offered for every relation of the bank. |
+| `relations/direction` | inverse, symmetric, directed | A setting: how models read directed relations: both directions with the reverse code, both directions with one code, or the stated direction only. Symmetric relations are always read both ways. Offered where the bank states a relation. |
 
 6. Edge filters
 
-Every relation stated, table of relations taken from a column, relation of a set edge and derived relation has its own filter under `edges/<table>/`. A base filter is offered while its relations are kept; a derived relation's while a derivation can produce it: its projection; both of its completed types, with no anchor type on or an anchor type that kept relations join to both; hops of at least its distance; diffusion; or rewiring. Drop and persistence treat an edge of each value as an edge of its own; a cap counts the edges of every value of a table together.
+Every relation stated, table of relations taken from a column, relation of a set edge and derived relation has its own filter under `edges/<table>/`. A base filter is offered for every relation of the bank; a derived relation's while the entry of `graphspec.derive` without a label can produce it: its projection; both of its completed types, with no anchor type on or an anchor type that relations of the bank join to both; hops of at least its distance; diffusion; or rewiring. A pipeline without that entry has no filter of a derived relation. Drop and persistence treat an edge of each value as an edge of its own; a cap counts the edges of every value of a table together.
 
 | Parameter | Range | Effect |
 |---|---|---|
+| `edges/direction` | inverse, symmetric, directed | How the filters read directed relations, as `relations/direction` says models do. Offered where the bank states a relation. |
 | `edges/<table>/drop` | 0–0.9 | A seeded hash removes that fraction of entity pairs, with all their rows. |
 | `edges/<table>/persistence` | 1–8 | A present fact is kept from the p-th consecutive step it is stated; facts stated twice at one step share a position. |
 | `edges/<table>/cap` | 0–64 | At most c neighbours per entity and step, with parallel facts counted once; 0 keeps all. A directed reading caps destinations, inverse caps destinations and sources separately, and symmetric caps each entity with a pair counted once. A pair stays only if it ranks within c at every capped end. |
@@ -182,8 +184,8 @@ Whenever a stage removes present facts, it also removes absent rows left without
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `relations/types` | typed, untyped | untyped replaces every base relation with `untyped` and drops attributes. Its absent row stays only when no underlying relation between the pair is still present. Offered while a base relation is kept. |
-| `relations/parallel` | keep, merge | merge keeps the last of identical facts stated at one step. Offered while a base relation is kept. |
+| `relations/types` | typed, untyped | untyped replaces every base relation with `untyped` and drops attributes. Its absent row stays only when no underlying relation between the pair is still present. Offered where the bank states a relation. |
+| `relations/parallel` | keep, merge | merge keeps the last of identical facts stated at one step. Offered where the bank states a relation. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 
