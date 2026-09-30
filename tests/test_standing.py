@@ -89,6 +89,13 @@ def parsed(source):
     return tree
 
 
+@pytest.fixture(scope="module", autouse=True)
+def library():
+    started = time.perf_counter()
+    trees = [parsed(source) for _, source in sources(ROOT, CODE)]
+    LOG.debug("library parsed exit modules=%d seconds=%.4f", len(trees), time.perf_counter() - started)
+
+
 def timing(tree):
     started = time.perf_counter()
     found = any(
