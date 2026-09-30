@@ -179,7 +179,7 @@ class TrainingSession:
 
     @timed("schedule")
     def schedule(self, training_blocks: Sequence[Block], batch_size: int) -> Schedule:
-        from tuning.batches.batching import batches
+        from tuning.batches.batching import Shuffle, batches, identities
         from tuning.families.periods import blocks as period_blocks
 
         if sorted(map(tuple, training_blocks)) != sorted(self.bank.blocks(0, self.history, self.config)):
@@ -194,12 +194,12 @@ class TrainingSession:
         with measure("graph_sizes"):
             sizes = self.bank.sizes(self.config)
         with measure("batch_schedule"):
-            training, ends = [], set()
+            training, ends, keys = [], set(), identities(self.bank, self.config)
             for epoch in range(epochs):
                 training.extend(
                     (epoch, group)
                     for group in batches(
-                        context, batch_size, sizes, self.stated.seed + epoch, frame_budget=1024
+                        context, batch_size, sizes, Shuffle(self.stated.seed, epoch, keys), frame_budget=1024
                     )
                 )
                 ends.add(len(training))

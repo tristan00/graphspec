@@ -18,20 +18,24 @@ from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
-from tuning.batches.batching import batches, pack_batch
+from tuning.batches.batching import Shuffle, batches, identities, pack_batch
 from tuning.batches.inputs import couples
 from tuning.families.event_graph import KINDS
 from tuning.families.model_spec import VIEWS, views
 from tuning.families.models import build as network
+from tuning.families.periods import blocks as period_blocks
 
 LOG = logging.getLogger(__name__)
 configuration = support.configuration
 SPLITS = dict(trained=["train"], scored=["test"], sees=dict(train=[], test=[]))
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
+RENUMBERED = (("m2", "m0", "m3", "m1"), ("s3", "s1", "s2", "s0"))
 TIMES, THIRD, KIND, VALUE = 4, 1, 3, 2
 FEW, MANY, CROWDED = 5, 50, (0, 1, 1, 2)
 EDGES = ("snapshot", "event_graph", "memory", "projection", "sequence", "tree", "walks")
-NETS, HELD, OPENED = {}, {}, {}
+WIDER = {"memory": {"memory/pair_terms": True}, "sequence": {"sequence/structure": "overlap"}}
+ROUNDING = 1e-6
+NETS, HELD, OPENED, CHECKED, EPOCHS = {}, {}, {}, {}, {}
 pytestmark = pytest.mark.xdist_group("references")
 
 
@@ -81,7 +85,7 @@ def stated(order):
 
 
 @timed("references.graph")
-def graph(name, changed=False, era=1.0, values=FEW, times=tuple(range(TIMES))):
+def graph(name, changed=False, era=1.0, values=FEW, times=tuple(range(TIMES)), listed=(MAKERS, SITES)):
     pairs = [(MAKERS[at], SITES[at]) for at in range(4)] + [(MAKERS[at], SITES[(at + 1) % 4]) for at in range(4)]
     links = [(MAKERS[at % 4], SITES[at // 4 % 4], "v%02d" % (at % values), 0) for at in range(max(values, 8))]
     links.append((MAKERS[VALUE], SITES[(VALUE + 1) % 4], "v%02d" % (2 if changed else 1), VALUE))
@@ -89,7 +93,7 @@ def graph(name, changed=False, era=1.0, values=FEW, times=tuple(range(TIMES))):
         name=name,
         unit="tick",
         columns=dict(era=era),
-        nodes=dict(maker=list(MAKERS), site=list(SITES)),
+        nodes=dict(maker=list(listed[0]), site=list(listed[1])),
         values=[
             dict(
                 form="state",
@@ -179,7 +183,10 @@ CASES = dict(
         schema=stated(NAMES), graphs=[graph("main", changed=True), graph("era", era=2.0, times=CROWDED)]
     ),
     reordered=lambda: dict(schema=stated(("r4", "r5", "r2", "r0", "r3", "r1")), graphs=[graph("main")]),
-    turned=lambda: dict(schema=stated(NAMES), graphs=[graph("era", times=CROWDED), graph("main")]),
+    renumbered=lambda: dict(
+        schema=stated(NAMES),
+        graphs=[graph("era", times=CROWDED, listed=RENUMBERED), graph("main", listed=RENUMBERED)],
+    ),
 )
 WIDE = dict(wide=lambda: dict(schema=stated(NAMES), graphs=[graph("main", values=MANY)]))
 
@@ -248,9 +255,37 @@ def test_every_family_reads_the_references_of_a_task_as_a_set_keyed_by_name(bank
     assert len(reordered) == TIMES and reordered == {row: stated[row] for row in reordered}
 
 
-def test_reordering_the_graphs_of_a_bank_leaves_the_predictions_of_the_projection_family_equal(banks):
-    turned, stated = predicted(banks, "projection", "turned"), predicted(banks, "projection", "stated")
-    assert len(turned) == 2 * TIMES and turned == stated
+@timed("references.epoch")
+def epoch(banks, family, name):
+    if (family, name) not in EPOCHS:
+        held = opened(banks, name)
+        values = dict(view=family, **WIDER.get(family, {}))
+        cfg = configuration(held.registry, values, {"time/history": 2}, 5, copy.deepcopy(SPLITS))
+        if family not in CHECKED:
+            torch.manual_seed(5)
+            CHECKED[family] = network(cfg, held.fitted(cfg)).eval()
+        sizes, shuffle = held.sizes(cfg), Shuffle(5, 1, identities(held, cfg))
+        trained = batches(period_blocks(held, held.blocks(0, 2, cfg), cfg), 2, sizes, shuffle, frame_budget=1024)
+        scored = batches(period_blocks(held, held.blocks(1, 2, cfg), cfg), 2, sizes, None, frame_budget=1024)
+        tasks, found = [], {}
+        with torch.inference_mode():
+            for group in trained + scored:
+                b = pack_batch(held, group, cfg, "cpu")
+                rows = [held.rows[row]["graph"] + "/%d" % held.rows[row]["ticket"] for row in b["rows"]]
+                tasks.append(sorted(rows))
+                found.update(zip(rows, CHECKED[family](b).tolist()))
+        EPOCHS[family, name] = tasks[: len(trained)], found
+    return EPOCHS[family, name]
+
+
+@pytest.mark.parametrize("family", VIEWS)
+def test_renumbering_entities_and_reordering_graphs_leaves_the_batches_and_predictions_of_every_family_equal(
+    banks, family
+):
+    batched, found = epoch(banks, family, "stated")
+    moved, placed = epoch(banks, family, "renumbered")
+    assert len(batched) > 2 and moved == batched
+    assert len(found) == 2 * TIMES and placed == pytest.approx(found, rel=ROUNDING, abs=ROUNDING)
 
 
 @pytest.mark.parametrize("family", VIEWS)

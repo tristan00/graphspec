@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from graphspec.infra.arrays import Bundle, Slot, shared, slot_bytes, views
-from tuning.batches.batching import batches, recipe_batch
+from tuning.batches.batching import Shuffle, batches, identities, recipe_batch
 from tuning.batches.packing import Packer
 from tuning.batches.tensors import materialise
 from tuning.families.periods import blocks as period_blocks
@@ -146,7 +146,7 @@ def test_packer_matches_single_process(packers, view):
     cfg, packer = packers[view]
     opened = packer.bank
     blocks = period_blocks(opened, opened.blocks(0, cfg["graph"]["time/history"], cfg), cfg)
-    groups = batches(blocks, 2, opened.sizes(cfg), 5, frame_budget=1024)[:5]
+    groups = batches(blocks, 2, opened.sizes(cfg), Shuffle(5, 0, identities(opened, cfg)), frame_budget=1024)[:5]
     assert len(groups) == 5
     for group, streamed in zip(groups, packer.stream(groups), strict=True):
         assert same(materialise(opened, cfg, recipe_batch(opened, group, cfg), "cpu"), streamed)
@@ -163,13 +163,13 @@ def test_batches_accept_blocks_read_back_from_json_with_window_sizes():
 
     blocks = [[0, 0, 2, 1, 0, 0, 2], [0, 1, 3, 2, 0, 2, 4], [1, 0, 2, 1, 0, 0, 1]]
     sizes = {0: (Sizes(), 1.0), 1: (5, 1.0)}
-    groups = batches(blocks, 4, sizes, 3, frame_budget=1024)
+    groups = batches(blocks, 4, sizes, Shuffle(3, 0, {0: 7, 1: 8}), frame_budget=1024)
     assert sorted(block for group in groups for block in group) == sorted(map(tuple, blocks))
 
 
 def test_batches_are_formed_only_under_a_seed_the_caller_states():
     blocks = [[0, 0, 2, 1, 0, 0, 2], [1, 0, 2, 1, 0, 0, 1]]
-    with pytest.raises(TypeError, match="seed"):
+    with pytest.raises(TypeError, match="shuffle"):
         batches(blocks, 4, {0: (5, 1.0), 1: (5, 1.0)}, frame_budget=1024)
 
 

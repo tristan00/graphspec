@@ -1,8 +1,10 @@
 import logging
 import time
+from dataclasses import dataclass
 
 import numpy as np
 
+from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from tuning.bank.bank import ROWS
 from tuning.families.periods import enabled
@@ -14,17 +16,41 @@ LOG = logging.getLogger(__name__)
 ENTITY_FRAMES = 1 << 20
 FACTS = 4 << 20
 CHUNK = 64
+GRAPHS, GROUPS = "tuning.batches/graphs", "tuning.batches/groups"
 
 
-def batches(blocks, size, sizes, seed, frame_budget=None, chunk=CHUNK):
+@dataclass(frozen=True)
+class Shuffle:
+    seed: int
+    epoch: int
+    keys: dict
+
+
+def identities(bank, cfg):
+    started = time.perf_counter()
+    names = {graph["index"]: graph["name"] for graph in bank.viewed(cfg).graphs}
+    graphs = bank.graphs(cfg)
+    members = bank.groups(cfg) if bank.joining(cfg) else [[graph] for graph in graphs]
+    result = {
+        graph: int(hashed(*(np.asarray([token(names[member])], np.uint64) for member in held))[0])
+        for graph, held in zip(graphs, members, strict=True)
+    }
+    LOG.debug("identities exit graphs=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def batches(blocks, size, sizes, shuffle, frame_budget=None, chunk=CHUNK):
     started = time.perf_counter()
     if size < 1 or chunk < 1 or (frame_budget is not None and frame_budget < 1):
         raise ValueError("batch size, chunk size and frame budget must be positive")
-    rng = np.random.default_rng(seed) if seed is not None else None
     blocks = [tuple(block) for block in blocks]
     graphs = list(dict.fromkeys(block[0] for block in blocks))
-    if rng is not None:
-        rng.shuffle(graphs)
+    if shuffle is not None:
+        tokens = np.asarray([shuffle.keys[graph] for graph in graphs], np.uint64)
+        drawn = unit(shuffle.seed, GRAPHS, tokens, np.full(len(graphs), shuffle.epoch))
+        graphs = [graphs[index] for index in np.lexsort((tokens, drawn))]
+        place = {graph: index for index, graph in enumerate(graphs)}
+        blocks.sort(key=lambda block: place[block[0]])
     members = max((sizes[graph][0].members for graph in graphs if callable(sizes[graph][0])), default=1)
     position = {graph: index // max(1, chunk // members) for index, graph in enumerate(graphs)}
     counted, grouped = {}, {}
@@ -61,8 +87,11 @@ def batches(blocks, size, sizes, seed, frame_budget=None, chunk=CHUNK):
                 cells += span
                 facts += frames * rate
             groups.append(group)
-        if rng is not None:
-            rng.shuffle(groups)
+        if shuffle is not None:
+            first = np.asarray([group[0] for group in groups], np.int64)
+            keyed = np.asarray([shuffle.keys[graph] for graph in first[:, 0]], np.uint64)
+            drawn = unit(shuffle.seed, GROUPS, keyed, *first[:, 1:].T, np.full(len(groups), shuffle.epoch))
+            groups = [groups[at] for at in np.argsort(drawn, kind="stable")]
         result.extend(groups)
     LOG.info(
         "batches exit seconds=%.3f blocks=%d batches=%d chunks=%d",
