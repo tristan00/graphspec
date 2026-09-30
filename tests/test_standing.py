@@ -180,33 +180,41 @@ def named(root, places, excluded):
     return found
 
 
-def resolved(root, name):
+def resolved(known, name):
     started = time.perf_counter()
-    path = root.joinpath(*name.split("."))
-    found = None
-    if path.with_suffix(".py").is_file():
-        found = path.with_suffix(".py")
-    elif (path / "__init__.py").is_file():
-        found = path / "__init__.py"
-    LOG.debug("resolved exit name=%s seconds=%.4f", name, time.perf_counter() - started)
-    return None if found is None else found.relative_to(root).as_posix()
+    place = name.replace(".", "/")
+    found = next((held for held in (place + ".py", place + "/__init__.py") if held in known), None)
+    LOG.debug("resolved exit name=%s seconds=%.6f", name, time.perf_counter() - started)
+    return found
 
 
-def imports(root, folders):
+def statements(tree):
     started = time.perf_counter()
-    found = []
-    for place, source in sources(root, folders):
+    found, waiting = [], [tree]
+    while waiting:
+        node = waiting.pop()
+        found.append(node)
+        for name in ("body", "orelse", "finalbody", "handlers", "cases"):
+            waiting.extend(child for child in getattr(node, name, ()) if isinstance(child, ast.AST))
+    LOG.debug("statements exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def imports(modules):
+    started = time.perf_counter()
+    known, found = {place for place, _ in modules}, []
+    for place, source in modules:
         package = place[: -len(".py")].split("/")[:-1]
-        for node in ast.walk(ast.parse(source)):
+        for node in statements(ast.parse(source)):
             targets = []
             if isinstance(node, ast.Import):
-                targets = [resolved(root, alias.name) for alias in node.names]
+                targets = [resolved(known, alias.name) for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
                 base = node.module or ""
                 if node.level:
                     base = ".".join(package[: len(package) - node.level + 1] + ([base] if base else []))
                 targets = [
-                    resolved(root, base + "." + alias.name) or resolved(root, base) for alias in node.names
+                    resolved(known, base + "." + alias.name) or resolved(known, base) for alias in node.names
                 ]
             found.extend((place, node.lineno, target) for target in targets if target is not None)
     LOG.debug("imports exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
@@ -214,10 +222,11 @@ def imports(root, folders):
 
 
 def group(place):
+    started = time.perf_counter()
     parts = place.split("/")
-    if place.startswith(INFRA + "/"):
-        return INFRA
-    return "/".join(parts[:2]) if len(parts) > 2 else place
+    found = INFRA if place.startswith(INFRA + "/") else "/".join(parts[:2]) if len(parts) > 2 else place
+    LOG.debug("group exit place=%s seconds=%.6f", place, time.perf_counter() - started)
+    return found
 
 
 def below(name):
@@ -235,12 +244,13 @@ def below(name):
 def layered(root, folders):
     started = time.perf_counter()
     reach = {name: below(name) for name in LAYERS}
+    modules = sources(root, folders)
     unplaced = sorted(
-        place for place, _ in sources(root, folders) if place.split("/")[0] in GROUPED and group(place) not in LAYERS
+        place for place, _ in modules if place.split("/")[0] in GROUPED and group(place) not in LAYERS
     )
     crossing = sorted(
         (place, line, group(place), group(target))
-        for place, line, target in imports(root, folders)
+        for place, line, target in imports(modules)
         if group(place) in LAYERS and group(target) != group(place) and group(target) not in reach[group(place)]
     )
     LOG.debug(
