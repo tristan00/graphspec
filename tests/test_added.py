@@ -126,6 +126,7 @@ def test_an_operation_adds_a_kind_a_relation_and_a_column_encoded_from_the_train
         placed={},
         relations={inward: dict(pairs=[["place", "hub"]], directed=True, columns=[count])},
         joins={},
+        candidates={},
     )
     assert opened.identity(cfg)["added"] == [declared] and registry.declaration()["added"] == [declared]
     viewed, partitions, place = opened.viewed(cfg), opened.partitions(cfg), registry.kind("place")
@@ -153,9 +154,13 @@ def test_an_operation_adds_a_kind_a_relation_and_a_column_encoded_from_the_train
     attributes = np.asarray(arrays["attributes_" + inward], np.float64)
     assert sorted(attributes[:, 0].tolist()) == sorted(np.repeat(counts, counts).astype(np.float64).tolist())
     with pytest.raises(ValueError, match="adds the columns lost and places them nowhere"):
-        opened.registry.grown("bad", Added({"lost": dict(type="number", encoder="value")}, {}, {}, {}, {}), None)
+        opened.registry.grown("bad", Added({"lost": dict(type="number", encoder="value")}, {}, {}, {}, {}, {}), None)
     with pytest.raises(ValueError, match="adds the kind of node place, a name the registry holds"):
-        opened.registry.grown("bad", Added({}, {"place": dict(columns=(), tokens=len)}, {}, {}, {}), None)
+        opened.registry.grown("bad", Added({}, {"place": dict(columns=(), tokens=len)}, {}, {}, {}, {}), None)
+    with pytest.raises(ValueError, match="adds the relation of candidates visits, a name without a colon no one holds"):
+        opened.registry.grown("bad", Added({}, {}, {}, {}, {}, {"visits": dict(pairs=(("place", "place"),), directed=True)}), None)
+    with pytest.raises(ValueError, match="adds the relation of candidates drawn between kinds of node no one states, lost"):
+        opened.registry.grown("bad", Added({}, {}, {}, {}, {}, {"drawn": dict(pairs=(("place", "lost"),), directed=True)}), None)
     LOG.info("added kind relation column exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -888,10 +893,10 @@ def parity():
 
 @timed("added.drawn_negatives")
 def drawn_negatives(found, code, steps):
-    rows = np.flatnonzero((found.fact_code == code) & np.isin(found.fact_step, steps))
-    assert found.fact_present[rows].all() and (found.fact_ref[rows] < 0).all()
+    derived, drawn = found
+    rows = np.flatnonzero((drawn["code"] == code) & np.isin(drawn["step"], steps))
     result = {}
-    for step, source, target in zip(found.fact_step[rows].tolist(), found.fact_source[rows].tolist(), found.fact_target[rows].tolist()):
+    for step, source, target in zip(drawn["step"][rows].tolist(), drawn["source"][rows].tolist(), drawn["target"][rows].tolist()):
         result.setdefault((step, source), []).append(target)
     return result
 
@@ -932,8 +937,9 @@ def test_negative_links_are_absent_edges_drawn_by_their_rule_for_every_present_e
         stated = {"negatives/of": "link:visits", "negatives/rule": rule, "negatives/count": 2, **rules.get(rule, {})}
         entries = resolved(registry, [dict(operation="graphspec.negatives", parameters=stated)])
         grown = pipeline.grown(registry, entries, None)
-        assert grown.by_name["negatives"].pairs == (("person", "place"),) and not grown.by_name["negatives"].symmetric
-        found = drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, None), grown.code("negatives"), steps)
+        made = grown.by_candidate["negatives"]
+        assert made.pairs == (("person", "place"),) and not made.symmetric and "negatives" not in grown.by_name
+        found = drawn_negatives(segments.apart(graph, {}, grown, entries, SEED, LIMITS, None), made.code, steps)
         expected = 0
         for step in steps.tolist():
             visits = (graph.fact_step == step) & graph.fact_present & (graph.fact_code == registry.code("visits"))
@@ -952,8 +958,8 @@ def test_negative_links_are_absent_edges_drawn_by_their_rule_for_every_present_e
     stated = {"negatives/of": "link:visits:person", "negatives/rule": "uniform", "negatives/count": 3}
     entries = resolved(registry, [dict(operation="graphspec.negatives", parameters=stated)])
     grown = pipeline.grown(registry, entries, None)
-    code = grown.code("negatives")
-    whole = drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, partitions), code, steps)
+    code = grown.by_candidate["negatives"].code
+    whole = drawn_negatives(segments.apart(graph, {}, grown, entries, SEED, LIMITS, partitions), code, steps)
     person, references = list(registry.references).index("person"), {}
     for member in range(len(graph.member_task)):
         references.setdefault(int(graph.member_task[member]), []).append(int(graph.member_source[member]))
@@ -964,12 +970,12 @@ def test_negative_links_are_absent_edges_drawn_by_their_rule_for_every_present_e
         assert len(drawn) == len(set(drawn)) == min(3, len(allowed)) and set(drawn) <= allowed
     trained = {key: value for key, value in whole.items() if key[0] < SCORED}
     alone = np.where(partitions == 1, -1, partitions).astype(np.int8)
-    assert drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, alone), code, steps) == trained
+    assert drawn_negatives(segments.apart(graph, {}, grown, entries, SEED, LIMITS, alone), code, steps) == trained
     unseen = np.where(partitions == 0, -1, partitions).astype(np.int8)
-    assert drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, unseen), code, steps[:SCORED]) == {}
+    assert drawn_negatives(segments.apart(graph, {}, grown, entries, SEED, LIMITS, unseen), code, steps[:SCORED]) == {}
     kept = ~((graph.fact_step >= SCORED) & (graph.fact_code == registry.code("visits")))
     changed = select(graph, FACTS, kept)
-    later = drawn_negatives(segments.whole(changed, {}, grown, entries, SEED, LIMITS, partitions), code, steps)
+    later = drawn_negatives(segments.apart(changed, {}, grown, entries, SEED, LIMITS, partitions), code, steps)
     assert {key: value for key, value in later.items() if key[0] < SCORED} == trained
     with pytest.raises(ValueError, match="was given no splits, and the operation graphspec.negatives reads the split"):
         segments.whole(graph, {}, grown, entries, SEED, LIMITS, None)

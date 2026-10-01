@@ -102,7 +102,7 @@ def adds(registry, settings, entry):
             joins[edge.name] = pairs
     columns = tuple(registry.schema.entities()[kind])
     tokens = functools.partial(grouping_tokens, entry, kind, column)
-    return Added({}, {entry: dict(columns=columns, tokens=tokens)}, {}, {}, joins)
+    return Added({}, {entry: dict(columns=columns, tokens=tokens)}, {}, {}, joins, {})
 
 
 def carried(registry, spec):
@@ -281,7 +281,7 @@ CONTRACT = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=adds,
         kinds=named,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

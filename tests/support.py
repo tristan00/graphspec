@@ -501,6 +501,18 @@ def template(names=SEVEN):
     return [dict(operation=name) for name in names]
 
 
+def unoffered(registry, grown):
+    started = time.perf_counter()
+    result = [
+        name
+        for name in OPERATIONS.names()
+        if [parameter.declaration() for parameter in OPERATIONS.named(name).stated(grown)]
+        != [parameter.declaration() for parameter in OPERATIONS.named(name).stated(registry)]
+    ]
+    LOG.debug("unoffered exit operations=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def parameters(registry, groups, names=SEVEN):
     started = time.perf_counter()
     result = specs.settings(registry, groups) + tuple(

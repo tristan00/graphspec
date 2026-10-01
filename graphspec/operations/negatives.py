@@ -14,7 +14,7 @@ from graphspec.schema.references import SORTS
 
 from .operation import OPERATIONS, Count, Operation, Phase
 from .parameters import Parameter, choice, number
-from .rows import counted, extend, fact_bytes, made_rows, observed
+from .rows import counted, fact_bytes
 
 LOG = logging.getLogger(__name__)
 NEGATIVES = Names("rule of negative sampling")
@@ -202,14 +202,14 @@ def adds(registry, settings, entry):
     if form == LINK:
         edge = registry.named[name]
         pairs = edge.pairs + (tuple((second, first) for first, second in edge.pairs) if edge.symmetric else ())
-        return Added({}, {}, {}, {entry: dict(pairs=tuple(dict.fromkeys(pairs)), directed=True, columns=())}, {})
+        return Added({}, {}, {}, {}, {}, {entry: dict(pairs=tuple(dict.fromkeys(pairs)), directed=True)})
     held = registry.schema.sets[name]
     tokens = functools.partial(set_tokens, entry, name, settings["negatives/count"])
-    relations = {
-        "%s.%s" % (entry, role): dict(pairs=tuple((entry, kind) for kind in held["kinds"]), directed=True, columns=())
+    candidates = {
+        "%s.%s" % (entry, role): dict(pairs=tuple((entry, kind) for kind in held["kinds"]), directed=True)
         for role in held["roles"]
     }
-    return Added({}, {entry: dict(columns=(), tokens=tokens)}, {}, relations, {})
+    return Added({}, {entry: dict(columns=(), tokens=tokens)}, {}, {}, {}, candidates)
 
 
 @timed("negatives.drawn")
@@ -335,7 +335,7 @@ def sets(graph, registry, spec, seed, frame, tasks, rule, budget, entry):
     count, kinds, tokens = frame.entities, frame.kinds, frame.tokens
     roles = registry.schema.sets[kind]["roles"]
     codes = np.asarray([registry.code(membership(kind, role)) for role in roles], np.int64)
-    made = np.asarray([registry.code("%s.%s" % (entry, role)) for role in roles], np.int64)
+    made = np.asarray([registry.by_candidate["%s.%s" % (entry, role)].code for role in roles], np.int64)
     position = np.full(registry.relations, -1, np.int64)
     position[codes] = np.arange(len(codes))
     marks = np.asarray([token(role) for role in roles], np.uint64)
@@ -399,7 +399,7 @@ def sets(graph, registry, spec, seed, frame, tasks, rule, budget, entry):
     swap = index == slot[picked][which]
     target[swap] = candidates[picked][which][swap]
     budget.retain(len(picked) + len(index), "negative sets")
-    return (moments[picked], negative), (moments[picked][which], negative[which], target, made[role[index]])
+    return moments[picked][which], negative[which], target, made[role[index]]
 
 
 @timed("operators.negatives")
@@ -410,14 +410,12 @@ def negatives(graph, registry, spec, seed, limits, carry, held):
     frame = Frame(graph, carry.tokens(np.arange(len(graph.kinds))), len(registry.nodes))
     if form == LINK:
         moment, source, target = links(graph, registry, spec, seed, frame, tasks, rule, budget)
-        code = np.full(len(source), registry.code(carry.entry), np.int64)
+        code = np.full(len(source), registry.by_candidate[carry.entry].code, np.int64)
     else:
-        (seen, entity), (moment, source, target, code) = sets(graph, registry, spec, seed, frame, tasks, rule, budget, carry.entry)
-        if len(entity):
-            graph, references = made_rows(graph, carry, np.zeros((1, graph.x_table.shape[1]), graph.x_table.dtype))
-            graph = observed(graph, entity, seen, np.full(len(entity), references[0], np.int64), np.zeros(len(entity), bool))
-    LOG.debug("negatives exit entry=%s facts=%d", carry.entry, len(source))
-    return extend(graph, source, target, code, moment, np.ones(len(source), bool), np.full(len(source), -1, np.int64))
+        moment, source, target, code = sets(graph, registry, spec, seed, frame, tasks, rule, budget, carry.entry)
+    carry.candidate(code, moment, source, target)
+    LOG.debug("negatives exit entry=%s candidates=%d", carry.entry, len(source))
+    return graph
 
 
 def drawing(rule):
@@ -437,10 +435,10 @@ NEGATIVE = OPERATIONS.register(
             Count("negatives/degree", "degree", drawing("degree"), "stored", "stored"),
             Count("negatives/hops", "paths", drawing("hops"), "stored", "stored"),
         ),
-        changes=("observations", "facts"),
+        changes=(),
         adds=adds,
         kinds=named,
-        version=2,
+        version=3,
         graphs=1,
     ),
 )

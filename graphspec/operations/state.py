@@ -97,7 +97,7 @@ class Segment:
         self.glob, self.base, self.step0, self.task0 = glob, base, step0, task0
         self.known, self.x_global, self.value_global = known, x_global, value_global
         self.entities, self.state, self.part = entities, None, None
-        self.seconds, self.second, self.entry = seconds, None, None
+        self.seconds, self.second, self.entry, self.candidates = seconds, None, None, []
 
     def __getstate__(self):
         return dict(self.__dict__, entities=None, state=None, part=None, second=None, entry=None)
@@ -118,6 +118,25 @@ class Segment:
 
     def keys(self, code, source, target):
         return encode(code, self.glob[source], self.glob[target], self.base)
+
+    @timed("carry.segment.candidate")
+    def candidate(self, code, step, source, target):
+        self.candidates.append(
+            (
+                np.asarray(code, np.int64),
+                np.asarray(step, np.int64),
+                self.glob[np.asarray(source, np.int64)],
+                self.glob[np.asarray(target, np.int64)],
+            )
+        )
+
+    @timed("carry.segment.drawn")
+    def drawn(self):
+        code, step, source, target = (
+            np.concatenate([held[place] for held in self.candidates] + [EMPTY]) for place in range(4)
+        )
+        order = np.lexsort((target, source, code, step))
+        return dict(code=code[order], step=step[order], source=source[order], target=target[order])
 
     @timed("carry.segment.tokens")
     def tokens(self, entity):

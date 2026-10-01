@@ -78,6 +78,7 @@ def adds(registry, settings, entry):
         {},
         {entry: dict(pairs=((first, second),), directed=settings["nearby/rule"] == "nearest", columns=(distance,))},
         {},
+        {},
     )
 
 
@@ -181,7 +182,7 @@ NEARBY = OPERATIONS.register(
         changes=("facts",),
         adds=adds,
         kinds=named,
-        version=4,
+        version=5,
         graphs=1,
     ),
 )

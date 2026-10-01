@@ -49,6 +49,7 @@ VARIANT = dict(
     event_boundaries=("event_boundaries",),
     event_member=("event_member",),
     neighbors=("neighbor_ids", "neighbor_offsets"),
+    candidates=("candidate_code", "candidate_step", "candidate_source", "candidate_target"),
 )
 
 
@@ -294,6 +295,13 @@ class Spaces:
             offsets = arrays["neighbor_offsets"]
             owner = np.repeat(np.arange(len(offsets) - 1), np.diff(offsets))
             return rows(through(keys.entities, owner), through(event, arrays["neighbor_ids"]))
+        if group == "candidates":
+            return rows(
+                arrays["candidate_code"],
+                through(keys.steps, arrays["candidate_step"]),
+                through(keys.entities, arrays["candidate_source"]),
+                through(keys.entities, arrays["candidate_target"]),
+            )
         if group.startswith("attributes_"):
             return rows(arrays[group])
         raise KeyError("no key is stated for the arrays %s" % group)

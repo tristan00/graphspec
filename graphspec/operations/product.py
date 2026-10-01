@@ -81,6 +81,7 @@ def adds(registry, settings, entry):
             )
         },
         {},
+        {},
     )
 
 
@@ -214,7 +215,7 @@ PRODUCT = OPERATIONS.register(
         changes=("facts",),
         adds=adds,
         kinds=None,
-        version=1,
+        version=2,
         graphs=1,
     ),
 )

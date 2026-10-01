@@ -389,8 +389,9 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     widened = segments.whole(graph, {}, registry, (), transform.SEED, LIMITS, None)
     for step in steps:
         given = {name: held[0] for name, held in beside.items() if name == step.graph}
-        alone = segments.whole(graph, given, registry, (step,), transform.SEED, LIMITS, None)
-        assert [name for name in DENSE if not identical(alone.arrays[name], widened.arrays[name])], step.name
+        alone, drawn = segments.apart(graph, given, registry, (step,), transform.SEED, LIMITS, None)
+        changed = [name for name in DENSE if not identical(alone.arrays[name], widened.arrays[name])]
+        assert changed or len(drawn["step"]), step.name
     moment = graph.steps - 1
     changes = edits(graph, moment)
     root = begun(graph, beside, registry, steps, spec, 1)
@@ -432,6 +433,36 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     with pytest.raises(ValueError, match="an edit applies to the steps of one graph"):
         both.continued(graph.steps + 1, changes[1])
     LOG.info("forks equal whole graphs exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("segments.tokened")
+def tokened(derived, drawn):
+    tokens = np.asarray(derived.entity_token)
+    return dict(drawn, source=tokens[drawn["source"]], target=tokens[drawn["target"]])
+
+
+@GROUP
+def test_no_operation_reads_or_offers_the_relations_negatives_add_as_candidates(bank, registered):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", RESIDENT)
+    graph, registry = support.shown(opened, 0).dense(), support.fitted(opened)
+    graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
+    drawing = support.pipelined(registry, VALUES, ("graphspec.negatives",))[0]
+    first = pipeline.resolved(registry, drawing)
+    grown = pipeline.grown(registry, first, None)
+    assert grown.candidates and [edge.name for edge in grown.edges] == [edge.name for edge in registry.edges]
+    assert support.unoffered(registry, grown) == []
+    drawn = tokened(*segments.apart(graph, {}, grown, first, transform.SEED, LIMITS, None))
+    assert len(drawn["step"])
+    for name in sorted(set(OPERATIONS.names()) - {"graphspec.negatives"}):
+        entry = support.pipelined(registry, VALUES, (name,), None, graphs)[0]
+        given = {graphs[name]: support.beside(opened, 0, graphs[name])} if name in graphs else {}
+        alone, after = pipeline.resolved(registry, entry), pipeline.resolved(registry, drawing + entry)
+        plain = segments.whole(graph, given, pipeline.grown(registry, alone, None), alone, transform.SEED, LIMITS, None)
+        found, held = segments.apart(graph, given, pipeline.grown(registry, after, None), after, transform.SEED, LIMITS, None)
+        assert unequal(found.arrays, plain.arrays, DENSE_READ) == [], name
+        assert unequal(tokened(found, held), drawn, {}) == [] and unequal(plain.arrays, graph.arrays, DENSE_READ), name
+    LOG.info("candidates unread exit operations=%d seconds=%.3f", len(OPERATIONS.names()), time.perf_counter() - started)
 
 
 @timed("segments.emptied")
@@ -485,10 +516,10 @@ def test_every_operation_derives_steps_that_hold_nothing_in_segments_as_it_deriv
         line = begun(graph, given, registry, (step,), spec, 0)
         for high in range(1, graph.steps + 1):
             line = line.continued(high, None)
-        derived, expected = line.derived(), whole.derived()
-        assert unequal(expected.arrays, unchanged.arrays, DENSE_READ), step.name
+        derived, expected, made = line.derived(), whole.derived(), whole.arrays()
+        assert unequal(expected.arrays, unchanged.arrays, DENSE_READ) or len(made["candidate_step"]), step.name
         assert unequal(derived.arrays, expected.arrays, DENSE_READ) == [], step.name
-        assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], step.name
+        assert unequal(line.arrays(), made, VARIANT_READ) == [], step.name
     LOG.info("steps that hold nothing exit operations=%d seconds=%.3f", len(steps), time.perf_counter() - started)
 
 

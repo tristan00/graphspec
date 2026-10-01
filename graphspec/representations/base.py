@@ -257,6 +257,14 @@ def represented(carry, graph, registry, spec, chosen, seed, limits, states):
         step_time=np.asarray(graph.step_time, np.int64),
         step_token=np.asarray(graph.step_token, np.uint64),
     )
+    if registry.candidates:
+        drawn = carry.drawn()
+        own.update(
+            candidate_code=drawn["code"].astype(np.int32),
+            candidate_step=(drawn["step"] + carry.step0).astype(np.int32),
+            candidate_source=drawn["source"].astype(np.int32),
+            candidate_target=drawn["target"].astype(np.int32),
+        )
     shown = Shown(carry, graph, arrays, own, work, before, registry, spec, seed, budget)
     piece, found = dict(own), dict(base=state)
     for entry in chosen:

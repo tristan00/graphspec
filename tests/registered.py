@@ -208,6 +208,7 @@ def adding(registry, settings, entry):
         {},
         {entry + ".in": dict(pairs=(("place", entry),), directed=True, columns=(count,))},
         {},
+        {},
     )
 
 

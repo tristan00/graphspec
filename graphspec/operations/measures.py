@@ -36,12 +36,13 @@ def stated(registry):
 @timed("operators.measures_adds")
 def adds(registry, settings, entry):
     if not measuring(settings):
-        return Added({}, {}, {}, {}, {})
+        return Added({}, {}, {}, {}, {}, {})
     columns = tuple("%s.%s" % (entry, name) for name in MEASURES if settings["measures/" + name])
     return Added(
         {name: dict(type=NUMBER, encoder=settings["measures/encoder"]) for name in columns},
         {},
         {kind: columns for kind in registry.nodes},
+        {},
         {},
         {},
     )
@@ -216,7 +217,7 @@ MEASURE = OPERATIONS.register(
         changes=("observations",),
         adds=adds,
         kinds=None,
-        version=2,
+        version=3,
         graphs=1,
     ),
 )

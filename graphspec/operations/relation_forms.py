@@ -58,7 +58,7 @@ def adds(registry, settings, entry):
         relations["%s.%s" % (entry, LOOPS)] = dict(
             pairs=tuple((kind, kind) for kind in registry.nodes), directed=False, columns=()
         )
-    return Added({}, {}, {}, relations, {})
+    return Added({}, {}, {}, relations, {}, {})
 
 
 @timed("operators.untype")
@@ -143,7 +143,7 @@ RELATION_FORMS = OPERATIONS.register(
         changes=("facts",),
         adds=adds,
         kinds=None,
-        version=3,
+        version=4,
         graphs=1,
     ),
 )

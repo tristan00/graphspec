@@ -139,14 +139,38 @@ def cases(held, family, found):
     return result
 
 
-@timed("offered.passed")
-def passed(held, model, graph, pipeline):
+@timed("offered.read")
+def read(held, model, graph, pipeline):
     bank = held["bank"]
     cfg = configuration(bank.registry, model, pipeline, graph, 5, copy.deepcopy(SPLITS))
     block = bank.blocks(0, graph["time/history"], cfg)[-1]
     b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, "cpu")
     torch.manual_seed(5)
-    net = build(cfg, bank.fitted(cfg))
+    return cfg, b, build(cfg, bank.fitted(cfg))
+
+
+@timed("offered.same")
+def same(left, right):
+    if isinstance(left, torch.Tensor):
+        return (
+            isinstance(right, torch.Tensor)
+            and (left.dtype, left.shape) == (right.dtype, right.shape)
+            and torch.equal(left.isnan(), right.isnan())
+            and torch.equal(left.nan_to_num(), right.nan_to_num())
+        )
+    if isinstance(left, dict):
+        return isinstance(right, dict) and sorted(left) == sorted(right) and all(same(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)):
+        return type(left) is type(right) and len(left) == len(right) and all(map(same, left, right))
+    if hasattr(left, "__dict__"):
+        return type(left) is type(right) and same(vars(left), vars(right))
+    return type(left) is type(right) and left == right
+
+
+@timed("offered.passed")
+def passed(held, model, graph, pipeline):
+    bank = held["bank"]
+    cfg, b, net = read(held, model, graph, pipeline)
     predicted = net(b)
     lost = loss(predicted, b, bank)
     lost.backward()
@@ -155,6 +179,7 @@ def passed(held, model, graph, pipeline):
         raise ValueError("predictions of shape %s are not finite or not of the targets' shape" % (predicted.shape,))
     if not torch.isfinite(lost) or not gradients or not all(torch.isfinite(grad).all() for grad in gradients):
         raise ValueError("the loss or a gradient is not finite")
+    return cfg, b, predicted.detach()
 
 
 @pytest.mark.parametrize("family", VIEWS)
@@ -177,10 +202,17 @@ def test_every_family_reads_the_kinds_relations_and_columns_a_pipeline_adds(held
     started = time.perf_counter()
     model, graph = drawn(held, dict(TINY, view=family))
     pipeline = held["pipeline"][:-1] + ADDING
-    passed(held, model, graph, pipeline)
-    cfg = configuration(held["bank"].registry, model, pipeline, graph, 5, copy.deepcopy(SPLITS))
+    cfg, b, predicted = passed(held, model, graph, pipeline)
     registry = held["bank"].fitted(cfg)
     assert registry.nodes[-1] == "contract" and "relation_forms.loops" in registry.by_name
-    assert {"product", "negatives"} <= set(registry.by_name) and registry.encoding.states["product.value"]
+    assert "product" in registry.by_name and registry.encoding.states["product.value"]
+    assert "negatives" in registry.by_candidate and "negatives" not in registry.by_name
     assert registry.features > held["bank"].viewed(cfg).registry.features
+    variant = held["bank"].arrays(0, cfg)
+    assert len(variant["candidate_step"])
+    assert set(variant["candidate_code"].tolist()) == {registry.by_candidate["negatives"].code}
+    plain, unread, alone = read(held, model, graph, pipeline[:-1])
+    assert "candidate_step" not in held["bank"].arrays(0, plain) and same(b, unread)
+    with torch.no_grad():
+        assert torch.equal(predicted, alone(unread))
     LOG.info("added read family=%s seconds=%.3f", family, time.perf_counter() - started)

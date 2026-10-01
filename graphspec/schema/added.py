@@ -34,7 +34,7 @@ def mapping(stated, where):
 
 
 class Added:
-    def __init__(self, columns, kinds, placed, relations, joins):
+    def __init__(self, columns, kinds, placed, relations, joins, candidates):
         started = time.perf_counter()
         self.columns = {}
         for name, entry in mapping(columns, "the columns an operation adds").items():
@@ -70,17 +70,26 @@ class Added:
             name: paired(held, "the pairs joined to " + name)
             for name, held in mapping(joins, "the pairs an operation joins to relations").items()
         }
+        self.candidates = {}
+        for name, entry in mapping(candidates, "the relations an operation adds as candidates").items():
+            if type(entry) is not dict or set(entry) != {"pairs", "directed"} or type(entry["directed"]) is not bool:
+                raise ValueError(
+                    "the relation %s an operation adds as candidates states its pairs of kinds and whether it has a "
+                    "direction, found %r" % (name, entry)
+                )
+            self.candidates[name] = dict(pairs=paired(entry["pairs"], "the relation " + name), directed=entry["directed"])
         LOG.debug(
-            "added exit columns=%d kinds=%d relations=%d seconds=%.4f",
+            "added exit columns=%d kinds=%d relations=%d candidates=%d seconds=%.4f",
             len(self.columns),
             len(self.kinds),
             len(self.relations),
+            len(self.candidates),
             time.perf_counter() - started,
         )
 
     @timed("added.holds")
     def holds(self):
-        return any((self.columns, self.kinds, self.placed, self.relations, self.joins))
+        return any((self.columns, self.kinds, self.placed, self.relations, self.joins, self.candidates))
 
     @timed("added.provisional")
     def provisional(self):
@@ -90,6 +99,7 @@ class Added:
             self.placed,
             self.relations,
             self.joins,
+            self.candidates,
         )
 
     @timed("added.declaration")
@@ -103,6 +113,10 @@ class Added:
                 for name, entry in self.relations.items()
             },
             joins={name: [list(pair) for pair in pairs] for name, pairs in self.joins.items()},
+            candidates={
+                name: dict(pairs=[list(pair) for pair in entry["pairs"]], directed=entry["directed"])
+                for name, entry in self.candidates.items()
+            },
         )
 
     @timed("added.described")
@@ -126,5 +140,14 @@ class Added:
         found += [
             "%s to the relation %s" % (" and ".join("%s to %s" % pair for pair in pairs), name)
             for name, pairs in self.joins.items()
+        ]
+        found += [
+            "the relation %s of candidates from %s, %s"
+            % (
+                name,
+                " or ".join("%s to %s" % pair for pair in held["pairs"]),
+                "directed" if held["directed"] else "without direction",
+            )
+            for name, held in self.candidates.items()
         ]
         return "%s adds %s" % (entry, "; ".join(found))

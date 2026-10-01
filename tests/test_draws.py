@@ -254,7 +254,7 @@ def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_so
     steps, spec = stated(registry, DRAWN, {})
     assert differing(derived(moved[:1], registry, steps, spec, [4, 9], LIMITS), reference) == []
     assert len(reference["variant/walks"]) and registry.code("rewire") in reference["facts"][:, 2]
-    assert registry.code("negatives") in reference["facts"][:, 2]
+    assert len(reference["variant/candidates"]) and "negatives" in registry.by_candidate
     assert differing(keyed(turned, registry), keyed(whole, registry)) == []
     steps, spec = stated(registry, DRAWN, dict(JOINED, **{"graphs/connect_fraction": 0.5}))
     linked = derived(graphs, registry, steps, spec, [], LIMITS)

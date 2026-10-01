@@ -543,6 +543,15 @@ def members_of(graph, registry, kind, codes, step):
     return found
 
 
+@timed("sets.drawn_members")
+def drawn_members(drawn, codes, step):
+    found = {}
+    chosen = (drawn["step"] == step) & np.isin(drawn["code"], list(codes))
+    for source, target, code in zip(drawn["source"][chosen].tolist(), drawn["target"][chosen].tolist(), drawn["code"][chosen].tolist()):
+        found.setdefault(source, set()).add((codes[code], target))
+    return found
+
+
 def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_present_set(bank):
     started = time.perf_counter()
     held = Deriver(bank, "cpu", RESIDENT)
@@ -553,17 +562,19 @@ def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_
     stated = {"negatives/of": "set:gathering", "negatives/rule": "uniform", "negatives/count": 3}
     steps = pipeline.resolved(registry, [dict(operation="graphspec.negatives", parameters=stated)])
     grown = pipeline.grown(registry, steps, None)
-    assert grown.nodes[-1] == "negatives" and grown.by_name["negatives.lead"].pairs == (("negatives", "point"), ("negatives", "place"))
-    derived = segments.whole(dense, {}, grown, steps, transform.SEED, GraphLimits("cpu"), None)
+    lead = grown.by_candidate["negatives.lead"]
+    assert grown.nodes[-1] == "negatives" and lead.pairs == (("negatives", "point"), ("negatives", "place"))
+    assert "negatives.lead" not in grown.by_name and support.unoffered(registry, grown) == []
+    derived, candidates = segments.apart(dense, {}, grown, steps, transform.SEED, GraphLimits("cpu"), None)
     roles = ("lead", "other")
     stored = {grown.code("gathering." + role): role for role in roles}
-    made = {grown.code("negatives." + role): role for role in roles}
+    made = {grown.by_candidate["negatives." + role].code: role for role in roles}
     negative, kinds, drawn = grown.kind("negatives"), np.asarray(derived.kinds), 0
     for step in range(dense.steps):
         present = members_of(derived, grown, "gathering", stored, step)
-        found = members_of(derived, grown, "negatives", made, step)
+        found = drawn_members(candidates, made, step)
         shown = derived.obs_entity[(derived.obs_step == step) & ~derived.obs_anchor].tolist()
-        assert {node for node in shown if kinds[node] == negative} == set(found)
+        assert all(kinds[node] == negative for node in found) and all(kinds[node] != negative for node in shown)
         tokens = np.asarray(derived.entity_token)
         owners = {}
         for node in found:

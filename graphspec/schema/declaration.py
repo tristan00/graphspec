@@ -12,6 +12,7 @@ from .schema import ENCODERS, TARGETS, TYPES, Encoding, Schema, reserved
 LOG = logging.getLogger(__name__)
 EVERYTHING = ("hop", "diffusion", "rewire", "untyped", "coupling", "boundary")
 ADDED = "added"
+CANDIDATES = "candidates"
 
 
 class EdgeType:
@@ -85,6 +86,14 @@ class Registry:
             for endpoint in edge.sources + edge.targets:
                 if endpoint not in self.node_index:
                     raise ValueError("edge %s names an undeclared node type %s" % (edge.name, endpoint))
+        self.candidates = tuple(
+            EdgeType(name, (CANDIDATES, entry), held["pairs"], symmetric=not held["directed"])
+            for entry, added in self.schema.grown
+            for name, held in added.candidates.items()
+        )
+        for code, edge in enumerate(self.candidates):
+            edge.code = code
+        self.by_candidate = {edge.name: edge for edge in self.candidates}
         self.canonical = np.zeros(self.relations, bool)
         for edge in self.edges:
             self.canonical[edge.code] = True
@@ -229,7 +238,7 @@ class Registry:
     def admits(self, entry, added):
         started = time.perf_counter()
         where = "the entry %s of the pipeline" % entry
-        taken = set(self.nodes) | set(self.by_name) | set(self.schema.columns)
+        taken = set(self.nodes) | set(self.by_name) | set(self.by_candidate) | set(self.schema.columns)
         for name, held in added.columns.items():
             if name in taken or ":" in name:
                 raise ValueError("%s adds the column %s, a name without a colon the registry does not hold" % (where, name))
@@ -268,6 +277,17 @@ class Registry:
                 raise ValueError(
                     "%s adds the relation %s between kinds of node no one states, %s, or with columns no one "
                     "states, %s" % (where, name, ", ".join(strangers) or "none", ", ".join(lacking) or "none")
+                )
+        for name, held in added.candidates.items():
+            if name in taken or name in added.kinds or name in added.columns or name in added.relations or ":" in name or name in RESERVED:
+                raise ValueError(
+                    "%s adds the relation of candidates %s, a name without a colon no one holds" % (where, name)
+                )
+            strangers = sorted({kind for pair in held["pairs"] for kind in pair} - kinds)
+            if strangers:
+                raise ValueError(
+                    "%s adds the relation of candidates %s between kinds of node no one states, %s"
+                    % (where, name, ", ".join(strangers))
                 )
         for name, pairs in added.joins.items():
             if name not in self.by_name:

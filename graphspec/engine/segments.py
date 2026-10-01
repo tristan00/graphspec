@@ -575,12 +575,23 @@ def single(beside):
     return result
 
 
-def whole(graph, beside, registry, steps, seed, limits, partitions):
+def apart(graph, beside, registry, steps, seed, limits, partitions):
     started = time.perf_counter()
     plan = Plan([graph], paired(steps, single(beside)), alone(graph), 0, registry)
     carry, dense, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, EMPTY)
     states = transform.initial(registry, steps)
     derived, _ = transform.derive(dense, registry, steps, seed, limits, partitions, carry, states, False)
+    drawn = carry.drawn()
+    candidates = dict(drawn, source=carry.local(drawn["source"]), target=carry.local(drawn["target"]))
+    LOG.info(
+        "apart exit graph=%s candidates=%d seconds=%.3f", graph.name, len(drawn["step"]), time.perf_counter() - started
+    )
+    return derived, candidates
+
+
+def whole(graph, beside, registry, steps, seed, limits, partitions):
+    started = time.perf_counter()
+    derived, _ = apart(graph, beside, registry, steps, seed, limits, partitions)
     LOG.info("whole exit graph=%s seconds=%.3f", graph.name, time.perf_counter() - started)
     return derived
 
