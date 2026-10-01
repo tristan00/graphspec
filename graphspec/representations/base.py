@@ -6,6 +6,7 @@ import numpy as np
 from numba import njit
 
 from graphspec.budgets import GraphBudget
+from graphspec.infra.files import save_array
 from graphspec.infra.hashing import hashed
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import finite
@@ -335,7 +336,7 @@ def stitched(arrays, table, kinds, tokens, registry, spec, chosen, limits, steps
         arrays.update(function(arrays, registry, spec, limits))
     if destination is not None:
         for name in sorted(set(arrays) - written):
-            np.save(Path(destination) / (name + ".npy"), arrays[name], allow_pickle=False)
+            save_array(Path(destination) / (name + ".npy"), arrays[name])
     LOG.info("stitched exit seconds=%.3f arrays=%d", time.perf_counter() - started, len(arrays))
     return arrays
 

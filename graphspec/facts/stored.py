@@ -4,8 +4,9 @@ from pathlib import Path
 
 import numpy as np
 
-from graphspec.infra.files import Mapped, load_arrays, read_json, save_arrays, write_json
+from graphspec.infra.files import load_arrays, read_json, read_pack, save_arrays, write_json, write_pack
 from graphspec.infra.hashing import token
+from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.schema import time as clock
 from graphspec.schema.references import MEMBERS
@@ -14,6 +15,7 @@ from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
 VERSION = 8
+PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
 HELD = ("inner_owner", "inner_kind", "inner_values")
 WITHIN = ("within_source", "within_target", "within_code", "within_values")
@@ -71,24 +73,16 @@ class Arrays:
         )
 
     def save(self, directory):
-        directory = Path(directory)
-        save_arrays(directory, self.arrays)
+        directory = output_path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        write_pack(directory / PACKED, self.arrays)
         write_json(directory / "graph.json", dict(name=self.name, keys=self.keys, steps=self.steps))
 
     @classmethod
     def load(cls, directory, mapped=False):
         directory = Path(directory)
         meta = read_json(directory / "graph.json")
-        if not mapped:
-            return cls(meta["name"], meta["keys"], meta["steps"], **load_arrays(directory, cls.NAMES))
-        graph = cls.__new__(cls)
-        graph.__dict__.update(
-            name=meta["name"],
-            keys=meta["keys"],
-            steps=int(meta["steps"]),
-            arrays=Mapped(directory, cls.NAMES),
-        )
-        return graph
+        return cls(meta["name"], meta["keys"], meta["steps"], **read_pack(directory / PACKED, mapped))
 
 
 def moment(value):

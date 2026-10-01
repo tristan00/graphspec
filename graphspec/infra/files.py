@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import io
 import json
 import logging
 import os
@@ -26,6 +27,10 @@ else:
 
 LOG = logging.getLogger(__name__)
 BUDGET = 300 << 30
+WRITTEN = 1 << 20
+PACK = b"GRAPHSPEC-PACK-1"
+PACK_ALIGN = 64
+PACK_BUFFER = 1 << 20
 SIZES, SWEEPERS = {}, {}
 PUBLISH = threading.Lock()
 
@@ -76,14 +81,75 @@ def sha256_json(value):
     return sha256_bytes(json.dumps(value, sort_keys=True).encode())
 
 
+def save_array(path, value):
+    value = np.asanyarray(value)
+    if value.nbytes > WRITTEN:
+        np.save(path, value, allow_pickle=False)
+        return
+    buffer = io.BytesIO()
+    np.lib.format.write_array(buffer, value, allow_pickle=False)
+    with open(path, "wb") as stream:
+        stream.write(buffer.getbuffer())
+
+
+def write_pack(path, arrays):
+    started = time.perf_counter()
+    held, entries, offset = [], [], 0
+    for name, value in arrays.items():
+        value = np.asarray(value)
+        if not value.flags.c_contiguous:
+            value = np.ascontiguousarray(value)
+        described = np.lib.format.dtype_to_descr(value.dtype)
+        if type(described) is not str or value.dtype.hasobject:
+            raise ValueError("the array %s has the dtype %s, which a pack does not hold" % (name, value.dtype))
+        held.append(value)
+        entries.append([name, described, list(value.shape), offset])
+        offset += aligned(value.nbytes)
+    header = json.dumps(entries).encode()
+    start = aligned(len(PACK) + 8 + len(header))
+    with open(path, "wb", buffering=PACK_BUFFER) as stream:
+        stream.write(PACK + len(header).to_bytes(8, "little") + header + bytes(start - len(PACK) - 8 - len(header)))
+        for value in held:
+            stream.write(value.reshape(-1).view(np.uint8))
+            stream.write(bytes(aligned(value.nbytes) - value.nbytes))
+    LOG.debug("write pack exit arrays=%d bytes=%d seconds=%.4f", len(held), start + offset, time.perf_counter() - started)
+
+
+def read_pack(path, mapped):
+    started = time.perf_counter()
+    if mapped:
+        whole = np.memmap(path, np.uint8, mode="r")
+    else:
+        with open(path, "rb") as stream:
+            whole = np.empty(os.fstat(stream.fileno()).st_size, np.uint8)
+            stream.readinto(memoryview(whole))
+    if bytes(whole[: len(PACK)]) != PACK:
+        raise ValueError("%s is not a pack of arrays" % path)
+    length = int.from_bytes(bytes(whole[len(PACK) : len(PACK) + 8]), "little")
+    start = aligned(len(PACK) + 8 + length)
+    result = {}
+    for name, described, shape, offset in json.loads(bytes(whole[len(PACK) + 8 : len(PACK) + 8 + length])):
+        dtype = np.lib.format.descr_to_dtype(described)
+        size = dtype.itemsize * int(np.prod(shape, dtype=np.int64))
+        result[name] = whole[start + offset : start + offset + size].view(dtype).reshape(shape)
+    LOG.debug("read pack exit arrays=%d mapped=%s seconds=%.4f", len(result), mapped, time.perf_counter() - started)
+    return result
+
+
+def aligned(size):
+    return -(-size // PACK_ALIGN) * PACK_ALIGN
+
+
 def save_arrays(directory, arrays):
+    started = time.perf_counter()
     directory = output_path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     for name, value in arrays.items():
         if isinstance(value, Path):
             shutil.copyfile(value, directory / (name + ".npy"))
         else:
-            np.save(directory / (name + ".npy"), value, allow_pickle=False)
+            save_array(directory / (name + ".npy"), value)
+    LOG.debug("save arrays exit arrays=%d seconds=%.4f", len(arrays), time.perf_counter() - started)
 
 
 def load_arrays(directory, names, mmap_mode=None):
@@ -91,24 +157,6 @@ def load_arrays(directory, names, mmap_mode=None):
     return {
         name: np.load(directory / (name + ".npy"), mmap_mode=mmap_mode, allow_pickle=False) for name in names
     }
-
-
-class Mapped(Mapping):
-    def __init__(self, directory, names):
-        self.directory, self.names, self.loaded = Path(directory), tuple(names), {}
-
-    def __getitem__(self, key):
-        if key not in self.loaded:
-            if key not in self.names:
-                raise KeyError(key)
-            self.loaded[key] = np.load(self.directory / (key + ".npy"), mmap_mode="r", allow_pickle=False)
-        return self.loaded[key]
-
-    def __iter__(self):
-        return iter(self.names)
-
-    def __len__(self):
-        return len(self.names)
 
 
 class Arrays(Mapping):

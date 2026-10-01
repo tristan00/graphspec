@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from graphspec.infra.files import Arrays
+from graphspec.infra.files import Arrays, save_array
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import DENSE, Dense
 
@@ -82,7 +82,7 @@ class Appender:
         if self.streams is None:
             result = {name: np.concatenate(parts) for name, parts in self.held.items()}
             for name, values in result.items():
-                np.save(self.directory / (name + ".npy"), values, allow_pickle=False)
+                save_array(self.directory / (name + ".npy"), values)
             self.held = {}
         else:
             for name, stream in self.streams.items():

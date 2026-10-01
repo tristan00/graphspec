@@ -10,7 +10,7 @@ import numba
 import numpy as np
 
 from graphspec import registries
-from graphspec.infra.files import Arrays
+from graphspec.infra.files import Arrays, save_array
 from graphspec.infra.processes.processes import guarded, spawned, worker_threads
 from graphspec.infra.timing import measure
 from graphspec.operations import pipeline
@@ -236,7 +236,7 @@ def represent_task(job, index):
         appender = work.pop("appender")
         appender.add(representations.ended(PIPE["chosen"], state))
         appender.close()
-        np.save(work["spill"] / MADE, np.concatenate(work.pop("made")), allow_pickle=False)
+        save_array(work["spill"] / MADE, np.concatenate(work.pop("made")))
 
 
 @staged
@@ -261,6 +261,13 @@ def stitch_task(job, index):
 
 
 TASKS = dict(expand=expand_task, open=open_task, represent=represent_task, stitch=stitch_task)
+
+
+def launched(executors):
+    started = time.perf_counter()
+    with ThreadPoolExecutor(len(executors)) as starting:
+        list(starting.map(lambda executor: executor.submit(time.perf_counter), executors))
+    LOG.debug("launched exit workers=%d seconds=%.4f", len(executors), time.perf_counter() - started)
 
 
 def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
@@ -328,6 +335,7 @@ def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partiti
     ]
     try:
         with worker_threads(initargs[-1]):
+            launched(executors)
             while stitched < len(jobs):
                 for job in range(len(jobs)):
                     while expanded[job] < sizes[job] and expanded[job] - len(done[job, "represent"]) < lookahead:

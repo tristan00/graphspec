@@ -15,9 +15,17 @@ from graphspec.budgets import GraphLimits
 from graphspec.engine import join, schedule, segments, transform
 from graphspec.engine.edits import sliced
 from graphspec.engine.transform import SEED
-from graphspec.facts.stored import Facts, admitted, inputs
+from graphspec.facts.stored import PACKED, Facts, admitted, inputs
 from graphspec.infra.arrays import Residents, between
-from graphspec.infra.files import ArrayStore, load_arrays, read_json, sha256_file, sha256_json, write_json
+from graphspec.infra.files import (
+    ArrayStore,
+    load_arrays,
+    read_json,
+    read_pack,
+    sha256_file,
+    sha256_json,
+    write_json,
+)
 from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
@@ -36,7 +44,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 14
+VIEW = 15
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -178,13 +186,13 @@ class Viewed:
         self.row_index, self.row_steps, self.labels, self.entities = {}, {}, {}, {}
         for graph in self.graphs:
             index = graph["index"]
-            held = load_arrays(self.path(index), ("task_kind", "task_step", "label_task", "label_row"))
+            held = read_pack(self.path(index) / PACKED, True)
             aimed = bank.registry.aimed[held["task_kind"].astype(np.int64)]
             place = np.cumsum(aimed) - 1
             self.row_steps[index] = held["task_step"][aimed].astype(np.int32)
             self.row_index[index] = np.full(int(aimed.sum()), -1, np.int64)
             self.row_index[index][place[held["label_task"]]] = held["label_row"]
-            self.labels[index] = (held["label_row"], place[held["label_task"]])
+            self.labels[index] = (np.array(held["label_row"]), place[held["label_task"]])
             self.entities[index] = graph["entities"]
         LOG.info(
             "viewed exit seconds=%.3f steps=%s several=%s graphs=%d",
