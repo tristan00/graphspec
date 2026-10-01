@@ -120,7 +120,7 @@ class Accuracy:
 
 
 class Entropy:
-    reads = ("class",)
+    reads = ("class", "proportions")
     better = "lower"
     label, short = "Validation log loss", "Log loss"
 
@@ -148,6 +148,22 @@ class Binary:
         return dict(
             value=float(part.mean()),
             series={name: float(part[held.series == code].mean()) for code, name in enumerate(held.names)},
+        )
+
+
+class Divergence:
+    reads = ("proportions",)
+    better = "lower"
+    label, short = "Validation divergence", "Divergence"
+
+    @timed("measures.divergence")
+    def __call__(self, held):
+        tasks, part = len(np.unique(held.task)), np.zeros(len(held.target))
+        stated = held.target > 0
+        part[stated] = held.target[stated] * np.log(held.target[stated] / held.prediction[stated])
+        return dict(
+            value=float(part.sum() / tasks),
+            series={name: float(part[held.series == code].sum() / tasks) for code, name in enumerate(held.names)},
         )
 
 
@@ -200,4 +216,5 @@ MEASURES.register("balanced", Balanced())
 MEASURES.register("accuracy", Accuracy())
 MEASURES.register("entropy", Entropy())
 MEASURES.register("binary", Binary())
+MEASURES.register("divergence", Divergence())
 ship([MEASURES])

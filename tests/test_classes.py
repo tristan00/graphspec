@@ -21,8 +21,10 @@ pytestmark = pytest.mark.xdist_group("classes")
 SITES = ("s0", "s1", "s2", "s3", "s4", "s5")
 GRADES = ["low", "mid", "high"]
 TAGS = ["red", "green", "blue"]
+TREES = ["oak", "elm", "ash"]
+SHARES = (0.5, 0.25, 0.25)
 TIMES = (1, 2, 3, 4, 5, 6, 7, 8)
-KINDS = dict(level=("number", "size"), grade=("class", GRADES), tags=("classes", TAGS))
+KINDS = dict(level=("number", "size"), grade=("class", GRADES), tags=("classes", TAGS), mix=("proportions", TREES))
 
 
 @timed("classes.aimed")
@@ -68,7 +70,9 @@ def stated(kind, at, place):
         return 0.5 * at + place
     if kind == "grade":
         return GRADES[(at + place) % 3]
-    return [name for bit, name in enumerate(TAGS) if (at * place) % 8 >> bit & 1]
+    if kind == "tags":
+        return [name for bit, name in enumerate(TAGS) if (at * place) % 8 >> bit & 1]
+    return {name: SHARES[(at + place + position) % 3] for position, name in enumerate(TREES)}
 
 
 @timed("classes.graph")
@@ -123,7 +127,7 @@ def test_every_kind_over_classes_reads_back_as_stated_with_its_classes_as_its_se
     held = Deriver(bank, "cpu", RESIDENT)
     schema = held.registry.schema
     assert schema.targets() == tuple(kind for kind, _ in KINDS.values())
-    assert schema.series() == ("size", *GRADES, *TAGS) and schema.target_columns() == dict(series="STRING")
+    assert schema.series() == ("size", *GRADES, *TAGS, *TREES) and schema.target_columns() == dict(series="STRING")
     wanted = {
         (graph["name"], kind, key): target
         for graph in case["graphs"]
@@ -211,12 +215,43 @@ def test_a_set_of_classes_is_one_decision_per_class_by_its_loss_and_its_measure(
     assert found["series"]["blue"] == pytest.approx(float(error[[2, 5]].mean()))
 
 
+def test_a_proportion_vector_states_a_share_of_every_class_and_is_predicted_and_measured_as_one():
+    import torch
+
+    from tuning.fits.losses import LOSSES
+    from tuning.measures.measures import measured, predicted, scored
+
+    where, kind = "the target of the kind of task mix", TARGETS.named("proportions")
+    for wrong in (dict(oak=0.5, elm=0.5), dict(oak=0.5, elm=0.25, ash=0.5), dict(oak=1.5, elm=-0.5, ash=0.0)):
+        with pytest.raises(ValueError, match="a share of at least 0 for every class of oak, elm, ash, summing to 1"):
+            kind.staged(wrong, tuple(TREES), where)
+    rows = dict(task=[0, 0, 0], graph=["g0"] * 3, y=[0.5, 0.25, 0.5], series=TREES)
+    with pytest.raises(ValueError, match="state shares of at least 0 that sum to 1 within 1e-06 over the classes"):
+        kind.points(rows, tuple(TREES), where)
+    assert kind.read([dict(series=name, y=y) for name, y in zip(TREES, SHARES)]) == dict(zip(TREES, SHARES))
+    scores, row = torch.tensor([1.0, 0.0, -1.0, 2.0, 2.0, 0.0]), torch.tensor([0, 0, 0, 1, 1, 1])
+    target = torch.tensor([0.5, 0.25, 0.25, 0.0, 1.0, 0.0])
+    batch = dict(target=target, weight=torch.ones(6), point_row=row, tasks=2)
+    logged = torch.cat([torch.log_softmax(scores[:3], 0), torch.log_softmax(scores[3:], 0)])
+    crossed = -(target * logged)
+    assert float(LOSSES.named("entropy")(scores, batch, None)) == pytest.approx(float(crossed.sum() / 2))
+    probability = predicted(("proportions",), np.zeros(6, np.int64), row.numpy(), scores.numpy())
+    assert np.allclose(probability, logged.exp().numpy())
+    held = scored(target.numpy(), probability, row.numpy(), np.tile(np.arange(3), 2), TREES, np.ones(3))
+    found = measured(["divergence", "entropy"], held, dict.fromkeys(TREES, "proportions"))
+    stated = target.numpy()
+    divergence = np.where(stated > 0, stated * np.log(np.where(stated > 0, stated, 1) / probability), 0)
+    assert found["divergence"]["value"] == pytest.approx(divergence.sum() / 2)
+    assert found["divergence"]["series"]["oak"] == pytest.approx(divergence[[0, 3]].sum() / 2)
+    assert found["entropy"]["value"] == pytest.approx(float(crossed.sum() / 2))
+
+
 def test_a_bank_of_a_number_and_kinds_over_classes_completes_one_fit(classes, tmp_path, statement, monkeypatch):
     bank = classes[0]
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
     held = Deriver(bank, "cpu", RESIDENT)
-    losses = {"number": "squared", "class": "entropy", "classes": "binary"}
-    given = dict(statement, loss=losses, measures=["entropy", "accuracy", "mse", "binary"])
+    losses = {"number": "squared", "class": "entropy", "classes": "binary", "proportions": "entropy"}
+    given = dict(statement, loss=losses, measures=["entropy", "accuracy", "mse", "binary", "divergence"])
     started = time.perf_counter()
     fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
     LOG.info("fit of kinds over classes exit seconds=%.3f", time.perf_counter() - started)
@@ -225,11 +260,13 @@ def test_a_bank_of_a_number_and_kinds_over_classes_completes_one_fit(classes, tm
     measures = saved["measures"]
     assert list(measures["accuracy"]["series"]) == GRADES and list(measures["mse"]["series"]) == ["size"]
     assert list(measures["binary"]["series"]) == TAGS and 0 <= measures["accuracy"]["value"] <= 1
-    assert np.isfinite([measures[name]["value"] for name in ("entropy", "binary", "mse")]).all()
+    assert list(measures["entropy"]["series"]) == GRADES + TREES and list(measures["divergence"]["series"]) == TREES
+    assert np.isfinite([measures[name]["value"] for name in ("entropy", "binary", "mse", "divergence")]).all()
     with np.load(tmp_path / "predictions.npz") as found:
         aim, task, prediction = found["aim"], held.task_of[found["row_index"]], found["prediction"]
         assert set(aim.tolist()) == set(range(len(KINDS)))
-        chosen = aim == list(KINDS).index("grade")
-        assert np.allclose(np.bincount(task[chosen], prediction[chosen])[np.unique(task[chosen])], 1.0)
+        for name in ("grade", "mix"):
+            chosen = aim == list(KINDS).index(name)
+            assert np.allclose(np.bincount(task[chosen], prediction[chosen])[np.unique(task[chosen])], 1.0)
         chosen = aim != list(KINDS).index("level")
         assert ((prediction[chosen] > 0) & (prediction[chosen] < 1)).all()

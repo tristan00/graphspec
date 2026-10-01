@@ -12,6 +12,7 @@ TARGETS = Names("kind of target")
 UTILITIES = Names("utility")
 BETTER = ("higher", "lower")
 UTILITY = ("name", "better")
+SUMMED = 1e-6
 
 
 @timed("targets.real")
@@ -263,8 +264,55 @@ class Classes:
         return np.exp(-np.logaddexp(0, -np.asarray(values, np.float64)))
 
 
+class Proportions:
+    scaled = False
+    matures = False
+    columns = dict(series="STRING")
+    fields = ()
+
+    @timed("targets.proportions.series")
+    def series(self, stated, where):
+        return counted(stated, 2, where)
+
+    @timed("targets.proportions.written")
+    def written(self, series):
+        return list(series)
+
+    @timed("targets.proportions.points")
+    def points(self, rows, series, where):
+        place, y = classed(rows, series, where)
+        if not np.isfinite(y).all() or np.any(y < 0) or np.any(np.abs(np.bincount(place, y) - 1) > SUMMED):
+            raise ValueError(
+                "the points of %s state shares of at least 0 that sum to 1 within %g over the classes of a task"
+                % (where, SUMMED)
+            )
+        return dict(series=list(rows["series"]))
+
+    @timed("targets.proportions.staged")
+    def staged(self, stated, series, where):
+        if (
+            not isinstance(stated, dict)
+            or set(stated) != set(series)
+            or not all(real(share) and share >= 0 for share in stated.values())
+            or abs(sum(stated.values()) - 1) > SUMMED
+        ):
+            raise ValueError(
+                "%s states its target as a share of at least 0 for every class of %s, summing to 1 within %g, "
+                "found %r" % (where, ", ".join(series), SUMMED, stated)
+            )
+        return [dict(series=name, y=float(stated[name])) for name in series]
+
+    @timed("targets.proportions.read")
+    def read(self, rows):
+        return {row["series"]: row["y"] for row in rows}
+
+    @timed("targets.proportions.predicted")
+    def predicted(self, values, task):
+        return normalised(values, task)
+
+
 class Weighted:
-    reads = ("number", "path", "class", "classes")
+    reads = ("number", "path", "class", "classes", "proportions")
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")
@@ -300,4 +348,5 @@ TARGETS.register("number", Number())
 TARGETS.register("path", Path())
 TARGETS.register("class", Class())
 TARGETS.register("classes", Classes())
+TARGETS.register("proportions", Proportions())
 UTILITIES.register("weighted", Weighted())

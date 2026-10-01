@@ -43,7 +43,7 @@ class Balanced:
 
 
 class Entropy:
-    reads = ("class",)
+    reads = ("class", "proportions")
 
     def __call__(self, predictions, batch, bank):
         import torch

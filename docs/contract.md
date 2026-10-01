@@ -145,6 +145,7 @@ A kind of target says what a target is, how it is stored and read back, and how 
 | `path` | a list of points, each `[tau, series, y]` | a list of names | one per point, storing `tau FLOAT` and `series STRING`: `tau` finite and above zero, the series one the kind of task states, no two points of one task with one series and one `tau`; each stops the build naming the graph or the kind | the value | yes | no |
 | `class` | one of its classes, by name | its classes, a list of at least two names | one per class, storing `series STRING`, the class, with `y` 1 for the class of the task and 0 for every other; a task without exactly one point per class stops the build naming its graph, and one whose points do not state one 1 and otherwise 0 naming its kind | the probability of each class: the exponential of its value over the sum of those of the classes of its task | no | no |
 | `classes` | a set of its classes, as a list of distinct names, possibly empty; read back in the order of the classes | its classes, a list of at least one name | one per class, storing `series STRING`, with `y` 1 for a class of the set and 0 for every other; a task without exactly one point per class stops the build naming its graph, and a `y` other than 0 or 1 naming its kind | the probability of each class on its own, one over one plus the exponential of minus its value | no | no |
+| `proportions` | a mapping from every one of its classes to its share, each finite and at least 0, the shares summing to 1 within 1e-6 | its classes, a list of at least two names | one per class, storing `series STRING`, with `y` its share; a task without exactly one point per class stops the build naming its graph, and shares that do not hold as stated naming its kind | the share of each class: the exponential of its value over the sum of those of the classes of its task | no | no |
 
 The classes of a kind of target over classes are stated by the schema as its series, never read from the rows: a point stores its class as its series, and the head of the kind gives each class its own learned embedding. A class named by two kinds of task of one kind of target is one series of both.
 
@@ -156,7 +157,7 @@ A utility is the value of an outcome: a function from a predicted target to one 
 
 | Utility | Reads | Parameters | The value of a target |
 |---|---|---|---|
-| `weighted` | `number`, `path`, `class`, `classes` | `weights`, a finite number for every series of the target | the sum over its points of the weight of the series of the point times its `y`: for a class, the value of its class; for a set of classes, the sum of the values of its classes; of a predicted target, the value of each class weighted by its probability |
+| `weighted` | `number`, `path`, `class`, `classes`, `proportions` | `weights`, a finite number for every series of the target | the sum over its points of the weight of the series of the point times its `y`: for a class, the value of its class; for a set of classes, the sum of the values of its classes; for a proportion vector, the value of each class weighted by its share; of a predicted target, the value of each class weighted by its probability or its predicted share |
 
 **Time**
 
