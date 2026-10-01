@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from graphspec.infra.workspace import gathered
+
 LOG = logging.getLogger(__name__)
 
 
@@ -25,7 +27,7 @@ def blocks(bank, original, cfg):
     for graph, start, stop, target, partition, first, last in original:
         if graph not in starts:
             arrays = bank.arrays(graph, cfg)
-            starts[graph] = arrays["period_starts"][np.maximum(0, arrays["period_membership"] - context)]
+            starts[graph] = gathered(arrays["period_starts"], np.asarray(arrays["period_membership"]) - context, 0)
         output.append(
             (
                 graph,

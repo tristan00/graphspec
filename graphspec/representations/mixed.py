@@ -87,9 +87,7 @@ def piece(shown, state):
         filled = np.arange(width)[None, :] < trace_count[use][:, None]
         extra_rows.append(trace_row[use][filled])
         extra_x.append(nodes.columns["x"][where][filled])
-    carried_rows, carried_x = np.concatenate(extra_rows), np.concatenate(extra_x)
-    arrangement = np.argsort(carried_rows, kind="stable")
-    carried_rows, carried_x = carried_rows[arrangement], carried_x[arrangement]
+    carried = Table(np.concatenate(extra_rows), x=np.concatenate(extra_x))
 
     def lookup(ids):
         ids = np.asarray(ids, np.int64)
@@ -99,10 +97,10 @@ def piece(shown, state):
         result[inside] = x[local[inside]]
         outside = ids[~inside]
         if len(outside):
-            position = np.minimum(np.searchsorted(carried_rows, outside), max(len(carried_rows) - 1, 0))
-            if not len(carried_rows) or np.any(carried_rows[position] != outside):
+            position = carried.find(outside)
+            if np.any(position < 0):
                 raise ValueError("a mixed representation row is missing from its carry")
-            result[~inside] = carried_x[position]
+            result[~inside] = carried.columns["x"][position]
         return result
 
     altered = np.zeros(rows, bool)

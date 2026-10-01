@@ -276,9 +276,10 @@ def matured(facts, registry, held, entity, step, values):
         moment = np.repeat(begun, counts) + spans.counted(counts)
         keys = entity.astype(np.int64) * steps + step
         arranged = np.argsort(keys, kind="stable")
-        wanted = who[row] * steps + moment
-        position = np.minimum(np.searchsorted(keys[arranged], wanted), max(len(keys) - 1, 0))
-        found = (keys[arranged][position] == wanted) if len(keys) else np.zeros(len(wanted), bool)
+        ordered, wanted = keys[arranged], who[row] * steps + moment
+        position = np.searchsorted(ordered, wanted)
+        found = position < len(keys)
+        found[found] = ordered[position[found]] == wanted[found]
         values[arranged[position[found]], column[row[found]]] = y[row[found]]
         count = int(found.sum())
     LOG.debug(

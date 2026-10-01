@@ -5,6 +5,7 @@ import numpy as np
 
 from graphspec.budgets import GraphBudget
 from graphspec.infra.timing import timed
+from graphspec.infra.workspace import gathered
 from graphspec.views.spans import encode
 
 from .operation import OPERATIONS, Operation, Phase
@@ -145,9 +146,8 @@ def consecutive(graph, registry, spec, seed, limits, carry, held):
             source, target = np.minimum(source, target), np.maximum(source, target)
         pairs = np.unique(np.stack((source, target), 1).reshape(-1, 2).astype(np.int64), axis=0)
         found.append((pairs[:, 0], pairs[:, 1], np.full(len(pairs), moment, np.int64)))
-    rows_of = joined.keys % carry.base
-    place = np.minimum(np.searchsorted(carry.glob, rows_of), len(carry.glob) - 1)
-    lasting = (carry.glob[place] != rows_of) | np.asarray(graph.entity_connected, bool)[place]
+    place = Table(carry.glob).find(joined.keys % carry.base)
+    lasting = (place < 0) | gathered(np.asarray(graph.entity_connected, bool), place, False)
     state["consecutive/joined"] = Table(joined.keys[lasting], value=joined.columns["value"][lasting])
     state["consecutive/last"] = last
     source, target, moment = (np.concatenate([part[index] for part in found] + [EMPTY]) for index in range(3))
@@ -176,7 +176,7 @@ CONSECUTIVE = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=named,
-        version=4,
+        version=5,
         graphs=1,
     ),
 )

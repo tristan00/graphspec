@@ -6,16 +6,17 @@ import numpy as np
 
 from graphspec.infra.hashing import hashed, salted
 from graphspec.infra.timing import timed
-from graphspec.infra.workspace import allocate, block_rows, changed
+from graphspec.infra.workspace import allocate, block_rows, changed, gathered
 from graphspec.operations.kernels import first_rows
 from graphspec.operations.parameters import enabled
+from graphspec.operations.state import Table
 from graphspec.schema.declaration import BOUNDARIES
 from graphspec.schema.references import SORTS, ends
 
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 11
+VERSION = 12
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"
@@ -184,14 +185,11 @@ def base(graph, registry, spec, link):
     steps, kinds = graph.steps, graph.kinds
     step, entity, reference = graph.obs_step, graph.obs_entity, graph.obs_ref
     lookup = step.astype(np.int64) * len(kinds) + entity
-    by_key = np.argsort(lookup, kind="stable")
-    sorted_keys = lookup[by_key]
+    held = Table(lookup, row=np.arange(len(lookup), dtype=np.int64))
 
     def found(owners, moments):
         probe = np.asarray(moments, np.int64) * len(kinds) + owners
-        positions = np.minimum(np.searchsorted(sorted_keys, probe), max(len(by_key) - 1, 0))
-        held = (sorted_keys[positions] == probe) if len(by_key) else np.zeros(len(probe), bool)
-        return np.where(held & (np.asarray(owners) >= 0), by_key[positions] if len(by_key) else -1, -1)
+        return np.where(np.asarray(owners) >= 0, held.lookup("row", probe, -1), -1)
 
     def observed(owners, moments):
         rows = found(owners, moments)
@@ -348,7 +346,7 @@ def affinity_index(events, steps, kinds):
     head = np.maximum.accumulate(
         np.where(np.r_[True, owner[1:] != owner[:-1]][: len(owner)], np.arange(len(owner)), 0)
     )
-    counts -= np.where((head > 0)[:, None], counts[np.maximum(head - 1, 0)], 0)
+    counts -= gathered(counts, head - 1, 0)
     totals = np.zeros((steps + 1, kinds), np.float32)
     np.add.at(totals, (tick // 2 + 1, kind), 1)
     result = dict(

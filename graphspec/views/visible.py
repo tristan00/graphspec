@@ -123,8 +123,9 @@ def withheld(keys, named, moments):
         named, moments = named[order], moments[order]
         first = np.r_[True, named[1:] != named[:-1]]
         named, moments = named[first], moments[first]
-        position = np.minimum(np.searchsorted(named, keys), len(named) - 1)
-        found = named[position] == keys
+        position = np.searchsorted(named, keys)
+        found = position < len(named)
+        found[found] = named[position[found]] == keys[found]
         result[found] = moments[position[found]]
     return result
 
