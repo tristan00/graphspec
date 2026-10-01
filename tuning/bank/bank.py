@@ -45,7 +45,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 34
+VIEW = 35
 TOKEN = (1 << 62) - 1
 
 
@@ -80,16 +80,23 @@ def pointed(schema, rows):
         if entry["target"] is not None
     }
     aims = np.asarray([code[row["kind"]] for row in rows], np.int64)
-    fields = {}
+    fields, inputs = {}, {}
     for place, kind in enumerate(targets):
         chosen = np.flatnonzero(aims == place).tolist()
-        for name in TARGETS.named(kind).fields:
+        entry = TARGETS.named(kind)
+        for name in entry.inputs + entry.outcomes:
             held = fields.setdefault(name, np.full(len(rows), np.nan, np.float32))
             held[chosen] = [rows[row][name] for row in chosen]
+        for name in entry.inputs:
+            inputs.setdefault(name, np.full(len(rows), np.nan, np.float32))[chosen] = fields[name][chosen]
     LOG.debug(
-        "pointed exit points=%d fields=%d seconds=%.4f", len(rows), len(fields), time.perf_counter() - started
+        "pointed exit points=%d fields=%d inputs=%d seconds=%.4f",
+        len(rows),
+        len(fields),
+        len(inputs),
+        time.perf_counter() - started,
     )
-    return aims, fields
+    return aims, fields, inputs
 
 
 def grouped(graphs, keys, size):
@@ -330,7 +337,7 @@ class Bank:
         asked = self.registry.schema.tasks["key"]
         keys = np.asarray([(owners[row["graph"]], row[asked]) for row in self.rows], np.int64).reshape(-1, 2)
         self.task_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
-        self.aims, self.fields = pointed(schema, self.rows)
+        self.aims, self.fields, self.inputs = pointed(schema, self.rows)
         self.nodes = self.named()
         self.center = np.asarray(
             [scaled[name]["mean"] if name in scaled else 0.0 for name in self.series_names], np.float32

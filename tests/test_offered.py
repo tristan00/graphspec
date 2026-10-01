@@ -2,7 +2,6 @@ import copy
 import logging
 import time
 
-import numpy as np
 import pytest
 import support
 import torch
@@ -16,7 +15,7 @@ from tuning.batches.batching import pack_batch
 from tuning.families.model_spec import VIEWS, configuration, groups, space, views
 from tuning.families.models import build
 from tuning.families.periods import blocks as period_blocks
-from tuning.fits.losses import LOSSES
+from tuning.fits.losses import Summed
 from tuning.searches.selector import graph_space
 
 LOG = logging.getLogger(__name__)
@@ -150,35 +149,15 @@ def read(held, model, graph, pipeline):
     return cfg, b, build(cfg, bank.fitted(cfg))
 
 
-@timed("offered.same")
-def same(left, right):
-    if isinstance(left, torch.Tensor):
-        return (
-            isinstance(right, torch.Tensor)
-            and (left.dtype, left.shape) == (right.dtype, right.shape)
-            and torch.equal(left.isnan(), right.isnan())
-            and torch.equal(left.nan_to_num(), right.nan_to_num())
-        )
-    if isinstance(left, np.ndarray):
-        return isinstance(right, np.ndarray) and left.dtype == right.dtype and np.array_equal(left, right)
-    if isinstance(left, dict):
-        return isinstance(right, dict) and sorted(left) == sorted(right) and all(same(left[key], right[key]) for key in left)
-    if isinstance(left, (list, tuple)):
-        return type(left) is type(right) and len(left) == len(right) and all(map(same, left, right))
-    if hasattr(left, "__dict__"):
-        return type(left) is type(right) and same(vars(left), vars(right))
-    return type(left) is type(right) and left == right
-
-
 @timed("offered.passed")
 def passed(held, model, graph, pipeline):
     bank = held["bank"]
     cfg, b, net = read(held, model, graph, pipeline)
     predicted = net(b)
-    lost = LOSSES.named("squared")(predicted, b, bank)
+    lost = Summed(dict(number="squared"), bank.registry.schema.targets())(predicted, b, bank)
     lost.backward()
     gradients = [parameter.grad for parameter in net.parameters() if parameter.grad is not None]
-    if predicted.shape != b["target"].shape or not torch.isfinite(predicted).all():
+    if predicted.shape != b["series"].shape or not torch.isfinite(predicted).all():
         raise ValueError("predictions of shape %s are not finite or not of the targets' shape" % (predicted.shape,))
     if not torch.isfinite(lost) or not gradients or not all(torch.isfinite(grad).all() for grad in gradients):
         raise ValueError("the loss or a gradient is not finite")
@@ -215,7 +194,7 @@ def test_every_family_reads_the_kinds_relations_and_columns_a_pipeline_adds(held
     assert len(variant["candidate_step"])
     assert set(variant["candidate_code"].tolist()) == {registry.by_candidate["negatives"].code}
     plain, unread, alone = read(held, model, graph, pipeline[:-1])
-    assert "candidate_step" not in held["bank"].arrays(0, plain) and same(b, unread)
+    assert "candidate_step" not in held["bank"].arrays(0, plain) and support.same(b, unread)
     with torch.no_grad():
         assert torch.equal(predicted, alone(unread))
     LOG.info("added read family=%s seconds=%.3f", family, time.perf_counter() - started)

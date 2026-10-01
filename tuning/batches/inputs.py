@@ -426,8 +426,8 @@ def pointed(bank, window, b, rows, owner):
     point_node = np.r_[point_node, count + int(seen.sum()) + np.arange(len(point))]
     observed, row = np.r_[observed[seen], placed], np.r_[row[seen], owner[point]]
     entity = held.numpy("entity")[observed]
-    for key in ("target",) + tuple(key for key in b if key.startswith(FIELD)):
-        b[key] = np.r_[b[key], np.full(len(point), 0.0 if key == "target" else np.nan, b[key].dtype)]
+    for key in tuple(key for key in b if key.startswith(FIELD)):
+        b[key] = np.r_[b[key], np.full(len(point), np.nan, b[key].dtype)]
     for key in ("weight", "series", "aim", "point_row"):
         b[key] = np.r_[b[key], b[key][point]]
     b["drawn"] = Host(rows[point])
@@ -757,7 +757,6 @@ def base_inputs(bank, block, window):
         selected=array(selected),
         rows=Host(rows),
         drawn=Host(np.zeros(0, np.int64)),
-        target=array(bank.targets[rows]),
         weight=array(bank.weights[rows]),
         series=array(bank.series[rows], torch.long),
         aim=array(bank.aims[rows], torch.long),
@@ -766,7 +765,7 @@ def base_inputs(bank, block, window):
         task=features(graph, (m,), ("task", held.numpy("row_task")[first:last], 1.0)),
         row_kind=array(kinds, torch.long),
         **member_inputs(window, first, last),
-        **{FIELD + name: array(values[rows]) for name, values in bank.fields.items()},
+        **{FIELD + name: array(values[rows]) for name, values in bank.inputs.items()},
     )
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
     b["partner"] = partnered(b["pair"], len(b["member_row"]))

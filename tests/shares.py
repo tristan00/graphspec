@@ -11,7 +11,8 @@ class Share:
     names = None
     parameters = ()
     columns = dict(trials="FLOAT")
-    fields = ("trials",)
+    inputs = ("trials",)
+    outcomes = ()
 
     @timed("shares.share.checked")
     def checked(self, stated, schema, references, where):

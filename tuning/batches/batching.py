@@ -18,7 +18,7 @@ ENTITY_FRAMES = 1 << 20
 FACTS = 4 << 20
 CHUNK = 64
 GRAPHS, GROUPS = "tuning.batches/graphs", "tuning.batches/groups"
-POINTS = ("target", "weight", "aim", "series")
+POINTS = ("weight", "aim", "series")
 
 
 @dataclass(frozen=True)

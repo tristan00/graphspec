@@ -30,7 +30,7 @@ def probe(bank, block, cfg, device, loss):
     if torch.device(device).type == "cuda":
         torch.cuda.reset_peak_memory_stats()
     values = net(b)
-    if values.shape != b["target"].shape or not torch.isfinite(values).all():
+    if values.shape != b["series"].shape or not torch.isfinite(values).all():
         raise ValueError("model output must be finite and match the target shape")
     loss(values, b, bank).backward()
     if torch.device(device).type == "cuda":
@@ -45,7 +45,7 @@ def probe(bank, block, cfg, device, loss):
         clone.load_state_dict(net.state_dict(), strict=True)
         torch.testing.assert_close(before, clone(b))
     return dict(
-        rows=len(b["target"]),
+        rows=len(b["series"]),
         pack_seconds=packed - started,
         total_seconds=time.perf_counter() - started,
         parameters=sum(p.numel() for p in net.parameters()),

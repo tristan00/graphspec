@@ -310,6 +310,15 @@ def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_t
         assert np.isfinite(found["prediction"]).all() and len(aim) == saved["holdout_rows"]
 
 
+def test_the_batch_a_model_reads_holds_the_inputs_of_a_path_and_of_a_registered_kind_and_no_outcome(
+    numbered, shared, monkeypatch
+):
+    for (bank, _), kinds, read in ((numbered, ("number", "path"), ["field/tau"]), (shared, ("share",), ["field/trials"])):
+        held = Deriver(bank, "cpu", RESIDENT)
+        assert held.registry.schema.targets() == kinds
+        assert support.outcomeless(held, inline(bank, ("snapshot",), monkeypatch)["snapshot"]) == (read, True)
+
+
 def test_a_kind_of_target_registered_by_a_test_builds_reads_back_and_completes_one_fit(
     shared, tmp_path, statement, monkeypatch
 ):

@@ -344,6 +344,12 @@ def test_every_kind_over_classes_matures_into_its_own_form_once_known(classes, m
     assert case["graphs"][1]["tasks"]["target"][2] == ["green"]
 
 
+def test_the_batch_a_model_reads_holds_no_outcome_of_a_number_or_a_kind_over_classes(classes, monkeypatch):
+    held = Deriver(classes[0], "cpu", RESIDENT)
+    assert held.registry.schema.targets() == ("number", "class", "classes", "proportions")
+    assert support.outcomeless(held, inline(classes[0], ("snapshot",), monkeypatch)["snapshot"]) == ([], True)
+
+
 def test_a_memory_reads_a_window_alone_that_holds_no_event(classes):
     import torch
 

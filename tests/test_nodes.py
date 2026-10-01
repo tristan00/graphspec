@@ -23,6 +23,7 @@ from tuning.bank.build import build
 from tuning.batches.batching import batches, pack_batch
 from tuning.families.model_spec import VIEWS, views
 from tuning.families.models import build as network
+from tuning.fits.losses import outcomes
 from tuning.fits.training import fit
 from tuning.statement import state
 
@@ -393,6 +394,7 @@ def test_a_link_withholds_its_target_edge_from_its_split_and_is_scored_among_the
     for partition in (0, 1):
         for block in held.blocks(partition, 2, cfg):
             b = pack_batch(held, [block], cfg, "cpu")
+            target = outcomes(held, b, "cpu")["target"]
             variant = held.arrays(block[0], cfg)
             tokens, rows = variant["entity_token"], b["rows"].tolist()
             node = [NAMED[tokens[entity % len(tokens)]] for entity in b["member_entity"][b["point_node"]].tolist()]
@@ -406,7 +408,7 @@ def test_a_link_withholds_its_target_edge_from_its_split_and_is_scored_among_the
                 chosen &= np.isin(variant["candidate_source"], anchor)
                 found = {NAMED[tokens[target]] for target in variant["candidate_target"][chosen].tolist()}
                 assert node[at] == row["node"] and len(drawn) == len(set(drawn)) and set(drawn) == found - {node[at]}
-                assert b["target"][len(rows) + places].sum() == 0 and b["target"][at] == 1
+                assert target[len(rows) + places].sum() == 0 and target[at] == 1 and "target" not in b
                 sizes.append(len(drawn) + 1)
     assert len(sizes) == len(TIMES) * 2 and max(sizes) == len(ITEMS) > min(sizes)
 
@@ -481,6 +483,12 @@ def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, stateme
             assert np.allclose(total[np.unique(task[chosen])], 1.0)
         assert len(drawn) >= int((aim == targets.index("link")).sum())
         assert ((prediction[aim == targets.index("nodes")] > 0) & (prediction[aim == targets.index("nodes")] < 1)).all()
+
+
+def test_the_batch_a_model_reads_holds_no_outcome_of_a_kind_naming_nodes(banks):
+    held = opened(banks, "stated")
+    assert held.registry.schema.targets() == ("ranking", "nodes", "link")
+    assert support.outcomeless(held, configured(held.registry, "snapshot", SEEING)) == ([], True)
 
 
 @timed("nodes.predicted")

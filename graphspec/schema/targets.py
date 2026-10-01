@@ -183,7 +183,8 @@ class Number:
     names = None
     parameters = ()
     columns = {}
-    fields = ()
+    inputs = ()
+    outcomes = ()
     checked = staticmethod(unconstrained)
 
     @timed("targets.number.ripe")
@@ -235,7 +236,8 @@ class Path:
     names = None
     parameters = ()
     columns = dict(tau="FLOAT", series="STRING")
-    fields = ("tau",)
+    inputs = ("tau",)
+    outcomes = ()
     checked = staticmethod(unconstrained)
 
     @timed("targets.path.series")
@@ -297,7 +299,8 @@ class Over:
     names = None
     parameters = ()
     columns = dict(series="STRING")
-    fields = ()
+    inputs = ()
+    outcomes = ()
     checked = staticmethod(unconstrained)
 
     @timed("targets.over.series")
@@ -445,7 +448,7 @@ class Sequence(Over):
     matures = None
     parameters = ("length",)
     columns = dict(series="STRING", place="INT32")
-    fields = ("place",)
+    inputs = ("place",)
 
     @timed("targets.sequence.checked")
     def checked(self, stated, schema, references, where):
@@ -518,7 +521,8 @@ class Survival:
     names = None
     parameters = ("width", "intervals")
     columns = dict(tau="FLOAT", duration="INT64", happened="BOOL")
-    fields = ("tau", "duration", "happened")
+    inputs = ("tau",)
+    outcomes = ("duration", "happened")
 
     @timed("targets.survival.checked")
     def checked(self, stated, schema, references, where):
@@ -618,7 +622,8 @@ class Pointed:
     scaled = False
     matures = None
     columns = dict(node="STRING")
-    fields = ()
+    inputs = ()
+    outcomes = ()
 
     @timed("targets.pointed.series")
     def series(self, stated, where):

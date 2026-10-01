@@ -296,17 +296,17 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     from tuning.batches.batching import pack_batch
     from tuning.families.models import build
     from tuning.families.periods import blocks as period_blocks
-    from tuning.fits.losses import LOSSES
+    from tuning.fits.losses import Summed
 
-    loss = LOSSES.named("balanced")
     opened = Deriver(path_bank, "cpu", RESIDENT)
+    loss = Summed(dict(path="balanced"), opened.registry.schema.targets())
     cfg = configuration(opened.registry, dict(model, hidden=8), {"time/history": 2}, 11, SPLITS)
     assert cfg["model"]["time/encoding"] == "log_cosine"
     full = [block for block in opened.blocks(0, 2, cfg) if block[2] - block[1] == 2]
     batch = pack_batch(opened, period_blocks(opened, full[:2], cfg), cfg, "cpu")
     net = build(cfg, opened.fitted(cfg))
     prediction = net(batch)
-    assert prediction.shape == batch["target"].shape == batch["field/tau"].shape
+    assert prediction.shape == batch["series"].shape == batch["field/tau"].shape and "target" not in batch
     assert len(prediction) > batch["tasks"] == 2
     assert torch.isfinite(prediction).all()
     value = loss(prediction, batch, opened)

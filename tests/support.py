@@ -531,3 +531,53 @@ def steps(registry, values, groups=(), names=SEVEN):
     result = resolved(registry, pipeline), specs.configured(specs.settings(registry, groups), rest)
     LOG.debug("steps exit steps=%d seconds=%.4f", len(result[0]), time.perf_counter() - started)
     return result
+
+
+def same(left, right):
+    import torch
+
+    started = time.perf_counter()
+    if isinstance(left, torch.Tensor):
+        result = (
+            isinstance(right, torch.Tensor)
+            and (left.dtype, left.shape) == (right.dtype, right.shape)
+            and torch.equal(left.isnan(), right.isnan())
+            and torch.equal(left.nan_to_num(), right.nan_to_num())
+        )
+    elif isinstance(left, np.ndarray):
+        result = isinstance(right, np.ndarray) and left.dtype == right.dtype and np.array_equal(left, right)
+    elif isinstance(left, dict):
+        result = isinstance(right, dict) and sorted(left) == sorted(right) and all(same(left[key], right[key]) for key in left)
+    elif isinstance(left, (list, tuple)):
+        result = type(left) is type(right) and len(left) == len(right) and all(map(same, left, right))
+    elif hasattr(left, "__dict__"):
+        result = type(left) is type(right) and same(vars(left), vars(right))
+    else:
+        result = type(left) is type(right) and left == right
+    LOG.debug("same exit equal=%s seconds=%.6f", result, time.perf_counter() - started)
+    return result
+
+
+def outcomeless(held, cfg):
+    from graphspec.schema.targets import TARGETS
+    from tuning.batches.batching import batches, pack_batch
+    from tuning.families.heads import FIELD
+    from tuning.families.periods import blocks as period_blocks
+
+    started = time.perf_counter()
+    named = {name for kind in held.registry.schema.targets() for name in TARGETS.named(kind).outcomes}
+    history = cfg["graph"]["time/history"]
+    blocks = period_blocks(held, [block for partition in (0, 1) for block in held.blocks(partition, history, cfg)], cfg)
+    found = [[block for block in blocks if block[0] == graph] for graph in sorted({block[0] for block in blocks})]
+    groups = [group for chosen in found for group in batches(chosen, len(chosen), held.sizes(cfg), None, frame_budget=1024)]
+    stated, targets, fields = [pack_batch(held, group, cfg, "cpu") for group in groups], held.targets, held.fields
+    held.targets = targets[::-1] + 1
+    held.fields = {name: values + 1 if name in named else values for name, values in fields.items()}
+    try:
+        changed = [pack_batch(held, group, cfg, "cpu") for group in groups]
+    finally:
+        held.targets, held.fields = targets, fields
+    read = sorted({key for b in stated for key in b if key == "target" or key.startswith(FIELD)})
+    result = read, same(stated, changed)
+    LOG.debug("outcomeless exit batches=%d seconds=%.4f", len(stated), time.perf_counter() - started)
+    return result

@@ -141,7 +141,7 @@ def test_each_model_produces_finite_predictions_for_its_labels(opened, model, hi
     net = build(cfg, opened.fitted(cfg)).eval()
     with torch.inference_mode():
         prediction = net(batch)
-    assert prediction.shape == batch["target"].shape
+    assert prediction.shape == batch["series"].shape
     assert torch.isfinite(prediction).all()
 
 

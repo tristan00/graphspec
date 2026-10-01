@@ -256,7 +256,9 @@ def test_a_time_to_an_event_states_its_duration_and_outcome_and_holds_a_point_pe
         assert kind.read(rows) == stated_target
     rows = kind.staged(dict(duration=3, happened=False), target, where)
     points = dict(task=[0] * 3, graph=["g1"] * 3, **{name: [row[name] for row in rows] for name in rows[0]})
-    assert kind.points(points, target, where) == dict(series=["churn"] * 3, **{name: points[name] for name in kind.fields})
+    named = kind.inputs + kind.outcomes
+    assert kind.inputs == ("tau",) and kind.outcomes == ("duration", "happened")
+    assert kind.points(points, target, where) == dict(series=["churn"] * 3, **{name: points[name] for name in named})
     refused = (
         (dict(points, duration=[3, 3, None]), "state the duration of their case, a whole number of at least 1"),
         (dict(points, tau=[2.0, 4.0, 8.0]), "a task of graph g1 holds under .* 3 intervals of 2, by the end"),
@@ -379,6 +381,13 @@ def test_a_bank_of_the_kinds_of_2_13_completes_one_fit(banks, tmp_path, statemen
         assert (total[total > 0] < 1).all()
         total = np.bincount(task[aim == 1], prediction[aim == 1])
         assert (total[np.unique(task[aim == 1])] < 1).all()
+
+
+def test_the_batch_a_model_reads_holds_the_inputs_of_a_sequence_and_a_time_to_an_event_and_no_outcome(banks):
+    held = opened(banks, "stated")
+    cfg = support.configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, SPLITS)
+    assert held.registry.schema.targets() == ("sequence", "survival") and sorted(held.inputs) == ["place", "tau"]
+    assert support.outcomeless(held, cfg) == (["field/place", "field/tau"], True)
 
 
 @timed("outcomes.predicted")
