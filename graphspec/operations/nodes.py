@@ -39,11 +39,12 @@ def stated(registry):
 
 def named(registry, settings):
     started = time.perf_counter()
-    result = {
-        kind: "names"
-        for kind in registry.declared
-        if not settings["nodes/%s/keep" % kind] or settings["nodes/%s/filter" % kind] != "none"
-    }
+    result = {}
+    for kind in registry.declared:
+        if not settings["nodes/%s/keep" % kind]:
+            result[kind] = "removes"
+        elif settings["nodes/%s/filter" % kind] != "none":
+            result[kind] = "names"
     LOG.debug("nodes named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
@@ -170,7 +171,7 @@ NODES = OPERATIONS.register(
         changes=("observations", "facts", "references"),
         adds=None,
         kinds=named,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

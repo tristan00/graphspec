@@ -45,6 +45,7 @@ REFUSED = (
     ("graphspec.neighbourhood", {"neighbourhood/around": "item"}, "item"),
     ("graphspec.contract", {"contract/grouping": "item:v1"}, "item"),
 )
+REMOVERS = (("graphspec.contract", None), ("graphspec.nodes", "gone"))
 
 
 @pytest.fixture(scope="module")
@@ -694,21 +695,29 @@ def entry(registry, name, values, label, graph):
     return entries[0]
 
 
-def test_an_entry_that_names_a_kind_an_earlier_contraction_removed_is_refused_when_the_pipeline_is_stated(opened):
+def test_an_entry_that_names_a_kind_an_earlier_contraction_or_nodes_removed_is_refused_when_the_pipeline_is_stated(
+    opened,
+):
     started = time.perf_counter()
     held, registry, graph, names = opened
     merged = entry(registry, "graphspec.merge", {}, None, names[1])
     quiet = [entry(registry, name, {}, None, None) for name in ("graphspec.nodes", "graphspec.derive")]
     quiet.append(entry(registry, "graphspec.neighbourhood", {"neighbourhood/around": "team"}, None, None))
-    for name, values, kind in REFUSED:
-        contraction = entry(registry, "graphspec.contract", {"contract/grouping": kind + ":v0"}, None, None)
-        later = entry(registry, name, values, "again" if name == "graphspec.contract" else None, None)
-        named = "again" if name == "graphspec.contract" else name
-        message = "the entry %s of the pipeline names the kind %s, which the entry graphspec.contract before it removed"
-        with pytest.raises(ValueError, match=re.escape(message % (named, kind))):
-            resolved(registry, [contraction, later])
-        if named != "again":
-            assert [step.name for step in resolved(registry, [later, contraction])] == [named, "graphspec.contract"]
-        assert len(resolved(registry, [contraction, merged, later])) == 3
-        assert len(resolved(registry, [contraction] + quiet)) == 4
-    LOG.info("refused exit cases=%d seconds=%.3f", len(REFUSED), time.perf_counter() - started)
+    message = "the entry %s of the pipeline names the kind %s, which the entry %s before it removed"
+    for removes, label in REMOVERS:
+        for name, values, kind in REFUSED:
+            removing = {"contract/grouping": kind + ":v0"} if label is None else {"nodes/%s/keep" % kind: False}
+            removal = entry(registry, removes, removing, label, None)
+            remover = removes if label is None else label
+            later = entry(registry, name, values, "again" if name == "graphspec.contract" else None, None)
+            named = "again" if name == "graphspec.contract" else name
+            with pytest.raises(ValueError, match=re.escape(message % (named, kind, remover))):
+                resolved(registry, [removal, later])
+            if name == "graphspec.contract" or values.get("nodes/item/keep") is False:
+                with pytest.raises(ValueError, match=re.escape(message % (remover, kind, named))):
+                    resolved(registry, [later, removal])
+            else:
+                assert [step.name for step in resolved(registry, [later, removal])] == [named, remover]
+            assert len(resolved(registry, [removal, merged, later])) == 3
+            assert len(resolved(registry, [removal] + quiet)) == 4
+    LOG.info("refused exit cases=%d seconds=%.3f", len(REFUSED) * len(REMOVERS), time.perf_counter() - started)

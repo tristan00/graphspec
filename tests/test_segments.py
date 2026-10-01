@@ -98,7 +98,8 @@ CONTRACTED = {"contract/grouping": "item:v0", "contract/aggregate": "mean", "con
 WINDOWED = {"time/scheme": "window", "time/unit": "step", "time/window": 2}
 ELSEWHERE = 0x5A5A5A5A5A5A5A5A
 GROUPING = "pipeline/graphspec.contract/contract/grouping"
-REFUSAL = re.compile(r"the entry (\S+) of the pipeline names the kind (\w+), which the entry graphspec\.contract before ")
+REFUSAL = re.compile(r"the entry (\S+) of the pipeline names the kind (\w+), which the entry (graphspec\.\w+) before ")
+KEPT = "pipeline/graphspec.nodes/nodes/%s/keep"
 CONTRACTIONS = (
     (("graphspec.contract", CONTRACTED, None),),
     (("graphspec.window", WINDOWED, None), ("graphspec.contract", CONTRACTED, None)),
@@ -190,9 +191,11 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
     registry = support.fitted(opened)
     rng = np.random.default_rng(draw)
     template = [dict(operation=name) for name in support.SEVEN]
-    stated = specs.draw(
+    stated = pipeline.draw(
+        registry,
+        template,
         pipeline.space(registry, template),
-        lambda parameter: True if parameter.name.count("/") == 1 else parameter.uniform(rng),
+        lambda parameter: parameter.options[-1] if parameter.name.count("/") == 1 else parameter.uniform(rng),
     )
     steps = pipeline.resolved(registry, pipeline.entries(template, stated))
     grown = pipeline.grown(registry, steps, None)
@@ -523,9 +526,12 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
         except ValueError as error:
             named = REFUSAL.match(str(error))
             assert named is not None, (draw, str(error))
-            assert stated[pipeline.PRESENT % named[1]] and order.index(named[1]) > order.index("graphspec.contract")
-            assert named[2] == stated[GROUPING].split(":")[0], draw
-            refused.append(named[1])
+            assert stated[pipeline.PRESENT % named[1]] and order.index(named[1]) > order.index(named[3])
+            if named[3] == "graphspec.contract":
+                assert named[2] == stated[GROUPING].split(":")[0], draw
+            else:
+                assert named[3] == "graphspec.nodes" and not stated[KEPT % named[2]], draw
+            refused.append((named[1], named[3]))
             continue
         grown = pipeline.grown(registry, steps, None)
         if draw % JOINING == 0:
@@ -549,7 +555,8 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
         assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], draw
         found.append((draw % JOINING == 0, tuple(step.operation.name for step in steps)))
     assert len(set(found)) + len(refused) == DRAWN and sorted({name for _, held in found for name in held}) == names
-    assert any(together and "graphspec.contract" in held for together, held in found) and refused
+    assert any(together and "graphspec.contract" in held for together, held in found)
+    assert {remover for _, remover in refused} == {"graphspec.contract", "graphspec.nodes"}
     assert len(chosen) < len(groupable(registry)) and {grouping.split(":")[0] for grouping in chosen} > {"item"}
     LOG.info(
         "random pipelines exit pipelines=%d refused=%s seconds=%.3f", len(found), refused, time.perf_counter() - started

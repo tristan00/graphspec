@@ -119,7 +119,7 @@ UNVERSIONED = (
 RECORDED = {
     "graphspec.periods": (5, "801dde91649ee01b08f81a7a8dc0821dee53a49e12cf8d45a27f1cf2ec4c7a35"),
     "graphspec.window": (8, "e4dc992b560a0ef5b38c09072e6d8ad51e35403ecd2da959dc6484eff67e4899"),
-    "graphspec.nodes": (6, "54fc43580dbf8470fee9f68a2d54a179bfe2f810ee01818b36f22f3dbdf65cba"),
+    "graphspec.nodes": (7, "cbc647b2303c072988a29cc1eadc8fac186cf58c0f7c650bd320e62fffd8949b"),
     "graphspec.derive": (9, "b9847e1ab20f4ade0177f9cb54c79653752cd9ce0cd9792a1ac436a26a25acf7"),
     "graphspec.relations": (5, "c4fa3ed5da0e9121609653133853386c5c2425cb5922b37c17cd2506cdf6d54d"),
     "graphspec.edges": (9, "cac33b8c4babee91f5ee7c73591a9bb5685157e4ad92e511212c3f47a5054846"),
