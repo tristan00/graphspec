@@ -8,6 +8,7 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from graphspec.infra.timing import timed
+from graphspec.schema.targets import pointed
 
 from .operation import OPERATIONS
 from .parameters import Parameter, flag
@@ -287,9 +288,19 @@ def rebuilt(entries):
     return result
 
 
+def targeted(registry):
+    started = time.perf_counter()
+    result = {}
+    for task, kinds in pointed(registry.schema).items():
+        for kind in kinds:
+            result.setdefault(kind, task)
+    LOG.debug("targeted exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def emptied(registry, steps):
     started = time.perf_counter()
-    removed = {}
+    removed, named = {}, targeted(registry)
     for step in steps:
         roles = step.operation.roles(registry, step.spec)
         lost = [kind for kind, role in roles.items() if role != "fills" and kind in removed]
@@ -297,6 +308,12 @@ def emptied(registry, steps):
             raise ValueError(
                 "the entry %s of the pipeline names the kind %s, which the entry %s before it removed; an entry "
                 "derives nothing for a kind no node of which is left" % (step.name, lost[0], removed[lost[0]])
+            )
+        gone = [kind for kind, role in roles.items() if role == "removes" and kind in named]
+        if gone:
+            raise ValueError(
+                "the entry %s of the pipeline removes the kind %s, which the target of the kind of task %s names; a "
+                "pipeline keeps every kind of node a target names" % (step.name, gone[0], named[gone[0]])
             )
         for kind, role in roles.items():
             if role == "removes":
@@ -528,12 +545,13 @@ class Offered:
             operation = self.operations[name]
             self.probes[name] = None if operation.kinds is None else probed(registry, operation, bounded[name], context)
         self.protected, ahead = {}, {}
+        tasked = {kind: "the target of the kind of task %s" % task for kind, task in targeted(registry).items()}
         for name in reversed(self.names):
-            self.protected[name] = dict(ahead)
+            self.protected[name] = dict(ahead, **tasked)
             if self.flags[name].options == (True,) and self.probes[name] is not None:
                 must = self.probes[name][2]
                 ahead = {kind: held for kind, held in ahead.items() if kind not in must["fills"]}
-                ahead.update(dict.fromkeys(must["hits"], name))
+                ahead.update(dict.fromkeys(must["hits"], "the entry %s after it, held present," % name))
         LOG.debug("offered exit entries=%d seconds=%.4f", len(self.names), time.perf_counter() - started)
 
     def removed(self, name, roles):
@@ -571,7 +589,7 @@ class Offered:
             return "names the kind %s, which the entry %s before it removed" % (lost[0], removed[lost[0]])
         kept = sorted(must["removes"] & guard.keys())
         if kept:
-            return "removes the kind %s, which the entry %s after it, held present, names" % (kept[0], guard[kept[0]])
+            return "removes the kind %s, which %s names" % (kept[0], guard[kept[0]])
         trial = {**flat, self.flags[name].name: True}
         for parameter in self.owned[name]:
             if parameter.active(trial):
@@ -600,7 +618,7 @@ class Offered:
                     name,
                     "names the kind %s, which the entry %s before it removed," % (lost[0], removed[lost[0]])
                     if lost
-                    else "removes the kind %s, which the entry %s after it, held present, names," % (kept[0], guard[kept[0]]),
+                    else "removes the kind %s, which %s names," % (kept[0], guard[kept[0]]),
                 )
             )
         return found
@@ -642,7 +660,8 @@ def draw(registry, template, parameters, choose):
                 if parameter.options and not held:
                     raise ValueError(
                         "the entry %s of the template is left no value of %s that names no kind an entry before it "
-                        "removed and removes none an entry after it, held present, names" % (name, parameter.name)
+                        "removed and removes none an entry after it, held present, or a target names"
+                        % (name, parameter.name)
                     )
                 flat[parameter.name] = choose(narrowed(parameter, held))
         if plan.probes[name] is not None:

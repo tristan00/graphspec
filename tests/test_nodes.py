@@ -617,6 +617,36 @@ def test_the_draw_of_a_links_negatives_leaves_out_its_positive_under_every_shipp
     LOG.info("negatives without their positive exit seconds=%.3f", time.perf_counter() - started)
 
 
+def test_a_pipeline_that_removes_a_kind_a_link_names_is_refused_when_stated_and_never_offered(banks):
+    from graphspec.operations.pipeline import resolved
+    from tuning.searches.selector import check_bounds, random_suggest
+
+    started, registry = time.perf_counter(), opened(banks, "bought").registry
+    contracted = {"contract/grouping": "item:price", "contract/aggregate": "mean", "contract/parallel": "keep"}
+    removed = {"nodes/user/keep": True, "nodes/item/keep": False, "nodes/referenced": "keep", "nodes/user/filter": "none"}
+    for operation, parameters in (("graphspec.contract", contracted), ("graphspec.nodes", removed)):
+        with pytest.raises(
+            ValueError,
+            match="the entry %s of the pipeline removes the kind item, which the target of the kind of task next "
+            "names" % operation,
+        ):
+            resolved(registry, [dict(operation=operation, parameters=parameters)])
+    template = support.template(("graphspec.contract", "graphspec.nodes", "graphspec.negatives"))
+    for seed in range(4):
+        drawn = random_suggest(registry, seed, 5, {"pipeline/graphspec.contract": [True]}, 30, template)[0]
+        stated = {entry["operation"]: entry["parameters"] for entry in drawn["pipeline"]}
+        assert stated["graphspec.contract"]["contract/grouping"] == "user:load"
+        assert "graphspec.nodes" not in stated or stated["graphspec.nodes"]["nodes/item/keep"]
+    bounds = {"pipeline/graphspec.contract": [True], "pipeline/graphspec.contract/contract/grouping": ["item:price"]}
+    with pytest.raises(
+        ValueError,
+        match="the bounds hold the entry graphspec.contract of the template present, and it removes the kind item, "
+        "which the target of the kind of task next names",
+    ):
+        check_bounds(registry, bounds, template)
+    LOG.info("kinds a link names kept exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_a_fit_whose_pipeline_draws_no_negatives_for_a_link_stops_naming_its_kind(banks, tmp_path, statement):
     held = opened(banks, "stated")
     cfg = dict(configured(held.registry, "snapshot", SEEING, support.SEVEN, 4), epochs=1)

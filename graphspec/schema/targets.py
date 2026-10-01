@@ -791,6 +791,27 @@ def valued(target, points):
     return UTILITIES.named(stated["name"]).value(stated, points)
 
 
+def pointed(schema):
+    started = time.perf_counter()
+    result = {}
+    for kind, entry in schema.tasks["kinds"].items():
+        target = entry["target"]
+        names = None if target is None else TARGETS.named(target["kind"]).names
+        if names is None:
+            continue
+        starts = set(schema.tasks["references"][target["about"]]["kinds"])
+        if names == "members":
+            result[kind] = tuple(sorted(starts))
+            continue
+        edge = schema.edges[target["relation"]]
+        found = {second for first, second in edge["endpoints"] if first in starts}
+        if not edge["directed"]:
+            found |= {first for first, second in edge["endpoints"] if second in starts}
+        result[kind] = tuple(sorted(found))
+    LOG.debug("pointed exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def needed(schema):
     started = time.perf_counter()
     result = {}
