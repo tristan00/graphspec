@@ -264,3 +264,55 @@ def test_consecutive_rows_of_a_group_are_joined_unless_a_gap_in_time_cuts_them(o
     with pytest.raises(ValueError, match="fills a relation stated without columns from a kind of node to itself"):
         CONSECUTIVE(dense, plain, {}, SEED, LIMITS, carry, CONSECUTIVE.initial(plain, {}), None)
     LOG.info("consecutive exit counts=%s seconds=%.3f", counts, time.perf_counter() - started)
+
+
+def surroundings(graph, registry, around, hops):
+    tokens, kinds = np.asarray(graph.entity_token), np.asarray(graph.kinds)
+    observations, facts = set(), set()
+    for step in range(graph.steps):
+        moment = int(graph.step_time[step])
+        observed = set(graph.obs_entity[graph.obs_step == step].tolist())
+        tasks = np.flatnonzero(graph.task_step == step)
+        chosen = np.isin(graph.member_task, tasks)
+        reached = {int(who) for who in np.r_[graph.member_source[chosen], graph.member_target[chosen]] if who >= 0}
+        if around != "references":
+            reached |= {who for who in observed if kinds[who] == registry.kind(around)}
+        reached &= observed
+        present = (graph.fact_step == step) & graph.fact_present
+        pairs = list(zip(graph.fact_source[present].tolist(), graph.fact_target[present].tolist()))
+        for _ in range(hops):
+            reached |= {b for a, b in pairs if a in reached} | {a for a, b in pairs if b in reached}
+        observations |= {(moment, int(tokens[who])) for who in reached}
+        facts |= {
+            (moment, int(code), int(tokens[a]), int(tokens[b]))
+            for (a, b), code in zip(pairs, graph.fact_code[present].tolist())
+            if a in reached and b in reached
+        }
+    return observations, facts
+
+
+def test_a_neighbourhood_keeps_what_lies_within_a_number_of_hops_of_its_nodes_at_each_step(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    sizes = {}
+    for around, hops in (("references", 0), ("references", 2), ("team", 1)):
+        entry = dict(
+            operation="graphspec.neighbourhood",
+            parameters={"neighbourhood/hops": hops, "neighbourhood/around": around},
+        )
+        found = segments.whole(graph, {}, registry, resolved(registry, [entry]), SEED, LIMITS, None)
+        tokens = np.asarray(found.entity_token)
+        observations = {
+            (int(found.step_time[step]), int(tokens[who])) for step, who in zip(found.obs_step, found.obs_entity)
+        }
+        present = np.asarray(found.fact_present)
+        facts = {
+            (int(found.step_time[step]), int(code), int(tokens[a]), int(tokens[b]))
+            for step, code, a, b in zip(
+                found.fact_step[present], found.fact_code[present], found.fact_source[present], found.fact_target[present]
+            )
+        }
+        assert (observations, facts) == surroundings(graph, registry, around, hops)
+        sizes[around, hops] = len(observations), len(facts)
+    assert sizes["references", 0][1] < sizes["references", 2][1] and sizes["references", 2][0] < len(graph.obs_step)
+    LOG.info("neighbourhood exit sizes=%s seconds=%.3f", sizes, time.perf_counter() - started)

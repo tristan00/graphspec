@@ -99,6 +99,7 @@ Operations that count degree, core numbers, components or paths meet set edges a
 | `nodes/degree`, `nodes/total_degree` | degree | stored: under `node` a member counts one edge per set edge it is in and a set edge's node counts its members and the edges about it; under `pairs` a member of a set edge of k members counts k − 1 | stored: one edge at the set edge's node and one at the other end |
 | `nodes/core` | core numbers | stored, as for degree | stored |
 | `derive/hops` | paths | stored: under `node` two members of one set edge are two hops apart, under `pairs` one | stored: through the set edge's node |
+| `neighbourhood/hops` | paths | stored, as for `derive/hops` | stored: through the set edge's node |
 | `derive/projection` | paths of two edges | stored: projecting a relation of a role over its members gives the members that share a set edge | stored |
 | `derive/diffusion` | components and paths | stored | stored |
 | `derive/rewiring` | components and degree | stored | stored |
@@ -308,7 +309,7 @@ The function receives the spec as `settings`, which hold the parameters the oper
 
 A phase reads the segment it works on through `carry`: `carry.glob`, the number of every entity of the segment among the entities of the derivation; `carry.step0`, the step of the derivation at which the segment begins; `carry.keys(code, source, target)`, a key of facts equal across segments; `carry.local(entities)`, the places in the segment of entities named by their numbers in the derivation, which stops where one is absent; and `carry.widened(graph, entities)`, which adds to the segment the entities its state brings and gives the graph with them and the new place of every entity it held. An entity whose `entity_connected` is set may appear in a later segment; the state carries it, and only it. The state is replaced, never changed in place: the state of a segment is shared by every derivation that continues from it.
 
-The shipped operations are `graphspec.periods`, `graphspec.window`, `graphspec.nodes`, `graphspec.derive`, `graphspec.relations`, `graphspec.edges`, `graphspec.merging`, `graphspec.nearby`, `graphspec.consecutive`, and `graphspec.merge` and `graphspec.difference`, which take two graphs. Each reads the graph it is given: `graphspec.derive` derives from the relations its input holds, so a relation removed before it is not read and one removed after it is. The conditions of the parameters of `graphspec.edges` read those of `graphspec.derive`, which offer the filters of the relations it derives; every other condition reads only the parameters of its own operation.
+The shipped operations are `graphspec.periods`, `graphspec.window`, `graphspec.nodes`, `graphspec.derive`, `graphspec.relations`, `graphspec.edges`, `graphspec.merging`, `graphspec.nearby`, `graphspec.consecutive`, `graphspec.neighbourhood`, and `graphspec.merge` and `graphspec.difference`, which take two graphs. Each reads the graph it is given: `graphspec.derive` derives from the relations its input holds, so a relation removed before it is not read and one removed after it is. The conditions of the parameters of `graphspec.edges` read those of `graphspec.derive`, which offer the filters of the relations it derives; every other condition reads only the parameters of its own operation.
 
 **Pipelines**
 

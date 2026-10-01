@@ -7,7 +7,7 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`, `nearby.py`, `consecutive.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`, `nearby.py`, `consecutive.py`, `neighbourhood.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads: the registry of representations and their families, structure, sample and encode (`registry.py`), the arrays every variant holds, their carried state and the arrays over a whole variant (`base.py`), one module per shipped representation (`coupling.py`, `events.py`, `neighbors.py`, `walks.py`, `mixed.py`), what they share (`groups.py`) and their kernels (`kernels.py`) |
 | `engine/` | Derivation of variants, one engine in segments: derivations, continuations and forks, and the build of a variant in the calling process (`segments.py`), the steps of a pipeline on one segment (`transform.py`), the same on worker processes (`schedule.py`), slices and edits (`edits.py`), writing and stitching segments (`stitch.py`), the physical join tests compare against (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
@@ -230,6 +230,15 @@ Fills a relation the schema states without columns from a kind of node to itself
 |---|---|---|
 | `consecutive/pairing` | the relations that qualify, alone or with a grouping | `<relation>`: the rows of the whole graph form one group; `<relation>:<grouping>:<side>`: the rows are grouped by their counterparts over the relation `<grouping>`, on which they are the sources or the targets. |
 | `consecutive/gap` | 1–10⁹, logarithmic, in the unit of time of the graph | The longest time between two consecutive rows that are joined. |
+
+12. Neighbourhood of nodes to a number of hops, at a time, `graphspec.neighbourhood`
+
+At every step it keeps the part of the graph within a number of hops of its nodes at that step, and removes the rest: the observations of the nodes reached, the present facts between two nodes reached, and the absent facts whose ends were kept at or before their step. Its nodes at a step are those the tasks of the step reference, observed at it, and, where a kind is stated, every node of the kind observed at it; a node a task references is therefore never removed at the step of the task, and a step without such nodes keeps nothing. Hops follow the present facts of the step in either direction, whatever their relation; it counts paths, and under the forms of storage of set edges counts them as stored, as `graphspec.derive` does. It carries the nodes it kept, for the absent facts of later segments, and the state of removing absent rows left without an earlier present row. It draws nothing. `neighbourhood.within(seeds, source, target, hops)` gives the keys reached from seeds over pairs of keys.
+
+| Parameter | Range | Effect |
+|---|---|---|
+| `neighbourhood/hops` | 0–3 | How many hops from its nodes; 0 keeps its nodes alone. |
+| `neighbourhood/around` | references, or a kind of node | Its nodes: those the tasks of the step reference, and every node of the kind where one is stated. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 
