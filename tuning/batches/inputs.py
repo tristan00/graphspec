@@ -7,6 +7,7 @@ import torch
 
 from graphspec import Registry
 from graphspec.engine.transform import SEED
+from graphspec.infra import workspace
 from graphspec.infra.arrays import Resident, between
 from graphspec.infra.hashing import salted
 from graphspec.operations.rows import keyed_relations
@@ -465,7 +466,7 @@ def mixed_inputs(b, window):
     )
     if tokens is not None:
         owner = held.numpy("mixed_entity")[left:right]
-        b["mixed"]["token"] = np.r_[np.where(owner >= 0, tokens[np.maximum(owner, 0)], -1), b["member_token"]]
+        b["mixed"]["token"] = np.r_[workspace.gathered(tokens, owner, -1), b["member_token"]]
 
 
 def events_inputs(b, window, blocks):
@@ -548,9 +549,8 @@ def walks_inputs(b, window, context):
         gaps = np.zeros(walks.shape + (3,), np.float32)
         gaps[:, walk_count:] = np.repeat(context["member_end_gaps"], walk_count, axis=1)[:, :, None, :]
         b.update(walk_period_kind=kinds, walk_end_time=gaps)
-    known = walks >= 0
-    known &= held.column("events", 2)[np.maximum(walks, 0)] >= start * 2
-    events = held.numpy("events")[np.maximum(walks, 0)]
+    events = workspace.gathered(held.numpy("events"), walks, -1)
+    known = (walks >= 0) & (events[..., 2] >= start * 2)
     nodes = np.empty(walks.shape, np.int32)
     observations = np.empty_like(nodes)
     current = np.broadcast_to(b["member_entity"][:, None], walks.shape[:2]).copy()
@@ -568,7 +568,7 @@ def walks_inputs(b, window, context):
         walk_identity=array(gather.walk_identities(nodes, known, b["partner"])),
     )
     if tokens is not None:
-        b["walk_token"] = np.where(known, tokens[nodes], -1)
+        b["walk_token"] = workspace.gathered(tokens, np.where(known, nodes, -1), -1)
 
 
 def base_inputs(bank, block, window):
@@ -661,7 +661,7 @@ def neighbor_history_inputs(b, window, blocks):
         )
     )
     if tokens is not None:
-        b["history_token"] = np.where(b["history_ids"] >= 0, tokens[np.maximum(b["history_ids"], 0)], -1)
+        b["history_token"] = workspace.gathered(tokens, b["history_ids"], -1)
 
 
 def pooled_frames(window, values):

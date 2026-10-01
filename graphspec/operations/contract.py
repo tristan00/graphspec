@@ -137,44 +137,37 @@ def grouped_nodes(graph, registry, carry, entry, kind, column):
 
 
 @timed("operators.groups_at")
-def groups_at(graph, carry, group, keys, ends, moments, present, holding):
+def groups_at(graph, carry, grouped, ends, moments, present, holding):
     ends, steps = np.asarray(ends, np.int64), graph.steps
     result, chosen = ends.copy(), np.flatnonzero(holding[ends])
     wanted = ends[chosen] * steps + np.asarray(moments, np.int64)[chosen]
     found = np.full(len(chosen), -1, np.int64)
-    order = np.argsort(keys, kind="stable")
-    place = np.minimum(np.searchsorted(keys[order], wanted), max(len(keys) - 1, 0))
     stated = np.flatnonzero(np.asarray(present, bool)[chosen])
-    if len(keys):
-        exact = keys[order][place[stated]] == wanted[stated]
-        found[stated[exact]] = group[order][place[stated[exact]]]
+    found[stated] = grouped.lookup("group", wanted[stated], -1)
     ended = np.flatnonzero(~np.asarray(present, bool)[chosen])
-    known = keys[group >= 0]
-    order = np.argsort(known, kind="stable")
-    place = np.searchsorted(known[order], wanted[ended], "right") - 1
+    known = grouped.columns["group"] >= 0
+    keys, group = grouped.keys[known], grouped.columns["group"][known]
+    place = np.searchsorted(keys, wanted[ended], "right") - 1
     within = np.zeros(len(ended), bool)
     inside = np.flatnonzero(place >= 0)
-    within[inside] = known[order][place[inside]] // steps == ends[chosen][ended][inside]
-    found[ended[within]] = group[group >= 0][order][place[within]]
+    within[inside] = keys[place[inside]] // steps == ends[chosen][ended][inside]
+    found[ended[within]] = group[place[within]]
     earlier = carry.state["contract/groups"].lookup("value", carry.glob[ends[chosen][ended[~within]]], -1)
-    position = np.minimum(np.searchsorted(carry.glob, np.maximum(earlier, 0)), len(carry.glob) - 1)
-    found[ended[~within]] = np.where((earlier >= 0) & (carry.glob[position] == earlier), position, -1)
+    found[ended[~within]] = Table(carry.glob).find(earlier)
     result[chosen] = found
     return result
 
 
 @timed("operators.followed")
-def followed(graph, registry, group, keys, holding, kind, column):
+def followed(graph, registry, grouped, holding, kind, column):
     moments = np.asarray(graph.task_step, np.int64)[np.asarray(graph.member_task, np.int64)]
-    order = np.argsort(keys, kind="stable")
     result = {}
     for name in ("member_source", "member_target"):
         ends = np.asarray(graph.arrays[name], np.int64)
         named = np.flatnonzero(gathered(holding, ends, False))
-        wanted = ends[named] * graph.steps + moments[named]
-        place = np.minimum(np.searchsorted(keys[order], wanted), max(len(keys) - 1, 0))
-        seen = keys[order][place] == wanted if len(keys) else np.zeros(len(named), bool)
-        lost = np.flatnonzero(seen & (group[order][place] < 0))
+        place = grouped.find(ends[named] * graph.steps + moments[named])
+        seen, group = place >= 0, gathered(grouped.columns["group"], place, -1)
+        lost = np.flatnonzero(seen & (group < 0))
         if len(lost):
             raise ValueError(
                 "%s names a node of the kind %s that holds no value of %s at the time of the task, so "
@@ -182,7 +175,7 @@ def followed(graph, registry, group, keys, holding, kind, column):
                 % (unresolved(graph, registry, int(named[lost[0]])), kind, column)
             )
         ends = ends.copy()
-        ends[named[seen]] = group[order][place[seen]]
+        ends[named[seen]] = group[seen]
         result[name] = ends.astype(graph.arrays[name].dtype)
     return result
 
@@ -227,19 +220,21 @@ def contract(graph, registry, spec, seed, limits, carry, held):
     kinds, entity = np.asarray(graph.kinds), np.asarray(graph.obs_entity, np.int64)
     holding = kinds == registry.kind(kind)
     members, group, keys = grouped_nodes(graph, registry, carry, entry, kind, column)
-    references = followed(graph, registry, group, keys, holding, kind, column)
+    groups = Table(keys, group=group)
+    references = followed(graph, registry, groups, holding, kind, column)
     present = np.asarray(graph.fact_present, bool)
-    source = groups_at(graph, carry, group, keys, graph.fact_source, graph.fact_step, present, holding)
-    target = groups_at(graph, carry, group, keys, graph.fact_target, graph.fact_step, present, holding)
+    source = groups_at(graph, carry, groups, graph.fact_source, graph.fact_step, present, holding)
+    target = groups_at(graph, carry, groups, graph.fact_target, graph.fact_step, present, holding)
     remembered(graph, carry, members, group)
     touched = holding[graph.fact_source] | holding[graph.fact_target]
     dropped = touched & ((source < 0) | (target < 0))
     base = touched & ~dropped
-    pair = carry.keys(graph.fact_code, np.maximum(source, 0), np.maximum(target, 0))
+    source, target = np.where(base, source, graph.fact_source), np.where(base, target, graph.fact_target)
+    pair = carry.keys(graph.fact_code, source, target)
     remains = collapsed(graph, carry, "contract/live", base, pair) & ~dropped
     graph = graph.replace(
-        fact_source=np.where(base, source, graph.fact_source).astype(graph.fact_source.dtype),
-        fact_target=np.where(base, target, graph.fact_target).astype(graph.fact_target.dtype),
+        fact_source=source.astype(graph.fact_source.dtype),
+        fact_target=target.astype(graph.fact_target.dtype),
         **references,
     )
     graph = prune(graph, remains, carry, "contract")
@@ -286,7 +281,7 @@ CONTRACT = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=adds,
         kinds=named,
-        version=3,
+        version=4,
         graphs=1,
     ),
 )
