@@ -9,7 +9,20 @@ import pytest
 import registered
 from support import configuration
 
-from graphspec import ABOUT, ENCODERS, FORMS, HELD, SEES, SEVERAL, SORTS, STEPS, STORAGE, TIES, TYPES
+from graphspec import (
+    ABOUT,
+    ENCODERS,
+    FORMS,
+    HELD,
+    NEGATIVES,
+    SEES,
+    SEVERAL,
+    SORTS,
+    STEPS,
+    STORAGE,
+    TIES,
+    TYPES,
+)
 from graphspec.build.forms import Form
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -48,6 +61,7 @@ ENTRIES = (
     (STEPS, "own", registered.Own()),
     (SEES, "everything", registered.everything),
     (STORAGE, "stored", registered.STORED),
+    (NEGATIVES, "parity", registered.PARITY),
 )
 VALUE = dict(type="number", encoder="value")
 

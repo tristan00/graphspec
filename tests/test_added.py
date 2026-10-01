@@ -5,10 +5,10 @@ import time
 import numpy as np
 import pytest
 import support
-from registered import HUB, KEPT, LINKED, RUNNING
+from registered import HUB, KEPT, LINKED, PARITY, RUNNING
 
 from conftest import SPLITS
-from graphspec import OPERATIONS, REPRESENTATIONS, Representation
+from graphspec import NEGATIVES, OPERATIONS, REPRESENTATIONS, Representation
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments
 from graphspec.engine.edits import Edit, edited, sliced
@@ -16,11 +16,11 @@ from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.operations import contract, operation, pipeline
+from graphspec.operations import contract, negatives, operation, pipeline
 from graphspec.operations.consecutive import CONSECUTIVE
 from graphspec.operations.nearby import NEARBY, measured, placed
 from graphspec.operations.pipeline import resolved
-from graphspec.operations.rows import keyed_relations
+from graphspec.operations.rows import FACTS, keyed_relations, select
 from graphspec.representations.registry import FAMILIES, families
 from graphspec.schema.added import Added
 from graphspec.views.graph import Graph
@@ -46,6 +46,7 @@ REFUSED = (
     ("graphspec.contract", {"contract/grouping": "item:v1"}, "item"),
 )
 REMOVERS = (("graphspec.contract", None), ("graphspec.nodes", "gone"))
+SCORED, DRAWS = 10, 20000
 
 
 @pytest.fixture(scope="module")
@@ -876,3 +877,121 @@ def test_a_product_of_relations_and_its_closure_equal_the_walks_enumerated_throu
     with pytest.raises(ValueError, match="multiplies the relations of a bank, and the bank bare states none"):
         pipeline.grown(bare, resolved(bare, [dict(operation="graphspec.product", parameters={})]), None)
     LOG.info("product exit paths=%d seconds=%.3f", len(found), time.perf_counter() - started)
+
+
+@pytest.fixture
+def parity():
+    NEGATIVES.register("test.parity", PARITY)
+    yield
+    del NEGATIVES.held["test.parity"]
+
+
+@timed("added.drawn_negatives")
+def drawn_negatives(found, code, steps):
+    rows = np.flatnonzero((found.fact_code == code) & np.isin(found.fact_step, steps))
+    assert found.fact_present[rows].all() and (found.fact_ref[rows] < 0).all()
+    result = {}
+    for step, source, target in zip(found.fact_step[rows].tolist(), found.fact_source[rows].tolist(), found.fact_target[rows].tolist()):
+        result.setdefault((step, source), []).append(target)
+    return result
+
+
+@timed("added.candidates")
+def candidates(graph, registry, step, anchor, weight):
+    shown = graph.obs_entity[(graph.obs_step == step) & ~graph.obs_anchor].tolist()
+    present = (graph.fact_step == step) & graph.fact_present
+    visits = present & (graph.fact_code == registry.code("visits"))
+    held = set(zip(graph.fact_source[visits].tolist(), graph.fact_target[visits].tolist()))
+    places = [node for node in shown if graph.kinds[node] == registry.kind("place") and (anchor, node) not in held]
+    return {node for node in places if weight(step, anchor, node, present, visits)}
+
+
+@timed("added.hops_of")
+def hops_of(graph, present, anchor, hops):
+    pairs = list(zip(graph.fact_source[present].tolist(), graph.fact_target[present].tolist()))
+    reached = {anchor}
+    for _ in range(hops):
+        reached |= {b for a, b in pairs if a in reached} | {a for a, b in pairs if b in reached}
+    return reached
+
+
+def test_negative_links_are_absent_edges_drawn_by_their_rule_for_every_present_edge_or_labelled_task(opened, parity):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    registry = registry.fitted(registry.encoding)
+    tokens = np.asarray(graph.entity_token).astype(np.uint64)
+    weights = {
+        "uniform": lambda step, anchor, node, present, visits: True,
+        "degree": lambda step, anchor, node, present, visits: node in graph.fact_source[visits] or node in graph.fact_target[visits],
+        "hops": lambda step, anchor, node, present, visits: node in hops_of(graph, present, anchor, 2),
+        "test.parity": lambda step, anchor, node, present, visits: int(tokens[node]) % 2 == 1,
+    }
+    rules = {"hops": {"negatives/hops/within": 2}, "test.parity": {"negatives/test.parity/odd": True}}
+    steps, totals = np.arange(graph.steps), {}
+    for rule, weight in weights.items():
+        stated = {"negatives/of": "link:visits", "negatives/rule": rule, "negatives/count": 2, **rules.get(rule, {})}
+        entries = resolved(registry, [dict(operation="graphspec.negatives", parameters=stated)])
+        grown = pipeline.grown(registry, entries, None)
+        assert grown.by_name["negatives"].pairs == (("person", "place"),) and not grown.by_name["negatives"].symmetric
+        found = drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, None), grown.code("negatives"), steps)
+        expected = 0
+        for step in steps.tolist():
+            visits = (graph.fact_step == step) & graph.fact_present & (graph.fact_code == registry.code("visits"))
+            for anchor in sorted(set(graph.fact_source[visits].tolist())):
+                quota = 2 * len(set(graph.fact_target[visits & (graph.fact_source == anchor)].tolist()))
+                drawn = found.get((step, anchor), [])
+                allowed = candidates(graph, registry, step, anchor, weight)
+                assert len(drawn) == len(set(drawn)) == min(quota, len(allowed)) and set(drawn) <= allowed, (rule, step)
+                expected += len(drawn)
+        assert expected == sum(len(drawn) for drawn in found.values()) > 0
+        totals[rule] = expected
+    assert totals["hops"] < totals["uniform"] and totals["test.parity"] < totals["uniform"]
+    rows = np.asarray(graph.label_row)
+    partitions = np.full(int(rows.max()) + 1, -1, np.int8)
+    partitions[rows] = (np.asarray(graph.task_step)[graph.label_task] >= SCORED).astype(np.int8)
+    stated = {"negatives/of": "link:visits:person", "negatives/rule": "uniform", "negatives/count": 3}
+    entries = resolved(registry, [dict(operation="graphspec.negatives", parameters=stated)])
+    grown = pipeline.grown(registry, entries, None)
+    code = grown.code("negatives")
+    whole = drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, partitions), code, steps)
+    person, references = list(registry.references).index("person"), {}
+    for member in range(len(graph.member_task)):
+        references.setdefault(int(graph.member_task[member]), []).append(int(graph.member_source[member]))
+    for task, step in enumerate(graph.task_step.tolist()):
+        anchor = int(graph.member_source[(graph.member_task == task) & (graph.member_name == person)][0])
+        allowed = candidates(graph, registry, step, anchor, weights["uniform"]) - set(references[task])
+        drawn = whole.get((step, anchor), [])
+        assert len(drawn) == len(set(drawn)) == min(3, len(allowed)) and set(drawn) <= allowed
+    trained = {key: value for key, value in whole.items() if key[0] < SCORED}
+    alone = np.where(partitions == 1, -1, partitions).astype(np.int8)
+    assert drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, alone), code, steps) == trained
+    unseen = np.where(partitions == 0, -1, partitions).astype(np.int8)
+    assert drawn_negatives(segments.whole(graph, {}, grown, entries, SEED, LIMITS, unseen), code, steps[:SCORED]) == {}
+    kept = ~((graph.fact_step >= SCORED) & (graph.fact_code == registry.code("visits")))
+    changed = select(graph, FACTS, kept)
+    later = drawn_negatives(segments.whole(changed, {}, grown, entries, SEED, LIMITS, partitions), code, steps)
+    assert {key: value for key, value in later.items() if key[0] < SCORED} == trained
+    with pytest.raises(ValueError, match="was given no splits, and the operation graphspec.negatives reads the split"):
+        segments.whole(graph, {}, grown, entries, SEED, LIMITS, None)
+    LOG.info("negative links exit totals=%s seconds=%.3f", totals, time.perf_counter() - started)
+
+
+def test_a_rule_of_negative_sampling_draws_each_candidate_in_proportion_to_its_weight(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    tokens = np.asarray(graph.entity_token).astype(np.uint64)
+    step = int(np.argmax(np.bincount(graph.fact_step[graph.fact_code == registry.code("visits")], minlength=graph.steps)))
+    shown = np.unique(graph.obs_entity[(graph.obs_step == step) & ~graph.obs_anchor].astype(np.int64))
+    rows = np.flatnonzero((graph.fact_step == step) & graph.fact_present)
+    near = negatives.Step(graph, step, rows, shown, tokens).near(len(graph.kinds), registry.coded["visits"])
+    places = shown[graph.kinds[shown] == registry.kind("place")]
+    for rule in ("uniform", "degree"):
+        weights = NEGATIVES.named(rule).weights(near, np.zeros(len(places), np.int64), places, None)
+        assert (weights > 0).sum() > 2 and len(set(weights.tolist())) > (rule == "degree")
+        groups = np.repeat(np.arange(DRAWS), len(places))
+        keys = (groups.astype(np.uint64), np.tile(tokens[places], DRAWS))
+        picked, rank = negatives.drawn(SEED, "test", np.tile(weights, DRAWS), groups, np.ones(DRAWS, np.int64), keys[1], keys)
+        assert len(picked) == DRAWS and (rank == 0).all()
+        shares = np.bincount(picked % len(places), minlength=len(places)) / DRAWS
+        assert np.abs(shares - weights / weights.sum()).max() < 0.015, (rule, shares, weights)
+    LOG.info("negative proportions exit draws=%d seconds=%.3f", DRAWS, time.perf_counter() - started)

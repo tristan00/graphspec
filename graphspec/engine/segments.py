@@ -225,12 +225,22 @@ class Plan:
         tokens = {kind: [np.zeros(0, np.uint64)] for kind, _ in kinds}
         for place, member in enumerate(members if kinds else ()):
             entity, rows = observed_rows(member)
-            found = [(np.asarray(member.kinds)[entity], self.registry.encoding.widened(rows))]
+            found = [(member, entity, self.registry.encoding.widened(rows))]
             for held in self.seconds.values():
-                entity, rows = observed_rows(held[place])
-                found.append((np.asarray(held[place].kinds)[entity], rows))
+                found.append((held[place],) + observed_rows(held[place]))
             for kind, held in kinds:
-                tokens[kind] += [np.asarray(held["tokens"](owners, rows, self.registry), np.uint64) for owners, rows in found]
+                tokens[kind] += [
+                    np.asarray(
+                        held["tokens"](
+                            np.asarray(graph.kinds)[entity],
+                            np.asarray(graph.entity_token).astype(np.uint64)[entity],
+                            rows,
+                            self.registry,
+                        ),
+                        np.uint64,
+                    )
+                    for graph, entity, rows in found
+                ]
         result = [(self.registry.kind(kind), np.unique(np.concatenate(tokens[kind]))) for kind, _ in kinds]
         LOG.debug(
             "added entities exit graphs=%d kinds=%d seconds=%.4f", len(members), len(result), time.perf_counter() - started

@@ -6,6 +6,8 @@ import pyarrow as pa
 from graphspec import Operation, Phase, Representation
 from graphspec.infra.hashing import token, unit
 from graphspec.infra.timing import timed
+from graphspec.operations.negatives import Rule
+from graphspec.operations.parameters import flag
 from graphspec.operations.rows import extend, made_rows, made_values, observed, written
 from graphspec.operations.sets import Form, node
 from graphspec.operations.state import EMPTY, Table
@@ -193,7 +195,7 @@ def checked_kept(arrays, name, registry, spec):
 
 
 @timed("registered.hubs")
-def hubs(entry, kinds, rows, registry):
+def hubs(entry, kinds, tokens, rows, registry):
     return np.asarray([token(entry)], np.uint64)
 
 
@@ -241,7 +243,18 @@ def hubbed(graph, registry, settings, seed, limits, carry, held):
     )
 
 
+@timed("registered.parities")
+def parities(registry):
+    return (flag("negatives/test.parity/odd", True),)
+
+
+@timed("registered.parity")
+def parity(near, anchors, candidates, settings):
+    return (near.tokens[candidates] % np.uint64(2) == settings["negatives/test.parity/odd"]).astype(np.float64)
+
+
 TRIPLE = Sort(True, False, 3, 3, True)
+PARITY = Rule(parities, parity)
 STORED = Form(node, True, True)
 TALLY = Operation(
     "test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), None, None, 1, 1

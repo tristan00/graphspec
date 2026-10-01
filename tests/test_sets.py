@@ -13,9 +13,10 @@ from graphspec.engine import segments, transform
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
+from graphspec.infra.hashing import hashed, token
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
-from graphspec.operations import sets
+from graphspec.operations import pipeline, sets
 from graphspec.operations.nodes import NODES
 from graphspec.operations.operation import Count
 from graphspec.schema.schema import VERSION, Encoding, Schema, fitted
@@ -531,6 +532,73 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
         "note, which are about edges",
     ):
         segments.whole(dense, {}, registry, steps, transform.SEED, GraphLimits("cpu"), None)
+
+
+@timed("sets.members_of")
+def members_of(graph, registry, kind, codes, step):
+    found = {}
+    chosen = (graph.fact_step == step) & graph.fact_present & np.isin(graph.fact_code, list(codes))
+    for source, target, code in zip(graph.fact_source[chosen].tolist(), graph.fact_target[chosen].tolist(), graph.fact_code[chosen].tolist()):
+        found.setdefault(source, set()).add((codes[code], target))
+    return found
+
+
+def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_present_set(bank):
+    started = time.perf_counter()
+    held = Deriver(bank, "cpu", RESIDENT)
+    cfg = configuration(held.registry, dict(view="snapshot"), STORED["node"], 5, SPLITS)
+    registry = held.fitted(cfg)
+    (index,) = [entry["index"] for entry in held.viewed(cfg).graphs if entry["source"] == 0]
+    dense = Graph.load(held.view(index, cfg)).dense()
+    stated = {"negatives/of": "set:gathering", "negatives/rule": "uniform", "negatives/count": 3}
+    steps = pipeline.resolved(registry, [dict(operation="graphspec.negatives", parameters=stated)])
+    grown = pipeline.grown(registry, steps, None)
+    assert grown.nodes[-1] == "negatives" and grown.by_name["negatives.lead"].pairs == (("negatives", "point"), ("negatives", "place"))
+    derived = segments.whole(dense, {}, grown, steps, transform.SEED, GraphLimits("cpu"), None)
+    roles = ("lead", "other")
+    stored = {grown.code("gathering." + role): role for role in roles}
+    made = {grown.code("negatives." + role): role for role in roles}
+    negative, kinds, drawn = grown.kind("negatives"), np.asarray(derived.kinds), 0
+    for step in range(dense.steps):
+        present = members_of(derived, grown, "gathering", stored, step)
+        found = members_of(derived, grown, "negatives", made, step)
+        shown = derived.obs_entity[(derived.obs_step == step) & ~derived.obs_anchor].tolist()
+        assert {node for node in shown if kinds[node] == negative} == set(found)
+        tokens = np.asarray(derived.entity_token)
+        owners = {}
+        for node in found:
+            (owner,) = [
+                owner
+                for owner, members in present.items()
+                for at in range(3)
+                if int(tokens[node]) == int(hashed(np.asarray([token("negatives")], np.uint64), tokens[[owner]], np.asarray([at]))[0])
+            ]
+            owners.setdefault(owner, []).append(node)
+            gone, came = present[owner] - found[node], found[node] - present[owner]
+            assert len(gone) == len(came) == 1 and next(iter(gone))[0] == next(iter(came))[0]
+            assert kinds[next(iter(gone))[1]] == kinds[next(iter(came))[1]]
+            assert next(iter(came))[1] not in {member for _, member in present[owner]}
+            assert found[node] not in present.values()
+        for owner, members in present.items():
+            held_nodes = {member for _, member in members}
+            allowed = sum(
+                1
+                for role, member in members
+                for node in shown
+                if kinds[node] == kinds[member]
+                and node not in held_nodes
+                and (members - {(role, member)}) | {(role, node)} not in present.values()
+            )
+            assert len(owners.get(owner, [])) == min(3, allowed), (step, owner)
+            assert len({frozenset(found[node]) for node in owners.get(owner, [])}) == len(owners.get(owner, []))
+        drawn += len(found)
+    assert drawn > 0
+    paired = configuration(held.registry, dict(view="snapshot"), STORED["pairs"], 5, SPLITS)
+    (index,) = [entry["index"] for entry in held.viewed(paired).graphs if entry["source"] == 0]
+    flat = Graph.load(held.view(index, paired)).dense()
+    with pytest.raises(ValueError, match="draws negative sets of gathering among the sets stored as nodes"):
+        segments.whole(flat, {}, grown, steps, transform.SEED, GraphLimits("cpu"), None)
+    LOG.info("negative sets exit drawn=%d seconds=%.3f", drawn, time.perf_counter() - started)
 
 
 @pytest.fixture

@@ -42,7 +42,11 @@ DRAWN = {
     "edges/near/cap_order": "random",
     "edges/hop:2/drop": 0.3,
     "edges/rewire/drop": 0.2,
+    "negatives/of": "link:visits",
+    "negatives/rule": "degree",
+    "negatives/count": 2,
 }
+NAMES = support.SEVEN + ("graphspec.negatives",)
 TIED = {
     "derive/project:visits:sources:person:person": True,
     "derive/project_cap": 2,
@@ -85,7 +89,7 @@ class Held:
 
 def stated(registry, values, graph):
     started = time.perf_counter()
-    entries, rest = support.pipelined(registry, values, support.SEVEN)
+    entries, rest = support.pipelined(registry, values, NAMES)
     assert rest == {}
     result = pipeline.resolved(registry, entries), specs.configured(
         specs.settings(registry, GROUPS), dict(WALKS, **CAPS, **graph)
@@ -220,7 +224,8 @@ def sampled(found, registry, order):
 @pytest.fixture(scope="module")
 def drawn(bank):
     opened = Deriver(bank, "cpu", RESIDENT)
-    registry = support.fitted(opened)
+    fitted = support.fitted(opened)
+    registry = pipeline.grown(fitted, stated(fitted, DRAWN, {})[0], None)
     views = [support.shown(opened, index).dense() for index in range(4)]
     cfg = support.configuration(
         opened.registry, dict(view="snapshot"), dict(support.several(opened.registry), **JOINED), 5, SPLITS
@@ -249,6 +254,7 @@ def test_permuting_entities_and_graphs_leaves_every_derived_array_equal_after_so
     steps, spec = stated(registry, DRAWN, {})
     assert differing(derived(moved[:1], registry, steps, spec, [4, 9], LIMITS), reference) == []
     assert len(reference["variant/walks"]) and registry.code("rewire") in reference["facts"][:, 2]
+    assert registry.code("negatives") in reference["facts"][:, 2]
     assert differing(keyed(turned, registry), keyed(whole, registry)) == []
     steps, spec = stated(registry, DRAWN, dict(JOINED, **{"graphs/connect_fraction": 0.5}))
     linked = derived(graphs, registry, steps, spec, [], LIMITS)

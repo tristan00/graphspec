@@ -71,6 +71,7 @@ VERSIONED = {
     "graphspec.measures": ("graphspec/operations/measures.py",),
     "graphspec.contract": ("graphspec/operations/contract.py",),
     "graphspec.product": ("graphspec/operations/product.py",),
+    "graphspec.negatives": ("graphspec/operations/negatives.py",),
     "derivation": (
         "graphspec/engine",
         "graphspec/operations/kernels.py",
@@ -132,10 +133,11 @@ RECORDED = {
     "graphspec.consecutive": (5, "7866390b6490d3e503326d26130dbaff6ba3895f90656c873da5c436e16105e6"),
     "graphspec.neighbourhood": (3, "3127f2221864f959236caa9d4a75ded96b262d3db1774174f0a311540627b589"),
     "graphspec.measures": (2, "d11543d525c8939d5af59c1eb88f41bc2799b9d4f7a97940c337e78b54b2a20d"),
-    "graphspec.contract": (4, "ec63035c66e116a0f8ad7e19c4335814d3f9544bb4a0391d932e4247bfff0dc3"),
+    "graphspec.contract": (5, "67f33ff340a83f58b2bb20b32fca711efe3d8b81c74693c0c200c3e424d01d6a"),
     "graphspec.product": (1, "b8a083927a5712d11eb1860f9ca558c755087a10a6102651310c9d68604d13f6"),
-    "derivation": (27, "dae6333cf9bdd1b4dc258ea0b52c69ee6ebe276f44c2f58d306d10056ad3f1b8"),
-    "views": (18, "1d68dfc0420b61c96378f01fd03dd632c5f845ffc9978b322b486803bb5240d5"),
+    "graphspec.negatives": (1, "2ec41dca58e3dd4b3e950e6ddaf7fb85cabce68a65e4ba436dd3ebc808ce832c"),
+    "derivation": (28, "33c2106c74f6a1d6ddee2e8b97071adec0ed1f745fd40d82f91b99279d6ac247"),
+    "views": (19, "2875ca5b41cf1a0b92dcd199d2366d7b8c34bd78d5786ce82e7853abef16048c"),
     "representations": (12, "5bb57a45dc82d1628d5666630b7c46b0d43f74264fbae44e56540e6543515acf"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }

@@ -7,6 +7,7 @@ from .build.calls import GraphTables, write_task
 from .build.forms import FORMS
 from .build.output import Stage
 from .descriptions.inspect import inspect
+from .operations.negatives import NEGATIVES
 from .operations.operation import OPERATIONS, Operation, Phase
 from .operations.sets import STORAGE
 from .registries import ship
@@ -25,6 +26,7 @@ __all__ = [
     "ENCODERS",
     "FORMS",
     "HELD",
+    "NEGATIVES",
     "OPERATIONS",
     "REPRESENTATIONS",
     "SEES",

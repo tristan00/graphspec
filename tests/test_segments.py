@@ -78,6 +78,10 @@ VALUES = {
     "product/paths": True,
     "product/cap": 2,
     "product/encoder": "standard",
+    "negatives/of": "link:visits",
+    "negatives/rule": "hops",
+    "negatives/count": 2,
+    "negatives/hops/within": 2,
 }
 SETTINGS = {"coupling/periods": 1, "events/periods": 1, "mixed/trace": 2}
 GROUPS = specs.GROUPS + (RUNNING.name,)
@@ -104,6 +108,7 @@ WINDOWED = {"time/scheme": "window", "time/unit": "step", "time/window": 2}
 ELSEWHERE = 0x5A5A5A5A5A5A5A5A
 GROUPING = "pipeline/graphspec.contract/contract/grouping"
 CONTRACTING = {"pipeline/graphspec.contract": True}
+UNSPLIT = "pipeline/graphspec.negatives/negatives/of"
 REFUSAL = re.compile(r"the entry (\S+) of the pipeline names the kind (\w+), which the entry (graphspec\.\w+) before ")
 KEPT = "pipeline/graphspec.nodes/nodes/%s/keep"
 CONTRACTIONS = (
@@ -516,18 +521,19 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
     beside = {name: [sliced(support.beside(opened, 0, name), 0, SPAN)] for name in sorted(set(graphs.values()))}
     chosen = groupings(registry, shown + [held[0] for held in beside.values()])
-    bounds = {GROUPING: chosen, REWIRING: dict(low=1, high=REWIRES)}
+    unsplit = ["link:%s" % table for table in registry.groups]
+    bounds = {GROUPING: chosen, REWIRING: dict(low=1, high=REWIRES), UNSPLIT: unsplit}
     spec = specs.configured(specs.settings(registry, specs.GROUPS), SETTINGS)
     joined = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **JOINED))
     names, found, refused = sorted(OPERATIONS.names()), [], []
     single = [name for name in names if OPERATIONS.named(name).graphs == 1]
     for draw in range(DRAWN):
         rng = np.random.default_rng(draw)
-        together = draw % JOINING == 0
+        together, forced = draw % JOINING == 0, draw == 0
         pool = single if together else names
         order = [pool[place] for place in rng.permutation(len(pool))]
         template = [dict(operation=name, **({"graph": graphs[name]} if name in graphs else {})) for name in order]
-        space = specs.narrow(pipeline.space(registry, template), dict(bounds, **(CONTRACTING if together else {})))
+        space = specs.narrow(pipeline.space(registry, template), dict(bounds, **(CONTRACTING if forced else {})))
         steps = None
         while steps is None:
             stated = specs.draw(space, lambda held: held.uniform(rng))
@@ -541,8 +547,8 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
                     assert named[2] == stated[GROUPING].split(":")[0], draw
                 else:
                     assert named[3] == "graphspec.nodes" and not stated[KEPT % named[2]], draw
-                refused.append((together, named[1], named[3]))
-                if not together:
+                refused.append((forced, named[1], named[3]))
+                if not forced:
                     break
         if steps is None:
             continue
@@ -567,9 +573,9 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
         assert unequal(line.derived().arrays, expected.arrays, DENSE_READ) == [], draw
         assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], draw
         found.append((together, tuple(step.operation.name for step in steps)))
-    alone = sum(not together for together, _, _ in refused)
+    alone = sum(not forced for forced, _, _ in refused)
     assert len(set(found)) + alone == DRAWN and sorted({name for _, held in found for name in held}) == names
-    assert [together for together, held in found if "graphspec.contract" in held].count(True) == DRAWN // JOINING
+    assert found[0][0] and "graphspec.contract" in found[0][1]
     assert {remover for _, _, remover in refused} == {"graphspec.contract", "graphspec.nodes"}
     assert len(chosen) < len(groupable(registry)) and {grouping.split(":")[0] for grouping in chosen} > {"item"}
     LOG.info(

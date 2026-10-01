@@ -79,7 +79,7 @@ def group_tokens(entry, held):
 
 
 @timed("operators.grouping_tokens")
-def grouping_tokens(entry, kind, column, kinds, rows, registry):
+def grouping_tokens(entry, kind, column, kinds, tokens, rows, registry):
     known, held = blocks(registry, column, np.asarray(rows)[np.asarray(kinds) == registry.kind(kind)])
     return np.unique(group_tokens(entry, held[known]))
 
@@ -281,7 +281,7 @@ CONTRACT = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=adds,
         kinds=named,
-        version=4,
+        version=5,
         graphs=1,
     ),
 )

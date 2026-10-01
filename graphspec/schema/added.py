@@ -45,8 +45,8 @@ class Added:
         for kind, entry in mapping(kinds, "the kinds of node an operation adds").items():
             if type(entry) is not dict or set(entry) != {"columns", "tokens"} or not callable(entry["tokens"]):
                 raise ValueError(
-                    "the kind %s an operation adds states its columns and a function from the kinds and the encoded "
-                    "rows of the observations of a graph to the tokens of its nodes in that graph, found %r"
+                    "the kind %s an operation adds states its columns and a function from the kinds, the tokens and "
+                    "the encoded rows of the observations of a graph to the tokens of its nodes in that graph, found %r"
                     % (kind, entry)
                 )
             self.kinds[kind] = dict(columns=named(entry["columns"], "the kind " + kind), tokens=entry["tokens"])
