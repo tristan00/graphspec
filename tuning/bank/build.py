@@ -157,7 +157,7 @@ def untasked(tasks, names):
 
 def pointed(stated, found, owner, kinds, graphs, rows):
     started = time.perf_counter()
-    stored = stated.target_columns()
+    stored, numbers = stated.target_columns(), found.column("y").to_numpy().astype(np.float64)
     columns = {name: found.column(name).to_pylist() for name in stored}
     graphs, result = np.asarray(graphs, object), [dict(row) for row in rows]
     for kind, entry in stated.tasks["kinds"].items():
@@ -173,7 +173,7 @@ def pointed(stated, found, owner, kinds, graphs, rows):
                 )
         given = {name: [columns[name][place] for place in chosen.tolist()] for name in target.columns}
         points = target.points(
-            dict(task=owner[chosen], graph=graphs[chosen], **given), entry["target"]["series"], where
+            dict(task=owner[chosen], graph=graphs[chosen], y=numbers[chosen], **given), entry["target"]["series"], where
         )
         if sorted(points) != sorted(("series",) + tuple(target.fields)):
             raise ValueError(

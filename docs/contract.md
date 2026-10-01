@@ -1,4 +1,4 @@
-**The contract: schema, time, tasks, edges beyond pairs, held graphs, tables and bank version 8**
+**The contract: schema, time, tasks, kinds of target, edges beyond pairs, held graphs, tables and bank version 8**
 
 A source holds one or more graphs. What the graphs hold is stated once, by a schema; the tables of the source and the bank built from them are checked against it. Nothing is read from the names or the types of the tables beyond what the schema states.
 
@@ -134,7 +134,7 @@ A kind of target says what a target is, how it is stored and read back, and how 
 | `columns` | The columns of the table of targets it stores beside `id`, `y` and `known`, each with its type. Two kinds of target that store one column with two types stop the schema, and so does a column named `id`, `y`, `known`, `task` or `owner`. |
 | `fields` | Those of its columns that are numbers read per point by the head of the kind. |
 | `series(stated, where)` | The series of a target statement, read from its `series` in the form the kind states; `written(series)` gives them back in that form. |
-| `points(rows, series, where)` | From the rows of the table of targets of the tasks of one kind of task, `task`, `graph` and the columns it stores, the checks of the kind and, per row, its series under `series` and each of its fields. |
+| `points(rows, series, where)` | From the rows of the table of targets of the tasks of one kind of task, `task`, `graph`, `y` and the columns it stores, the checks of the kind and, per row, its series under `series` and each of its fields. |
 | `staged(stated, series, where)` | The rows of the table of targets of one target as a script states it, each with `y` and the columns it stores. |
 | `read(rows)` | The target as a script states it, from its rows in their order. |
 
@@ -143,9 +143,11 @@ A kind of target says what a target is, how it is stored and read back, and how 
 | `number` | a finite number | the name of its one series | one, of that series; a task holding two stops the build naming its graph and its kind | yes | yes |
 | `path` | a list of points, each `[tau, series, y]` | a list of names | one per point, storing `tau FLOAT` and `series STRING`: `tau` finite and above zero, the series one the kind of task states, no two points of one task with one series and one `tau`; each stops the build naming the graph or the kind | yes | no |
 
+A kind of target registered from outside the library is used as the shipped ones are, with no change to the library: it is registered in `graphspec.TARGETS`; its kinds of task state a utility that reads it, registered in `graphspec.UTILITIES` where none shipped does; the head a family attaches for it is registered in `tuning.HEADS` under its name; and a fit names a loss and measures, registered in `tuning.LOSSES` and `tuning.MEASURES`, that read it and every other kind of target of the bank. Each family attaches one head per kind of target the bank holds, and a head reads the fields of its kind per point (see tuning/README.md). Its entries are carried to every process the library starts as other entries registered from outside are; the registry of each is imported there first.
+
 **Utilities**
 
-A utility is the value of an outcome: a function from a predicted target to one number, with the direction that is better. Every kind of task that states a target states a utility, and the measures that order options read it and nothing else. Utilities are registered in `graphspec.UTILITIES`, each with `reads`, the kinds of target it reads; `parameters`, the names its statement holds beside `name` and `better`; `checked(stated, series, where)`, which checks them against the series of the target and gives them; and `value(stated, points)`, which takes the points of predicted targets, `task`, `series` and `y`, and gives the tasks in order and one value for each. A target states `utility` as `name`, `better`, `higher` or `lower`, and every parameter of the utility; a utility that does not read the kind of the target, a parameter absent or unknown, or a direction not stated stops the schema naming it. `graphspec.schema.targets.valued(target, points)` gives the utility of the points of a target.
+A utility is the value of an outcome: a function from a predicted target to one number, with the direction that is better. Every kind of task that states a target states a utility, and the measures that order options read it and nothing else. Utilities are registered in `graphspec.UTILITIES`, each with `reads`, the kinds of target it reads; `parameters`, the names its statement holds beside `name` and `better`; `checked(stated, series, where)`, which checks them against the series of the target and gives them; and `value(stated, points)`, which takes the points of predicted targets, `task`, `series`, `y` and the fields of their kind of target, and gives the tasks in order and one value for each. A target states `utility` as `name`, `better`, `higher` or `lower`, and every parameter of the utility; a utility that does not read the kind of the target, a parameter absent or unknown, or a direction not stated stops the schema naming it. `graphspec.schema.targets.valued(target, points)` gives the utility of the points of a target.
 
 | Utility | Reads | Parameters | The value of a target |
 |---|---|---|---|

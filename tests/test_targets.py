@@ -123,6 +123,39 @@ def read(held, name):
     }
 
 
+@timed("targets.share")
+def share(at, place):
+    return [(at % 4) / 4, 1.0 + at]
+
+
+@pytest.fixture(scope="module")
+def shared(tmp_path_factory):
+    import registered
+
+    from tuning import HEADS, LOSSES, MEASURES
+
+    entries = (
+        (TARGETS, "share", registered.Share()),
+        (UTILITIES, "expected", registered.Expected()),
+        (HEADS, "share", registered.SHARE_HEAD),
+        (LOSSES, "crossed", registered.Crossed()),
+        (MEASURES, "absolute", registered.Absolute()),
+    )
+    for names, name, entry in entries:
+        names.register(name, entry)
+    try:
+        started = time.perf_counter()
+        root = tmp_path_factory.mktemp("share")
+        target = dict(kind="share", series="part", about=None, utility=dict(name="expected", better="higher"))
+        stated = dict(schema=mixed(dict(part=target)), graphs=[graph(0, dict(part=share))])
+        build(synthetic.stage(root, "share", stated), root / "bank", 1, ("train",))
+        LOG.info("bank of a registered kind of target exit seconds=%.3f", time.perf_counter() - started)
+        yield root / "bank", stated
+    finally:
+        for names, name, _ in entries:
+            del names.held[name]
+
+
 @pytest.fixture(scope="module")
 def numbered(tmp_path_factory):
     started = time.perf_counter()
@@ -258,3 +291,43 @@ def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_t
         aim, tau = found["aim"], found["field/tau"]
         assert set(aim.tolist()) == {0, 1} and np.isnan(tau[aim == 0]).all() and (tau[aim == 1] > 0).all()
         assert np.isfinite(found["prediction"]).all() and len(aim) == saved["holdout_rows"]
+
+
+def test_a_kind_of_target_registered_by_a_test_builds_reads_back_and_completes_one_fit(
+    shared, tmp_path, statement, monkeypatch
+):
+    bank, stated = shared
+    held = Deriver(bank, "cpu", RESIDENT)
+    schema = held.registry.schema
+    assert schema.targets() == ("share",) and schema.target_columns() == dict(trials="FLOAT")
+    tasks = stated["graphs"][0]["tasks"]
+    assert read(held, "g0") == {("g0", "part", key): target for key, target in zip(tasks["key"], tasks["target"])}
+    truth = Facts.load(held.truth(0))
+    found = truth.stated(held.registry, held.splits, held.manifest["observers"])
+    assert found["targets"] == support.written(bank.parent / "share.staging", schema)["g0"]["targets"]
+    assert held.split["series"] == [] and held.center.tolist() == [0.0] and held.scale.tolist() == [1.0]
+    points = dict(
+        task=[row["ticket"] for row in held.rows],
+        series=[row["series"] for row in held.rows],
+        y=[row["y"] for row in held.rows],
+        trials=held.fields["trials"],
+    )
+    keys, values = valued(schema.tasks["kinds"]["part"]["target"], points)
+    assert values.tolist() == [(at % 4) / 4 * (1.0 + at) for at in keys.tolist()]
+    with pytest.raises(ValueError, match="a share of the target of the kind of task part lies outside 0 and 1"):
+        TARGETS.named("share").points(
+            dict(task=[0], graph=["g0"], y=[1.5], trials=[2.0]), ("part",), "the target of the kind of task part"
+        )
+    cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
+    given = dict(statement, loss="crossed", measures=["absolute"])
+    with pytest.raises(ValueError, match="names the loss squared, which reads targets of the kinds number, path"):
+        fit(bank, tmp_path, cfg, [], 16, time.perf_counter() + 30, state(statement))
+    started = time.perf_counter()
+    fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
+    LOG.info("fit of a registered kind of target exit seconds=%.3f", time.perf_counter() - started)
+    saved = read_json(tmp_path / "result.json")
+    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20 and saved["loss"] == "crossed"
+    assert list(saved["measures"]) == ["absolute"] and list(saved["measures"]["absolute"]["series"]) == ["part"]
+    with np.load(tmp_path / "predictions.npz") as found:
+        assert ((found["prediction"] > 0) & (found["prediction"] < 1)).all()
+        assert found["field/trials"].tolist() == held.fields["trials"][found["row_index"]].tolist()
