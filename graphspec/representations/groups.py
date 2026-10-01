@@ -15,7 +15,7 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 6
+VERSION = 7
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"

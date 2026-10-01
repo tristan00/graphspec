@@ -4,8 +4,10 @@ import time
 from graphspec.operations import parameters as specs
 from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, number, real
 from graphspec.operations.pipeline import resolved
+from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
 LOG = logging.getLogger(__name__)
+DERIVES = "representations/%s"
 VIEWS = (
     "snapshot",
     "mixed",
@@ -176,6 +178,7 @@ def space(registry):
         flag("keys/embedding", False, embeds_keys),
         number("keys/table", 4096, 65536, 16384, lambda spec: spec.get("keys/embedding") is True),
     ]
+    parameters += [flag(DERIVES % name, False) for name in unread()]
     LOG.debug(
         "model space exit seconds=%.4f parameters=%d views=%d",
         time.perf_counter() - started,
@@ -235,6 +238,23 @@ def row_local(spec):
 def groups(spec):
     wanted = {REPRESENTATIONS[block] for block in blocks(spec) if block in REPRESENTATIONS}
     return tuple(group for group in GROUPS if group in wanted)
+
+
+def unread():
+    return tuple(name for name in REGISTERED.names() if name not in GROUPS)
+
+
+def derived(spec):
+    started = time.perf_counter()
+    lacking = [DERIVES % name for name in unread() if DERIVES % name not in spec]
+    if lacking:
+        raise KeyError(
+            "the model states no %s; a representation registered outside the groups the families read is "
+            "derived where the model states it" % ", ".join(lacking)
+        )
+    result = groups(spec) + tuple(name for name in unread() if spec[DERIVES % name])
+    LOG.debug("derived exit representations=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 def neighbors(spec):

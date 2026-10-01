@@ -31,5 +31,5 @@ def check(arrays, name, registry, spec):
 
 
 NEIGHBORS = REPRESENTATIONS.register(
-    "neighbors", Representation("neighbors", carries, horizon, piece, None, adjacency, check)
+    "neighbors", Representation("neighbors", "sample", carries, horizon, piece, None, adjacency, check)
 )

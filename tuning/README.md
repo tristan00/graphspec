@@ -110,6 +110,7 @@ A trial's configuration holds the model spec under `model`, the pipeline under `
 | `dropout` | a component applies it | 0–0.5 |
 | `time/encoding` | a view encodes time gaps: `event_graph`, `memory`, `projection`, `sequence`, `tree`, `walks`, and `snapshot` with `coupling_edges` | log_cosine, cosine, log_linear |
 | `keys/embedding`, `keys/table` | a view embeds entities: every view but `affinity` and `signal`; table when on | off, on; 4096–65536 |
+| `representations/<name>` | a representation is registered outside the groups the views read; the fit derives it beside them | off, on |
 | `snapshot/spatial`, `snapshot/layers` | view `snapshot`; layers when spatial is not `none` | none, mean, normalised, relational, attention, chebyshev, relational_attention; 1–3 |
 | `snapshot/chebyshev_order` | spatial `chebyshev` | 1–4 |
 | `snapshot/temporal` | view `snapshot` | graph_sequence, entity_gru, entity_tcn, entity_attention, graph_cell, evolving, coupling_edges |

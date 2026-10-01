@@ -2,6 +2,7 @@ import numpy as np
 import pyarrow as pa
 
 from graphspec import Operation, Phase, Representation
+from graphspec.infra.hashing import unit
 from graphspec.infra.timing import timed
 from graphspec.operations.sets import Form, node
 from graphspec.operations.state import EMPTY, Table
@@ -138,7 +139,58 @@ def unchecked(arrays, name, registry, spec):
         raise ValueError("a running count of graph %s is negative" % name)
 
 
+def unlinked(registry, spec):
+    return dict(last=Table(EMPTY, row=EMPTY))
+
+
+@timed("registered.linked")
+def linked(shown, state):
+    entity = shown.own["entity"].astype(np.int64)
+    rows = shown.before["obs"] + np.arange(len(entity), dtype=np.int64)
+    order = np.lexsort((rows, entity))
+    same = np.r_[False, entity[order][1:] == entity[order][:-1]]
+    previous = np.full(len(entity), -1, np.int64)
+    previous[order[same]] = rows[order[np.flatnonzero(same) - 1]]
+    first = order[~same]
+    previous[first] = state["last"].lookup("row", entity[first], -1)
+    ends = order[np.r_[~same[1:], True]] if len(order) else order
+    state["last"] = state["last"].replaced(entity[ends], entity[ends], row=rows[ends])
+    return dict(linked=previous)
+
+
+def checked_links(arrays, name, registry, spec):
+    linked, entity = np.asarray(arrays["linked"]), np.asarray(arrays["entity"])
+    chosen = np.flatnonzero(linked >= 0)
+    if np.any(linked[chosen] >= chosen) or np.any(entity[linked[chosen]] != entity[chosen]):
+        raise ValueError("a link of graph %s does not lead to an earlier observation of its entity" % name)
+
+
+def unkept(registry, spec):
+    return {}
+
+
+@timed("registered.kept")
+def kept(shown, state):
+    entity = shown.own["entity"].astype(np.int64)
+    local = shown.own["step"].astype(np.int64) - shown.carry.step0
+    drawn = unit(
+        shown.seed,
+        "test.kept",
+        shown.carry.entities.tokens[entity].astype(np.uint64),
+        np.asarray(shown.graph.step_time, np.int64)[local],
+        np.asarray(shown.graph.step_token, np.uint64)[local],
+    )
+    return dict(kept=drawn < 0.5)
+
+
+def checked_kept(arrays, name, registry, spec):
+    if len(arrays["kept"]) != len(arrays["entity"]):
+        raise ValueError("graph %s does not draw once for every observation" % name)
+
+
 TRIPLE = Sort(True, False, 3, 3, True)
 STORED = Form(node, True, True)
 TALLY = Operation("test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), 1)
-RUNNING = Representation("test.running", uncounted, unlooking, running, None, None, unchecked)
+RUNNING = Representation("test.running", "encode", uncounted, unlooking, running, None, None, unchecked)
+LINKED = Representation("test.linked", "structure", unlinked, unlooking, linked, None, None, checked_links)
+KEPT = Representation("test.kept", "sample", unkept, unlooking, kept, None, None, checked_kept)

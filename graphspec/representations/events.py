@@ -89,4 +89,6 @@ def check(arrays, name, registry, spec):
         raise ValueError("event boundary edges of graph %s are invalid" % name)
 
 
-EVENTS = REPRESENTATIONS.register("events", Representation("events", carries, horizon, piece, None, None, check))
+EVENTS = REPRESENTATIONS.register(
+    "events", Representation("events", "structure", carries, horizon, piece, None, None, check)
+)

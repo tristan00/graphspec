@@ -35,7 +35,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 9
+VIEW = 10
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -449,17 +449,17 @@ class Bank:
         return result
 
     def stated(self, cfg):
-        from tuning.families.model_spec import groups
+        from tuning.families.model_spec import derived, groups
 
         if "pipeline" not in cfg:
             raise KeyError("the configuration states no pipeline")
-        chosen = groups(cfg["model"])
+        chosen = derived(cfg["model"])
         key = (chosen, specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])))
         if key not in self.variants:
             started = time.perf_counter()
             self.variants[key] = (
                 resolved(self.registry, cfg["pipeline"]),
-                specs.canonical(specs.settings(self.registry, chosen), cfg["graph"]),
+                specs.canonical(specs.settings(self.registry, groups(cfg["model"])), cfg["graph"]),
                 chosen,
             )
             LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)

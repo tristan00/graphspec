@@ -82,4 +82,6 @@ def check(arrays, name, registry, spec):
             raise ValueError("%s of graph %s are not strictly causal" % (held, name))
 
 
-WALKS = REPRESENTATIONS.register("walks", Representation("walks", carries, horizon, piece, None, adjacency, check))
+WALKS = REPRESENTATIONS.register(
+    "walks", Representation("walks", "sample", carries, horizon, piece, None, adjacency, check)
+)
