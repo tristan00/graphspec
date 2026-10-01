@@ -14,6 +14,7 @@ from graphspec.engine.edits import sliced
 from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
 from graphspec.operations.consecutive import CONSECUTIVE
 from graphspec.operations.nearby import NEARBY, fillable, measured, placed
 from graphspec.operations.pipeline import resolved
@@ -38,6 +39,7 @@ def opened(bank):
     return held, support.fitted(held), support.shown(held, 0).dense(), names
 
 
+@timed("added.observed")
 def observed(graph):
     tokens, table = np.asarray(graph.entity_token), np.asarray(graph.x_table)
     return {
@@ -46,6 +48,7 @@ def observed(graph):
     }
 
 
+@timed("added.stated")
 def stated(graph, registry):
     tokens, both = np.asarray(graph.entity_token), keyed_relations(registry)[1]
     found = {}
@@ -158,6 +161,7 @@ def test_a_difference_removes_the_edges_the_graph_it_names_holds_at_the_same_ste
     LOG.info("difference exit removed=%s seconds=%.3f", removed, time.perf_counter() - started)
 
 
+@timed("added.added")
 def added(found, graph, code):
     tokens = np.asarray(graph.entity_token)
     rows = [
@@ -213,6 +217,7 @@ def test_nearby_joins_the_rows_whose_columns_lie_within_a_distance_or_are_neares
     LOG.info("nearby exit seconds=%.3f", time.perf_counter() - started)
 
 
+@timed("added.sessions")
 def sessions(graph, registry, pairing, gap):
     place, tokens = registry.kind("place"), np.asarray(graph.entity_token).astype(np.uint64)
     structural = ~np.asarray(graph.obs_anchor, bool)
@@ -266,6 +271,7 @@ def test_consecutive_rows_of_a_group_are_joined_unless_a_gap_in_time_cuts_them(o
     LOG.info("consecutive exit counts=%s seconds=%.3f", counts, time.perf_counter() - started)
 
 
+@timed("added.surroundings")
 def surroundings(graph, registry, around, hops):
     tokens, kinds = np.asarray(graph.entity_token), np.asarray(graph.kinds)
     observations, facts = set(), set()

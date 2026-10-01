@@ -241,7 +241,10 @@ def groups(spec):
 
 
 def unread():
-    return tuple(name for name in REGISTERED.names() if name not in GROUPS)
+    started = time.perf_counter()
+    result = tuple(name for name in REGISTERED.names() if name not in GROUPS)
+    LOG.debug("unread exit representations=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 def derived(spec):

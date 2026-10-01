@@ -86,10 +86,13 @@ def every(opened, registry, joined):
 
 
 def seconds(opened, steps, indices):
-    return {
+    started = time.perf_counter()
+    result = {
         name: [support.beside(opened, index, name) for index in indices]
         for name in sorted({step.graph for step in steps if step.graph is not None})
     }
+    LOG.debug("seconds exit graphs=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 def identical(left, right):
