@@ -1,3 +1,4 @@
+import functools
 import logging
 import time
 
@@ -16,12 +17,27 @@ def parameters(spec):
     return {name: value for name, value in spec.items() if name.startswith("graphs/")}
 
 
-def unify(graphs, registry, spec, seed):
+def connecting(kinds, tokens, registry, spec, seed):
     started = time.perf_counter()
     connect = np.asarray([spec["graphs/connect/" + kind] for kind in registry.declared], bool)
+    tokens = np.asarray(tokens).astype(np.uint64)
+    result = connect[np.asarray(kinds, np.int64)] & (unit(seed, CONNECT, tokens) < spec["graphs/connect_fraction"])
+    LOG.debug("connecting exit entities=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def apart(kinds, tokens):
+    started = time.perf_counter()
+    result = np.zeros(len(kinds), bool)
+    LOG.debug("apart exit entities=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def unify(graphs, registry, spec, seed):
+    started = time.perf_counter()
     kinds = np.concatenate([np.asarray(graph.kinds) for graph in graphs]).astype(np.int64)
     tokens = np.concatenate([np.asarray(graph.entity_token) for graph in graphs]).astype(np.uint64)
-    connected = connect[kinds] & (unit(seed, CONNECT, tokens) < spec["graphs/connect_fraction"])
+    connected = connecting(kinds, tokens, registry, spec, seed)
     chosen = np.flatnonzero(connected)
     group, count = spans.identity(np.stack((kinds[chosen], tokens[chosen].view(np.int64)), 1))
     first = np.full(count, len(kinds), np.int64)
@@ -45,6 +61,7 @@ def unify(graphs, registry, spec, seed):
         kinds[creator],
         tokens[creator],
         connected[creator],
+        functools.partial(connecting, registry=registry, spec=spec, seed=seed),
     )
 
 
@@ -53,7 +70,7 @@ def joined(graphs, registry, spec, seed):
     graphs = tuple(graphs)
     if not graphs:
         raise ValueError("joining requires at least one graph")
-    maps, kinds, tokens, connected = unify(graphs, registry, spec, seed)
+    maps, kinds, tokens, connected, _ = unify(graphs, registry, spec, seed)
     step_offsets = np.r_[0, np.cumsum([graph.steps for graph in graphs])]
     task_offsets = np.r_[0, np.cumsum([len(graph.task_key) for graph in graphs])]
     period_offsets = np.r_[0, np.cumsum([int(graph.period.max(initial=-1)) + 1 for graph in graphs])]

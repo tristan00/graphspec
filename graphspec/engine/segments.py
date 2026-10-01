@@ -76,7 +76,7 @@ def placed(carry, graph, tops):
 def alone(member):
     kinds = np.asarray(member.kinds).astype(np.int64)
     connected = np.asarray(member.entity_connected) if isinstance(member, Dense) else np.zeros(len(kinds), bool)
-    return [np.arange(len(kinds))], kinds, np.asarray(member.entity_token).astype(np.uint64), connected
+    return [np.arange(len(kinds))], kinds, np.asarray(member.entity_token).astype(np.uint64), connected, join.apart
 
 
 def unified(members, registry, spec, seed):
@@ -127,6 +127,28 @@ def matched(kinds, tokens, numbers, second):
     return result
 
 
+@timed("segments.numbered")
+def numbered(found, seconds, joins, total):
+    fresh = [np.flatnonzero(numbers < 0) for numbers in found]
+    kinds = np.concatenate([np.asarray(second.kinds)[place] for second, place in zip(seconds, fresh)] + [EMPTY])
+    tokens = np.concatenate(
+        [np.asarray(second.entity_token)[place].astype(np.uint64) for second, place in zip(seconds, fresh)]
+        + [EMPTY.astype(np.uint64)]
+    )
+    kinds, shared = kinds.astype(np.int64), joins(kinds, tokens)
+    keys = np.stack((np.where(shared, kinds, -1 - np.arange(len(kinds))), np.where(shared, tokens.view(np.int64), 0)), 1)
+    _, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
+    rank = np.empty(len(first), np.int64)
+    rank[np.argsort(first, kind="stable")] = np.arange(len(first))
+    assigned, offsets, result = total + rank[inverse.reshape(-1)], np.cumsum([0] + [len(place) for place in fresh]), []
+    for numbers, place, low in zip(found, fresh, offsets):
+        numbers = numbers.copy()
+        numbers[place] = assigned[low : low + len(place)]
+        result.append(numbers)
+    first = np.sort(first)
+    return result, kinds[first], tokens[first]
+
+
 class Plan:
     def __init__(self, members, beside, unify, room, registry):
         started = time.perf_counter()
@@ -134,7 +156,7 @@ class Plan:
             raise ValueError(
                 "the room a derivation leaves for the entities of its edits is a whole number, found %r" % (room,)
             )
-        maps, kinds, tokens, connected = unify
+        maps, kinds, tokens, connected, joins = unify
         self.registry = registry
         self.seconds = {
             name: [self.widened(second if isinstance(second, Dense) else second.dense()) for second in beside[name]]
@@ -156,7 +178,7 @@ class Plan:
                     "the second graph %s is given beside %d graphs, and the derivation holds %d"
                     % (name, len(seconds), len(members))
                 )
-            self.second_maps[name] = []
+            found = []
             for member, second, own in zip(members, seconds, maps):
                 if second.steps != member.steps or not np.array_equal(
                     np.asarray(second.step_time), np.asarray(member.step_time)
@@ -165,15 +187,13 @@ class Plan:
                         "the second graph %s shows other times than the graph %s it is given beside; a second "
                         "graph is shown at the steps of the graph beside it" % (second.name, member.name)
                     )
-                numbers = matched(kinds[0][own], tokens[0][own], own, second)
-                fresh = numbers < 0
-                numbers[fresh] = total + np.arange(int(fresh.sum()))
-                total += int(fresh.sum())
-                kinds.append(np.asarray(second.kinds)[fresh].astype(kinds[0].dtype))
-                tokens.append(np.asarray(second.entity_token)[fresh].astype(np.uint64))
-                self.second_maps[name].append(numbers)
+                found.append(matched(kinds[0][own], tokens[0][own], own, second))
+            self.second_maps[name], own_kinds, own_tokens = numbered(found, seconds, joins, total)
+            total += len(own_kinds)
+            kinds.append(own_kinds.astype(kinds[0].dtype))
+            tokens.append(own_tokens)
         kinds, tokens = np.concatenate(kinds), np.concatenate(tokens)
-        connected = np.r_[connected, np.zeros(total - len(connected), bool)]
+        connected = np.r_[connected, np.full(total - len(connected), graphs > 1)]
         self.maps, self.entities, self.base = maps, Entities(kinds, tokens, connected), len(kinds) + room
         self.steps = np.r_[0, np.cumsum([member.steps for member in members])].astype(np.int64)
         self.tasks = np.r_[0, np.cumsum([len(member.task_key) for member in members])].astype(np.int64)

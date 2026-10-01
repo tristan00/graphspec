@@ -96,11 +96,14 @@ REWIRING = "pipeline/graphspec.derive/derive/rewiring_budget"
 JOINED = {"graphs/join": "single", "graphs/join_size": MEMBERS}
 CONTRACTED = {"contract/grouping": "item:v0", "contract/aggregate": "mean", "contract/parallel": "keep"}
 WINDOWED = {"time/scheme": "window", "time/unit": "step", "time/window": 2}
+ELSEWHERE = 0x5A5A5A5A5A5A5A5A
 GROUPING = "pipeline/graphspec.contract/contract/grouping"
 REFUSAL = re.compile(r"the entry (\S+) of the pipeline names the kind (\w+), which the entry graphspec\.contract before ")
 CONTRACTIONS = (
-    (("graphspec.contract", CONTRACTED),),
-    (("graphspec.window", WINDOWED), ("graphspec.contract", CONTRACTED)),
+    (("graphspec.contract", CONTRACTED, None),),
+    (("graphspec.window", WINDOWED, None), ("graphspec.contract", CONTRACTED, None)),
+    (("graphspec.merge", {"merge/prefer": "second"}, 1), ("graphspec.contract", CONTRACTED, None)),
+    (("graphspec.difference", {"difference/match": "keys"}, 0),),
 )
 DENSE_READ = dict(obs_ref="x_table", fact_ref="value_table")
 VARIANT_READ = dict(x_ref="x_table")
@@ -214,34 +217,59 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
     assert unequal(found, held, VARIANT_READ) == []
 
 
+@timed("segments.renamed")
+def renamed(second, registry):
+    tokens = np.asarray(second.entity_token).copy()
+    chosen = (np.asarray(second.kinds) == registry.kind("person")) & (np.arange(len(tokens)) % 2 == 0)
+    tokens[chosen] ^= np.uint64(ELSEWHERE)
+    return second.replace(entity_token=tokens)
+
+
 @GROUP
-def test_contraction_alone_or_after_a_window_in_a_joined_group_equals_the_physical_join_of_its_graphs(bank):
+def test_contraction_merge_and_difference_in_a_joined_group_equal_the_physical_join_of_its_graphs(bank):
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", RESIDENT)
     registry = support.fitted(opened)
     graphs = [support.shown(opened, index).dense() for index in range(MEMBERS)]
+    names = [graph["name"] for graph in opened.manifest["graphs"]]
     spec = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **JOINED))
     physical = join.joined(graphs, registry, spec, transform.SEED)
     bounds = np.cumsum([member.steps for member in graphs])
     cuts = sorted(set(bounds[:-1].tolist()) | set((bounds[:-1] + 1).tolist())) + [physical.steps]
-    separate, counts = dict(spec, **{"graphs/join": "separate"}), []
+    separate, counts, shared = dict(spec, **{"graphs/join": "separate"}), [], []
     for stated in CONTRACTIONS:
-        steps = pipeline.resolved(registry, [dict(operation=name, parameters=values) for name, values in stated])
+        entries = [
+            dict(operation=name, parameters=values, **({} if second is None else dict(graph=names[second])))
+            for name, values, second in stated
+        ]
+        steps = pipeline.resolved(registry, entries)
         grown = pipeline.grown(registry, steps, None)
-        reference = Derivation.begun([physical], {}, grown, steps, separate, specs.GROUPS, transform.SEED, LIMITS, None, 0)
+        beside = {
+            entry["graph"]: [renamed(support.beside(opened, index, entry["graph"]), registry) for index in range(MEMBERS)]
+            for entry in entries
+            if "graph" in entry
+        }
+        whole = {name: [join.joined(held, registry, spec, transform.SEED)] for name, held in beside.items()}
+        reference = Derivation.begun(
+            [physical], whole, grown, steps, separate, specs.GROUPS, transform.SEED, LIMITS, None, 0
+        )
         reference = reference.continued(physical.steps, None)
-        line = Derivation.begun(graphs, {}, grown, steps, spec, specs.GROUPS, transform.SEED, LIMITS, None, 0)
+        line = Derivation.begun(graphs, beside, grown, steps, spec, specs.GROUPS, transform.SEED, LIMITS, None, 0)
         for high in cuts:
             line = line.continued(high, None)
         derived, expected = line.derived(), reference.derived()
         assert unequal(derived.arrays, expected.arrays, DENSE_READ) == [], stated
         assert unequal(line.arrays(), reference.arrays(), VARIANT_READ) == [], stated
-        made = np.asarray(derived.kinds) == grown.kind("contract")
+        kinds = np.asarray(derived.kinds)
+        shared.append(len(kinds) - len(physical.kinds) - int((kinds >= len(registry.declared)).sum()))
+        made = kinds == (grown.kind("contract") if "contract" in grown.nodes else -1)
         counts.append(int(made.sum()))
         assert np.asarray(derived.entity_connected)[made].all()
         assert len(np.unique(np.asarray(derived.entity_token)[made])) == made.sum()
-    assert counts[0] == counts[1] > 0
-    LOG.info("contraction in a joined group exit groups=%s seconds=%.3f", counts, time.perf_counter() - started)
+    assert counts[0] == counts[1] > 0 and counts[2] > 0 and shared[0] == shared[1] == 0 < shared[2] and shared[3] > 0
+    LOG.info(
+        "joined group exit groups=%s second=%s seconds=%.3f", counts, shared, time.perf_counter() - started
+    )
 
 
 @GROUP
