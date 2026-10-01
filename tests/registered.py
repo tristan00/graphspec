@@ -13,7 +13,6 @@ from graphspec.operations.sets import Form, node
 from graphspec.operations.state import EMPTY, Table
 from graphspec.schema.added import Added
 from graphspec.schema.references import Sort
-from graphspec.schema.time import NEVER
 from graphspec.views.view import Tasks
 
 NAME = "registered"
@@ -90,7 +89,8 @@ def middle(starts, stops):
 
 @timed("registered.everything")
 def everything(facts, registry, held):
-    return np.full(len(facts.obs_entity), NEVER, np.int64), np.full(len(facts.fact_source), NEVER, np.int64)
+    none = np.zeros(0, np.int64)
+    return (none, none, none), (none, none, none)
 
 
 @timed("registered.spanned")

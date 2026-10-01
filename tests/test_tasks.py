@@ -62,10 +62,9 @@ ASKED = (
 
 def without_beside(facts, registry, held):
     started = time.perf_counter()
-    result = (
-        np.full(len(facts.obs_entity), NEVER, np.int64),
-        np.where(np.asarray(facts.fact_code) == registry.code("beside"), ALWAYS, NEVER),
-    )
+    beside = np.flatnonzero(np.asarray(facts.fact_code) == registry.code("beside"))
+    none = np.zeros(0, np.int64)
+    result = (none, none, none), (beside, np.full(len(beside), ALWAYS), np.full(len(beside), NEVER))
     LOG.debug("without beside exit graph=%s seconds=%.4f", facts.name, time.perf_counter() - started)
     return result
 

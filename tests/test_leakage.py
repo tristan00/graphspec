@@ -283,6 +283,29 @@ def test_without_targets_keeps_the_edges_a_target_is_about_from_the_time_of_its_
         Schema(mapping)
 
 
+def test_without_targets_shows_the_edges_a_target_is_about_again_once_the_target_is_known(banks):
+    from graphspec.facts.stored import Facts
+    from graphspec.views.view import sequences, view
+
+    started = time.perf_counter()
+    held, cfg = opened(banks["seen"])
+    alpha, facts = held.splits.index("alpha"), Facts.load(held.truth(0))
+    flow = int(np.flatnonzero(np.asarray(facts.task_time) == 4)[0])
+    assert held.registry.tasks[int(facts.task_kind[flow])] == "flow"
+    known = np.where(np.asarray(facts.target_task) == flow, 6, np.asarray(facts.target_known))
+    found = {}
+    for name, stated in (("never", facts), ("six", facts.replace(target_known=known))):
+        (sequence,) = [
+            sequence
+            for sequence in sequences(stated, held.registry, "changes", held.looking(cfg)[0])
+            if (sequence["observer"], sequence["split"]) == (0, alpha)
+        ]
+        shown = view(stated, held.registry, sequence, None)
+        found[name] = sequence["moments"].tolist(), serving(held, shown, ("m1", "s1"))
+    assert found == dict(never=([0, 2, 4, 6], [0, 1]), six=([0, 2, 4, 6], [0, 1, 3]))
+    LOG.info("edges withheld until known exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_a_graph_without_tasks_builds_and_a_choice_of_steps_that_cannot_show_it_stops_naming_both(banks):
     held, cfg = opened(banks["seen"])
     assert [graph["name"] for graph in held.manifest["graphs"]] == ["g0", "g1"]

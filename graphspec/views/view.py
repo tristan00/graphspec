@@ -209,7 +209,7 @@ def shown(facts, group, held, observer, kept):
         stamps["since"],
         stamps["until"],
         stamps["known"],
-        np.minimum(stamps["replaced"], kept),
+        stamps["replaced"],
         allowed,
         held["moments"],
         held["looking"],
@@ -217,6 +217,8 @@ def shown(facts, group, held, observer, kept):
     counts = ended - begun
     row = np.repeat(np.arange(len(counts)), counts)
     step = np.repeat(begun, counts) + spans.counted(counts)
+    seen = ~visible.withheld(row, step, kept, held["looking"], len(held["moments"]))
+    row, step = row[seen], step[seen]
     LOG.debug(
         "shown exit graph=%s group=%s facts=%d rows=%d seconds=%.4f",
         facts.name,

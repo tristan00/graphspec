@@ -413,6 +413,30 @@ def test_a_link_withholds_its_target_edge_from_its_split_and_is_scored_among_the
     assert len(sizes) == len(TIMES) * 2 and max(sizes) == len(ITEMS) > min(sizes)
 
 
+def test_a_link_withholds_its_target_edge_only_until_the_target_is_known(banks):
+    started, held = time.perf_counter(), opened(banks, "stated")
+    shown = {}
+    for name, splits in (("open", OPEN), ("seeing", SEEING)):
+        cfg = configured(held.registry, "snapshot", splits)
+        (entry,) = [
+            entry
+            for entry in held.viewed(cfg).graphs
+            if held.manifest["graphs"][entry["source"]]["name"] == "g0" and entry["split"] in (-1, 0)
+        ]
+        view = Graph.load(held.view(entry["index"], cfg))
+        dense, times = view.dense(), np.asarray(view.step_time).tolist()
+        found = {}
+        for source, target, step, present in zip(dense.fact_source, dense.fact_target, dense.fact_step, dense.fact_present):
+            if present:
+                found.setdefault((view.keys[source], view.keys[target]), []).append(times[step])
+        shown[name] = found, times
+    for at in LINKED:
+        edge, moment = (who("next", at, 0), stated("next", at, 0, False)), TIMES[at]
+        assert shown["open"][0][edge] == [time for time in shown["open"][1] if time >= moment]
+        assert shown["seeing"][0].get(edge) == [time for time in shown["seeing"][1] if time >= moment + 1]
+    LOG.info("links withheld until known exit seconds=%.3f", time.perf_counter() - started)
+
+
 @timed("nodes.late")
 def late(absent, kind, key):
     linking = dict(next=KINDS["next"])
