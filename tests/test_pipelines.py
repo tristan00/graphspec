@@ -27,7 +27,7 @@ from tuning.searches.selector import random_suggest
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("pipelines")
+pytestmark = pytest.mark.xdist_group("fixture")
 GONE = dict(
     first="c390954",
     second="c390954",

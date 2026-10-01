@@ -21,7 +21,7 @@ from graphspec.views.graph import DENSE, Dense
 from tuning.bank.bank import Deriver
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("operations")
+pytestmark = pytest.mark.xdist_group("fixture")
 SHIFT = specs.number("test/shift", 0, 4, 1)
 OPERATED = {
     "02_periods_sample_coupling": dict(

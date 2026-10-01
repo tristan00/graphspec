@@ -25,7 +25,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("schema")
+pytestmark = pytest.mark.xdist_group("fixture")
 
 
 def lacking(mapping, *path):

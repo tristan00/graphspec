@@ -1,3 +1,4 @@
+import functools
 import logging
 import time
 from pathlib import Path
@@ -487,6 +488,7 @@ def stepped(names, graph):
     return result
 
 
+@functools.cache
 def arrays(path, level):
     started = time.perf_counter()
     graphs = {}
