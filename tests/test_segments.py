@@ -214,7 +214,7 @@ def test_appender_writes_loadable_arrays_of_every_shape(tmp_path):
         closed = appender.close()
         for name in pieces[0]:
             expected = np.concatenate([piece[name] for piece in pieces])
-            for loaded in (np.load(folder / (name + ".npy"), mmap_mode="r"), closed[name]):
+            for loaded in (Arrays(folder)[name], closed[name]):
                 assert loaded.dtype == expected.dtype and loaded.shape == expected.shape
                 assert np.array_equal(np.asarray(loaded), expected)
         (tmp_path / ("strict%d" % limit)).mkdir()

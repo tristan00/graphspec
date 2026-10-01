@@ -29,6 +29,7 @@ LOG = logging.getLogger(__name__)
 BUDGET = 300 << 30
 WRITTEN = 1 << 20
 PACK = b"GRAPHSPEC-PACK-1"
+PACKS = ".pack"
 PACK_ALIGN = 64
 PACK_BUFFER = 1 << 20
 SIZES, SWEEPERS = {}, {}
@@ -97,8 +98,6 @@ def write_pack(path, arrays):
     held, entries, offset = [], [], 0
     for name, value in arrays.items():
         value = np.asarray(value)
-        if not value.flags.c_contiguous:
-            value = np.ascontiguousarray(value)
         described = np.lib.format.dtype_to_descr(value.dtype)
         if type(described) is not str or value.dtype.hasobject:
             raise ValueError("the array %s has the dtype %s, which a pack does not hold" % (name, value.dtype))
@@ -110,7 +109,13 @@ def write_pack(path, arrays):
     with open(path, "wb", buffering=PACK_BUFFER) as stream:
         stream.write(PACK + len(header).to_bytes(8, "little") + header + bytes(start - len(PACK) - 8 - len(header)))
         for value in held:
-            stream.write(value.reshape(-1).view(np.uint8))
+            if value.flags.c_contiguous:
+                stream.write(value.reshape(-1).view(np.uint8))
+            else:
+                for chunk in np.nditer(
+                    value, flags=["external_loop", "buffered", "zerosize_ok"], buffersize=PACK_BUFFER, order="C"
+                ):
+                    stream.write(chunk.tobytes("C"))
             stream.write(bytes(aligned(value.nbytes) - value.nbytes))
     LOG.debug("write pack exit arrays=%d bytes=%d seconds=%.4f", len(held), start + offset, time.perf_counter() - started)
 
@@ -161,25 +166,40 @@ def load_arrays(directory, names, mmap_mode=None):
 
 class Arrays(Mapping):
     def __init__(self, directory):
-        self.sources = {path.stem: path for path in Path(directory).glob("*.npy")}
-        self.loaded = {}
+        started = time.perf_counter()
+        directory = Path(directory)
+        self.sources = {path.stem: path for path in directory.glob("*.npy")}
+        self.packed, self.loaded = {}, {}
+        for path in sorted(directory.glob("*" + PACKS)):
+            found = read_pack(path, True)
+            twice = sorted((set(found) & set(self.packed)) | (set(found) & set(self.sources)))
+            if twice:
+                raise ValueError("the arrays %s are held twice in %s" % (", ".join(twice), directory))
+            self.packed.update(found)
+        LOG.debug(
+            "arrays exit files=%d packed=%d seconds=%.4f", len(self.sources), len(self.packed), time.perf_counter() - started
+        )
 
     def __getitem__(self, key):
+        if key in self.packed:
+            return self.packed[key]
         if key not in self.loaded:
             self.loaded[key] = np.load(self.sources[key], mmap_mode="r", allow_pickle=False)
         return self.loaded[key]
 
     def read(self, key):
+        if key in self.packed:
+            return np.array(self.packed[key])
         return np.load(self.sources[key], allow_pickle=False)
 
     def __iter__(self):
-        return iter(self.sources)
+        return iter(list(self.sources) + list(self.packed))
 
     def __len__(self):
-        return len(self.sources)
+        return len(self.sources) + len(self.packed)
 
     def __contains__(self, key):
-        return key in self.sources
+        return key in self.sources or key in self.packed
 
 
 class ArrayStore:

@@ -6,7 +6,7 @@ import numpy as np
 from numba import njit
 
 from graphspec.budgets import GraphBudget
-from graphspec.infra.files import save_array
+from graphspec.infra.files import write_pack
 from graphspec.infra.hashing import hashed
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import finite
@@ -20,6 +20,7 @@ from .groups import base, periods
 
 LOG = logging.getLogger(__name__)
 INFINITE = np.int64(1) << np.int64(60)
+STITCHED = "stitched.pack"
 
 
 def carried(registry):
@@ -335,8 +336,7 @@ def stitched(arrays, table, kinds, tokens, registry, spec, chosen, limits, steps
     for function in dict.fromkeys(entry.stitched for entry in chosen if entry.stitched is not None):
         arrays.update(function(arrays, registry, spec, limits))
     if destination is not None:
-        for name in sorted(set(arrays) - written):
-            save_array(Path(destination) / (name + ".npy"), arrays[name])
+        write_pack(Path(destination) / STITCHED, {name: arrays[name] for name in sorted(set(arrays) - written)})
     LOG.info("stitched exit seconds=%.3f arrays=%d", time.perf_counter() - started, len(arrays))
     return arrays
 

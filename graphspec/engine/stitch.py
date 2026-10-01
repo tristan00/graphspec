@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from graphspec.infra.files import Arrays, save_array
+from graphspec.infra.files import Arrays, write_pack
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import DENSE, Dense
 
@@ -15,6 +15,7 @@ TASKED = ("member_task", "label_task")
 GROUP = ("kinds", "entity_token", "entity_connected", "x_table", "value_table")
 HEADER = 128
 BUFFERED = 64 << 20
+SEGMENTS = "segments.pack"
 
 
 def header(dtype, shape):
@@ -81,8 +82,7 @@ class Appender:
         started = time.perf_counter()
         if self.streams is None:
             result = {name: np.concatenate(parts) for name, parts in self.held.items()}
-            for name, values in result.items():
-                save_array(self.directory / (name + ".npy"), values)
+            write_pack(self.directory / SEGMENTS, result)
             self.held = {}
         else:
             for name, stream in self.streams.items():
