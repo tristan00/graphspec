@@ -3,6 +3,7 @@ import torch
 
 from graphspec.infra.timing import timed
 from tuning.families.heads import FIELD, Attached
+from tuning.measures.measures import needless
 
 
 class Share:
@@ -97,6 +98,7 @@ class Absolute:
     reads = ("share",)
     better = "lower"
     label, short = "Validation absolute error", "MAE"
+    refusal = staticmethod(needless)
 
     @timed("shares.absolute")
     def __call__(self, held):

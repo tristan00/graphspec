@@ -11,15 +11,14 @@ import numpy as np
 
 from graphspec.infra import compute
 from graphspec.infra.code import digest as code_digest
-from graphspec.infra.files import read_json, sha256_bytes, sha256_file, write_json
+from graphspec.infra.files import sha256_bytes, sha256_file, write_json
 from graphspec.infra.log import emit
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.operations.parameters import digest
-from graphspec.schema.schema import Schema
 from tuning.bank.bank import PACKAGES
 from tuning.families.heads import FIELD
-from tuning.measures.measures import measured, predicted, scored
+from tuning.measures.measures import measurable, measured, predicted, scored
 
 from .losses import Summed, admitted
 
@@ -60,11 +59,9 @@ def shortened(bank, pipeline, every):
 
 
 class TrainingSession:
-    def __init__(self, bank_directory, directory, config: dict, budget, stated):
+    def __init__(self, bank, bank_directory, directory, config: dict, budget, stated):
         import torch
 
-        from graphspec.infra.arrays import RESIDENT
-        from tuning.bank.bank import Deriver
         from tuning.bank.variants import prepare
         from tuning.batches.packing import Packer
         from tuning.families.model_spec import describe
@@ -90,7 +87,7 @@ class TrainingSession:
             np.random.seed(stated.seed)
             compute.reserve(self.device)
         with measure("bank_load_and_verify"):
-            self.bank: Deriver = Deriver(bank_directory, self.device, RESIDENT)
+            self.bank: Deriver = bank
             self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
@@ -427,6 +424,8 @@ class TrainingSession:
 
 
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, statement):
+    from graphspec.infra.arrays import RESIDENT
+    from tuning.bank.bank import Deriver
     from tuning.batches.inputs import drawing
     from tuning.statement import stated as checked
 
@@ -448,12 +447,14 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         )
     if "pipeline" not in config:
         raise KeyError("the configuration states no pipeline")
-    declared = Schema(read_json(Path(bank_directory) / "manifest.json")["spec"]["schema"])
-    admitted(declared.targets(), stated.loss, stated.measures)
-    drawing(declared, config["pipeline"])
+    with measure("bank_load"):
+        bank = Deriver(bank_directory, stated.device, RESIDENT)
+    admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
+    drawing(bank.registry.schema, config["pipeline"])
+    measurable(stated.measures, bank, stated.scored)
     with FitBudget(directory, deadline, stated.preparation_seconds) as budget:
         with budget.measure("prepare"):
-            session = TrainingSession(bank_directory, directory, config, budget, stated)
+            session = TrainingSession(bank, bank_directory, directory, config, budget, stated)
         try:
             budget.pulse("scheduling")
             schedule = session.schedule(training_blocks, batch_size)

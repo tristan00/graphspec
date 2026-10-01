@@ -446,7 +446,7 @@ The statement of a fit, `tuning.statement.Statement`, holds beside its other fie
 | `scored` | The names of the splits scored on, at least one, none of them trained on. |
 | `sees` | For every split trained on or scored on, the list of the rules of what its tasks may see; an empty list states that they see every fact. |
 | `loss` | The registered loss the fit trains with (`tuning.LOSSES`). |
-| `measures` | The registered measures the fit records, at least one (`tuning.MEASURES`). A loss or a measure that cannot read a kind of target of the bank stops the fit naming both. |
+| `measures` | The registered measures the fit records, at least one (`tuning.MEASURES`). A loss or a measure that cannot read a kind of target of the bank stops the fit naming both. When a fit or a search starts, before anything is derived or trained, every measure is checked against the targets of the splits scored on as the bank holds them: a series it reads without a point there, or a need of the measure they do not meet (its `refusal`, see tuning/README.md), such as varying targets for `r2` or a pair of tasks to compare for `concordance`, stops it naming the splits, the series or the measure. |
 
 A configuration carries the same three under `splits`, and a fit whose configuration and statement differ in them stops. The rows of a split neither trained on nor scored on enter no fit.
 

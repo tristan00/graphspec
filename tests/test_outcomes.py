@@ -288,6 +288,7 @@ def test_a_time_to_an_event_states_its_duration_and_outcome_and_holds_a_point_pe
 
 
 def test_a_kind_of_target_whose_values_are_times_is_refused_in_a_schema_of_several_units():
+    started = time.perf_counter()
     held = schema(KINDS)
     held["time"] = dict(model="clock", units=["day", "hour"], ties="key")
     with pytest.raises(
@@ -304,6 +305,7 @@ def test_a_kind_of_target_whose_values_are_times_is_refused_in_a_schema_of_sever
     assert Schema(held).units == ("day", "hour")
     timed = {name: TARGETS.named(name).times for name in TARGETS.shipped}
     assert {name: found for name, found in timed.items() if found} == dict(path=("tau",), survival=("tau", "duration"))
+    LOG.info("units of timed targets exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("outcomes.agreed")
@@ -400,6 +402,23 @@ def test_a_bank_of_the_kinds_of_2_13_completes_one_fit(banks, tmp_path, statemen
         assert (total[total > 0] < 1).all()
         total = np.bincount(task[aim == 1], prediction[aim == 1])
         assert (total[np.unique(task[aim == 1])] < 1).all()
+
+
+def test_concordance_without_a_comparable_pair_among_the_tasks_scored_stops_a_fit_when_it_starts(banks):
+    from tuning.measures.measures import measurable
+
+    started = time.perf_counter()
+    held = Deriver(banks["stated"], "cpu", RESIDENT)
+    measurable(MEASURES, held, ["validation"])
+    held.fields["happened"][held.split["indices"]["validation"]] = False
+    with pytest.raises(
+        ValueError,
+        match="the splits scored on, validation, cannot be measured by concordance: concordance requires, in the "
+        "series churn, a task whose event happened within its intervals before another task of the series ended$",
+    ):
+        measurable(MEASURES, held, ["validation"])
+    measurable([name for name in MEASURES if name != "concordance"], held, ["validation"])
+    LOG.info("concordance refused exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_the_batch_a_model_reads_holds_the_inputs_of_a_sequence_and_a_time_to_an_event_and_no_outcome(banks):

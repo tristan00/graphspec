@@ -26,7 +26,7 @@ from tuning.fits.budget import TIMEOUT_EXIT_CODE
 from tuning.fits.losses import admitted
 from tuning.fits.training import fit
 from tuning.measures import objective
-from tuning.measures.measures import read
+from tuning.measures.measures import measurable, read
 
 from .records import VERSION, Outcome, worker_alive
 from .report import report
@@ -195,6 +195,7 @@ def run(args):
             raise ValueError(name + " must be a nonnegative integer")
     bank = Bank(args.bank)
     admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
+    measurable(stated.measures, bank, stated.scored)
     objective.ranking(stated.measures)
     ranked = read(bank.registry.schema.measured(), stated.measures[0])
     mix = None

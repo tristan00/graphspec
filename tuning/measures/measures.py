@@ -34,26 +34,26 @@ def scored(target, prediction, task, series, names, scale, fields):
         raise ValueError("every field of the points scored holds one value per point")
     if not len(target) or not np.isfinite(prediction).all() or not np.isfinite(target).all():
         raise ValueError("the predictions scored must be nonempty and finite")
-    lacking = [name for code, name in enumerate(names) if not (series == code).any()]
-    if lacking:
-        raise ValueError("the series %s have no point scored" % ", ".join(lacking))
     result = Scored(target, prediction, task, series, tuple(names), np.asarray(scale, np.float64), fields)
     LOG.debug("scored exit points=%d seconds=%.4f", len(target), time.perf_counter() - started)
     return result
 
 
+@timed("measures.needless")
+def needless(held):
+    return None
+
+
 @timed("measures.determined")
-def determined(target, prediction, where):
-    variance = float(target.var())
-    if variance == 0:
-        raise ValueError("R² requires varying targets scored in %s" % where)
-    return 1 - float(((prediction - target) ** 2).mean()) / variance
+def determined(target, prediction):
+    return 1 - float(((prediction - target) ** 2).mean()) / float(target.var())
 
 
 class Squared:
     reads = ("number", "path")
     better = "lower"
     label, short = "Validation MSE", "MSE"
+    refusal = staticmethod(needless)
 
     @timed("measures.squared")
     def __call__(self, held):
@@ -69,14 +69,21 @@ class Determination:
     better = "higher"
     label, short = "Validation R²", "R²"
 
+    @timed("measures.determination.refusal")
+    def refusal(self, held):
+        flat = [name for code, name in enumerate(held.names) if held.target[held.series == code].var() == 0]
+        if flat:
+            return "R² requires targets that vary within each series it reads, and those of the series %s do not" % (
+                ", ".join(flat)
+            )
+        return None
+
     @timed("measures.determination")
     def __call__(self, held):
         return dict(
-            value=determined(held.target, held.prediction, "every series"),
+            value=determined(held.target, held.prediction),
             series={
-                name: determined(
-                    held.target[held.series == code], held.prediction[held.series == code], "the series " + name
-                )
+                name: determined(held.target[held.series == code], held.prediction[held.series == code])
                 for code, name in enumerate(held.names)
             },
         )
@@ -86,6 +93,7 @@ class Balanced:
     reads = ("number", "path")
     better = "lower"
     label, short = "Validation loss", "Loss"
+    refusal = staticmethod(needless)
 
     @timed("measures.balanced")
     def __call__(self, held):
@@ -112,6 +120,7 @@ class Accuracy:
     reads = ("class",)
     better = "higher"
     label, short = "Validation accuracy", "Accuracy"
+    refusal = staticmethod(needless)
 
     @timed("measures.accuracy")
     def __call__(self, held):
@@ -131,6 +140,7 @@ class Entropy:
     reads = ("class", "proportions", "link")
     better = "lower"
     label, short = "Validation log loss", "Log loss"
+    refusal = staticmethod(needless)
 
     @timed("measures.entropy")
     def __call__(self, held):
@@ -143,6 +153,7 @@ class Binary:
     reads = ("classes", "nodes")
     better = "lower"
     label, short = "Validation binary log loss", "Binary log loss"
+    refusal = staticmethod(needless)
 
     @timed("measures.binary")
     def __call__(self, held):
@@ -159,6 +170,7 @@ class Divergence:
     reads = ("proportions",)
     better = "lower"
     label, short = "Validation divergence", "Divergence"
+    refusal = staticmethod(needless)
 
     @timed("measures.divergence")
     def __call__(self, held):
@@ -204,6 +216,7 @@ class Gain:
     reads = ("ranking",)
     better = "higher"
     label, short = "Validation normalised discounted gain", "NDCG"
+    refusal = staticmethod(needless)
 
     @timed("measures.gain")
     def __call__(self, held):
@@ -218,6 +231,7 @@ class Reciprocal:
     reads = ("ranking", "link")
     better = "higher"
     label, short = "Validation reciprocal rank", "MRR"
+    refusal = staticmethod(needless)
 
     @timed("measures.reciprocal")
     def __call__(self, held):
@@ -228,6 +242,7 @@ class Reciprocal:
 class Hits:
     reads = ("ranking", "link")
     better = "higher"
+    refusal = staticmethod(needless)
 
     @timed("measures.hits.init")
     def __init__(self, count):
@@ -253,6 +268,7 @@ class Agreement:
     reads = ("nodes",)
     better = "higher"
     label, short = "Validation F1", "F1"
+    refusal = staticmethod(needless)
 
     @timed("measures.agreement")
     def __call__(self, held):
@@ -265,6 +281,7 @@ class Jaccard:
     reads = ("nodes",)
     better = "higher"
     label, short = "Validation Jaccard index", "Jaccard"
+    refusal = staticmethod(needless)
 
     @timed("measures.jaccard")
     def __call__(self, held):
@@ -299,6 +316,7 @@ class Tokens:
     reads = ("sequence",)
     better = "lower"
     label, short = "Validation loss per token", "Token loss"
+    refusal = staticmethod(needless)
 
     @timed("measures.tokens")
     def __call__(self, held):
@@ -314,6 +332,7 @@ class Placed:
     reads = ("sequence",)
     better = "higher"
     label, short = "Validation token accuracy", "Token accuracy"
+    refusal = staticmethod(needless)
 
     @timed("measures.placed")
     def __call__(self, held):
@@ -326,6 +345,7 @@ class Exact:
     reads = ("sequence",)
     better = "higher"
     label, short = "Validation exact sequences", "Exact"
+    refusal = staticmethod(needless)
 
     @timed("measures.exact")
     def __call__(self, held):
@@ -343,18 +363,28 @@ class Exact:
         )
 
 
-def survived(held):
+def cased(held):
     started = time.perf_counter()
     owner = np.unique(held.task, return_inverse=True)[1].reshape(-1)
-    tasks, lasting = owner.max() + 1, 1 - accumulated(held.prediction, held.task, held.fields["tau"])
-    cases = dict(risk=np.bincount(owner, held.prediction, tasks), horizon=np.zeros(tasks))
+    tasks = owner.max() + 1
+    cases = dict(horizon=np.zeros(tasks))
     np.maximum.at(cases["horizon"], owner, held.fields["tau"])
     for name, values in (("duration", held.fields["duration"]), ("happened", held.fields["happened"] == 1)):
         cases[name] = np.zeros(tasks, values.dtype)
         cases[name][owner] = values
     cases["series"] = np.zeros(tasks, np.int64)
     cases["series"][owner] = held.series
-    LOG.debug("survived exit tasks=%d seconds=%.4f", tasks, time.perf_counter() - started)
+    cases["earlier"] = cases["happened"] & (cases["duration"] <= cases["horizon"])
+    LOG.debug("cased exit tasks=%d seconds=%.4f", tasks, time.perf_counter() - started)
+    return owner, cases
+
+
+def survived(held):
+    started = time.perf_counter()
+    owner, cases = cased(held)
+    lasting = 1 - accumulated(held.prediction, held.task, held.fields["tau"])
+    cases["risk"] = np.bincount(owner, held.prediction, len(cases["series"]))
+    LOG.debug("survived exit tasks=%d seconds=%.4f", len(cases["series"]), time.perf_counter() - started)
     return owner, lasting, cases
 
 
@@ -401,19 +431,29 @@ class Concordance:
     better = "higher"
     label, short = "Validation concordance", "Concordance"
 
+    @timed("measures.concordance.refusal")
+    def refusal(self, held):
+        _, cases = cased(held)
+        lacking = []
+        for code, name in enumerate(held.names):
+            chosen = cases["series"] == code
+            duration = cases["duration"][chosen]
+            if not (cases["earlier"][chosen] & (duration < duration.max())).any():
+                lacking.append(name)
+        if lacking:
+            return (
+                "concordance requires, in the series %s, a task whose event happened within its intervals before "
+                "another task of the series ended" % ", ".join(lacking)
+            )
+        return None
+
     @timed("measures.concordance")
     def __call__(self, held):
         _, _, cases = survived(held)
-        earlier = cases["happened"] & (cases["duration"] <= cases["horizon"])
         series, agreed, pairs = {}, 0.0, 0
         for code, name in enumerate(held.names):
             chosen = cases["series"] == code
-            found, count = concordant(cases["duration"][chosen], cases["risk"][chosen], earlier[chosen])
-            if not count:
-                raise ValueError(
-                    "concordance requires, in the series %s, a task whose event happened within its horizon before "
-                    "another task ended" % name
-                )
+            found, count = concordant(cases["duration"][chosen], cases["risk"][chosen], cases["earlier"][chosen])
             series[name], agreed, pairs = found / count, agreed + found, pairs + count
         return dict(value=agreed / pairs, series=series)
 
@@ -422,6 +462,7 @@ class Brier:
     reads = ("survival",)
     better = "lower"
     label, short = "Validation integrated Brier score", "Brier"
+    refusal = staticmethod(needless)
 
     @timed("measures.brier")
     def __call__(self, held):
@@ -476,12 +517,47 @@ def read(kinds, name):
     return tuple(series for series, kind in kinds.items() if kind in MEASURES.named(name).reads)
 
 
+def checked(name, held, kinds, where):
+    started = time.perf_counter()
+    part = restricted(held, [held.names.index(series) for series in read(kinds, name)])
+    lacking = [series for code, series in enumerate(part.names) if not (part.series == code).any()]
+    if lacking:
+        raise ValueError(
+            "%s hold no point of the series %s, which the measure %s reads" % (where, ", ".join(lacking), name)
+        )
+    refused = MEASURES.named(name).refusal(part)
+    if refused is not None:
+        raise ValueError("%s cannot be measured by %s: %s" % (where, name, refused))
+    LOG.debug("measure checked exit measure=%s seconds=%.4f", name, time.perf_counter() - started)
+    return part
+
+
+def measurable(names, bank, scored):
+    started = time.perf_counter()
+    strangers = [name for name in scored if name not in bank.split["indices"]]
+    if strangers:
+        raise ValueError(
+            "the splits scored on name %s, and the bank holds the splits %s"
+            % (", ".join(strangers), ", ".join(sorted(bank.split["indices"])))
+        )
+    rows = np.sort(np.concatenate([np.asarray(bank.split["indices"][name], np.int64) for name in scored]))
+    held = Scored(
+        np.asarray(bank.targets[rows], np.float64),
+        np.full(len(rows), np.nan),
+        bank.task_of[rows],
+        bank.series[rows],
+        tuple(bank.series_names),
+        np.asarray(bank.scale, np.float64),
+        {name: values[rows] for name, values in bank.fields.items()},
+    )
+    for name in names:
+        checked(name, held, bank.registry.schema.measured(), "the splits scored on, %s," % ", ".join(scored))
+    LOG.info("measurable exit measures=%d points=%d seconds=%.4f", len(names), len(rows), time.perf_counter() - started)
+
+
 def measured(names, held, kinds):
     started = time.perf_counter()
-    result = {}
-    for name in names:
-        wanted = [held.names.index(series) for series in read(kinds, name)]
-        result[name] = MEASURES.named(name)(restricted(held, wanted))
+    result = {name: MEASURES.named(name)(checked(name, held, kinds, "the points scored")) for name in names}
     LOG.debug("measured exit measures=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 

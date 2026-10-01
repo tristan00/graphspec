@@ -1,6 +1,8 @@
+import argparse
 import copy
 import logging
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -587,6 +589,43 @@ def test_a_search_offers_every_family_under_every_context_for_references_of_ever
     space, rng = Space(registry, {}, 600, [], support.template()), np.random.default_rng(5)
     assert len({space.draw(rng, 0, {})["graph"]["time/context"] for _ in range(12)}) > 1
     check_bounds(registry, {"time/context": {"low": 1, "high": 3}}, support.template())
+
+
+def test_a_fit_or_a_search_that_cannot_be_measured_stops_when_it_starts_naming_the_split_series_or_measure(
+    bank, tmp_path, statement
+):
+    from tuning.measures.measures import measurable
+    from tuning.searches.run import run
+
+    started = time.perf_counter()
+    east = dict(trained=["north", "south"], scored=["east"], sees=dict(north=[], south=[], east=[]))
+    held = Deriver(bank, "cpu", RESIDENT)
+    cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, copy.deepcopy(east))
+    lacking = "the splits scored on, east, hold no point of the series wide, which the measure mse reads$"
+    with pytest.raises(ValueError, match=lacking):
+        fit(bank, tmp_path / "fit", cfg, [], 16, time.perf_counter() + 30, state(dict(statement, **east)))
+    searched = dict(
+        bank=str(bank), output=str(tmp_path / "search"), device="cpu", seed=3, preparation_seconds=300,
+        batch_sequences=8, continuous=False, trials=None, seconds=10, selector="random", random_trials=10,
+        random_params=[], mix=["random=100"], objective=None, bounds=None, workers=1, variant_gb=1,
+        pipeline=str(Path(__file__).parent / "pipeline.json"), trained=["north", "south"], scored=["east"],
+        sees=["north=", "south=", "east="], loss=["number=squared"], measures=["mse", "r2"],
+    )
+    with pytest.raises(ValueError, match=lacking):
+        run(argparse.Namespace(**searched))
+    assert not list(tmp_path.iterdir())
+    measurable(["mse", "r2"], held, ["east", "west"])
+    held.targets[[row for row in held.split["indices"]["west"] if held.rows[row]["series"] == "total"]] = 1.0
+    with pytest.raises(
+        ValueError,
+        match="the splits scored on, west, cannot be measured by r2: R² requires targets that vary within each "
+        "series it reads, and those of the series total do not$",
+    ):
+        measurable(["mse", "r2"], held, ["west"])
+    measurable(["mse", "r2"], held, ["east", "west"])
+    with pytest.raises(ValueError, match="the splits scored on name shore, and the bank holds the splits east, north"):
+        measurable(["mse"], held, ["shore"])
+    LOG.info("unmeasured fit and search exit seconds=%.3f", time.perf_counter() - started)
 
 
 @pytest.fixture

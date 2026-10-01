@@ -207,8 +207,9 @@ def test_the_balanced_measure_is_the_balanced_loss_on_the_points_scored():
     assert metrics["mse"]["value"] == pytest.approx(5.0) and set(metrics["mse"]) == {"value", "series"}
     assert metrics["r2"]["value"] == pytest.approx(1 - (5 / 3) / np.var(targets[:3]))
     assert list(metrics["r2"]["series"]) == ["a"]
-    with pytest.raises(ValueError, match="the series c have no point scored"):
-        scored(targets, predictions, owners, series, ["a", "b", "c"], np.ones(3), {})
+    unscored = scored(targets, predictions, owners, series, ["a", "b", "c"], np.ones(3), {})
+    with pytest.raises(ValueError, match="the points scored hold no point of the series c, which the measure mse reads"):
+        measured(["mse"], unscored, dict(a="number", b="path", c="number"))
 
 
 def test_validation_loss_matches_the_training_loss_on_the_same_points():
