@@ -42,7 +42,7 @@ SEVEN = (
     "graphspec.edges",
     "graphspec.merging",
 )
-ADDED = ("graphspec.merge",)
+ADDED = ("graphspec.merge", "graphspec.difference")
 KEYS = ("id", "from", "to", "since", "seq", "present")
 VALUES = dict(value=dict(type="number", encoder="value"))
 STAMPS = ("since", "until", "known", "replaced", "observers")

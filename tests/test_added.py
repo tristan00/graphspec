@@ -126,3 +126,31 @@ def test_a_merge_takes_the_graph_it_names_on_keys_at_the_steps_of_the_graph_it_c
     with pytest.raises(KeyError, match="the bank holds no graph named absent to show beside graph"):
         support.beside(held, 0, "absent")
     LOG.info("merge exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_difference_removes_the_edges_the_graph_it_names_holds_at_the_same_steps(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    mine, removed = stated(graph, registry), {}
+    for name in names[:2]:
+        second = support.beside(held, 0, name)
+        theirs = stated(second, registry)
+        for match in ("keys", "values"):
+            entry = dict(operation="graphspec.difference", graph=name, parameters={"difference/match": match})
+            left = segments.whole(graph, {name: second}, registry, resolved(registry, [entry]), SEED, LIMITS, None)
+            kept = {
+                key: [
+                    row
+                    for row in rows
+                    if not row[0]
+                    or not any(other[0] and (match == "keys" or other[1] == row[1]) for other in theirs.get(key, []))
+                ]
+                for key, rows in mine.items()
+            }
+            found = stated(left, registry)
+            assert [row for row in listed(found) if row[1][0]] == [row for row in listed(kept) if row[1][0]]
+            assert {row for row in listed(found) if not row[1][0]} <= {row for row in listed(mine) if not row[1][0]}
+            assert observed(left) == observed(graph)
+            removed[name, match] = len(listed(mine)) - len(listed(found))
+    assert 0 < removed[names[1], "values"] <= removed[names[1], "keys"] < removed[names[0], "keys"]
+    LOG.info("difference exit removed=%s seconds=%.3f", removed, time.perf_counter() - started)

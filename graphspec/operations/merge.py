@@ -7,7 +7,7 @@ from graphspec.infra.timing import timed
 
 from .operation import OPERATIONS, Operation, Phase
 from .parameters import choice
-from .rows import FACTS, OBSERVATIONS, keyed_relations, prune, pruned
+from .rows import FACTS, OBSERVATIONS, fact_keys, keyed_relations, prune, pruned, second_of
 
 LOG = logging.getLogger(__name__)
 PREFERRED = ("first", "second")
@@ -22,31 +22,6 @@ def stated(registry):
 
 def carried(registry, spec):
     return {"prune/merge": pruned()}
-
-
-@timed("operators.second_of")
-def second_of(carry, operation):
-    if carry.second is None:
-        raise ValueError("the operation %s takes a second graph and was given none" % operation)
-    return carry.second
-
-
-@timed("operators.fact_keys")
-def fact_keys(registry, *graphs):
-    both = keyed_relations(registry)[1]
-    stacked = []
-    for step, code, source, target in graphs:
-        code, source, target = (np.asarray(values, np.int64) for values in (code, source, target))
-        swap = both[code] & (source > target)
-        stacked.append(
-            np.stack(
-                (np.asarray(step, np.int64), code, np.where(swap, target, source), np.where(swap, source, target)),
-                1,
-            ).reshape(-1, 4)
-        )
-    _, inverse = np.unique(np.concatenate(stacked), axis=0, return_inverse=True)
-    inverse, bounds = inverse.reshape(-1), np.cumsum([0] + [len(held) for held in stacked])
-    return tuple(inverse[low:high] for low, high in zip(bounds[:-1], bounds[1:]))
 
 
 @timed("operators.taken")
@@ -149,7 +124,7 @@ MERGE = OPERATIONS.register(
         splits=(),
         requires=(),
         changes=("observations", "facts"),
-        version=1,
+        version=2,
         graphs=2,
     ),
 )

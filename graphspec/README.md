@@ -7,7 +7,7 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads: the registry of representations and their families, structure, sample and encode (`registry.py`), the arrays every variant holds, their carried state and the arrays over a whole variant (`base.py`), one module per shipped representation (`coupling.py`, `events.py`, `neighbors.py`, `walks.py`, `mixed.py`), what they share (`groups.py`) and their kernels (`kernels.py`) |
 | `engine/` | Derivation of variants, one engine in segments: derivations, continuations and forks, and the build of a variant in the calling process (`segments.py`), the steps of a pipeline on one segment (`transform.py`), the same on worker processes (`schedule.py`), slices and edits (`edits.py`), writing and stitching segments (`stitch.py`), the physical join tests compare against (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
@@ -202,6 +202,14 @@ The entry names its second graph, a graph of the bank shown at the steps of the 
 | Parameter | Range | Effect |
 |---|---|---|
 | `merge/prefer` | first, second | Which graph keeps its rows where both hold an observation of an entity or rows about an edge at one step: the graph changed, or the second. |
+
+9. Difference of two graphs, `graphspec.difference`, which takes two graphs
+
+The entry names its second graph as a merge does. At every step the difference removes the present facts of the graph that the second graph also holds present at that step: the same relation between the same two entities, met by kind and key, in either order for a relation without direction. Observations are kept, and absent rows left without an earlier present row are removed. It carries the state of that removal and nothing else. It draws nothing.
+
+| Parameter | Range | Effect |
+|---|---|---|
+| `difference/match` | keys, values | keys: an edge the second graph holds at the step is removed whatever its values; values: only where the second graph's edge carries the same values, compared as stated, bit for bit, an edge without values matching one without values. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 

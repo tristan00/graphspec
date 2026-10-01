@@ -38,6 +38,32 @@ def counted(counts):
     return np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
 
 
+@timed("operators.second_of")
+def second_of(carry, operation):
+    if carry.second is None:
+        raise ValueError("the operation %s takes a second graph and was given none" % operation)
+    return carry.second
+
+
+@timed("operators.fact_keys")
+def fact_keys(registry, *graphs):
+    both = keyed_relations(registry)[1]
+    stacked = []
+    for columns in graphs:
+        step, code, source, target = (np.asarray(values, np.int64) for values in columns[:4])
+        swap = both[code] & (source > target)
+        stacked.append(
+            np.stack(
+                (step, code, np.where(swap, target, source), np.where(swap, source, target))
+                + tuple(np.asarray(extra, np.int64) for extra in columns[4:]),
+                1,
+            ).reshape(len(step), -1)
+        )
+    _, inverse = np.unique(np.concatenate(stacked), axis=0, return_inverse=True)
+    inverse, bounds = inverse.reshape(-1), np.cumsum([0] + [len(held) for held in stacked])
+    return tuple(inverse[low:high] for low, high in zip(bounds[:-1], bounds[1:]))
+
+
 def fact_bytes(graph):
     return sum(graph.arrays[name].dtype.itemsize for name in FACTS)
 

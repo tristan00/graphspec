@@ -1,3 +1,3 @@
-from . import derive, edges, merge, merging, nodes, periods, relations, window
+from . import derive, difference, edges, merge, merging, nodes, periods, relations, window
 
-__all__ = ["derive", "edges", "merge", "merging", "nodes", "periods", "relations", "window"]
+__all__ = ["derive", "difference", "edges", "merge", "merging", "nodes", "periods", "relations", "window"]

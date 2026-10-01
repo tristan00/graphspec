@@ -51,11 +51,12 @@ VALUES = {
     "relations/types": "untyped",
     "relations/parallel": "merge",
     "merge/prefer": "second",
+    "difference/match": "keys",
 }
 SETTINGS = {"coupling/periods": 1, "events/periods": 1, "mixed/trace": 2}
 GROUPS = specs.GROUPS + (RUNNING.name,)
 ADDED = support.ADDED
-SECOND = 1
+SECONDS = {"graphspec.merge": 1, "graphspec.difference": 0}
 REPEATS, MARGIN = 7, 1.1
 
 
@@ -69,8 +70,8 @@ def registered():
 
 
 def every(opened, registry, joined):
-    name = opened.manifest["graphs"][SECOND]["name"]
-    graphs = {operation: name for operation in ADDED if OPERATIONS.named(operation).graphs == 2}
+    graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
+    assert sorted(graphs) == sorted(name for name in ADDED if OPERATIONS.named(name).graphs == 2)
     entries, rest = support.pipelined(registry, VALUES, support.SEVEN + (TALLY.name,) + ADDED, None, graphs)
     assert rest == {}
     graph = dict(SETTINGS, **({"graphs/join": "single", "graphs/join_size": 4} if joined else {}))
