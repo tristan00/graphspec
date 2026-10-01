@@ -79,7 +79,7 @@ GROUPS = specs.GROUPS + (RUNNING.name,)
 ADDED = support.ADDED
 TESTED = (TALLY, HUB)
 SECONDS = {"graphspec.merge": 1, "graphspec.difference": 0}
-REPEATS, MARGIN = 7, 1.1
+ROUNDS, MARGIN = (8, 32), 1.1
 SHOWN, STEPS, BARE, HOLLOW, UNVALUED = 2, 5, 1, 2, 3
 EMPTIED = dict(
     VALUES,
@@ -538,6 +538,35 @@ def clocked(make):
         gc.enable()
 
 
+def sampled(found, rounds, history, end, changes):
+    started = time.perf_counter()
+    for repeat in range(rounds):
+        if repeat % 2 == 0:
+            spent, held = clocked(history)
+            found["history"].append(spent)
+        forks = ()
+        for change in changes:
+            if repeat % 2:
+                spent, made = clocked(lambda: held.forked(end, (change,)))
+                trunk = clocked(lambda: held.continued(end, None))[0]
+            else:
+                trunk = clocked(lambda: held.continued(end, None))[0]
+                spent, made = clocked(lambda: held.forked(end, (change,)))
+            found["last"].append(trunk)
+            found["fork"].append(spent)
+            forks += made
+    LOG.debug("sampled exit rounds=%d seconds=%.4f", rounds, time.perf_counter() - started)
+    return held, forks
+
+
+def estimated(found, count):
+    started = time.perf_counter()
+    history = min(found["history"])
+    last, fork = (float(np.reshape(found[name], (-1, count)).min(0).sum()) for name in ("last", "fork"))
+    LOG.debug("estimated exit samples=%d seconds=%.4f", len(found["last"]), time.perf_counter() - started)
+    return history, last, fork, (history + fork) / (history + last)
+
+
 @GROUP
 def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_last_step(bank, registered):
     started = time.perf_counter()
@@ -547,25 +576,24 @@ def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_las
     beside = seconds(opened, steps, [1])
     moment = graph.steps - 1
     changes = edits(graph, moment)
-    found = dict(history=[], last=[], fork=[])
-    for _ in range(REPEATS):
-        spent, held = clocked(lambda: begun(graph, beside, registry, steps, spec, 1).continued(moment, None))
-        found["history"].append(spent)
-        forks = ()
-        for change in changes:
-            found["last"].append(clocked(lambda: held.continued(graph.steps, None))[0])
-            spent, fork = clocked(lambda: held.forked(graph.steps, (change,)))
-            found["fork"].append(spent)
-            forks += fork
-    history, last = float(np.median(found["history"])), float(np.median(found["last"]))
-    fork = last + float(np.median(np.subtract(found["fork"], found["last"])))
+    found, ratio = dict(history=[], last=[], fork=[]), np.inf
+    for rounds in ROUNDS:
+        if ratio > MARGIN:
+            held, forks = sampled(
+                found,
+                rounds,
+                lambda: begun(graph, beside, registry, steps, spec, 1).continued(moment, None),
+                graph.steps,
+                changes,
+            )
+            history, last, fork, ratio = estimated(found, len(changes))
     derived = [item for derivation in (held,) + forks for item in derivation.segments]
     assert [item.high - item.low for item in derived] == [moment] + [graph.steps - moment] * len(changes)
-    assert all(fork.parent is held and fork.derivations()[:1] == held.derivations() for fork in forks)
-    ratio = (history + len(changes) * fork) / (history + len(changes) * last)
+    assert all(made.parent is held and made.derivations()[:1] == held.derivations() for made in forks)
     LOG.info(
-        "edits at one time exit edits=%d history=%.4f last=%.4f fork=%.4f ratio=%.3f seconds=%.3f",
+        "edits at one time exit edits=%d rounds=%d history=%.4f last=%.4f fork=%.4f ratio=%.3f seconds=%.3f",
         len(changes),
+        len(found["last"]) // len(changes),
         history,
         last,
         fork,
