@@ -52,4 +52,5 @@ def reading(registry, name):
 HEADS.register("number", Attached((), number))
 HEADS.register("path", Attached(("time/encoding",), path))
 HEADS.register("class", Attached((), scores))
+HEADS.register("classes", Attached((), scores))
 ship([HEADS])

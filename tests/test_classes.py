@@ -20,8 +20,9 @@ LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("classes")
 SITES = ("s0", "s1", "s2", "s3", "s4", "s5")
 GRADES = ["low", "mid", "high"]
+TAGS = ["red", "green", "blue"]
 TIMES = (1, 2, 3, 4, 5, 6, 7, 8)
-KINDS = dict(level=("number", "size"), grade=("class", GRADES))
+KINDS = dict(level=("number", "size"), grade=("class", GRADES), tags=("classes", TAGS))
 
 
 @timed("classes.aimed")
@@ -65,7 +66,9 @@ def schema(kinds):
 def stated(kind, at, place):
     if kind == "level":
         return 0.5 * at + place
-    return GRADES[(at + place) % 3]
+    if kind == "grade":
+        return GRADES[(at + place) % 3]
+    return [name for bit, name in enumerate(TAGS) if (at * place) % 8 >> bit & 1]
 
 
 @timed("classes.graph")
@@ -120,15 +123,16 @@ def test_every_kind_over_classes_reads_back_as_stated_with_its_classes_as_its_se
     held = Deriver(bank, "cpu", RESIDENT)
     schema = held.registry.schema
     assert schema.targets() == tuple(kind for kind, _ in KINDS.values())
-    assert schema.series() == ("size", *GRADES) and schema.target_columns() == dict(series="STRING")
+    assert schema.series() == ("size", *GRADES, *TAGS) and schema.target_columns() == dict(series="STRING")
     wanted = {
         (graph["name"], kind, key): target
         for graph in case["graphs"]
         for kind, key, target in zip(graph["tasks"]["kind"], graph["tasks"]["key"], graph["tasks"]["target"])
     }
-    assert read(held) == wanted
+    assert read(held) == wanted and [] in wanted.values()
     assert [entry["name"] for entry in held.split["series"]] == ["size"]
-    assert held.center[1:].tolist() == [0.0] * 3 and held.scale[1:].tolist() == [1.0] * 3
+    classes = len(schema.series()) - 1
+    assert held.center[1:].tolist() == [0.0] * classes and held.scale[1:].tolist() == [1.0] * classes
     grade = [row for row in held.rows if row["kind"] == "grade"]
     assert len(grade) == 3 * sum(kind == "grade" for _, kind, _ in wanted) and {row["y"] for row in grade} == {0.0, 1.0}
 
@@ -178,21 +182,54 @@ def test_a_class_is_predicted_by_scores_its_loss_normalises_per_task_and_its_mea
     assert sum(metrics["entropy"]["series"].values()) == pytest.approx(metrics["entropy"]["value"])
 
 
+def test_a_set_of_classes_is_one_decision_per_class_by_its_loss_and_its_measure():
+    import torch
+    from torch.nn import functional as F
+
+    from tuning.fits.losses import LOSSES
+    from tuning.measures.measures import measured, predicted, scored
+
+    where, kind = "the target of the kind of task tags", TARGETS.named("classes")
+    for wrong in (["red", "red"], ["pink"], "red"):
+        with pytest.raises(ValueError, match="a list of distinct classes of red, green, blue, possibly none"):
+            kind.staged(wrong, tuple(TAGS), where)
+    assert [row["y"] for row in kind.staged(["blue", "red"], tuple(TAGS), where)] == [1.0, 0.0, 1.0]
+    rows = dict(task=[0, 0, 0], graph=["g0"] * 3, y=[1.0, 0.5, 0.0], series=TAGS)
+    with pytest.raises(ValueError, match="state 1 for every class of the set of a task and 0 for every other"):
+        kind.points(rows, tuple(TAGS), where)
+    assert kind.read([dict(series=name, y=y) for name, y in zip(TAGS, [1.0, 0.0, 1.0])]) == ["red", "blue"]
+    scores = torch.tensor([2.0, -1.0, 0.0, 0.5, 3.0, -2.0])
+    target, weight = torch.tensor([1.0, 0, 0, 1, 1, 0]), torch.tensor([1.0] * 3 + [2.0] * 3)
+    batch = dict(target=target, weight=weight, point_row=torch.tensor([0, 0, 0, 1, 1, 1]), tasks=2)
+    error = F.binary_cross_entropy_with_logits(scores, target, reduction="none")
+    assert float(LOSSES.named("binary")(scores, batch, None)) == pytest.approx(float((weight * error).sum() / 9))
+    probability = predicted(("classes",), np.zeros(6, np.int64), np.repeat([0, 1], 3), scores.numpy())
+    assert np.allclose(probability, torch.sigmoid(scores).numpy())
+    held = scored(target.numpy(), probability, np.repeat([0, 1], 3), np.tile(np.arange(3), 2), TAGS, np.ones(3))
+    found = measured(["binary"], held, dict.fromkeys(TAGS, "classes"))["binary"]
+    assert found["value"] == pytest.approx(float(error.mean()))
+    assert found["series"]["blue"] == pytest.approx(float(error[[2, 5]].mean()))
+
+
 def test_a_bank_of_a_number_and_kinds_over_classes_completes_one_fit(classes, tmp_path, statement, monkeypatch):
     bank = classes[0]
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
     held = Deriver(bank, "cpu", RESIDENT)
-    losses = {"number": "squared", "class": "entropy"}
-    given = dict(statement, loss=losses, measures=["entropy", "accuracy", "mse"])
+    losses = {"number": "squared", "class": "entropy", "classes": "binary"}
+    given = dict(statement, loss=losses, measures=["entropy", "accuracy", "mse", "binary"])
     started = time.perf_counter()
     fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
     LOG.info("fit of kinds over classes exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20 and saved["loss"] == given["loss"]
-    assert list(saved["measures"]["accuracy"]["series"]) == GRADES and list(saved["measures"]["mse"]["series"]) == ["size"]
-    assert 0 <= saved["measures"]["accuracy"]["value"] <= 1 and np.isfinite(saved["measures"]["entropy"]["value"])
+    measures = saved["measures"]
+    assert list(measures["accuracy"]["series"]) == GRADES and list(measures["mse"]["series"]) == ["size"]
+    assert list(measures["binary"]["series"]) == TAGS and 0 <= measures["accuracy"]["value"] <= 1
+    assert np.isfinite([measures[name]["value"] for name in ("entropy", "binary", "mse")]).all()
     with np.load(tmp_path / "predictions.npz") as found:
-        aim, task = found["aim"], held.task_of[found["row_index"]]
-        chosen = aim == 1
-        assert np.allclose(np.bincount(task[chosen], found["prediction"][chosen])[np.unique(task[chosen])], 1.0)
-        assert ((found["prediction"][chosen] > 0) & (found["prediction"][chosen] < 1)).all()
+        aim, task, prediction = found["aim"], held.task_of[found["row_index"]], found["prediction"]
+        assert set(aim.tolist()) == set(range(len(KINDS)))
+        chosen = aim == list(KINDS).index("grade")
+        assert np.allclose(np.bincount(task[chosen], prediction[chosen])[np.unique(task[chosen])], 1.0)
+        chosen = aim != list(KINDS).index("level")
+        assert ((prediction[chosen] > 0) & (prediction[chosen] < 1)).all()

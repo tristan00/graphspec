@@ -76,6 +76,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 | `squared` | `number`, `path` | the mean over the points of the batch of the squared error, weighted by the weight of their task |
 | `balanced` | `number`, `path` | the squared error averaged within each task and series, then over the tasks of each series by their weights, then over the series |
 | `entropy` | `class` | the cross-entropy of the stated `y` of the points of a task with the exponentials of their values normalised over the task, averaged over the tasks by their weights |
+| `binary` | `classes` | the binary cross-entropy of each point's `y` with one over one plus the exponential of minus its value, one decision per class, averaged over the points by the weights of their tasks |
 
 | Measure | Reads | Better | Value, and per series the same over its points |
 |---|---|---|---|
@@ -84,6 +85,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 | `balanced` | `number`, `path` | lower | per series, the squared error averaged within each task, then over its tasks, over the variance the series was scaled by; the value is their mean |
 | `accuracy` | `class` | higher | the share of tasks whose most probable class, the first in order of the classes where several tie, is their class; per class, the share of tasks where that class is chosen exactly when it is theirs |
 | `entropy` | `class` | lower | the mean over tasks of minus the sum over their points of `y` times the logarithm of the predicted probability; per class, its part of that sum, so the values per class add up to the value |
+| `binary` | `classes` | lower | the mean over the points of minus the logarithm of the probability predicted for what the point states, `y` 1 or 0; per class, the same over its points |
 - The saved checkpoint is reloaded and must reproduce the first validation batch.
 - The configured `--seconds` budget covers selection, layout, source capture, variant building, packing, training, and evaluation. At the deadline the runner records a timeout and waits for every owned worker to exit before continuing. Pruning runs after cleanup, outside the trial budget. Late outputs are retained with `late_` names; incomplete trials receive no prediction score. `trial.json` records phase timings.
 

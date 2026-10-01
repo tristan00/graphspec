@@ -135,6 +135,22 @@ class Entropy:
         )
 
 
+class Binary:
+    reads = ("classes",)
+    better = "lower"
+    label, short = "Validation binary log loss", "Binary log loss"
+
+    @timed("measures.binary")
+    def __call__(self, held):
+        part, stated = np.zeros(len(held.target)), held.target == 1
+        part[stated] = -np.log(held.prediction[stated])
+        part[~stated] = -np.log1p(-held.prediction[~stated])
+        return dict(
+            value=float(part.mean()),
+            series={name: float(part[held.series == code].mean()) for code, name in enumerate(held.names)},
+        )
+
+
 def predicted(kinds, aims, task, values):
     started = time.perf_counter()
     result = np.asarray(values, np.float64).copy()
@@ -183,4 +199,5 @@ MEASURES.register("r2", Determination())
 MEASURES.register("balanced", Balanced())
 MEASURES.register("accuracy", Accuracy())
 MEASURES.register("entropy", Entropy())
+MEASURES.register("binary", Binary())
 ship([MEASURES])

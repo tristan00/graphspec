@@ -218,8 +218,53 @@ class Class:
         return normalised(values, task)
 
 
+class Classes:
+    scaled = False
+    matures = False
+    columns = dict(series="STRING")
+    fields = ()
+
+    @timed("targets.classes.series")
+    def series(self, stated, where):
+        return counted(stated, 1, where)
+
+    @timed("targets.classes.written")
+    def written(self, series):
+        return list(series)
+
+    @timed("targets.classes.points")
+    def points(self, rows, series, where):
+        _, y = classed(rows, series, where)
+        if np.any((y != 0) & (y != 1)):
+            raise ValueError(
+                "the points of %s state 1 for every class of the set of a task and 0 for every other" % where
+            )
+        return dict(series=list(rows["series"]))
+
+    @timed("targets.classes.staged")
+    def staged(self, stated, series, where):
+        if (
+            not isinstance(stated, list)
+            or any(type(name) is not str or name not in series for name in stated)
+            or len(set(stated)) != len(stated)
+        ):
+            raise ValueError(
+                "%s states its target as a list of distinct classes of %s, possibly none, found %r"
+                % (where, ", ".join(series), stated)
+            )
+        return [dict(series=name, y=float(name in stated)) for name in series]
+
+    @timed("targets.classes.read")
+    def read(self, rows):
+        return [row["series"] for row in rows if row["y"] == 1]
+
+    @timed("targets.classes.predicted")
+    def predicted(self, values, task):
+        return np.exp(-np.logaddexp(0, -np.asarray(values, np.float64)))
+
+
 class Weighted:
-    reads = ("number", "path", "class")
+    reads = ("number", "path", "class", "classes")
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")
@@ -254,4 +299,5 @@ def valued(target, points):
 TARGETS.register("number", Number())
 TARGETS.register("path", Path())
 TARGETS.register("class", Class())
+TARGETS.register("classes", Classes())
 UTILITIES.register("weighted", Weighted())

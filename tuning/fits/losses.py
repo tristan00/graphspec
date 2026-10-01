@@ -61,6 +61,16 @@ class Entropy:
         return (weight * task).sum() / weight.sum()
 
 
+class Binary:
+    reads = ("classes",)
+
+    def __call__(self, predictions, batch, bank):
+        from torch.nn import functional as F
+
+        error = F.binary_cross_entropy_with_logits(predictions, batch["target"], reduction="none")
+        return (batch["weight"] * error).sum() / batch["weight"].sum()
+
+
 @timed("losses.readers")
 def readers(registry, kind):
     return tuple(name for name in registry.names() if kind in registry.named(name).reads)
@@ -132,4 +142,5 @@ def admitted(kinds, loss, measures):
 LOSSES.register("squared", Squared())
 LOSSES.register("balanced", Balanced())
 LOSSES.register("entropy", Entropy())
+LOSSES.register("binary", Binary())
 ship([LOSSES])
