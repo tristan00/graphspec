@@ -51,7 +51,7 @@ class Table:
     def replaced(self, touched, keys, **columns):
         kept = ~np.isin(self.keys, np.asarray(touched, np.int64))
         return Table(
-            np.r_[self.keys[kept], np.asarray(keys, np.int64)],
+            np.concatenate((self.keys[kept], np.asarray(keys, np.int64))),
             **{
                 name: np.concatenate((self.columns[name][kept], np.asarray(value)))
                 for name, value in columns.items()
@@ -69,9 +69,9 @@ class Entities:
     @timed("carry.entities.added")
     def added(self, kinds, tokens):
         return Entities(
-            np.r_[self.kinds, np.asarray(kinds, self.kinds.dtype)],
-            np.r_[self.tokens, np.asarray(tokens, self.tokens.dtype)],
-            np.r_[self.connected, np.zeros(len(kinds), bool)],
+            np.concatenate((self.kinds, np.asarray(kinds, self.kinds.dtype))),
+            np.concatenate((self.tokens, np.asarray(tokens, self.tokens.dtype))),
+            np.concatenate((self.connected, np.zeros(len(kinds), bool))),
         )
 
 

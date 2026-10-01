@@ -153,7 +153,7 @@ def complete(graph, registry, selected, within, present, u, v, budget):
     if not len(within):
         flat, offsets = members, np.asarray([0, len(members)], np.int64)
     else:
-        anchors, linked = np.r_[u, v], np.r_[v, u]
+        anchors, linked = np.concatenate((u, v)), np.concatenate((v, u))
         use = np.isin(graph.kinds[anchors], within) & np.isin(linked, members)
         anchors, linked = anchors[use], linked[use]
         order = np.argsort(anchors, kind="stable")
@@ -191,7 +191,7 @@ def widen(slots, keys_low, keys_high, count, extra, budget):
 
 @timed("operators.closure")
 def closure(registry, u, v, limit, entities, budget):
-    source, target = np.r_[u, v].astype(np.int64), np.r_[v, u].astype(np.int64)
+    source, target = np.concatenate((u, v)).astype(np.int64), np.concatenate((v, u)).astype(np.int64)
     order = np.argsort(source, kind="stable")
     source, target = source[order], target[order]
     starts = np.searchsorted(source, np.arange(entities + 1))
@@ -226,7 +226,7 @@ def closure(registry, u, v, limit, entities, budget):
         result.append(
             (a.astype(np.int32), b.astype(np.int32), np.full(len(a), registry.code(hop(distance)), np.int64))
         )
-        left, middle = np.r_[a, b], np.r_[b, a]
+        left, middle = np.concatenate((a, b)), np.concatenate((b, a))
     return result
 
 
@@ -630,11 +630,11 @@ def derived_rows(graph, found, stop, budget):
     budget.workspace(total * 32 + (len(ends) + len(stop[0])) * budget.fact_bytes * 2, "derived fact assembly")
     return extend(
         graph,
-        np.r_[source, source[ends], stop[0]],
-        np.r_[target, target[ends], stop[1]],
-        np.r_[code, code[ends], stop[2]],
-        np.r_[step, step[ends] + 1, np.zeros(len(stop[0]), np.int32)],
-        np.r_[np.ones(len(step), bool), np.zeros(len(ends) + len(stop[0]), bool)],
+        np.concatenate((source, source[ends], stop[0])),
+        np.concatenate((target, target[ends], stop[1])),
+        np.concatenate((code, code[ends], stop[2])),
+        np.concatenate((step, step[ends] + 1, np.zeros(len(stop[0]), np.int32))),
+        np.concatenate((np.ones(len(step), bool), np.zeros(len(ends) + len(stop[0]), bool))),
         np.full(total, -1, np.int32),
     )
 
@@ -714,7 +714,7 @@ DERIVE = OPERATIONS.register(
         ),
         changes=("facts",),
         adds=None,
-        version=7,
+        version=8,
         graphs=1,
     ),
 )

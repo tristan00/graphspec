@@ -32,18 +32,18 @@ def coupled(shown, state):
     entity, step = own["entity"].astype(np.int64), own["step"].astype(np.int64)
     halo = np.flatnonzero(np.isin(state["entity"], entity))
     count = len(halo)
-    values, (ext_entity,) = localized(np.r_[state["entity"][halo], entity])
+    values, (ext_entity,) = localized(np.concatenate((state["entity"][halo], entity)))
     source, target = coupling_edges(
-        ext_entity, np.r_[state["step"][halo], step], spec, INFINITE, INFINITE, len(values), budget
+        ext_entity, np.concatenate((state["step"][halo], step)), spec, INFINITE, INFINITE, len(values), budget
     )
     kept = target >= count
     source = resolved(source[kept], count, state["row"][halo], obs0)
     target = obs0 + target[kept].astype(np.int64) - count
     budget.retain(len(source), "temporal coupling")
     connected = work["connected"]
-    merged_entity = np.r_[state["entity"], entity[connected]]
-    merged_row = np.r_[state["row"], obs0 + np.flatnonzero(connected)]
-    merged_step = np.r_[state["step"], step[connected]]
+    merged_entity = np.concatenate((state["entity"], entity[connected]))
+    merged_row = np.concatenate((state["row"], obs0 + np.flatnonzero(connected)))
+    merged_step = np.concatenate((state["step"], step[connected]))
     order = np.lexsort((merged_row, merged_entity))
     merged_entity, merged_row, merged_step = merged_entity[order], merged_row[order], merged_step[order]
     limit = tail_length(spec)
@@ -62,12 +62,12 @@ def bounded(shown, lookback, window):
     shift = max(work["group0"] - lookback, 0)
     halo = np.flatnonzero((recent["group"] >= shift) & np.isin(recent["entity"], own["entity"]))
     count = len(halo)
-    values, (ext_entity,) = localized(np.r_[recent["entity"][halo], own["entity"]])
+    values, (ext_entity,) = localized(np.concatenate((recent["entity"][halo], own["entity"])))
     result = observation_boundaries(
         ext_entity,
-        np.r_[recent["step"][halo], own["step"]].astype(np.int64),
-        np.r_[recent["group"][halo], work["group"]].astype(np.int64) - shift,
-        np.r_[recent["period"][halo], own["obs_period"]],
+        np.concatenate((recent["step"][halo], own["step"])).astype(np.int64),
+        np.concatenate((recent["group"][halo], work["group"])).astype(np.int64) - shift,
+        np.concatenate((recent["period"][halo], own["obs_period"])),
         lookback,
         window,
         len(values),

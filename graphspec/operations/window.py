@@ -101,13 +101,13 @@ def held(graph, carry):
     added_obs, added_facts = len(obs["entity"]), len(facts["source"])
     if not added_obs and not added_facts:
         return graph, obs, facts
-    graph, _ = carry.widened(graph, np.r_[obs["entity"], facts["source"], facts["target"]])
+    graph, _ = carry.widened(graph, np.concatenate((obs["entity"], facts["source"], facts["target"])))
     tables = len(graph.x_table), len(graph.value_table)
-    carry.x_global = np.r_[carry.x_global, obs["ref"]]
-    carry.value_global = np.r_[carry.value_global, facts["ref"]]
+    carry.x_global = np.concatenate((carry.x_global, obs["ref"]))
+    carry.value_global = np.concatenate((carry.value_global, facts["ref"]))
 
     def prefixed(name, values):
-        return np.r_[np.asarray(values), graph.arrays[name]].astype(graph.arrays[name].dtype)
+        return np.concatenate((np.asarray(values), graph.arrays[name])).astype(graph.arrays[name].dtype)
 
     values = facts["values"].reshape(added_facts, graph.value_table.shape[1])
     rows = obs["x"].reshape(added_obs, graph.x_table.shape[1])
@@ -244,7 +244,7 @@ WINDOW = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=None,
-        version=4,
+        version=5,
         graphs=1,
     ),
 )

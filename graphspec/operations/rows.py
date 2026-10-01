@@ -74,7 +74,7 @@ def fact_bytes(graph):
 @timed("operators.made_rows")
 def made_rows(graph, carry, rows):
     start = len(graph.x_table)
-    carry.x_global = np.r_[carry.x_global, np.full(len(rows), -1, np.int64)]
+    carry.x_global = np.concatenate((carry.x_global, np.full(len(rows), -1, np.int64)))
     grown = graph.replace(x_table=np.concatenate((graph.x_table, np.asarray(rows, graph.x_table.dtype))))
     return grown, start + np.arange(len(rows))
 
@@ -82,7 +82,7 @@ def made_rows(graph, carry, rows):
 @timed("operators.made_values")
 def made_values(graph, carry, values):
     start = len(graph.value_table)
-    carry.value_global = np.r_[carry.value_global, np.full(len(values), -1, np.int64)]
+    carry.value_global = np.concatenate((carry.value_global, np.full(len(values), -1, np.int64)))
     grown = graph.replace(value_table=np.concatenate((graph.value_table, np.asarray(values, graph.value_table.dtype))))
     return grown, start + np.arange(len(values))
 
@@ -201,12 +201,12 @@ def collapsed(graph, carry, name, base, pair):
     live = carry.state[name]
     chosen = np.flatnonzero(np.isin(live.columns["pair"], pair))
     added = len(chosen)
-    source = np.r_[carry.local(live.columns["source"][chosen]), graph.fact_source].astype(np.int64)
-    target = np.r_[carry.local(live.columns["target"][chosen]), graph.fact_target].astype(np.int64)
-    code = np.r_[live.columns["code"][chosen], graph.fact_code].astype(np.int64)
-    pair = np.r_[live.columns["pair"][chosen], pair]
-    present = np.r_[np.ones(added, bool), graph.fact_present]
-    base = np.r_[np.ones(added, bool), base]
+    source = np.concatenate((carry.local(live.columns["source"][chosen]), graph.fact_source)).astype(np.int64)
+    target = np.concatenate((carry.local(live.columns["target"][chosen]), graph.fact_target)).astype(np.int64)
+    code = np.concatenate((live.columns["code"][chosen], graph.fact_code)).astype(np.int64)
+    pair = np.concatenate((live.columns["pair"][chosen], pair))
+    present = np.concatenate((np.ones(added, bool), graph.fact_present))
+    base = np.concatenate((np.ones(added, bool), base))
     typed, typed_count = kernels.keyed(source, target, code)
     pairs, pair_count = kernels.keyed(pair, np.zeros(len(pair), np.int64), np.zeros(len(pair), np.int64))
     result = kernels.collapsing(typed, pairs, present, base, typed_count, pair_count)[added:]
@@ -292,15 +292,17 @@ def prune_mask(fact_source, fact_target, fact_code, fact_present, kept, connecte
     state = table.lookup("state", keys, 0)
     carried = np.flatnonzero(state > 0)
     first = carried[np.unique(keys[carried], return_index=True)[1]]
-    source, target, code = (np.r_[column[first], column] for column in (fact_source, fact_target, fact_code))
-    present = np.r_[np.ones(len(first), bool), fact_present]
-    everything = np.r_[state[first] == 2, kept]
+    source, target, code = (
+        np.concatenate((column[first], column)) for column in (fact_source, fact_target, fact_code)
+    )
+    present = np.concatenate((np.ones(len(first), bool), fact_present))
+    everything = np.concatenate((state[first] == 2, kept))
     ids, count = kernels.keyed(source, target, code)
     result = kernels.orphans(ids, present, everything, count)[len(first) :]
     stated = np.bincount(ids[present], minlength=count) > 0
     surviving = np.bincount(ids[present & everything], minlength=count) > 0
     group_key = np.zeros(count, np.int64)
-    group_key[ids] = np.r_[keys[first], keys]
+    group_key[ids] = np.concatenate((keys[first], keys))
     lasting = np.zeros(count, bool)
     lasting[ids[connected[source] & connected[target]]] = True
     chosen = lasting & stated

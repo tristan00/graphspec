@@ -119,9 +119,9 @@ def ends(source, target):
     started = time.perf_counter()
     source, target = np.asarray(source, np.int64), np.asarray(target, np.int64)
     ended = target >= 0
-    member = np.r_[np.arange(len(source)), np.flatnonzero(ended)]
-    entity = np.r_[source, target[ended]]
-    side = np.r_[np.zeros(len(source), np.int64), np.ones(int(ended.sum()), np.int64)]
+    member = np.concatenate((np.arange(len(source)), np.flatnonzero(ended)))
+    entity = np.concatenate((source, target[ended]))
+    side = np.concatenate((np.zeros(len(source), np.int64), np.ones(int(ended.sum()), np.int64)))
     order = np.lexsort((side, member))
     LOG.debug(
         "ends exit members=%d ends=%d seconds=%.4f", len(source), len(order), time.perf_counter() - started

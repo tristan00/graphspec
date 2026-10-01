@@ -118,22 +118,22 @@ UNVERSIONED = (
 )
 RECORDED = {
     "graphspec.periods": (4, "833fd7fb35eaef6a8a2309f05dafb53a409bc21e65310a4225e80bb7670404fe"),
-    "graphspec.window": (4, "dc35f29fc4bb983dee9e12afc23f2f48203f8098273bd5ff6ca3e57991a82b91"),
+    "graphspec.window": (5, "b7d4d2a10361e022d345186fb40194ea9d1a0a536fa9d65f4e7eaaf8aa2c5586"),
     "graphspec.nodes": (5, "fc4461207563604f6bbf15dcb6179f055a01c3e7fb3919b39da9e4fc4e39a5d9"),
-    "graphspec.derive": (7, "7b2389d3777842db2fb2c8aba73c7804879bbd7459413c6e5a24007a65942908"),
+    "graphspec.derive": (8, "a57e77a4cda3a91f05dd09852b3a0ab6f654602be738964beee1b034f6ac41fa"),
     "graphspec.relations": (4, "80fed54864b81ef92d3af86fcd1c7c6b9ceb7127eee7c775396477e826a23c22"),
     "graphspec.edges": (7, "7eb1624b913bb05d4c3453eb7623c993cde9a91b620209868768c824e6e80c2e"),
     "graphspec.relation_forms": (2, "00ab0156147143a114a8e8ce1468c6eb34e4a8eeb08df6979b2a944575bc1a24"),
-    "graphspec.merge": (3, "afdb91c799bcde74c9462c3f612ea7feb1adaa8ee087077eeb3a9cd6f17151df"),
+    "graphspec.merge": (4, "4f6e1d23353434448c0696906cf81772869a88b5c25c31530cf8d07ff29eebb9"),
     "graphspec.difference": (2, "9adfe2580659300250191f439fbf126cf40dbd40f3d05ac1a16443f2efbd6add"),
     "graphspec.nearby": (3, "903ff24554e9d3c80484b42ca19c9259e4b32c89799c9260816318922db84c85"),
     "graphspec.consecutive": (2, "ea9ecdde8c855684f92f3b32b2c8bf3f50ed1fa424643e115c4ffc936b576e75"),
     "graphspec.neighbourhood": (2, "02dc2af70bd30e2210f58b83494302577d4063a4998954f09a449aac1a7fcae8"),
     "graphspec.measures": (1, "acac779ee89e556e2e24cb89afd4bf2556f4a10d92be25121cfcd963f9a53bce"),
     "graphspec.contract": (1, "1416bce1428c04d438d85a51f279a78be81f346224933126716046741adaace9"),
-    "derivation": (19, "e1d819882a73a831cfe29705ef84591677be02597fda2982f23c04da253c5b21"),
-    "views": (15, "22621e012607100802bfd6cafd8d17db5654b31e93b33e6611e4813dddfaf960"),
-    "representations": (9, "429c42ff53d167fc7168d6103b71493f862a3c64c318d3a38bd8f47512690583"),
+    "derivation": (20, "2e56c693036f6a13a0bd39db167922c886ea208514749e3a628d7ba78b75f1e7"),
+    "views": (16, "dfd23951abe25f348f59f4e76dff17e5f438a33e1c240b036ef0be1edeeedfe0"),
+    "representations": (10, "0e385b22162863b29890a99ab40c93bc6f5d3e8c8ef9c5014c92009031551eca"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }
 

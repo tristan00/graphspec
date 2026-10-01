@@ -33,9 +33,9 @@ def taken(prefer, mine, theirs):
 
 @timed("operators.merged_rows")
 def merged_rows(graph, names, added, kept, moments):
-    order = np.argsort(np.r_[moments[0][kept[0]], moments[1][kept[1]]], kind="stable")
+    order = np.argsort(np.concatenate((moments[0][kept[0]], moments[1][kept[1]])), kind="stable")
     return {
-        name: np.r_[np.asarray(graph.arrays[name])[kept[0]], np.asarray(added[name])[kept[1]]].astype(
+        name: np.concatenate((np.asarray(graph.arrays[name])[kept[0]], np.asarray(added[name])[kept[1]])).astype(
             graph.arrays[name].dtype
         )[order]
         for name in names
@@ -108,8 +108,8 @@ def merge(graph, registry, spec, seed, limits, carry, held):
         **observations,
         **facts,
     )
-    carry.x_global = np.r_[carry.x_global, second.x_global]
-    carry.value_global = np.r_[carry.value_global, second.value_global]
+    carry.x_global = np.concatenate((carry.x_global, second.x_global))
+    carry.value_global = np.concatenate((carry.value_global, second.value_global))
     return prune(merged, ~facts["fact_present"] | shown, carry, "merge")
 
 
@@ -125,7 +125,7 @@ MERGE = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=None,
-        version=3,
+        version=4,
         graphs=2,
     ),
 )

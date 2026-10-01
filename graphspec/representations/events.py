@@ -20,7 +20,7 @@ def horizon(spec):
 
 
 def extended(recent, halo, events):
-    ext = np.r_[recent["events"][halo], events].astype(np.int32)
+    ext = np.concatenate((recent["events"][halo], events)).astype(np.int32)
     values, (left, right) = localized(ext[:, 0], ext[:, 1])
     ext[:, 0], ext[:, 1] = left, right
     return values, ext
@@ -36,8 +36,8 @@ def piece(shown, state):
     halo = np.flatnonzero(known & (recent["events"][:, 2] >= 2 * work["first_step"] - spec["events/window"]))
     count = len(halo)
     values, ext = extended(recent, halo, events)
-    identity = np.r_[recent["identity"][halo], shown.work["identity"]]
-    before, after = event_edges(ext, identity, np.r_[known[halo], member], spec, len(values), budget)
+    identity = np.concatenate((recent["identity"][halo], shown.work["identity"]))
+    before, after = event_edges(ext, identity, np.concatenate((known[halo], member)), spec, len(values), budget)
     kept = after >= count
     before = resolved(before[kept], count, recent["id"][halo], events0)
     after = events0 + after[kept].astype(np.int64) - count
@@ -55,9 +55,9 @@ def piece(shown, state):
         values, ext = extended(recent, halo, events)
         edges = event_boundaries(
             ext,
-            np.r_[known[halo], member],
-            np.r_[recent["group"][halo], work["event_group"]].astype(np.int64) - shift,
-            np.r_[recent["period"][halo], work["event_period"]],
+            np.concatenate((known[halo], member)),
+            np.concatenate((recent["group"][halo], work["event_group"])).astype(np.int64) - shift,
+            np.concatenate((recent["period"][halo], work["event_period"])),
             lookback,
             spec["events/period_window"],
             len(values),

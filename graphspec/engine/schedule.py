@@ -11,6 +11,7 @@ import numpy as np
 
 from graphspec import registries
 from graphspec.infra.files import Arrays, save_array
+from graphspec.infra.hashing import hashed
 from graphspec.infra.processes.processes import guarded, spawned, worker_threads
 from graphspec.infra.timing import measure
 from graphspec.operations import pipeline
@@ -63,6 +64,7 @@ def staging(steps, registry):
 def attach(jobs, registry, stated, spec, groups, seed, limits, partitions, threads):
     started = time.perf_counter()
     numba.set_num_threads(threads)
+    hashed(np.zeros(0, np.uint64))
     steps = pipeline.resolved(registry, stated)
     PIPE.clear()
     PIPE.update(
@@ -367,8 +369,8 @@ def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partiti
                         LOG.info("segments represented job=%d seconds=%.3f", job, time.perf_counter() - started)
                         heapq.heappush(waiting, (-1, RANK["stitch"], job, "stitch", (index,)))
     finally:
-        with ThreadPoolExecutor(workers) as closing:
-            list(closing.map(lambda executor: executor.shutdown(cancel_futures=True), executors))
+        for executor in executors:
+            executor.shutdown(wait=False, cancel_futures=True)
     LOG.info(
         "segments parallel build exit seconds=%.3f groups=%d segments=%d workers=%d stages=%d busy=%s",
         time.perf_counter() - started,
