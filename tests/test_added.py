@@ -721,3 +721,158 @@ def test_an_entry_that_names_a_kind_an_earlier_contraction_or_nodes_removed_is_r
             assert len(resolved(registry, [removal, merged, later])) == 3
             assert len(resolved(registry, [removal] + quiet)) == 4
     LOG.info("refused exit cases=%d seconds=%.3f", len(REFUSED) * len(REMOVERS), time.perf_counter() - started)
+
+
+@timed("added.runs")
+def runs(graph):
+    begun, last, result = {}, {}, {}
+    for row in np.flatnonzero(graph.fact_present).tolist():
+        key, step = (int(graph.fact_code[row]), int(graph.fact_source[row]), int(graph.fact_target[row])), int(graph.fact_step[row])
+        if last.get(key) not in (step, step - 1):
+            begun[key] = step
+        last[key] = step
+        result[row] = begun[key]
+    return result
+
+
+@timed("added.stepped")
+def stepped(graph, registry, rows, begun, step, aggregate):
+    table, direction, column = step
+    codes = set(np.concatenate([registry.coded[group] for group in registry.groups]).tolist()) if table == "*" else set(registry.coded[table].tolist())
+    found, ages = {}, {}
+    for row in rows:
+        if int(graph.fact_code[row]) not in codes:
+            continue
+        value = 1.0
+        if column is not None:
+            reference = int(graph.fact_ref[row])
+            value = np.nan if reference < 0 else float(graph.value_table[reference, registry.attributes(table).index(column)])
+            if value != value:
+                continue
+        a, b = int(graph.fact_source[row]), int(graph.fact_target[row])
+        ends = {"forward": [(a, b)], "backward": [(b, a)], "both": [(a, b), (b, a)]}[direction]
+        for pair in ends:
+            found[pair] = value if pair not in found or aggregate in (None, "paths") else PLUS[aggregate](found[pair], value)
+            ages[pair] = max(ages.get(pair, -1), begun[row])
+    return found, ages
+
+
+PLUS = dict(paths=lambda a, b: a + b, product=lambda a, b: a + b, shortest=min, widest=max)
+TIMES = dict(paths=lambda a, b: a * b, product=lambda a, b: a * b, shortest=lambda a, b: a + b, widest=min)
+
+
+@timed("added.latest")
+def latest(found, ages, tokens, cap, middle):
+    if not cap:
+        return found
+    kept = set()
+    for node in {pair[middle] for pair in found}:
+        others = sorted(((ages[pair], int(tokens[pair[1 - middle]])), pair) for pair in found if pair[middle] == node)
+        kept |= {pair for _, pair in others[::-1][:cap]}
+    return {pair: value for pair, value in found.items() if pair in kept}
+
+
+@timed("added.multiplied")
+def multiplied(left, right, aggregate):
+    found = {}
+    for (a, b), x in left.items():
+        for (c, d), y in right.items():
+            if b == c:
+                value = TIMES[aggregate or "paths"](x, y)
+                found[a, d] = value if (a, d) not in found else PLUS[aggregate or "paths"](found[a, d], value)
+    return found
+
+
+@timed("added.enumerated")
+def enumerated(graph, registry, stated):
+    steps = [tuple(part.split(":")) + (None,) * (3 - len(part.split(":"))) for part in stated["product/path"].split(",")]
+    valued = all(step[2] is not None for step in steps)
+    aggregate = stated["product/aggregate"] if valued else ("paths" if stated["product/paths"] else None)
+    begun, tokens, result = runs(graph), np.asarray(graph.entity_token).astype(np.uint64), {}
+    for step in range(graph.steps):
+        rows = np.flatnonzero(graph.fact_present & (graph.fact_step == step)).tolist()
+        held = [stepped(graph, registry, rows, begun, path_step, aggregate) for path_step in steps]
+        if len(held) == 2:
+            first = latest(*held[0], tokens, stated.get("product/cap", 0), 1)
+            power = multiplied(first, latest(*held[1], tokens, stated.get("product/cap", 0), 0), aggregate)
+        else:
+            power = held[0][0]
+        power = {pair: value for pair, value in power.items() if pair[0] != pair[1]}
+        total = {pair: (value, 1) for pair, value in power.items()}
+        walked = power
+        for distance in range(2, stated.get("product/length", 1) + 1):
+            walked = multiplied(walked, power, aggregate)
+            for pair, value in walked.items():
+                if pair in total:
+                    total[pair] = (PLUS[aggregate or "paths"](total[pair][0], value), total[pair][1])
+                else:
+                    total[pair] = (value, distance)
+        symmetric = [(table, {"forward": "backward", "backward": "forward"}.get(way, way), column) for table, way, column in steps[::-1]] == steps
+        for (a, b), (value, distance) in total.items():
+            if a == b:
+                continue
+            ends = tuple(sorted((int(tokens[a]), int(tokens[b])))) if symmetric else (int(tokens[a]), int(tokens[b]))
+            held = (() if aggregate is None else (np.float32(value),)) + ((np.float32(distance),) if stated.get("product/length", 1) > 1 else ())
+            result[(int(graph.step_time[step]),) + ends] = held
+    return result, symmetric
+
+
+@timed("added.multiplied_facts")
+def multiplied_facts(found, edge):
+    tokens, present, absent = np.asarray(found.entity_token).astype(np.uint64), {}, set()
+    for row in np.flatnonzero(found.fact_code == edge.code).tolist():
+        ends = (int(tokens[found.fact_source[row]]), int(tokens[found.fact_target[row]]))
+        key = (int(found.step_time[found.fact_step[row]]),) + (tuple(sorted(ends)) if edge.symmetric else ends)
+        reference = int(found.fact_ref[row])
+        if found.fact_present[row]:
+            values = found.value_table[reference, : len(edge.attributes)] if reference >= 0 else ()
+            present[key] = tuple(np.float32(value) for value in values)
+        else:
+            absent.add(key)
+    return present, absent
+
+
+PRODUCTS = (
+    {"product/path": "visits:forward,visits:backward", "product/length": 1, "product/paths": True, "product/cap": 2, "product/encoder": "standard"},
+    {"product/path": "*:both", "product/length": 3, "product/paths": False, "product/encoder": "standard"},
+    {"product/path": "visits:forward:weight,visits:backward:weight", "product/length": 2, "product/aggregate": "product", "product/cap": 0, "product/encoder": "standard"},
+    {"product/path": "visits:both:weight", "product/length": 2, "product/aggregate": "widest", "product/encoder": "standard"},
+    {"product/path": "near:forward", "product/length": 3, "product/paths": True, "product/encoder": "standard"},
+    {"product/path": "visits:forward,located:backward", "product/paths": False, "product/cap": 1},
+    {"product/path": "visits:forward:weight,located:backward:distance", "product/aggregate": "shortest", "product/cap": 0, "product/encoder": "logarithm"},
+)
+
+
+def test_a_product_of_relations_and_its_closure_equal_the_walks_enumerated_through_the_relations_it_names(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    found = {}
+    for stated in PRODUCTS:
+        steps = resolved(registry, [dict(operation="graphspec.product", parameters=stated)])
+        grown = pipeline.grown(registry, steps, None)
+        derived = segments.whole(graph, {}, grown, steps, SEED, LIMITS, None)
+        expected, symmetric = enumerated(graph, registry, stated)
+        edge = grown.by_name["product"]
+        assert edge.symmetric == symmetric and len(expected), stated["product/path"]
+        present, absent = multiplied_facts(derived, edge)
+        assert present.keys() == expected.keys(), stated["product/path"]
+        assert all(np.allclose(present[key], expected[key], rtol=1e-6) for key in expected), stated["product/path"]
+        times = [int(moment) for moment in graph.step_time]
+        ended = {(times[times.index(key[0]) + 1],) + key[1:] for key in expected if key[0] != times[-1]}
+        assert absent == {key for key in ended if key not in expected}, stated["product/path"]
+        found[stated["product/path"]] = present
+    uncapped = enumerated(graph, registry, dict(PRODUCTS[0], **{"product/cap": 0}))[0]
+    assert set(found["visits:forward,visits:backward"]) < set(uncapped)
+    projected = {"derive/project:visits:sources:person:person": True, "derive/project_cap": 2, "derive/hops": 3}
+    steps = resolved(registry, support.pipelined(registry, projected, ("graphspec.derive",))[0])
+    derived = segments.whole(graph, {}, registry, steps, SEED, LIMITS, None)
+    pairs = multiplied_facts(derived, registry.by_name["project:visits:sources:person:person"])[0]
+    assert pairs.keys() == found["visits:forward,visits:backward"].keys()
+    for distance in (2, 3):
+        hops = multiplied_facts(derived, registry.by_name["hop:%d" % distance])[0]
+        assert hops.keys() == {key for key, value in found["*:both"].items() if value == (distance,)} != set()
+    bare = support.registry("bare", ["thing"], [])
+    assert OPERATIONS.named("graphspec.product").stated(bare) == ()
+    with pytest.raises(ValueError, match="multiplies the relations of a bank, and the bank bare states none"):
+        pipeline.grown(bare, resolved(bare, [dict(operation="graphspec.product", parameters={})]), None)
+    LOG.info("product exit paths=%d seconds=%.3f", len(found), time.perf_counter() - started)

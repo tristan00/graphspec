@@ -70,6 +70,7 @@ VERSIONED = {
     "graphspec.neighbourhood": ("graphspec/operations/neighbourhood.py",),
     "graphspec.measures": ("graphspec/operations/measures.py",),
     "graphspec.contract": ("graphspec/operations/contract.py",),
+    "graphspec.product": ("graphspec/operations/product.py",),
     "derivation": (
         "graphspec/engine",
         "graphspec/operations/kernels.py",
@@ -132,6 +133,7 @@ RECORDED = {
     "graphspec.neighbourhood": (3, "3127f2221864f959236caa9d4a75ded96b262d3db1774174f0a311540627b589"),
     "graphspec.measures": (2, "d11543d525c8939d5af59c1eb88f41bc2799b9d4f7a97940c337e78b54b2a20d"),
     "graphspec.contract": (4, "ec63035c66e116a0f8ad7e19c4335814d3f9544bb4a0391d932e4247bfff0dc3"),
+    "graphspec.product": (1, "b8a083927a5712d11eb1860f9ca558c755087a10a6102651310c9d68604d13f6"),
     "derivation": (27, "dae6333cf9bdd1b4dc258ea0b52c69ee6ebe276f44c2f58d306d10056ad3f1b8"),
     "views": (18, "1d68dfc0420b61c96378f01fd03dd632c5f845ffc9978b322b486803bb5240d5"),
     "representations": (12, "5bb57a45dc82d1628d5666630b7c46b0d43f74264fbae44e56540e6543515acf"),

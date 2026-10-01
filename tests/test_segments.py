@@ -73,6 +73,11 @@ VALUES = {
     "contract/grouping": "item:v0",
     "contract/aggregate": "mean",
     "contract/parallel": "sum",
+    "product/path": "visits:forward,visits:backward",
+    "product/length": 2,
+    "product/paths": True,
+    "product/cap": 2,
+    "product/encoder": "standard",
 }
 SETTINGS = {"coupling/periods": 1, "events/periods": 1, "mixed/trace": 2}
 GROUPS = specs.GROUPS + (RUNNING.name,)
@@ -98,6 +103,7 @@ CONTRACTED = {"contract/grouping": "item:v0", "contract/aggregate": "mean", "con
 WINDOWED = {"time/scheme": "window", "time/unit": "step", "time/window": 2}
 ELSEWHERE = 0x5A5A5A5A5A5A5A5A
 GROUPING = "pipeline/graphspec.contract/contract/grouping"
+CONTRACTING = {"pipeline/graphspec.contract": True}
 REFUSAL = re.compile(r"the entry (\S+) of the pipeline names the kind (\w+), which the entry (graphspec\.\w+) before ")
 KEPT = "pipeline/graphspec.nodes/nodes/%s/keep"
 CONTRACTIONS = (
@@ -517,24 +523,31 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     single = [name for name in names if OPERATIONS.named(name).graphs == 1]
     for draw in range(DRAWN):
         rng = np.random.default_rng(draw)
-        pool = single if draw % JOINING == 0 else names
+        together = draw % JOINING == 0
+        pool = single if together else names
         order = [pool[place] for place in rng.permutation(len(pool))]
         template = [dict(operation=name, **({"graph": graphs[name]} if name in graphs else {})) for name in order]
-        stated = specs.draw(specs.narrow(pipeline.space(registry, template), bounds), lambda held: held.uniform(rng))
-        try:
-            steps = pipeline.resolved(registry, pipeline.entries(template, stated))
-        except ValueError as error:
-            named = REFUSAL.match(str(error))
-            assert named is not None, (draw, str(error))
-            assert stated[pipeline.PRESENT % named[1]] and order.index(named[1]) > order.index(named[3])
-            if named[3] == "graphspec.contract":
-                assert named[2] == stated[GROUPING].split(":")[0], draw
-            else:
-                assert named[3] == "graphspec.nodes" and not stated[KEPT % named[2]], draw
-            refused.append((named[1], named[3]))
+        space = specs.narrow(pipeline.space(registry, template), dict(bounds, **(CONTRACTING if together else {})))
+        steps = None
+        while steps is None:
+            stated = specs.draw(space, lambda held: held.uniform(rng))
+            try:
+                steps = pipeline.resolved(registry, pipeline.entries(template, stated))
+            except ValueError as error:
+                named = REFUSAL.match(str(error))
+                assert named is not None, (draw, str(error))
+                assert stated[pipeline.PRESENT % named[1]] and order.index(named[1]) > order.index(named[3])
+                if named[3] == "graphspec.contract":
+                    assert named[2] == stated[GROUPING].split(":")[0], draw
+                else:
+                    assert named[3] == "graphspec.nodes" and not stated[KEPT % named[2]], draw
+                refused.append((together, named[1], named[3]))
+                if not together:
+                    break
+        if steps is None:
             continue
         grown = pipeline.grown(registry, steps, None)
-        if draw % JOINING == 0:
+        if together:
             picked = sorted(rng.choice(MEMBERS, int(rng.integers(2, MEMBERS + 1)), replace=False).tolist())
             members = [sliced(shown[index], 0, int(rng.integers(2, SPAN + 1))) for index in picked]
             drawn = dict(joined, **{name: bool(rng.integers(2)) for name in joined if name.startswith("graphs/connect/")})
@@ -553,10 +566,11 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
         verify_dense(expected, grown)
         assert unequal(line.derived().arrays, expected.arrays, DENSE_READ) == [], draw
         assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], draw
-        found.append((draw % JOINING == 0, tuple(step.operation.name for step in steps)))
-    assert len(set(found)) + len(refused) == DRAWN and sorted({name for _, held in found for name in held}) == names
-    assert any(together and "graphspec.contract" in held for together, held in found)
-    assert {remover for _, remover in refused} == {"graphspec.contract", "graphspec.nodes"}
+        found.append((together, tuple(step.operation.name for step in steps)))
+    alone = sum(not together for together, _, _ in refused)
+    assert len(set(found)) + alone == DRAWN and sorted({name for _, held in found for name in held}) == names
+    assert [together for together, held in found if "graphspec.contract" in held].count(True) == DRAWN // JOINING
+    assert {remover for _, _, remover in refused} == {"graphspec.contract", "graphspec.nodes"}
     assert len(chosen) < len(groupable(registry)) and {grouping.split(":")[0] for grouping in chosen} > {"item"}
     LOG.info(
         "random pipelines exit pipelines=%d refused=%s seconds=%.3f", len(found), refused, time.perf_counter() - started

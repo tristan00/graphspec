@@ -50,6 +50,7 @@ ADDED = (
     "graphspec.neighbourhood",
     "graphspec.measures",
     "graphspec.contract",
+    "graphspec.product",
 )
 KEYS = ("id", "from", "to", "since", "seq", "present")
 VALUES = dict(value=dict(type="number", encoder="value"))
