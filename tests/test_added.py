@@ -392,6 +392,81 @@ def test_relation_forms_keep_or_reduce_parallel_edges_and_add_reverse_edges_and_
     LOG.info("relation forms exit counts=%s seconds=%.3f", counts, time.perf_counter() - started)
 
 
+@timed("added.cored")
+def cored(nodes, pairs):
+    found = {node: 0 for node in nodes}
+    for least in range(1, len(pairs) + 2):
+        alive = set(nodes)
+        while True:
+            degree = {node: 0 for node in alive}
+            for a, b in pairs:
+                if a in alive and b in alive:
+                    degree[a] += 1
+                    degree[b] += a != b
+            gone = {node for node in alive if degree[node] < least}
+            if not gone:
+                break
+            alive -= gone
+        if not alive:
+            return found
+        found.update({node: least for node in alive})
+    return found
+
+
+@timed("added.structured")
+def structured(graph):
+    tokens, result = np.asarray(graph.entity_token).astype(np.uint64), {}
+    for step in range(graph.steps):
+        nodes = graph.obs_entity[graph.obs_step == step].tolist()
+        chosen = (graph.fact_step == step) & graph.fact_present
+        pairs = list(zip(graph.fact_source[chosen].tolist(), graph.fact_target[chosen].tolist()))
+        degree = {node: sum(1 for a, b in pairs if node in (a, b)) for node in nodes}
+        reached = {node: {node} for node in nodes}
+        for a, b in pairs:
+            joined = reached[a] | reached[b]
+            for node in joined:
+                reached[node] = joined
+        cores = cored(nodes, pairs)
+        result.update(
+            {
+                (int(graph.step_time[step]), int(tokens[node])): (degree[node], len(reached[node]), cores[node])
+                for node in nodes
+            }
+        )
+    return result
+
+
+def test_measures_of_structure_are_columns_on_every_kind_of_node_at_every_step(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    parameters = {"measures/degree": True, "measures/components": True, "measures/cores": True, "measures/encoder": "logarithm"}
+    steps = resolved(registry, [dict(operation="graphspec.measures", parameters=parameters)])
+    grown = pipeline.grown(registry, steps, None)
+    columns = ("measures.degree", "measures.components", "measures.cores")
+    assert grown.schema.added_columns() == columns
+    assert all(set(columns) <= set(held) for held in grown.schema.entities().values())
+    declared = {entry["name"]: entry for entry in operation.listed(registry)}["graphspec.measures"]
+    assert [(count["counts"], count["sets"], count["about"]) for count in declared["requires"]] == [
+        ("degree", "stored", "stored"),
+        ("components", "stored", "stored"),
+        ("core numbers", "stored", "stored"),
+    ]
+    found = segments.whole(graph, {}, grown, steps, SEED, LIMITS, None)
+    slots = [grown.encoding.slots(name) for name in columns]
+    rows = np.asarray(found.x_table, np.float64)[found.obs_ref]
+    tokens = np.asarray(found.entity_token).astype(np.uint64)
+    assert all((rows[:, flags] == 1).all() for _, flags in slots)
+    measured = {
+        (int(found.step_time[step]), int(tokens[who])): tuple(int(row[values[0]]) for values, _ in slots)
+        for step, who, row in zip(found.obs_step, found.obs_entity, rows)
+    }
+    expected = structured(graph)
+    assert measured == expected and max(value[2] for value in expected.values()) > 1
+    stated = np.asarray(found.x_table)[found.obs_ref][:, : registry.encoding.values]
+    assert np.array_equal(stated, np.asarray(graph.x_table)[graph.obs_ref][:, : registry.encoding.values])
+    LOG.info("measures exit observations=%d seconds=%.3f", len(measured), time.perf_counter() - started)
+
+
 @timed("added.sessions")
 def sessions(graph, registry, pairing, gap):
     place, tokens = registry.kind("place"), np.asarray(graph.entity_token).astype(np.uint64)

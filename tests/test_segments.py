@@ -63,6 +63,10 @@ VALUES = {
     "consecutive/gap": 3.0,
     "neighbourhood/hops": 1,
     "neighbourhood/around": "team",
+    "measures/degree": True,
+    "measures/components": True,
+    "measures/cores": True,
+    "measures/encoder": "standard",
 }
 SETTINGS = {"coupling/periods": 1, "events/periods": 1, "mixed/trace": 2}
 GROUPS = specs.GROUPS + (RUNNING.name,)

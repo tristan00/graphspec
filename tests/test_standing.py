@@ -68,6 +68,7 @@ VERSIONED = {
     "graphspec.nearby": ("graphspec/operations/nearby.py",),
     "graphspec.consecutive": ("graphspec/operations/consecutive.py",),
     "graphspec.neighbourhood": ("graphspec/operations/neighbourhood.py",),
+    "graphspec.measures": ("graphspec/operations/measures.py",),
     "derivation": (
         "graphspec/engine",
         "graphspec/operations/kernels.py",
@@ -127,6 +128,7 @@ RECORDED = {
     "graphspec.nearby": (3, "903ff24554e9d3c80484b42ca19c9259e4b32c89799c9260816318922db84c85"),
     "graphspec.consecutive": (2, "ea9ecdde8c855684f92f3b32b2c8bf3f50ed1fa424643e115c4ffc936b576e75"),
     "graphspec.neighbourhood": (2, "02dc2af70bd30e2210f58b83494302577d4063a4998954f09a449aac1a7fcae8"),
+    "graphspec.measures": (1, "acac779ee89e556e2e24cb89afd4bf2556f4a10d92be25121cfcd963f9a53bce"),
     "derivation": (15, "9123c426334fa315540acb6b0f3727a00bcfe0cbe7052d0339abba7ba69e5f73"),
     "views": (13, "3eb287743bceebe060d2a184c8c3aa42fa4f7f0adadd9eb4318dc267e7f82f06"),
     "representations": (7, "73b6b108220c0b31b983ed46c838accc87119970a2ec9fe07e912ae73808253a"),

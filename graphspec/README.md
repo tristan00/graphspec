@@ -7,7 +7,7 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `relation_forms.py`, `merge.py`, `difference.py`, `nearby.py`, `consecutive.py`, `neighbourhood.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `relation_forms.py`, `merge.py`, `difference.py`, `nearby.py`, `consecutive.py`, `neighbourhood.py`, `measures.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads: the registry of representations and their families, structure, sample and encode (`registry.py`), the arrays every variant holds, their carried state and the arrays over a whole variant (`base.py`), one module per shipped representation (`coupling.py`, `events.py`, `neighbors.py`, `walks.py`, `mixed.py`), what they share (`groups.py`) and their kernels (`kernels.py`) |
 | `engine/` | Derivation of variants, one engine in segments: derivations, continuations and forks, and the build of a variant in the calling process (`segments.py`), the steps of a pipeline on one segment (`transform.py`), the same on worker processes (`schedule.py`), slices and edits (`edits.py`), writing and stitching segments (`stitch.py`), the physical join tests compare against (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
@@ -247,6 +247,15 @@ At every step it keeps the part of the graph within a number of hops of its node
 |---|---|---|
 | `neighbourhood/hops` | 0–3 | How many hops from its nodes; 0 keeps its nodes alone. |
 | `neighbourhood/around` | references, or a kind of node | Its nodes: those the tasks of the step reference, and every node of the kind where one is stated. |
+
+13. Measures of structure as columns, `graphspec.measures`
+
+Adds a column per measure stated on, `<entry>.degree`, `<entry>.components` and `<entry>.cores`, numbers encoded by the encoder the entry states and fitted as every added column is, and places them on every kind of node the registry holds when it runs. At every step it measures the graph it is given: the nodes observed at the step, anchors among them, and the present facts of every relation the graph then holds, derived and added ones included, as undirected edges. The degree of a node counts the facts it is an end of, parallel facts each and a self-loop once; its component is the number of nodes its connected component holds, itself included; its core number is the largest k such that it belongs to the k-core, peeled by the same degree. Edges joining sets and edges about edges are counted as their forms of storage store them, as its counts state. Every observation receives a row of values of its own, its stated values unchanged and the measures written into the columns added. It carries no state from segment to segment and draws nothing.
+
+| Parameter | Range | Effect |
+|---|---|---|
+| `measures/degree`, `measures/components`, `measures/cores` | off, on | Which measures it adds. With none on it changes nothing. |
+| `measures/encoder` | the encoders of numbers, no default | The encoder of every column it adds. Offered where a measure is on. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 
