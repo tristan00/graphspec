@@ -127,6 +127,7 @@ class TrainingSession:
         from graphspec.infra.arrays import RESIDENT
         from tuning.bank.bank import Deriver
         from tuning.bank.variants import prepare
+        from tuning.batches.packing import Packer
         from tuning.families.model_spec import describe
         from tuning.families.models import build
 
@@ -154,17 +155,6 @@ class TrainingSession:
             self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
-        with measure("model_build"):
-            self.net: nn.Module = build(config, self.bank.fitted(config)).to(self.device)
-        with measure("optimizer_setup"):
-            self.optimizer: Optimizer = torch.optim.AdamW(
-                self.net.parameters(),
-                lr=config["lr"],
-                weight_decay=config["weight_decay"],
-                fused=self.cuda,
-            )
-        if self.cuda:
-            torch.cuda.reset_peak_memory_stats(self.device)
         self.timing = self.budget.timings
         self.timing.update(
             packer=0.0,
@@ -173,6 +163,25 @@ class TrainingSession:
             validation_pack=0.0,
             validation_compute=0.0,
         )
+        with self.budget.measure("packer"):
+            self.packer: Packer = Packer(
+                self.bank, config, self.device, stated.workers, self.directory / "timing_workers"
+            )
+        try:
+            with measure("model_build"):
+                self.net: nn.Module = build(config, self.bank.fitted(config)).to(self.device)
+            with measure("optimizer_setup"):
+                self.optimizer: Optimizer = torch.optim.AdamW(
+                    self.net.parameters(),
+                    lr=config["lr"],
+                    weight_decay=config["weight_decay"],
+                    fused=self.cuda,
+                )
+            if self.cuda:
+                torch.cuda.reset_peak_memory_stats(self.device)
+        except BaseException:
+            self.packer.close()
+            raise
         self.losses: list[float] = []
         self.trained_rows: list[int] = []
         self.epoch_losses: list[float] = []
@@ -455,7 +464,6 @@ class TrainingSession:
 
 
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, statement):
-    from tuning.batches.packing import Packer
     from tuning.statement import stated as checked
 
     from .budget import FitBudget
@@ -479,22 +487,17 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     with FitBudget(directory, deadline, stated.preparation_seconds) as budget:
         with budget.measure("prepare"):
             session = TrainingSession(bank_directory, directory, config, budget, stated)
-        budget.pulse("scheduling")
-        schedule = session.schedule(training_blocks, batch_size)
-        session.net.train()
-        budget.pulse("packer_setup")
-        with budget.measure("packer"):
-            packer = Packer(
-                session.bank, config, stated.device, stated.workers, session.directory / "timing_workers"
-            )
         try:
-            session.train(packer, schedule)
+            budget.pulse("scheduling")
+            schedule = session.schedule(training_blocks, batch_size)
+            session.net.train()
+            session.train(session.packer, schedule)
             session.checkpoint(training_blocks)
-            indices, values = session.evaluate(packer, schedule)
+            indices, values = session.evaluate(session.packer, schedule)
         finally:
             budget.pulse("cleanup")
             with measure("packer_cleanup"):
-                packer.close()
+                session.packer.close()
         result = session.save_result(indices, values, batch_size)
     result["timeline"] = budget.timeline.snapshot()
     write_json(Path(directory) / "result.json", result)
