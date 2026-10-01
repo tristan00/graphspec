@@ -65,7 +65,7 @@ def attach(jobs, registry, stated, spec, groups, seed, limits, partitions, threa
     started = time.perf_counter()
     numba.set_num_threads(threads)
     hashed(np.zeros(0, np.uint64))
-    steps = pipeline.resolved(registry, stated)
+    steps = pipeline.rebuilt(stated)
     PIPE.clear()
     PIPE.update(
         jobs=[

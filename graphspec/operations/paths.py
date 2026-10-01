@@ -5,6 +5,7 @@ import numpy as np
 
 from graphspec.budgets import GraphCapacityError
 from graphspec.infra.timing import timed
+from graphspec.schema.declaration import ADDED
 
 from . import kernels
 from .rows import counted, extend, member_end, open_runs, run_state
@@ -101,7 +102,7 @@ def offered(registry):
         LOG.debug("paths offered exit paths=0 seconds=%.4f", time.perf_counter() - started)
         return ()
     plain, priced = [], []
-    for group in registry.groups:
+    for group in tuple(registry.groups) + tuple(edge.name for edge in registry.edges if edge.origin[0] == ADDED):
         edge = registry.named[group]
         for direction in ("both",) if edge.symmetric else DIRECTIONS:
             plain.append((group, direction, None))

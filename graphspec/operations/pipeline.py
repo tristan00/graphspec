@@ -2,9 +2,12 @@ import json
 import logging
 import time
 from collections import ChainMap
+from functools import partial
 from weakref import WeakKeyDictionary
 
 import numpy as np
+
+from graphspec.infra.timing import timed
 
 from .operation import OPERATIONS
 from .parameters import Parameter, flag
@@ -176,17 +179,59 @@ def drawn(found, reads):
 def ordered(found, reads):
     started = time.perf_counter()
     before = {
-        name: tuple(earlier for earlier, other, _, _ in found[:place] if other.kinds is not None) + reads[name]
+        name: tuple(
+            earlier for earlier, other, _, _ in found[:place] if other.kinds is not None or other.adds is not None
+        )
+        + reads[name]
         for place, (name, _, _, _) in enumerate(found)
     }
     result = walked(
         found,
         before,
-        "the entry %s of the template is drawn after itself, through the entries it reads and the entries before "
-        "them that name kinds",
+        "the entry %s of the pipeline comes after itself, through the entries it reads and the entries before "
+        "them that name kinds or add to the registry",
     )
     LOG.debug("ordered exit entries=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
+
+
+@timed("pipeline.entered")
+def entered(operation, label):
+    return label if label is not None else operation.name.split(".", 1)[1]
+
+
+@timed("pipeline.specified")
+def specified(stated, reads, name):
+    return dict(ChainMap(*[stated[read] for read in reads[name]]), **stated[name])
+
+
+class Growing:
+    def __init__(self, registry, found):
+        started = time.perf_counter()
+        self.found, self.held, self.keys, self.memo = found, [registry], [()], {}
+        LOG.debug("growing exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
+
+    def before(self, place, spec):
+        started = time.perf_counter()
+        while len(self.held) <= place:
+            name, operation, label, _ = self.found[len(self.held) - 1]
+            held, key = self.held[-1], self.keys[-1]
+            given = None if operation.adds is None else spec(name)
+            if given is not None:
+                added = operation.added(held, given, entered(operation, label))
+                if added.holds():
+                    key = (key, entered(operation, label), json.dumps(added.declaration(), sort_keys=True))
+                    if key not in self.memo:
+                        self.memo[key] = held.grown(entered(operation, label), added, None)
+                    held = self.memo[key]
+            self.held.append(held)
+            self.keys.append(key)
+        LOG.debug("growing before exit place=%d seconds=%.4f", place, time.perf_counter() - started)
+        return self.held[place], self.keys[place]
+
+    def restarted(self):
+        self.held, self.keys = self.held[:1], self.keys[:1]
+        return self
 
 
 def given(name, parameters, values, context):
@@ -216,11 +261,21 @@ def resolved(registry, entries):
     started = time.perf_counter()
     found = checked(entries, STATED)
     reads, held = readers(found), {name: (operation, entry) for name, operation, _, entry in found}
-    stated = {}
-    for name in drawn(found, reads):
+    places = {name: place for place, (name, _, _, _) in enumerate(found)}
+    stated, growing = {}, Growing(registry, found)
+    for name in ordered(found, reads):
         operation, entry = held[name]
         context = ChainMap(*[stated[read] for read in reads[name]])
-        stated[name] = given(name, operation.stated(registry), entry["parameters"], context)
+        grown = growing.before(places[name], partial(specified, stated, reads))[0]
+        stated[name] = given(name, operation.stated(grown), entry["parameters"], context)
+    result = stepped(found, reads, stated)
+    emptied(registry, result)
+    LOG.debug("resolved exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def stepped(found, reads, stated):
+    started = time.perf_counter()
     result = tuple(
         Step(
             name,
@@ -232,8 +287,15 @@ def resolved(registry, entries):
         )
         for name, operation, label, entry in found
     )
-    emptied(registry, result)
-    LOG.debug("resolved exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    LOG.debug("stepped exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def rebuilt(entries):
+    started = time.perf_counter()
+    found = checked(entries, STATED)
+    result = stepped(found, readers(found), {name: entry["parameters"] for name, _, _, entry in found})
+    LOG.debug("rebuilt exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
@@ -258,7 +320,7 @@ def emptied(registry, steps):
 
 
 def called(step):
-    return step.label if step.label is not None else step.operation.name.split(".", 1)[1]
+    return entered(step.operation, step.label)
 
 
 def additions(registry, steps):
@@ -465,6 +527,7 @@ class Offered:
             else:
                 self.owned[parts[1]].append(parameter)
         self.order = ordered(found, self.reads)
+        self.registry, self.growing, self.regrowns = registry, Growing(registry, found), {}
         bounded = {
             name: {parameter.name[len(NAMED % name) :]: parameter for parameter in self.owned[name]} for name in self.names
         }
@@ -531,12 +594,56 @@ class Offered:
                 trial[parameter.name] = held[0] if parameter.options else parameter.default
         return None
 
-    def verified(self, registry, name, flat, removed, guard):
-        context = {}
+    def context(self, name, flat):
+        result = {}
         for read in self.reads[name] + (name,):
             prefix = NAMED % read
-            context.update({held.name[len(prefix) :]: flat[held.name] for held in self.owned[read] if held.name in flat})
-        found = self.operations[name].roles(registry, context)
+            result.update({held.name[len(prefix) :]: flat[held.name] for held in self.owned[read] if held.name in flat})
+        return result
+
+    def spec(self, flat, name):
+        return self.context(name, flat) if flat[self.flags[name].name] else None
+
+    def stated(self, name, flat):
+        started = time.perf_counter()
+        grown, key = self.growing.before(self.place[name], partial(self.spec, flat))
+        if not key:
+            return self.owned[name]
+        if (name, key) not in self.regrowns:
+            own, operation = NAMED % name, self.operations[name]
+            prefixes = (own,) + tuple(NAMED % read for read in self.reads[name])
+            bounded = {parameter.name: parameter for parameter in self.owned[name]}
+            base = {parameter.name: parameter for parameter in operation.stated(self.registry)}
+            result = []
+            for parameter in operation.stated(grown):
+                if own + parameter.name not in bounded:
+                    raise ValueError(
+                        "the entry %s of the template states %s where the entries before it add to the registry, and "
+                        "a search offers only the parameters it states for the registry of the bank"
+                        % (name, parameter.name)
+                    )
+                held = bounded[own + parameter.name]
+                options = held.options
+                if options:
+                    options += tuple(option for option in parameter.options if option not in base[parameter.name].options)
+                result.append(
+                    Parameter(
+                        held.name,
+                        held.kind,
+                        held.default,
+                        held.low,
+                        held.high,
+                        held.log,
+                        options,
+                        qualified(PRESENT % name, parameter, prefixes),
+                    )
+                )
+            self.regrowns[name, key] = result
+        LOG.debug("offered stated exit entry=%s seconds=%.4f", name, time.perf_counter() - started)
+        return self.regrowns[name, key]
+
+    def verified(self, registry, name, flat, removed, guard):
+        found = self.operations[name].roles(registry, self.context(name, flat))
         lost = sorted(roled(found, HITS) & removed.keys())
         kept = sorted(roled(found, ("removes",)) & guard.keys())
         if lost or kept:
@@ -571,6 +678,7 @@ def narrowed(parameter, options):
 def draw(registry, template, parameters, choose):
     started = time.perf_counter()
     plan, flat, roles = offered(registry, template, tuple(parameters)), {}, {}
+    plan.growing.restarted()
     for name in plan.order:
         removed, guard, flag = plan.removed(name, roles), plan.protected[name], plan.flags[name]
         options, roles[name] = flag.options, {}
@@ -583,7 +691,7 @@ def draw(registry, template, parameters, choose):
         flat[flag.name] = choose(narrowed(flag, options))
         if not flat[flag.name]:
             continue
-        for parameter in plan.owned[name]:
+        for parameter in plan.stated(name, flat):
             if parameter.active(flat):
                 held = plan.allowed(name, parameter, removed, guard)
                 if parameter.options and not held:

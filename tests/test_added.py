@@ -884,6 +884,53 @@ def test_a_product_of_relations_and_its_closure_equal_the_walks_enumerated_throu
     LOG.info("product exit paths=%d seconds=%.3f", len(found), time.perf_counter() - started)
 
 
+@timed("added.walked")
+def walked(graph, registry):
+    tokens, result = np.asarray(graph.entity_token).astype(np.uint64), {}
+    for step in range(graph.steps):
+        chosen = (graph.fact_step == step) & graph.fact_present & (graph.fact_code == registry.code("visits"))
+        places = {}
+        for person, place in zip(graph.fact_source[chosen].tolist(), graph.fact_target[chosen].tolist()):
+            places.setdefault(person, set()).add(place)
+        met = {(a, b) for a in places for b in places if a != b and places[a] & places[b]}
+        middles = {}
+        for a, b in met:
+            for c in [c for held, c in met if held == b and c != a]:
+                middles.setdefault((a, c), set()).add(b)
+        moment = int(graph.step_time[step])
+        result.update({(moment,) + tuple(sorted((int(tokens[a]), int(tokens[c])))): len(held) for (a, c), held in middles.items()})
+    return result
+
+
+def test_two_products_chained_give_the_walks_of_four_steps_and_never_read_a_relation_of_candidates(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    first = {"product/path": "visits:forward,visits:backward", "product/length": 1, "product/paths": False, "product/cap": 0}
+    second = {
+        "product/path": "first:both,first:both",
+        "product/length": 1,
+        "product/paths": True,
+        "product/cap": 0,
+        "product/encoder": "standard",
+    }
+    entries = [
+        dict(operation="graphspec.product", label="first", parameters=first),
+        dict(operation="graphspec.product", label="second", parameters=second),
+    ]
+    steps = resolved(registry, entries)
+    grown = pipeline.grown(registry, steps, None)
+    edge = grown.by_name["second"]
+    assert edge.symmetric and edge.pairs == (("person", "person"),) and edge.attributes == ("second.paths",)
+    found = multiplied_facts(segments.whole(graph, {}, grown, steps, SEED, LIMITS, None), edge)[0]
+    expected = walked(graph, registry)
+    assert len(expected) and found == {key: (np.float32(count),) for key, count in expected.items()}
+    drawing = dict(operation="graphspec.negatives", parameters={"negatives/of": "link:visits", "negatives/rule": "uniform", "negatives/count": 1})
+    reading = dict(operation="graphspec.product", parameters={"product/path": "negatives:forward", "product/paths": False, "product/cap": 0})
+    with pytest.raises(ValueError, match="product/path must be one of"):
+        resolved(registry, [drawing, reading])
+    LOG.info("chained products exit pairs=%d seconds=%.3f", len(found), time.perf_counter() - started)
+
+
 @pytest.fixture
 def parity():
     NEGATIVES.register("test.parity", PARITY)

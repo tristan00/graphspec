@@ -281,6 +281,20 @@ def test_a_search_draws_a_reader_before_what_it_reads_with_entries_that_name_kin
     LOG.info("reader before its read exit drawn=%d seconds=%.3f", len(named), time.perf_counter() - started)
 
 
+def test_a_search_offers_a_product_the_relations_the_entries_before_it_add(bank):
+    started = time.perf_counter()
+    registry, rng = Bank(bank).registry, np.random.default_rng(13)
+    template = [dict(operation="graphspec.product", label=label) for label in ("first", "second")]
+    space, paths = pipeline.space(registry, template), []
+    for _ in range(30):
+        flat = pipeline.draw(registry, template, space, partial(present, rng))
+        paths.append(pipeline.resolved(registry, pipeline.entries(template, flat))[1].parameters["product/path"])
+    chained = [path for path in paths if "first:" in path]
+    (static,) = [parameter for parameter in space if parameter.name == "pipeline/second/product/path"]
+    assert chained and not any("first:" in option for option in static.options)
+    LOG.info("chained offered exit drawn=%d chained=%d seconds=%.3f", len(paths), len(chained), time.perf_counter() - started)
+
+
 def test_running_again_continues_and_may_change_selector_random_phase_and_bounds(bank, tmp_path):
     output = tmp_path / "run"
     run(arguments(bank, output, **FRESH))
