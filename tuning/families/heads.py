@@ -35,6 +35,13 @@ def path(hidden, spec, registry):
     return PathHead(hidden, spec["time/encoding"])
 
 
+@timed("heads.scores")
+def scores(hidden, spec, registry):
+    from .layers import ScoreHead
+
+    return ScoreHead(hidden)
+
+
 def reading(registry, name):
     started = time.perf_counter()
     result = any(name in HEADS.named(kind).reads for kind in registry.schema.targets())
@@ -44,4 +51,5 @@ def reading(registry, name):
 
 HEADS.register("number", Attached((), number))
 HEADS.register("path", Attached(("time/encoding",), path))
+HEADS.register("class", Attached((), scores))
 ship([HEADS])

@@ -42,6 +42,25 @@ class Balanced:
         return (series_total / series_tasks.clamp_min(1e-12)).sum() / (series_tasks > 0).sum()
 
 
+class Entropy:
+    reads = ("class",)
+
+    def __call__(self, predictions, batch, bank):
+        import torch
+
+        row, tasks = batch["point_row"], batch["tasks"]
+        top = predictions.new_full((tasks,), -torch.inf).scatter_reduce(
+            0, row, predictions.detach(), "amax", include_self=True
+        )
+        shifted = predictions - top[row]
+        total = predictions.new_zeros(tasks).index_add_(0, row, shifted.exp())
+        crossed = -batch["target"] * (shifted - total[row].log())
+        task = predictions.new_zeros(tasks).index_add_(0, row, crossed)
+        points = predictions.new_zeros(tasks).index_add_(0, row, predictions.new_ones(len(row)))
+        weight = predictions.new_zeros(tasks).index_add_(0, row, batch["weight"]) / points.clamp_min(1)
+        return (weight * task).sum() / weight.sum()
+
+
 @timed("losses.readers")
 def readers(registry, kind):
     return tuple(name for name in registry.names() if kind in registry.named(name).reads)
@@ -112,4 +131,5 @@ def admitted(kinds, loss, measures):
 
 LOSSES.register("squared", Squared())
 LOSSES.register("balanced", Balanced())
+LOSSES.register("entropy", Entropy())
 ship([LOSSES])

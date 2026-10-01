@@ -221,6 +221,17 @@ class NumberHead(nn.Module):
         return self.output(torch.cat((h, series), -1)).squeeze(-1)
 
 
+class ScoreHead(nn.Module):
+    @timed("layers.scorehead")
+    def __init__(self, hidden):
+        super().__init__()
+        self.task = nn.Linear(hidden, hidden)
+        self.bias = nn.Linear(hidden, 1)
+
+    def forward(self, h, series, b, points):
+        return (self.task(h) * series).sum(-1) + self.bias(series).squeeze(-1)
+
+
 class PathHead(nn.Module):
     @timed("layers.pathhead")
     def __init__(self, hidden, encoding):

@@ -19,7 +19,7 @@ from graphspec.operations.parameters import digest
 from graphspec.schema.schema import Schema
 from tuning.bank.bank import PACKAGES
 from tuning.families.heads import FIELD
-from tuning.measures.measures import measured, scored
+from tuning.measures.measures import measured, predicted, scored
 
 from .losses import Summed, admitted
 
@@ -319,6 +319,8 @@ class TrainingSession:
         if not np.array_equal(indices, self.scored):
             raise ValueError("holdout predictions do not exactly cover the frozen partition")
         with measure("metrics"):
+            schema = self.bank.registry.schema
+            values = predicted(schema.targets(), self.bank.aims[indices], self.bank.task_of[indices], values)
             held = scored(
                 self.bank.targets[indices],
                 values,
@@ -327,7 +329,7 @@ class TrainingSession:
                 self.bank.series_names,
                 self.bank.scale,
             )
-            metrics = measured(self.stated.measures, held, self.bank.registry.schema.measured())
+            metrics = measured(self.stated.measures, held, schema.measured())
         with measure("prediction_save"):
             np.savez_compressed(
                 self.directory / "predictions.npz",

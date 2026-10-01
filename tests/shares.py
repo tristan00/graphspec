@@ -41,6 +41,10 @@ class Share:
         (row,) = rows
         return [row["y"], row["trials"]]
 
+    @timed("shares.share.predicted")
+    def predicted(self, values, task):
+        return values
+
 
 class Expected:
     reads = ("share",)

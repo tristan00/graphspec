@@ -137,11 +137,15 @@ A kind of target says what a target is, how it is stored and read back, and how 
 | `points(rows, series, where)` | From the rows of the table of targets of the tasks of one kind of task, `task`, `graph`, `y` and the columns it stores, the checks of the kind and, per row, its series under `series` and each of its fields. |
 | `staged(stated, series, where)` | The rows of the table of targets of one target as a script states it, each with `y` and the columns it stores. |
 | `read(rows)` | The target as a script states it, from its rows in their order. |
+| `predicted(values, task)` | The predicted target of the points of the kind, in the units of the target, from the values a model gives them per point (in the units stated, for a kind that scales), `task` naming the task of each point. Measures, the stored predictions and utilities read it. |
 
-| Kind | A target, as a script states it | Its `series` | Points | Scaled | Matures |
-|---|---|---|---|---|---|
-| `number` | a finite number | the name of its one series | one, of that series; a task holding two stops the build naming its graph and its kind | yes | yes |
-| `path` | a list of points, each `[tau, series, y]` | a list of names | one per point, storing `tau FLOAT` and `series STRING`: `tau` finite and above zero, the series one the kind of task states, no two points of one task with one series and one `tau`; each stops the build naming the graph or the kind | yes | no |
+| Kind | A target, as a script states it | Its `series` | Points | Predicted | Scaled | Matures |
+|---|---|---|---|---|---|---|
+| `number` | a finite number | the name of its one series | one, of that series; a task holding two stops the build naming its graph and its kind | the value | yes | yes |
+| `path` | a list of points, each `[tau, series, y]` | a list of names | one per point, storing `tau FLOAT` and `series STRING`: `tau` finite and above zero, the series one the kind of task states, no two points of one task with one series and one `tau`; each stops the build naming the graph or the kind | the value | yes | no |
+| `class` | one of its classes, by name | its classes, a list of at least two names | one per class, storing `series STRING`, the class, with `y` 1 for the class of the task and 0 for every other; a task without exactly one point per class stops the build naming its graph, and one whose points do not state one 1 and otherwise 0 naming its kind | the probability of each class: the exponential of its value over the sum of those of the classes of its task | no | no |
+
+The classes of a kind of target over classes are stated by the schema as its series, never read from the rows: a point stores its class as its series, and the head of the kind gives each class its own learned embedding. A class named by two kinds of task of one kind of target is one series of both.
 
 A kind of target registered from outside the library is used as the shipped ones are, with no change to the library: it is registered in `graphspec.TARGETS`; its kinds of task state a utility that reads it, registered in `graphspec.UTILITIES` where none shipped does; the head a family attaches for it is registered in `tuning.HEADS` under its name; and a fit names for it a loss registered in `tuning.LOSSES` that reads it, summed with the losses of the other kinds of target of the bank, and measures registered in `tuning.MEASURES`, one at least reading it. Each family attaches one head per kind of target the bank holds, and a head reads the fields of its kind per point (see tuning/README.md). Its entries are carried to every process the library starts as other entries registered from outside are; the registry of each is imported there first.
 
@@ -151,7 +155,7 @@ A utility is the value of an outcome: a function from a predicted target to one 
 
 | Utility | Reads | Parameters | The value of a target |
 |---|---|---|---|
-| `weighted` | `number`, `path` | `weights`, a finite number for every series of the target | the sum over its points of the weight of the series of the point times its `y` |
+| `weighted` | `number`, `path`, `class` | `weights`, a finite number for every series of the target | the sum over its points of the weight of the series of the point times its `y`: for a class, the value of its class, and of a predicted class, the value of each class weighted by its probability |
 
 **Time**
 

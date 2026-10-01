@@ -6,6 +6,7 @@ import numpy as np
 
 from graphspec.infra.timing import timed
 from graphspec.registries import Names, ship
+from graphspec.schema.targets import TARGETS
 
 LOG = logging.getLogger(__name__)
 MEASURES = Names("measure")
@@ -94,6 +95,57 @@ class Balanced:
         return dict(value=float(np.mean(list(series.values()))), series=series)
 
 
+@timed("measures.grouped")
+def grouped(task):
+    return np.unique(task, return_inverse=True)[1].reshape(-1)
+
+
+class Accuracy:
+    reads = ("class",)
+    better = "higher"
+    label, short = "Validation accuracy", "Accuracy"
+
+    @timed("measures.accuracy")
+    def __call__(self, held):
+        owner = grouped(held.task)
+        order = np.lexsort((-held.prediction, owner))
+        first = np.unique(owner[order], return_index=True)[1]
+        picked = np.zeros(len(owner), bool)
+        picked[order[first]] = True
+        agreed = picked == (held.target == 1)
+        return dict(
+            value=float((held.target[picked] == 1).mean()),
+            series={name: float(agreed[held.series == code].mean()) for code, name in enumerate(held.names)},
+        )
+
+
+class Entropy:
+    reads = ("class",)
+    better = "lower"
+    label, short = "Validation log loss", "Log loss"
+
+    @timed("measures.entropy")
+    def __call__(self, held):
+        tasks, part = len(np.unique(held.task)), np.zeros(len(held.target))
+        stated = held.target > 0
+        part[stated] = -held.target[stated] * np.log(held.prediction[stated])
+        return dict(
+            value=float(part.sum() / tasks),
+            series={name: float(part[held.series == code].sum() / tasks) for code, name in enumerate(held.names)},
+        )
+
+
+def predicted(kinds, aims, task, values):
+    started = time.perf_counter()
+    result = np.asarray(values, np.float64).copy()
+    for code, kind in enumerate(kinds):
+        chosen = aims == code
+        if chosen.any():
+            result[chosen] = TARGETS.named(kind).predicted(result[chosen], task[chosen])
+    LOG.debug("predicted exit points=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def restricted(held, wanted):
     started = time.perf_counter()
     chosen = np.isin(held.series, wanted)
@@ -129,4 +181,6 @@ def measured(names, held, kinds):
 MEASURES.register("mse", Squared())
 MEASURES.register("r2", Determination())
 MEASURES.register("balanced", Balanced())
+MEASURES.register("accuracy", Accuracy())
+MEASURES.register("entropy", Entropy())
 ship([MEASURES])
