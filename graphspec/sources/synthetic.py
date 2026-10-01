@@ -931,7 +931,7 @@ def case_tasks(schema, index, tasks, counter, lookup, where):
         if stated is None:
             raise ValueError("%s, tasks: a task of the kind %s states a target" % (where, tasks["kind"][task]))
         kind = TARGETS.named(stated["kind"])
-        for row in kind.staged(target, stated["series"], "%s, the task %r" % (where, tasks["key"][task])):
+        for row in kind.staged(target, stated, "%s, the task %r" % (where, tasks["key"][task])):
             aimed["task"].append(int(ids[task]))
             aimed["y"].append(row["y"])
             aimed["known"].append(known)

@@ -170,13 +170,13 @@ def test_a_class_is_one_of_at_least_two_stated_classes_and_holds_one_point_for_e
         Schema(schema(dict(grade=("class", ["low"], None))))
     kind = TARGETS.named("class")
     with pytest.raises(ValueError, match="states its target as one of the classes low, mid, high, found 'top'"):
-        kind.staged("top", tuple(GRADES), where)
+        kind.staged("top", dict(series=tuple(GRADES)), where)
     rows = dict(task=[0, 0, 0], graph=["g0"] * 3, y=[1.0, 1.0, 0.0], series=GRADES)
     with pytest.raises(ValueError, match="state 1 for the one class of a task and 0 for every other"):
-        kind.points(rows, tuple(GRADES), where)
+        kind.points(rows, dict(series=tuple(GRADES)), where)
     with pytest.raises(ValueError, match="a task of graph g1 holds under .* one point for every class"):
-        kind.points(dict(rows, graph=["g1"] * 3, series=["low", "low", "high"]), tuple(GRADES), where)
-    assert kind.points(dict(rows, y=[0.0, 1.0, 0.0]), tuple(GRADES), where) == dict(series=GRADES)
+        kind.points(dict(rows, graph=["g1"] * 3, series=["low", "low", "high"]), dict(series=tuple(GRADES)), where)
+    assert kind.points(dict(rows, y=[0.0, 1.0, 0.0]), dict(series=tuple(GRADES)), where) == dict(series=GRADES)
     assert kind.read([dict(series=name, y=y) for name, y in zip(GRADES, [0.0, 1.0, 0.0])]) == "mid"
     target = Schema(schema(dict(grade=KINDS["grade"]))).tasks["kinds"]["grade"]["target"]
     target = dict(target, utility=dict(target["utility"], weights=dict(low=1.0, mid=4.0, high=0.0)))
@@ -198,10 +198,10 @@ def test_a_class_is_predicted_by_scores_its_loss_normalises_per_task_and_its_mea
     expected = F.cross_entropy(scores.view(3, 3), torch.tensor([0, 1, 2]), reduction="none")
     found = LOSSES.named("entropy")(scores, batch, None)
     assert float(found) == pytest.approx(float((expected * torch.tensor([1.0, 3.0, 1.0])).sum() / 5))
-    probability = predicted(("class",), np.zeros(9, np.int64), row.numpy(), scores.numpy())
+    probability = predicted(("class",), np.zeros(9, np.int64), row.numpy(), scores.numpy(), {})
     assert np.allclose(np.bincount(row.numpy(), probability), 1.0)
     assert np.allclose(probability[:3], F.softmax(scores[:3], 0).numpy())
-    held = scored(target.numpy(), probability, row.numpy(), np.tile(np.arange(3), 3), GRADES, np.ones(3))
+    held = scored(target.numpy(), probability, row.numpy(), np.tile(np.arange(3), 3), GRADES, np.ones(3), {})
     metrics = measured(["accuracy", "entropy"], held, dict(low="class", mid="class", high="class"))
     assert metrics["accuracy"]["value"] == pytest.approx(1 / 3)
     assert metrics["accuracy"]["series"] == pytest.approx(dict(low=2 / 3, mid=2 / 3, high=1 / 3))
@@ -219,20 +219,20 @@ def test_a_set_of_classes_is_one_decision_per_class_by_its_loss_and_its_measure(
     where, kind = "the target of the kind of task tags", TARGETS.named("classes")
     for wrong in (["red", "red"], ["pink"], "red"):
         with pytest.raises(ValueError, match="a list of distinct classes of red, green, blue, possibly none"):
-            kind.staged(wrong, tuple(TAGS), where)
-    assert [row["y"] for row in kind.staged(["blue", "red"], tuple(TAGS), where)] == [1.0, 0.0, 1.0]
+            kind.staged(wrong, dict(series=tuple(TAGS)), where)
+    assert [row["y"] for row in kind.staged(["blue", "red"], dict(series=tuple(TAGS)), where)] == [1.0, 0.0, 1.0]
     rows = dict(task=[0, 0, 0], graph=["g0"] * 3, y=[1.0, 0.5, 0.0], series=TAGS)
     with pytest.raises(ValueError, match="state 1 for every class of the set of a task and 0 for every other"):
-        kind.points(rows, tuple(TAGS), where)
+        kind.points(rows, dict(series=tuple(TAGS)), where)
     assert kind.read([dict(series=name, y=y) for name, y in zip(TAGS, [1.0, 0.0, 1.0])]) == ["red", "blue"]
     scores = torch.tensor([2.0, -1.0, 0.0, 0.5, 3.0, -2.0])
     target, weight = torch.tensor([1.0, 0, 0, 1, 1, 0]), torch.tensor([1.0] * 3 + [2.0] * 3)
     batch = dict(target=target, weight=weight, point_row=torch.tensor([0, 0, 0, 1, 1, 1]), tasks=2)
     error = F.binary_cross_entropy_with_logits(scores, target, reduction="none")
     assert float(LOSSES.named("binary")(scores, batch, None)) == pytest.approx(float((weight * error).sum() / 9))
-    probability = predicted(("classes",), np.zeros(6, np.int64), np.repeat([0, 1], 3), scores.numpy())
+    probability = predicted(("classes",), np.zeros(6, np.int64), np.repeat([0, 1], 3), scores.numpy(), {})
     assert np.allclose(probability, torch.sigmoid(scores).numpy())
-    held = scored(target.numpy(), probability, np.repeat([0, 1], 3), np.tile(np.arange(3), 2), TAGS, np.ones(3))
+    held = scored(target.numpy(), probability, np.repeat([0, 1], 3), np.tile(np.arange(3), 2), TAGS, np.ones(3), {})
     found = measured(["binary"], held, dict.fromkeys(TAGS, "classes"))["binary"]
     assert found["value"] == pytest.approx(float(error.mean()))
     assert found["series"]["blue"] == pytest.approx(float(error[[2, 5]].mean()))
@@ -247,10 +247,10 @@ def test_a_proportion_vector_states_a_share_of_every_class_and_is_predicted_and_
     where, kind = "the target of the kind of task mix", TARGETS.named("proportions")
     for wrong in (dict(oak=0.5, elm=0.5), dict(oak=0.5, elm=0.25, ash=0.5), dict(oak=1.5, elm=-0.5, ash=0.0)):
         with pytest.raises(ValueError, match="a share of at least 0 for every class of oak, elm, ash, summing to 1"):
-            kind.staged(wrong, tuple(TREES), where)
+            kind.staged(wrong, dict(series=tuple(TREES)), where)
     rows = dict(task=[0, 0, 0], graph=["g0"] * 3, y=[0.5, 0.25, 0.5], series=TREES)
     with pytest.raises(ValueError, match="state shares of at least 0 that sum to 1 within 1e-06 over the classes"):
-        kind.points(rows, tuple(TREES), where)
+        kind.points(rows, dict(series=tuple(TREES)), where)
     assert kind.read([dict(series=name, y=y) for name, y in zip(TREES, SHARES)]) == dict(zip(TREES, SHARES))
     scores, row = torch.tensor([1.0, 0.0, -1.0, 2.0, 2.0, 0.0]), torch.tensor([0, 0, 0, 1, 1, 1])
     target = torch.tensor([0.5, 0.25, 0.25, 0.0, 1.0, 0.0])
@@ -258,9 +258,9 @@ def test_a_proportion_vector_states_a_share_of_every_class_and_is_predicted_and_
     logged = torch.cat([torch.log_softmax(scores[:3], 0), torch.log_softmax(scores[3:], 0)])
     crossed = -(target * logged)
     assert float(LOSSES.named("entropy")(scores, batch, None)) == pytest.approx(float(crossed.sum() / 2))
-    probability = predicted(("proportions",), np.zeros(6, np.int64), row.numpy(), scores.numpy())
+    probability = predicted(("proportions",), np.zeros(6, np.int64), row.numpy(), scores.numpy(), {})
     assert np.allclose(probability, logged.exp().numpy())
-    held = scored(target.numpy(), probability, row.numpy(), np.tile(np.arange(3), 2), TREES, np.ones(3))
+    held = scored(target.numpy(), probability, row.numpy(), np.tile(np.arange(3), 2), TREES, np.ones(3), {})
     found = measured(["divergence", "entropy"], held, dict.fromkeys(TREES, "proportions"))
     stated = target.numpy()
     divergence = np.where(stated > 0, stated * np.log(np.where(stated > 0, stated, 1) / probability), 0)

@@ -28,17 +28,17 @@ class Share:
         return series[0]
 
     @timed("shares.share.points")
-    def points(self, rows, series, where):
+    def points(self, rows, target, where):
         share = np.asarray(rows["y"], np.float64)
         trials = np.asarray([np.nan if value is None else value for value in rows["trials"]], np.float64)
         if np.any((share < 0) | (share > 1)):
             raise ValueError("a share of %s lies outside 0 and 1" % where)
         if not np.all(trials >= 1) or len(np.unique(rows["task"])) != len(share):
             raise ValueError("%s holds one share of one or more trials for a task" % where)
-        return dict(series=[series[0]] * len(share), trials=trials.tolist())
+        return dict(series=[target["series"][0]] * len(share), trials=trials.tolist())
 
     @timed("shares.share.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
         share, trials = stated
         return [dict(y=share, trials=trials)]
 
@@ -48,7 +48,7 @@ class Share:
         return [row["y"], row["trials"]]
 
     @timed("shares.share.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return values
 
 

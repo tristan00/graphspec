@@ -177,7 +177,7 @@ def pointed(stated, found, owner, kinds, graphs, rows):
                 )
         given = {name: [columns[name][place] for place in chosen.tolist()] for name in target.columns}
         points = target.points(
-            dict(task=owner[chosen], graph=graphs[chosen], y=numbers[chosen], **given), entry["target"]["series"], where
+            dict(task=owner[chosen], graph=graphs[chosen], y=numbers[chosen], **given), entry["target"], where
         )
         given = ("series",) + tuple(target.fields) + (() if target.names is None else ("node",))
         if sorted(points) != sorted(given):

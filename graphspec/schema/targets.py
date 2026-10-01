@@ -162,19 +162,19 @@ class Number:
     def written(self, series):
         return series[0]
 
-    def points(self, rows, series, where):
+    def points(self, rows, target, where):
         started = time.perf_counter()
         owner = np.asarray(rows["task"], np.int64)
         found, counts = np.unique(owner, return_counts=True)
         if np.any(counts > 1):
             twice = int(np.flatnonzero(owner == found[np.argmax(counts > 1)])[0])
             raise ValueError("a task of graph %s holds more than one number as %s" % (rows["graph"][twice], where))
-        result = dict(series=[series[0]] * len(owner))
+        result = dict(series=[target["series"][0]] * len(owner))
         LOG.debug("number points exit points=%d seconds=%.4f", len(owner), time.perf_counter() - started)
         return result
 
     @timed("targets.number.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
         if not real(stated):
             raise ValueError("%s states its target as a finite number, found %r" % (where, stated))
         return [dict(y=float(stated))]
@@ -185,7 +185,7 @@ class Number:
         return row["y"]
 
     @timed("targets.number.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return values
 
 
@@ -206,8 +206,9 @@ class Path:
     def written(self, series):
         return list(series)
 
-    def points(self, rows, series, where):
+    def points(self, rows, target, where):
         started = time.perf_counter()
+        series = target["series"]
         owner = np.asarray(rows["task"], np.int64)
         tau = np.asarray([np.nan if value is None else value for value in rows["tau"]], np.float64)
         if not np.isfinite(tau).all() or np.any(tau <= 0):
@@ -230,7 +231,7 @@ class Path:
         return dict(series=names, tau=tau.tolist())
 
     @timed("targets.path.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
         if (
             not isinstance(stated, list)
             or not stated
@@ -247,7 +248,7 @@ class Path:
         return [[row["tau"], row["series"], row["y"]] for row in rows]
 
     @timed("targets.path.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return values
 
 
@@ -284,14 +285,15 @@ class Class(Over):
         return [name if value == 1 else None for name, value in zip(series, y)]
 
     @timed("targets.class.points")
-    def points(self, rows, series, where):
-        place, y = classed(rows, series, where)
+    def points(self, rows, target, where):
+        place, y = classed(rows, target["series"], where)
         if np.any((y != 0) & (y != 1)) or np.any(np.bincount(place, y) != 1):
             raise ValueError("the points of %s state 1 for the one class of a task and 0 for every other" % where)
         return dict(series=list(rows["series"]))
 
     @timed("targets.class.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
+        series = target["series"]
         if type(stated) is not str or stated not in series:
             raise ValueError(
                 "%s states its target as one of the classes %s, found %r" % (where, ", ".join(series), stated)
@@ -304,7 +306,7 @@ class Class(Over):
         return found
 
     @timed("targets.class.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return normalised(values, task)
 
 
@@ -321,8 +323,8 @@ class Classes(Over):
         return [bool(value == 1) for value in y]
 
     @timed("targets.classes.points")
-    def points(self, rows, series, where):
-        _, y = classed(rows, series, where)
+    def points(self, rows, target, where):
+        _, y = classed(rows, target["series"], where)
         if np.any((y != 0) & (y != 1)):
             raise ValueError(
                 "the points of %s state 1 for every class of the set of a task and 0 for every other" % where
@@ -330,7 +332,8 @@ class Classes(Over):
         return dict(series=list(rows["series"]))
 
     @timed("targets.classes.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
+        series = target["series"]
         if (
             not isinstance(stated, list)
             or any(type(name) is not str or name not in series for name in stated)
@@ -347,7 +350,7 @@ class Classes(Over):
         return [row["series"] for row in rows if row["y"] == 1]
 
     @timed("targets.classes.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return logistic(values)
 
 
@@ -364,8 +367,8 @@ class Proportions(Over):
         return [float(value) for value in y]
 
     @timed("targets.proportions.points")
-    def points(self, rows, series, where):
-        place, y = classed(rows, series, where)
+    def points(self, rows, target, where):
+        place, y = classed(rows, target["series"], where)
         if not np.isfinite(y).all() or np.any(y < 0) or np.any(np.abs(np.bincount(place, y) - 1) > SUMMED):
             raise ValueError(
                 "the points of %s state shares of at least 0 that sum to 1 within %g over the classes of a task"
@@ -374,7 +377,8 @@ class Proportions(Over):
         return dict(series=list(rows["series"]))
 
     @timed("targets.proportions.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
+        series = target["series"]
         if (
             not isinstance(stated, dict)
             or set(stated) != set(series)
@@ -392,7 +396,7 @@ class Proportions(Over):
         return {row["series"]: row["y"] for row in rows}
 
     @timed("targets.proportions.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return normalised(values, task)
 
 
@@ -423,17 +427,17 @@ class Members(Pointed):
 
 class Ranking(Members):
     @timed("targets.ranking.points")
-    def points(self, rows, series, where):
+    def points(self, rows, target, where):
         owner, y = located(rows, where)
         if not np.isfinite(y).all() or np.any(y < 0):
             raise ValueError("the points of %s state the relevance of each item, a finite number of at least 0" % where)
         found = np.unique(owner)
         if np.any(np.bincount(np.searchsorted(found, owner), y > 0, len(found)) == 0):
             raise ValueError("the points of %s state for every task one item at least of a relevance above 0" % where)
-        return dict(series=[series[0]] * len(owner), node=list(rows["node"]))
+        return dict(series=[target["series"][0]] * len(owner), node=list(rows["node"]))
 
     @timed("targets.ranking.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
         if (
             not isinstance(stated, dict)
             or any(type(key) is not str for key in stated)
@@ -451,20 +455,20 @@ class Ranking(Members):
         return {row["node"]: row["y"] for row in rows}
 
     @timed("targets.ranking.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return normalised(values, task)
 
 
 class Nodes(Members):
     @timed("targets.nodes.points")
-    def points(self, rows, series, where):
+    def points(self, rows, target, where):
         owner, y = located(rows, where)
         if np.any((y != 0) & (y != 1)):
             raise ValueError("the points of %s state 1 for a node that belongs and 0 for one that does not" % where)
-        return dict(series=[series[0]] * len(owner), node=list(rows["node"]))
+        return dict(series=[target["series"][0]] * len(owner), node=list(rows["node"]))
 
     @timed("targets.nodes.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
         if (
             not isinstance(stated, dict)
             or not stated
@@ -482,7 +486,7 @@ class Nodes(Members):
         return {row["node"]: row["y"] == 1 for row in rows}
 
     @timed("targets.nodes.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return logistic(values)
 
 
@@ -511,14 +515,14 @@ class Link(Pointed):
         return dict(relation=relation)
 
     @timed("targets.link.points")
-    def points(self, rows, series, where):
+    def points(self, rows, target, where):
         owner, y = located(rows, where)
         if len(np.unique(owner)) != len(owner) or np.any(y != 1):
             raise ValueError("the points of %s state one node, the one its task links to, with y 1" % where)
-        return dict(series=[series[0]] * len(owner), node=list(rows["node"]))
+        return dict(series=[target["series"][0]] * len(owner), node=list(rows["node"]))
 
     @timed("targets.link.staged")
-    def staged(self, stated, series, where):
+    def staged(self, stated, target, where):
         if type(stated) is not str or not stated:
             raise ValueError(
                 "%s states its target as the key of the node its task links to, found %r" % (where, stated)
@@ -531,7 +535,7 @@ class Link(Pointed):
         return row["node"]
 
     @timed("targets.link.predicted")
-    def predicted(self, values, task):
+    def predicted(self, values, task, fields):
         return normalised(values, task)
 
 

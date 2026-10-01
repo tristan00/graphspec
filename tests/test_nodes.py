@@ -252,12 +252,12 @@ def test_a_ranking_states_a_relevance_for_every_item_its_task_lists():
     where, kind = "the target of the kind of task rank", TARGETS.named("ranking")
     for wrong in ({}, dict(i0=0.0), dict(i0=-1.0, i1=2.0), ["i0"]):
         with pytest.raises(ValueError, match="mapping from the key of every item its task lists to its relevance"):
-            kind.staged(wrong, ("relevance",), where)
+            kind.staged(wrong, dict(series=("relevance",)), where)
     rows = dict(task=[0, 0, 1], graph=["g0"] * 3, y=[1.0, 0.0, 2.0], node=["i0", "i0", "i1"])
     with pytest.raises(ValueError, match="a task of graph g0 names the node i0 twice"):
-        kind.points(rows, ("relevance",), where)
+        kind.points(rows, dict(series=("relevance",)), where)
     with pytest.raises(ValueError, match="one item at least of a relevance above 0"):
-        kind.points(dict(rows, y=[0.0, 0.0, 2.0], node=["i0", "i1", "i1"]), ("relevance",), where)
+        kind.points(dict(rows, y=[0.0, 0.0, 2.0], node=["i0", "i1", "i1"]), dict(series=("relevance",)), where)
     assert kind.read([dict(node="i1", y=2.0), dict(node="i0", y=0.0)]) == dict(i1=2.0, i0=0.0)
     with pytest.raises(ValueError, match="is about the reference that lists the nodes its points name"):
         Schema(schema(dict(rank=("ranking", "relevance", None, {}))))
@@ -295,9 +295,9 @@ def test_a_ranking_is_scored_listwise_and_measured_by_gain_and_reciprocal_rank()
     share = torch.tensor([0.0, 2 / 3, 1 / 3, 1.0, 0.0, 0.0])
     logged = torch.cat([torch.log_softmax(scores[:3], 0), torch.log_softmax(scores[3:], 0)])
     assert float(LOSSES.named("listwise")(scores, batch, None)) == pytest.approx(float(-(share * logged).sum() / 2))
-    probability = predicted(("ranking",), np.zeros(6, np.int64), row.numpy(), scores.numpy())
+    probability = predicted(("ranking",), np.zeros(6, np.int64), row.numpy(), scores.numpy(), {})
     assert np.allclose(probability, logged.exp().numpy())
-    held = scored(target.numpy(), probability, row.numpy(), np.zeros(6, np.int64), ["relevance"], np.ones(1))
+    held = scored(target.numpy(), probability, row.numpy(), np.zeros(6, np.int64), ["relevance"], np.ones(1), {})
     found = measured(["gain", "reciprocal", "hits1"], held, dict(relevance="ranking"))
     first = (0 + 1 / np.log2(3) + 2 / np.log2(4)) / (2 + 1 / np.log2(3))
     second = 1.0 * (1 / np.log2(3) + 1 / np.log2(4)) / 2
@@ -314,10 +314,10 @@ def test_a_set_of_nodes_is_one_decision_per_node_its_task_lists():
     where, kind = "the target of the kind of task pick", TARGETS.named("nodes")
     for wrong in ({}, dict(i0=1), dict(i0=True, i1="no"), ["i0"]):
         with pytest.raises(ValueError, match="mapping from the key of every node its task lists to whether it belongs"):
-            kind.staged(wrong, ("chosen",), where)
+            kind.staged(wrong, dict(series=("chosen",)), where)
     rows = dict(task=[0, 0], graph=["g1"] * 2, y=[1.0, 0.5], node=["i0", "i1"])
     with pytest.raises(ValueError, match="state 1 for a node that belongs and 0 for one that does not"):
-        kind.points(rows, ("chosen",), where)
+        kind.points(rows, dict(series=("chosen",)), where)
     assert kind.read([dict(node="i2", y=1.0), dict(node="i0", y=0.0)]) == dict(i2=True, i0=False)
     scores, row = torch.tensor([2.0, -1.0, 0.5, -3.0, -2.0]), torch.tensor([0, 0, 0, 1, 1])
     target = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0])
@@ -325,9 +325,9 @@ def test_a_set_of_nodes_is_one_decision_per_node_its_task_lists():
     error = torch.nn.functional.binary_cross_entropy_with_logits(scores, target, reduction="none")
     expected = float((batch["weight"] * error).sum() / batch["weight"].sum())
     assert float(LOSSES.named("binary")(scores, batch, None)) == pytest.approx(expected)
-    probability = predicted(("nodes",), np.zeros(5, np.int64), row.numpy(), scores.numpy())
+    probability = predicted(("nodes",), np.zeros(5, np.int64), row.numpy(), scores.numpy(), {})
     assert np.allclose(probability, torch.sigmoid(scores).numpy())
-    held = scored(target.numpy(), probability, row.numpy(), np.zeros(5, np.int64), ["chosen"], np.ones(1))
+    held = scored(target.numpy(), probability, row.numpy(), np.zeros(5, np.int64), ["chosen"], np.ones(1), {})
     found = measured(["f1", "jaccard", "binary"], held, dict(chosen="nodes"))
     assert found["f1"]["value"] == pytest.approx((2 * 1 / (2 + 2) + 1.0) / 2)
     assert found["jaccard"]["value"] == pytest.approx((1 / 3 + 1.0) / 2) == found["jaccard"]["series"]["chosen"]
@@ -341,9 +341,9 @@ def test_a_link_names_one_node_its_relation_joins_to_the_node_it_starts_from():
     where, kind = "the target of the kind of task next", TARGETS.named("link")
     for wrong in ("", ["i0"], None):
         with pytest.raises(ValueError, match="the key of the node its task links to"):
-            kind.staged(wrong, ("bought",), where)
+            kind.staged(wrong, dict(series=("bought",)), where)
     with pytest.raises(ValueError, match="state one node, the one its task links to, with y 1"):
-        kind.points(dict(task=[0, 0], graph=["g0"] * 2, y=[1.0, 1.0], node=["i0", "i1"]), ("bought",), where)
+        kind.points(dict(task=[0, 0], graph=["g0"] * 2, y=[1.0, 1.0], node=["i0", "i1"]), dict(series=("bought",)), where)
     assert kind.read([dict(node="i3", y=1.0)]) == "i3"
     refused = (
         (("link", "bought", "items", dict(relation="buys")), "the reference of the one node its link starts from"),
@@ -359,8 +359,8 @@ def test_a_link_names_one_node_its_relation_joins_to_the_node_it_starts_from():
     logged = torch.cat([torch.log_softmax(scores[:3], 0), torch.log_softmax(scores[3:], 0)])
     expected = float(-(logged[0] * 1 + logged[4] * 3) / 4)
     assert float(LOSSES.named("entropy")(scores, batch, None)) == pytest.approx(expected)
-    probability = predicted(("link",), np.zeros(5, np.int64), row.numpy(), scores.numpy())
-    held = scored(target.numpy(), probability, row.numpy(), np.zeros(5, np.int64), ["bought"], np.ones(1))
+    probability = predicted(("link",), np.zeros(5, np.int64), row.numpy(), scores.numpy(), {})
+    held = scored(target.numpy(), probability, row.numpy(), np.zeros(5, np.int64), ["bought"], np.ones(1), {})
     found = measured(["reciprocal", "hits1", "hits10", "entropy"], held, dict(bought="link"))
     assert found["reciprocal"]["value"] == pytest.approx((1 / 2 + 1 / 1.5) / 2)
     assert found["hits1"]["value"] == 0.0 and found["hits10"]["value"] == 1.0

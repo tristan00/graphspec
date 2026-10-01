@@ -197,7 +197,7 @@ def test_the_balanced_measure_is_the_balanced_loss_on_the_points_scored():
     series = np.array([0, 0, 0, 1, 1])
     metrics = measured(
         ["balanced", "mse", "r2"],
-        scored(targets, predictions, owners, series, ["a", "b"], np.array([1.0, 2.0])),
+        scored(targets, predictions, owners, series, ["a", "b"], np.array([1.0, 2.0]), {}),
         dict(a="number", b="path"),
     )
     mse = (1.0 * 1 + 0.5 * 0 + 0.5 * 4) / 2
@@ -208,7 +208,7 @@ def test_the_balanced_measure_is_the_balanced_loss_on_the_points_scored():
     assert metrics["r2"]["value"] == pytest.approx(1 - (5 / 3) / np.var(targets[:3]))
     assert list(metrics["r2"]["series"]) == ["a"]
     with pytest.raises(ValueError, match="the series c have no point scored"):
-        scored(targets, predictions, owners, series, ["a", "b", "c"], np.ones(3))
+        scored(targets, predictions, owners, series, ["a", "b", "c"], np.ones(3), {})
 
 
 def test_validation_loss_matches_the_training_loss_on_the_same_points():
@@ -222,7 +222,7 @@ def test_validation_loss_matches_the_training_loss_on_the_same_points():
     targets, predictions = rng.normal(size=24), rng.normal(size=24)
     center, scale = np.array([0.3, -0.2]), np.array([1.5, 0.4])
     found = measured(
-        ["balanced"], scored(targets, predictions, owners, series, ["a", "b"], scale), dict(a="path", b="path")
+        ["balanced"], scored(targets, predictions, owners, series, ["a", "b"], scale, {}), dict(a="path", b="path")
     )
 
     def standard(values):

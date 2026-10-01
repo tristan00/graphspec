@@ -328,7 +328,10 @@ class TrainingSession:
             raise ValueError("holdout predictions do not exactly cover the frozen partition")
         with measure("metrics"):
             schema, every = self.bank.registry.schema, np.r_[indices, owners]
-            both = predicted(schema.targets(), self.bank.aims[every], self.bank.task_of[every], np.r_[values, drawn])
+            fields = {name: np.r_[found[indices], np.full(len(owners), np.nan)] for name, found in self.bank.fields.items()}
+            both = predicted(
+                schema.targets(), self.bank.aims[every], self.bank.task_of[every], np.r_[values, drawn], fields
+            )
             values, drawn = both[: len(indices)], both[len(indices) :]
             held = scored(
                 np.r_[self.bank.targets[indices], np.zeros(len(owners))],
@@ -337,6 +340,7 @@ class TrainingSession:
                 self.bank.series[every],
                 self.bank.series_names,
                 self.bank.scale,
+                fields,
             )
             metrics = measured(self.stated.measures, held, schema.measured())
         with measure("prediction_save"):

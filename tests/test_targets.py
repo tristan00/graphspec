@@ -333,7 +333,7 @@ def test_a_kind_of_target_registered_by_a_test_builds_reads_back_and_completes_o
     assert values.tolist() == [(at % 4) / 4 * (1.0 + at) for at in keys.tolist()]
     with pytest.raises(ValueError, match="a share of the target of the kind of task part lies outside 0 and 1"):
         TARGETS.named("share").points(
-            dict(task=[0], graph=["g0"], y=[1.5], trials=[2.0]), ("part",), "the target of the kind of task part"
+            dict(task=[0], graph=["g0"], y=[1.5], trials=[2.0]), dict(series=("part",)), "the target of the kind of task part"
         )
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
     given = dict(statement, loss=dict(share="crossed"), measures=["absolute"])

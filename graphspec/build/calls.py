@@ -250,7 +250,7 @@ class GraphTables:
             rows = [
                 (place, row)
                 for place, stated in enumerate(targets)
-                for row in target.staged(stated, aim["series"], "a task of the kind %s" % kind)
+                for row in target.staged(stated, aim, "a task of the kind %s" % kind)
             ]
             numbers = self.ids(TARGET, len(rows))
             aimed = dict(id=numbers, y=pa.array([row["y"] for _, row in rows], pa.float64()))

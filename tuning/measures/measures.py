@@ -20,20 +20,24 @@ class Scored:
     series: np.ndarray
     names: tuple
     scale: np.ndarray
+    fields: dict
 
 
-def scored(target, prediction, task, series, names, scale):
+def scored(target, prediction, task, series, names, scale, fields):
     started = time.perf_counter()
     target, prediction = np.asarray(target, np.float64), np.asarray(prediction, np.float64)
     task, series = np.asarray(task, np.int64), np.asarray(series, np.int64)
+    fields = {name: np.asarray(values, np.float64) for name, values in fields.items()}
     if target.ndim != 1 or not target.shape == prediction.shape == task.shape == series.shape:
         raise ValueError("every point scored needs a target, a prediction, a task and a series")
+    if any(values.shape != target.shape for values in fields.values()):
+        raise ValueError("every field of the points scored holds one value per point")
     if not len(target) or not np.isfinite(prediction).all() or not np.isfinite(target).all():
         raise ValueError("the predictions scored must be nonempty and finite")
     lacking = [name for code, name in enumerate(names) if not (series == code).any()]
     if lacking:
         raise ValueError("the series %s have no point scored" % ", ".join(lacking))
-    result = Scored(target, prediction, task, series, tuple(names), np.asarray(scale, np.float64))
+    result = Scored(target, prediction, task, series, tuple(names), np.asarray(scale, np.float64), fields)
     LOG.debug("scored exit points=%d seconds=%.4f", len(target), time.perf_counter() - started)
     return result
 
@@ -269,13 +273,14 @@ class Jaccard:
         return tasked(held, owner, np.where(union > 0, both / np.maximum(union, 1), 1.0))
 
 
-def predicted(kinds, aims, task, values):
+def predicted(kinds, aims, task, values, fields):
     started = time.perf_counter()
     result = np.asarray(values, np.float64).copy()
     for code, kind in enumerate(kinds):
         chosen = aims == code
         if chosen.any():
-            result[chosen] = TARGETS.named(kind).predicted(result[chosen], task[chosen])
+            held = {name: np.asarray(found)[chosen] for name, found in fields.items()}
+            result[chosen] = TARGETS.named(kind).predicted(result[chosen], task[chosen], held)
     LOG.debug("predicted exit points=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
@@ -292,6 +297,7 @@ def restricted(held, wanted):
         place[held.series[chosen]],
         tuple(held.names[code] for code in wanted),
         held.scale[wanted],
+        {name: values[chosen] for name, values in held.fields.items()},
     )
     LOG.debug("restricted exit points=%d seconds=%.4f", int(chosen.sum()), time.perf_counter() - started)
     return result

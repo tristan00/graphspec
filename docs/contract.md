@@ -137,12 +137,12 @@ A kind of target says what a target is, how it is stored and read back, and how 
 | `parameters` | The names its target statement holds beside `kind`, `series`, `about` and `utility`. |
 | `checked(stated, schema, references, where)` | Checks `about` and the parameters of a target statement against the schema and its references, and gives the parameters; a statement it refuses stops the schema naming it. |
 | `columns` | The columns of the table of targets it stores beside `id`, `y` and `known`, each with its type. Two kinds of target that store one column with two types stop the schema, and so does a column named `id`, `y`, `known`, `task` or `owner`. |
-| `fields` | Those of its columns that are numbers read per point by the head of the kind. |
+| `fields` | Those of its columns that are numbers read per point, as numbers at 32 bits: by the head of the kind, by the losses and the measures that read the kind, and by `predicted`. |
 | `series(stated, where)` | The series of a target statement, read from its `series` in the form the kind states; `written(series)` gives them back in that form. |
-| `points(rows, series, where)` | From the rows of the table of targets of the tasks of one kind of task, `task`, `graph`, `y` and the columns it stores, the checks of the kind and, per row, its series under `series`, each of its fields and, where it names nodes, the key of the node under `node`. |
-| `staged(stated, series, where)` | The rows of the table of targets of one target as a script states it, each with `y` and the columns it stores. |
+| `points(rows, target, where)` | From the rows of the table of targets of the tasks of one kind of task, `task`, `graph`, `y` and the columns it stores, and the target statement of the kind of task as the schema holds it, `series` and the parameters among it, the checks of the kind and, per row, its series under `series`, each of its fields and, where it names nodes, the key of the node under `node`. |
+| `staged(stated, target, where)` | The rows of the table of targets of one target as a script states it, each with `y` and the columns it stores, `target` being the target statement of its kind of task as the schema holds it. |
 | `read(rows)` | The target as a script states it, from its rows in their order. |
-| `predicted(values, task)` | The predicted target of the points of the kind, in the units of the target, from the values a model gives them per point (in the units stated, for a kind that scales), `task` naming the task of each point. Measures, the stored predictions and utilities read it. |
+| `predicted(values, task, fields)` | The predicted target of the points of the kind, in the units of the target, from the values a model gives them per point (in the units stated, for a kind that scales), `task` naming the task of each point and `fields` holding its fields per point. Measures, the stored predictions and utilities read it. |
 
 | Kind | A target, as a script states it | Its `series` | Points | Predicted | Scaled | Matures |
 |---|---|---|---|---|---|---|
