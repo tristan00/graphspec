@@ -52,6 +52,9 @@ VALUES = {
     "relations/parallel": "merge",
     "merge/prefer": "second",
     "difference/match": "keys",
+    "nearby/relation": "near",
+    "nearby/rule": "nearest",
+    "nearby/k": 2,
 }
 SETTINGS = {"coupling/periods": 1, "events/periods": 1, "mixed/trace": 2}
 GROUPS = specs.GROUPS + (RUNNING.name,)

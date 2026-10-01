@@ -7,7 +7,7 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`, `nearby.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads: the registry of representations and their families, structure, sample and encode (`registry.py`), the arrays every variant holds, their carried state and the arrays over a whole variant (`base.py`), one module per shipped representation (`coupling.py`, `events.py`, `neighbors.py`, `walks.py`, `mixed.py`), what they share (`groups.py`) and their kernels (`kernels.py`) |
 | `engine/` | Derivation of variants, one engine in segments: derivations, continuations and forks, and the build of a variant in the calling process (`segments.py`), the steps of a pipeline on one segment (`transform.py`), the same on worker processes (`schedule.py`), slices and edits (`edits.py`), writing and stitching segments (`stitch.py`), the physical join tests compare against (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
@@ -210,6 +210,17 @@ The entry names its second graph as a merge does. At every step the difference r
 | Parameter | Range | Effect |
 |---|---|---|
 | `difference/match` | keys, values | keys: an edge the second graph holds at the step is removed whatever its values; values: only where the second graph's edge carries the same values, compared as stated, bit for bit, an edge without values matching one without values. |
+
+10. Edges computed from the columns of two nodes, `graphspec.nearby`
+
+Fills a relation the schema states, whose edges then come from the values of its ends rather than from the source. It requires a relation stated without columns whose ends are kinds of node that share a column of numbers, and stops naming the bank where none is; the distance between two nodes is the Euclidean distance between the encoded values of the columns of numbers their kinds share, and stops naming the relation where the encoders fitted for the statement give none of those columns a width. At every step it reads the nodes of the relation's kinds observed at the step, other than as anchors, and joins no node missing a value in one of those columns. An edge is stated at every step it is found, as stated edges are, without a value and with no absent row when it is no longer found. A relation without direction between nodes of one kind holds each pair once, the lower entity first; a directed relation between nodes of one kind holds both directions under a distance and each node's own nearest under nearest. It carries no state from segment to segment and draws nothing.
+
+| Parameter | Range | Effect |
+|---|---|---|
+| `nearby/relation` | the relations that qualify | The relation it fills, from a node of its first kind to a node of its second. |
+| `nearby/rule` | threshold, nearest | threshold: every two nodes within the distance; nearest: every node to its nearest. |
+| `nearby/threshold` | 0.01–100, logarithmic | The distance. Offered for threshold. |
+| `nearby/k` | 1–16 | How many nearest each node joins, fewer where fewer are observed; candidates at equal distances are taken in the order of their tokens. Offered for nearest. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 

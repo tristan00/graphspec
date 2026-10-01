@@ -65,6 +65,7 @@ VERSIONED = {
     "graphspec.merging": ("graphspec/operations/merging.py",),
     "graphspec.merge": ("graphspec/operations/merge.py",),
     "graphspec.difference": ("graphspec/operations/difference.py",),
+    "graphspec.nearby": ("graphspec/operations/nearby.py",),
     "derivation": (
         "graphspec/engine",
         "graphspec/operations/__init__.py",
@@ -121,7 +122,8 @@ RECORDED = {
     "graphspec.merging": (3, "00b8563466374c4503b11fad815d6dab7f545aab425d8aaa43d9e3987dbc4e8d"),
     "graphspec.merge": (2, "4fc3c9ad3d5df7b3a44b11fa9b710a532eb7e3a2d8e17bbc6f116efc26a245dd"),
     "graphspec.difference": (1, "399ee4018e4dd262c7afef546bf667e32ce2e76a9440e43dcbe0e273299416c6"),
-    "derivation": (11, "aad04f6a3cdcf0f93ebd06bbfa3d6ce4d4ae60f24b59e3747e72e7ec482497bc"),
+    "graphspec.nearby": (1, "9d1d69d2d7e4c6bfc0a3d8838ab01b13fd2decb06107bbbad5a170c93edbf577"),
+    "derivation": (12, "e98af89a66e658d1b82dd77618c9f3c481caec8408d0cce1b9f17605388297b4"),
     "views": (11, "d0c0a6138e1b187c28cba776d9ccca40ebd9b3fc9e50c4698c17dbadab4ac454"),
     "representations": (7, "73b6b108220c0b31b983ed46c838accc87119970a2ec9fe07e912ae73808253a"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
