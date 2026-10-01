@@ -561,6 +561,10 @@ def test_contraction_makes_one_node_per_group_of_a_column_with_reduced_values_an
     lacking = rounded(graph, registry, "v0", quiet + [int(graph.member_source[task])])
     with pytest.raises(ValueError, match="so graphspec.contract puts it in no group and the reference cannot follow it"):
         segments.whole(lacking, {}, grown, steps, SEED, LIMITS, None)
+    bare = support.columned("bare", ["thing"], [], {})
+    assert contract.CONTRACT.stated(bare) == ()
+    with pytest.raises(ValueError, match="by one of the columns the bank states for it, and the bank bare states no"):
+        pipeline.grown(bare, resolved(bare, [dict(operation="graphspec.contract", parameters={})]), None)
     LOG.info("contraction exit seconds=%.3f", time.perf_counter() - started)
 
 
