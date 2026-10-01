@@ -1,8 +1,10 @@
 import csv
+import functools
 import hashlib
 import io
 import json
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -157,11 +159,40 @@ def save_arrays(directory, arrays):
     LOG.debug("save arrays exit arrays=%d seconds=%.4f", len(arrays), time.perf_counter() - started)
 
 
+@functools.lru_cache(maxsize=4096)
+def described(header, major):
+    if major not in (1, 2):
+        raise ValueError("an array file of format version %d is not read" % major)
+    stream = io.BytesIO(header)
+    return (np.lib.format.read_array_header_1_0 if major == 1 else np.lib.format.read_array_header_2_0)(stream)
+
+
+def load_array(path):
+    with open(path, "rb") as stream:
+        data = bytearray(os.fstat(stream.fileno()).st_size)
+        stream.readinto(data)
+    if data[:6] != b"\x93NUMPY":
+        raise ValueError("%s is not an array file" % path)
+    width = 2 if data[6] == 1 else 4
+    start = 8 + width + int.from_bytes(data[8 : 8 + width], "little")
+    shape, fortran, dtype = described(bytes(data[8:start]), data[6])
+    if dtype.hasobject:
+        raise ValueError("%s holds objects, which are not read" % path)
+    flat = np.frombuffer(data, dtype, math.prod(shape), start)
+    return flat.reshape(shape[::-1]).transpose() if fortran else flat.reshape(shape)
+
+
 def load_arrays(directory, names, mmap_mode=None):
+    started = time.perf_counter()
     directory = Path(directory)
-    return {
-        name: np.load(directory / (name + ".npy"), mmap_mode=mmap_mode, allow_pickle=False) for name in names
-    }
+    if mmap_mode is None:
+        result = {name: load_array(directory / (name + ".npy")) for name in names}
+    else:
+        result = {
+            name: np.load(directory / (name + ".npy"), mmap_mode=mmap_mode, allow_pickle=False) for name in names
+        }
+    LOG.debug("load arrays exit arrays=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 class Arrays(Mapping):
@@ -190,7 +221,7 @@ class Arrays(Mapping):
     def read(self, key):
         if key in self.packed:
             return np.array(self.packed[key])
-        return np.load(self.sources[key], allow_pickle=False)
+        return load_array(self.sources[key])
 
     def __iter__(self):
         return iter(list(self.sources) + list(self.packed))
