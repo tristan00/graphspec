@@ -18,6 +18,7 @@ from graphspec.infra.timing import measure, timed
 from graphspec.operations.parameters import digest
 from graphspec.schema.schema import Schema
 from tuning.bank.bank import PACKAGES
+from tuning.families.heads import FIELD
 from tuning.measures.measures import measured, scored
 
 from .losses import LOSSES, admitted
@@ -334,7 +335,8 @@ class TrainingSession:
                 prediction=values,
                 target=self.bank.targets[indices],
                 series=self.bank.series[indices],
-                **({} if not self.bank.path else dict(tau=self.bank.taus[indices])),
+                aim=self.bank.aims[indices],
+                **{FIELD + name: values[indices] for name, values in self.bank.fields.items()},
             )
         self.budget.check()
         result = dict(

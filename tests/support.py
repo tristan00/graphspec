@@ -397,8 +397,6 @@ def columned(name, nodes, edges, columns):
     )
     encoding = Encoding(schema, {}, {column: {} for column in columns}, {edge.name: [edge.name] for edge in base})
     extras = dict(
-        target="number",
-        series=["outcome"],
         signals=0,
         base=[edge.name for edge in base],
         events=False,

@@ -12,6 +12,7 @@ from graphspec.infra.arrays import Resident, between
 from graphspec.infra.hashing import salted
 from graphspec.operations.rows import keyed_relations
 from graphspec.schema.references import SORTS
+from tuning.families.heads import FIELD
 
 from . import gather
 from .tensors import Frames, Host, array, features, features_at, gathered, joined
@@ -158,10 +159,10 @@ def history_inputs(window, b, count, include_structure, selected):
 
 def chosen_points(bank, block, cfg):
     started = time.perf_counter()
-    graph, _, stop, target_start, partition, _, _ = block
+    graph, _, stop, target_start, partition, row_lo, row_hi = block
     rows, places = bank.labels(graph, cfg)
     steps = bank.points(graph, cfg)[1][places]
-    picked = (steps >= target_start) & (steps < stop)
+    picked = (steps >= target_start) & (steps < stop) & (places >= row_lo) & (places < row_hi)
     picked[picked] = bank.partitions(cfg)[rows[picked]] == partition
     LOG.debug(
         "chosen points exit graph=%d points=%d seconds=%.4f",
@@ -170,18 +171,6 @@ def chosen_points(bank, block, cfg):
         time.perf_counter() - started,
     )
     return rows[picked], places[picked].astype(np.int64)
-
-
-def chosen_rows(bank, block, held, first, last, cfg):
-    _, _, _, target_start, partition, row_lo, row_hi = block
-    moment = held.numpy("row_step")[first:last].astype(np.int64)
-    ids = np.arange(first, last)
-    if bank.path:
-        return np.isin(ids, chosen_points(bank, block, cfg)[1])
-    rows = held.numpy("row_index")[first:last]
-    selected = (rows >= 0) & (moment >= target_start) & (ids >= row_lo) & (ids < row_hi)
-    selected[selected] = bank.partitions(cfg)[rows[selected]] == partition
-    return selected
 
 
 @dataclass(frozen=True)
@@ -206,14 +195,15 @@ class Window:
         graph, start, stop, _, _, row_lo, row_hi = block
         held = bank.resident(graph, cfg, "cpu")
         lo, hi = (int(value) for value in held.numpy("snapshot_offsets")[[start, stop]])
-        if windowed(cfg["model"]) or bank.path:
+        if windowed(cfg["model"]):
             first, last = between(held.numpy("row_step"), start, stop)
         else:
             first, last = row_lo, row_hi
         if row_local(cfg["model"]):
-            chosen = np.flatnonzero(chosen_rows(bank, block, held, first, last, cfg))
-            if len(chosen):
-                first, last = first + int(chosen[0]), first + int(chosen[-1]) + 1
+            places = chosen_points(bank, block, cfg)[1]
+            places = places[(places >= first) & (places < last)]
+            if len(places):
+                first, last = int(places.min()), int(places.max()) + 1
         tokens = bank.tokens(held) if cfg["model"].get("keys/embedding") else None
         return cls(
             graph, start, stop, first, last, lo, hi, held, bank.fitted(cfg), cfg, tokens, bank.joining(cfg)
@@ -572,7 +562,6 @@ def walks_inputs(b, window, context):
 
 
 def base_inputs(bank, block, window):
-    _, _, _, target_start, partition, row_lo, row_hi = block
     graph, start, stop = window.graph, window.start, window.stop
     first, last, lo, hi = window.first, window.last, window.lo, window.hi
     held, tokens = window.held, window.tokens
@@ -580,14 +569,11 @@ def base_inputs(bank, block, window):
     row_steps = held.numpy("row_step")
     m = last - first
     moment = row_steps[first:last].astype(np.int64)
-    selected = chosen_rows(bank, block, held, first, last, window.cfg)
-    if bank.path:
-        rows, places = chosen_points(bank, block, window.cfg)
-        if np.any(places < first) or np.any(places >= last):
-            raise ValueError("a point of graph %d lies outside its window" % graph)
-        point_row = np.searchsorted(np.flatnonzero(selected) + first, places)
-    else:
-        rows = held.numpy("row_index")[first:last][selected]
+    rows, places = chosen_points(bank, block, window.cfg)
+    if np.any(places < first) or np.any(places >= last):
+        raise ValueError("a point of graph %d lies outside its window" % graph)
+    selected = np.isin(np.arange(first, last), places)
+    point_row = np.searchsorted(np.flatnonzero(selected) + first, places)
     local = moment - start
     bounds = np.searchsorted(local, np.arange(n + 1))
     kinds = held.numpy("row_kind")[first:last]
@@ -609,20 +595,18 @@ def base_inputs(bank, block, window):
         target=array(bank.targets[rows]),
         weight=array(bank.weights[rows]),
         series=array(bank.series[rows], torch.long),
+        aim=array(bank.aims[rows], torch.long),
+        point_row=array(point_row, torch.long),
+        tasks=int(selected.sum()),
         task=features(graph, (m,), ("task", held.numpy("row_task")[first:last], 1.0)),
         row_kind=array(kinds, torch.long),
         **member_inputs(window, first, last),
+        **{FIELD + name: array(values[rows]) for name, values in bank.fields.items()},
     )
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
     b["partner"] = partnered(b["pair"], len(b["member_row"]))
     if tokens is not None:
         b["member_token"] = array(tokens[b["member_entity"]])
-    if bank.path:
-        b.update(
-            tau=array(bank.taus[rows]),
-            point_row=array(point_row, torch.long),
-            tasks=int(selected.sum()),
-        )
     return b
 
 

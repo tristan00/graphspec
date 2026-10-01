@@ -46,7 +46,7 @@ def test_the_schema_is_built_from_a_mapping_and_written_back_to_one():
     assert schema.model == "clock" and schema.units == ("step",) and schema.graph == ("season",)
     assert schema.ties == "sequence" and schema.observers is False
     assert schema.events() == ("buy", "move", "sell") and schema.series() == ("outcome",)
-    assert schema.aim() == "number" and schema.asked_columns() == ("size", "speed")
+    assert schema.targets() == ("number",) and schema.asked_columns() == ("size", "speed")
     assert Schema(synthetic.varied("path")["schema"]).series() == ("level", "trend")
     held = Schema(synthetic.varied("node")["schema"])
     assert held.aimed_kinds() == ("outcome",) and held.tasks["signals"] == 0
@@ -264,7 +264,7 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
     assert manifest["version"] == VERSION == 8 and manifest["trained"] == ["train"]
     assert declared["schema"] == synthetic.varied("task")["schema"]
     assert manifest["splits"] == ["train", "validation"] and list(declared["extras"]) == list(EXTRAS)
-    assert declared["extras"]["events"] is True and declared["extras"]["target"] == "number"
+    assert declared["extras"]["events"] is True and Schema(declared["schema"]).targets() == ("number",)
     assert declared["encoding"]["states"] is None and "widths" not in declared
     edges = {edge["name"]: edge for edge in declared["edges"]}
     assert edges["visits"]["attributes"] == ["weight", "mode"]

@@ -45,22 +45,18 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 21
+VIEW = 22
 
 
-def layout(index, rows, steps, labels, partitions, partition, history, windowed):
+def layout(index, steps, labels, partitions, partition, history, windowed):
     started = time.perf_counter()
-    if labels is None:
-        chosen = np.flatnonzero(rows >= 0)
-        chosen = chosen[partitions[rows[chosen]] == partition]
-        moments = steps[chosen]
-    else:
-        held, places = labels
-        moments = steps[places[partitions[held] == partition]]
+    held, places = labels
+    chosen = np.unique(places[partitions[held] == partition])
+    moments = steps[chosen]
     result = []
     for moment in np.unique(moments).tolist():
         start, stop = max(0, moment - history + 1), moment + 1
-        if labels is None and not windowed:
+        if not windowed:
             members = chosen[moments == moment]
             for piece in range(0, len(members), ROWS):
                 part = members[piece : piece + ROWS]
@@ -72,6 +68,27 @@ def layout(index, rows, steps, labels, partitions, partition, history, windowed)
         "layout exit graph=%d blocks=%d seconds=%.4f", index, len(result), time.perf_counter() - started
     )
     return result
+
+
+def pointed(schema, rows):
+    started = time.perf_counter()
+    targets = schema.targets()
+    code = {
+        kind: targets.index(entry["target"]["kind"])
+        for kind, entry in schema.tasks["kinds"].items()
+        if entry["target"] is not None
+    }
+    aims = np.asarray([code[row["kind"]] for row in rows], np.int64)
+    fields = {}
+    for place, kind in enumerate(targets):
+        chosen = np.flatnonzero(aims == place).tolist()
+        for name in TARGETS.named(kind).fields:
+            held = fields.setdefault(name, np.full(len(rows), np.nan, np.float32))
+            held[chosen] = [rows[row][name] for row in chosen]
+    LOG.debug(
+        "pointed exit points=%d fields=%d seconds=%.4f", len(rows), len(fields), time.perf_counter() - started
+    )
+    return aims, fields
 
 
 def grouped(graphs, keys, size):
@@ -287,7 +304,6 @@ class Bank:
         self.registry = Registry.from_declaration(self.manifest["spec"])
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")
-        self.path = self.registry.extras["target"] == "path"
         self.splits = self.manifest["splits"]
         supervision = read_json(self.directory / "supervision.json")
         self.rows, self.split = supervision["rows"], supervision["split"]
@@ -313,8 +329,7 @@ class Bank:
         asked = self.registry.schema.tasks["key"]
         keys = np.asarray([(owners[row["graph"]], row[asked]) for row in self.rows], np.int64).reshape(-1, 2)
         self.task_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
-        if self.path:
-            self.taus = np.asarray([row["tau"] for row in self.rows], np.float32)
+        self.aims, self.fields = pointed(schema, self.rows)
         self.center = np.asarray(
             [scaled[name]["mean"] if name in scaled else 0.0 for name in self.series_names], np.float32
         )
@@ -326,11 +341,11 @@ class Bank:
         self._shared_kinds = None
         self._tokens = WeakKeyDictionary()
         LOG.info(
-            "bank exit seconds=%.3f graphs=%d rows=%d target=%s",
+            "bank exit seconds=%.3f graphs=%d rows=%d targets=%s",
             time.perf_counter() - started,
             len(self.manifest["graphs"]),
             len(self.rows),
-            self.registry.extras["target"],
+            ",".join(schema.targets()),
         )
 
     def looking(self, cfg):
@@ -516,17 +531,10 @@ class Bank:
         partitions = self.partitions(cfg)
         result = []
         for index in self.graphs(cfg):
-            rows, moments = self.points(index, cfg)
+            moments = self.points(index, cfg)[1]
             result.extend(
                 layout(
-                    index,
-                    rows,
-                    moments,
-                    self.labels(index, cfg) if self.path else None,
-                    partitions,
-                    partition,
-                    history,
-                    windowed(cfg["model"]),
+                    index, moments, self.labels(index, cfg), partitions, partition, history, windowed(cfg["model"])
                 )
             )
         LOG.info(

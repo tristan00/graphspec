@@ -22,7 +22,7 @@ class Squared:
 
 
 class Balanced:
-    reads = ("path",)
+    reads = ("number", "path")
 
     def __call__(self, predictions, batch, bank):
         import torch

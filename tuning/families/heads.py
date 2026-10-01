@@ -1,0 +1,44 @@
+import logging
+import time
+
+from graphspec.registries import Names, ship
+
+LOG = logging.getLogger(__name__)
+HEADS = Names("head of a kind of target")
+FIELD = "field/"
+
+
+class Attached:
+    def __init__(self, reads, module):
+        started = time.perf_counter()
+        if not isinstance(reads, tuple) or any(type(name) is not str for name in reads) or not callable(module):
+            raise ValueError(
+                "a head states the parameters of the model it reads as a tuple of names, and the function that "
+                "builds it"
+            )
+        self.reads, self.module = reads, module
+        LOG.debug("attached exit reads=%d seconds=%.4f", len(reads), time.perf_counter() - started)
+
+
+def number(hidden, spec, registry):
+    from .layers import NumberHead
+
+    return NumberHead(hidden)
+
+
+def path(hidden, spec, registry):
+    from .layers import PathHead
+
+    return PathHead(hidden, spec["time/encoding"])
+
+
+def reading(registry, name):
+    started = time.perf_counter()
+    result = any(name in HEADS.named(kind).reads for kind in registry.schema.targets())
+    LOG.debug("reading exit parameter=%s seconds=%.4f", name, time.perf_counter() - started)
+    return result
+
+
+HEADS.register("number", Attached((), number))
+HEADS.register("path", Attached(("time/encoding",), path))
+ship([HEADS])

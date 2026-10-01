@@ -680,12 +680,6 @@ class Schema:
                 event=self.seen(found["event"], names, references, found["absent"], where),
                 matures=self.matured(found["matures"], target, names, references, where),
             )
-        forms = {held["target"]["kind"] for held in kinds.values() if held["target"] is not None}
-        if len(forms) > 1:
-            raise ValueError(
-                "the kinds of task of one schema state targets of one kind, found %s"
-                % ", ".join(sorted(forms))
-            )
         owners = {}
         for held in kinds.values():
             if held["target"] is None:
@@ -904,15 +898,6 @@ class Schema:
                 for name in entry["target"]["series"]
             )
         )
-
-    @timed("schema.aim")
-    def aim(self):
-        forms = {
-            entry["target"]["kind"] for entry in self.tasks["kinds"].values() if entry["target"] is not None
-        }
-        if not forms:
-            raise ValueError("no kind of task of the schema states a target")
-        return next(iter(forms))
 
     @timed("schema.targets")
     def targets(self):

@@ -8,6 +8,8 @@ from torch.nn import functional as F
 from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
 
+from .heads import FIELD, HEADS
+
 CHUNK = 128
 
 
@@ -209,27 +211,48 @@ class Asked(nn.Module):
         return values + self.kind(b["row_kind"])
 
 
+class NumberHead(nn.Module):
+    @timed("layers.numberhead")
+    def __init__(self, hidden):
+        super().__init__()
+        self.output = nn.Linear(hidden * 2, 1)
+
+    def forward(self, h, series, b, points):
+        return self.output(torch.cat((h, series), -1)).squeeze(-1)
+
+
+class PathHead(nn.Module):
+    @timed("layers.pathhead")
+    def __init__(self, hidden, encoding):
+        super().__init__()
+        self.time = TimeEncoding(hidden, encoding)
+        self.output = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.SiLU(), nn.Linear(hidden, 1))
+
+    def forward(self, h, series, b, points):
+        return self.output(torch.cat((h, self.time(b[FIELD + "tau"][points]), series), -1)).squeeze(-1)
+
+
 class Head(nn.Module):
     @timed("layers.head")
     def __init__(self, width, spec, registry):
         super().__init__()
         hidden = spec["hidden"]
-        self.path = registry.extras["target"] == "path"
+        self.targets = registry.schema.targets()
         self.task = nn.Sequential(nn.Linear(width, hidden), nn.SiLU())
-        self.series = nn.Embedding(len(registry.extras["series"]), hidden)
-        if self.path:
-            self.time = TimeEncoding(hidden, spec["time/encoding"])
-            self.output = nn.Sequential(nn.Linear(hidden * 3, hidden), nn.SiLU(), nn.Linear(hidden, 1))
-        else:
-            self.output = nn.Linear(hidden * 2, 1)
+        self.series = nn.Embedding(len(registry.schema.series()), hidden)
+        self.kinds = nn.ModuleList(HEADS.named(kind).module(hidden, spec, registry) for kind in self.targets)
 
     def forward(self, features, b):
-        h = self.task(features)
-        if self.path:
-            h = torch.cat((h[b["point_row"]], self.time(b["tau"]), self.series(b["series"])), -1)
-        else:
-            h = torch.cat((h, self.series(b["series"])), -1)
-        return self.output(h).squeeze(-1)
+        h, series = self.task(features)[b["point_row"]], self.series(b["series"])
+        if len(self.kinds) == 1:
+            return self.kinds[0](h, series, b, torch.arange(len(h), device=h.device))
+        outputs, places = [], []
+        for code, kind in enumerate(self.kinds):
+            points = (b["aim"] == code).nonzero().flatten()
+            outputs.append(kind(h[points], series[points], b, points))
+            places.append(points)
+        values = torch.cat(outputs)
+        return values.new_zeros(len(h)).scatter(0, torch.cat(places), values)
 
 
 class KeyEmbedding(nn.Module):

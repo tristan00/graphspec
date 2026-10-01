@@ -8,7 +8,6 @@ from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 
 from .schema import ENCODERS, TYPES, Encoding, Schema, reserved
-from .targets import TARGETS
 
 LOG = logging.getLogger(__name__)
 EVERYTHING = ("hop", "diffusion", "rewire", "untyped", "coupling", "boundary")
@@ -57,7 +56,7 @@ class EdgeType:
         )
 
 
-EXTRAS = ("target", "series", "signals", "base", "events", "several", "untasked")
+EXTRAS = ("signals", "base", "events", "several", "untasked")
 STORED = ("member", "pairs")
 FITTED = ("features", "values", "widths")
 
@@ -113,13 +112,8 @@ class Registry:
             raise ValueError(
                 "a registry records exactly %s; it lacks %s" % (", ".join(EXTRAS), ", ".join(lacking))
             )
-        if self.extras["target"] not in TARGETS.names() or self.extras["target"] != self.schema.aim():
-            raise ValueError(
-                "the registry records targets of the kind %r and its schema states %s"
-                % (self.extras["target"], self.schema.aim())
-            )
-        if list(self.extras["series"]) != list(self.schema.series()):
-            raise ValueError("the registry and its schema name different series")
+        if not self.schema.targets():
+            raise ValueError("no kind of task of the schema states a target")
         kinds = self.schema.tasks["kinds"]
         self.tasks = tuple(kinds)
         self.stops = np.asarray([entry["absent"] == "stop" for entry in kinds.values()], bool)
@@ -528,8 +522,6 @@ def registry(task, encoding, several, untasked):
         EdgeType(name, ("boundary", name.split(":")[1]), everything, symmetric=True) for name in BOUNDARIES
     )
     extras = dict(
-        target=schema.aim(),
-        series=list(schema.series()),
         signals=schema.tasks["signals"],
         base=[relation["name"] for relation in relations],
         events=bool(schema.events()),
@@ -538,10 +530,10 @@ def registry(task, encoding, several, untasked):
     )
     result = Registry(task["name"], encoding, edges, MARKERS, extras)
     LOG.info(
-        "vocabulary exit seconds=%.3f nodes=%d relations=%d target=%s",
+        "vocabulary exit seconds=%.3f nodes=%d relations=%d targets=%s",
         time.perf_counter() - started,
         len(nodes),
         result.relations,
-        extras["target"],
+        ",".join(schema.targets()),
     )
     return result

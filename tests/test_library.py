@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from support import VALUES, asked, stated
 
-from graphspec import GraphTables, Stage, write_task
+from graphspec import GraphTables, Schema, Stage, write_task
 from graphspec.build.staged import Staged
 from graphspec.infra.processes.locks import heavy_job
 from graphspec.infra.runtime import output_path
@@ -62,7 +62,8 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
     before = {p.name: p.read_bytes() for p in (tmp_path / "source").iterdir()}
     task = write_task(tmp_path / "task.json", "different", tmp_path / "source", schema)
     manifest = build(task, tmp_path / "bank", 1, ("train",))
-    assert manifest["spec"]["extras"]["target"] == "number" and manifest["rows"] == 4
+    assert Schema(manifest["spec"]["schema"]).targets() == ("number",) and manifest["rows"] == 4
+    assert "target" not in manifest["spec"]["extras"] and "series" not in manifest["spec"]["extras"]
     assert manifest["split_rows"] == dict(train=2, validation=2)
     assert manifest["spec"]["nodes"] == ["customer", "organization"]
     assert "widths" not in manifest["spec"] and manifest["spec"]["encoding"]["states"] is None

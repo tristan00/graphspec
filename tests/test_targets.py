@@ -1,17 +1,137 @@
 import copy
+import logging
 import time
 
 import numpy as np
 import pytest
+import support
 
-from conftest import SPLITS
-from graphspec.schema.schema import Schema
+from conftest import SPLITS, inline
+from graphspec.facts.stored import Facts
+from graphspec.infra.arrays import RESIDENT
+from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
+from graphspec.schema.schema import VERSION, Schema
 from graphspec.schema.targets import TARGETS, UTILITIES, valued
 from graphspec.sources import synthetic
+from tuning.bank.bank import Deriver
+from tuning.bank.build import build
 from tuning.fits.training import fit
 from tuning.statement import state
 
+LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("targets")
+SITES = ("s0", "s1", "s2", "s3", "s4", "s5")
+VALUE = dict(type="number", encoder="value")
+TIMES = (1, 2, 3, 4, 5, 6, 7, 8)
+
+
+@timed("targets.asked")
+def asked(target):
+    return dict(references=["at"], columns=[], target=target, weight=False, absent="stop", event=None, matures=None)
+
+
+@timed("targets.aimed")
+def aimed(kind, series):
+    return dict(kind=kind, series=series, about=None, utility=synthetic.valued([series] if kind == "number" else series))
+
+
+@timed("targets.mixed")
+def mixed(kinds):
+    return dict(
+        version=VERSION,
+        time=dict(model="clock", units=["tick"], ties=None),
+        observers=False,
+        columns=dict(load=VALUE),
+        graph=dict(columns=[]),
+        nodes=dict(site=dict(columns=["load"], holds=None)),
+        sets={},
+        edges=dict(link=synthetic.edge("site", "site", [])),
+        tasks=dict(
+            key="ticket",
+            grouping=None,
+            signals=0,
+            references=dict(at=dict(sort="node", kinds=["site"])),
+            kinds={name: asked(target) for name, target in kinds.items()},
+        ),
+    )
+
+
+@timed("targets.graph")
+def graph(place, stated):
+    kinds = list(stated)
+    values = [
+        dict(
+            form="state",
+            parameters={},
+            rows=dict(
+                key=list(SITES), since=[0] * 6, until=[None] * 6, load=[1.0 + at + place for at in range(6)]
+            ),
+            kind="site",
+        )
+    ]
+    links = dict(
+        source=list(SITES[:-1]), target=list(SITES[1:]), present=[True] * 5, since=[0] * 5, until=[None] * 5
+    )
+    edges = [dict(form="state", parameters={}, rows=links, table="link", ends=("site", "site"))]
+    kind = [kinds[at % len(kinds)] for at in range(len(TIMES))]
+    return dict(
+        name="g%d" % place,
+        unit="tick",
+        columns={},
+        nodes=dict(site=list(SITES)),
+        values=values,
+        edges=edges,
+        tasks=dict(
+            key=list(range(len(TIMES))),
+            kind=kind,
+            time=list(TIMES),
+            split=["train" if (at // len(kinds)) % 2 == 0 else "validation" for at in range(len(TIMES))],
+            weight=[None] * len(TIMES),
+            references=dict(at=[SITES[at % 6] for at in range(len(TIMES))]),
+            target=[stated[kind[at]](at, place) for at in range(len(TIMES))],
+            known=[None] * len(TIMES),
+        ),
+    )
+
+
+@timed("targets.number")
+def number(at, place):
+    return 0.5 * at + place
+
+
+@timed("targets.course")
+def course(at, place):
+    return [[1.0, "near", 1.0 + at + place], [2.0, "near", 2.0 * at - place], [1.0, "far", 0.25 * at * at]]
+
+
+@timed("targets.case")
+def case(kinds, targets):
+    return dict(schema=mixed(kinds), graphs=[graph(place, targets) for place in range(2)])
+
+
+@timed("targets.read")
+def read(held, name):
+    found = {}
+    kinds = held.registry.schema.tasks["kinds"]
+    for row in held.rows:
+        found.setdefault((row["graph"], row["kind"], row["ticket"]), []).append(row)
+    return {
+        key: TARGETS.named(kinds[key[1]]["target"]["kind"]).read(rows)
+        for key, rows in found.items()
+        if key[0] == name
+    }
+
+
+@pytest.fixture(scope="module")
+def numbered(tmp_path_factory):
+    started = time.perf_counter()
+    root = tmp_path_factory.mktemp("mixed")
+    kinds = dict(level=aimed("number", "size"), course=aimed("path", ["near", "far"]))
+    stated = case(kinds, dict(level=number, course=course))
+    build(synthetic.stage(root, "mixed", stated), root / "bank", 1, ("train",))
+    LOG.info("bank of mixed targets exit seconds=%.3f", time.perf_counter() - started)
+    return root / "bank", stated
 
 
 def restated(**target):
@@ -54,14 +174,87 @@ def test_the_utility_of_a_target_is_one_number_per_task():
 
 
 def test_a_statement_naming_what_cannot_read_a_kind_of_target_of_the_bank_stops_naming_both(
-    path_bank, tmp_path, statement
+    numbered, tmp_path, statement
 ):
-    config = dict(seed=statement["seed"], splits=SPLITS, pipeline=[])
+    bank, config = numbered[0], dict(seed=statement["seed"], splits=SPLITS, pipeline=[])
     with pytest.raises(
         ValueError,
         match="names the measure r2, which reads targets of the kinds number and cannot read the kind of target path",
     ):
-        fit(path_bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(statement))
+        fit(bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(statement))
     with pytest.raises(KeyError, match="no loss is registered under the name 'absolute'"):
-        fit(path_bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(dict(statement, loss="absolute")))
+        fit(bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(dict(statement, loss="absolute")))
     assert not list(tmp_path.iterdir())
+
+
+def test_a_number_and_a_path_in_one_bank_read_back_as_stated_and_are_scaled_per_series(numbered):
+    bank, stated = numbered
+    held = Deriver(bank, "cpu", RESIDENT)
+    schema = held.registry.schema
+    assert schema.targets() == ("number", "path") and schema.series() == ("size", "near", "far")
+    assert schema.measured() == dict(size="number", near="path", far="path")
+    for graph in stated["graphs"]:
+        tasks = graph["tasks"]
+        wanted = {
+            (graph["name"], kind, key): target
+            for kind, key, target in zip(tasks["kind"], tasks["key"], tasks["target"])
+        }
+        assert read(held, graph["name"]) == wanted
+    written = support.written(bank.parent / "mixed.staging", schema)
+    for entry in held.manifest["graphs"]:
+        truth = Facts.load(held.truth(entry["index"]))
+        found = truth.stated(held.registry, held.splits, held.manifest["observers"])
+        assert found["targets"] == written[truth.name]["targets"] and len(found["targets"]["y"]) == 16
+    trained = held.split["indices"]["train"]
+    assert [entry["name"] for entry in held.split["series"]] == ["size", "near", "far"]
+    for entry in held.split["series"]:
+        values = [held.rows[row]["y"] for row in trained if held.rows[row]["series"] == entry["name"]]
+        assert entry["mean"] == pytest.approx(np.mean(values)) and entry["sd"] == pytest.approx(np.std(values, ddof=1))
+    path = np.asarray([row["kind"] == "course" for row in held.rows])
+    assert np.array_equal(held.aims, path.astype(np.int64)) and np.isnan(held.fields["tau"][~path]).all()
+    assert held.fields["tau"][path].tolist() == [row["tau"] for row in held.rows if row["kind"] == "course"]
+
+
+def test_a_head_gives_every_point_the_prediction_of_the_head_of_its_kind_of_target():
+    from types import SimpleNamespace
+
+    import torch
+
+    from tuning.families.layers import Head
+
+    schema = SimpleNamespace(targets=lambda: ("number", "path"), series=lambda: ("size", "near", "far"))
+    torch.manual_seed(3)
+    head = Head(5, {"hidden": 4, "time/encoding": "log_cosine"}, SimpleNamespace(schema=schema))
+    features = torch.randn(3, 5)
+    b = {
+        "point_row": torch.tensor([0, 1, 1, 2, 0]),
+        "series": torch.tensor([1, 0, 2, 0, 1]),
+        "aim": torch.tensor([1, 0, 1, 0, 1]),
+        "field/tau": torch.tensor([1.0, float("nan"), 2.0, float("nan"), 3.0]),
+    }
+    found = head(features, b)
+    h, series = head.task(features)[b["point_row"]], head.series(b["series"])
+    assert found.shape == (5,) and torch.isfinite(found).all()
+    for code in (0, 1):
+        points = (b["aim"] == code).nonzero().flatten()
+        torch.testing.assert_close(found[points], head.kinds[code](h[points], series[points], b, points))
+
+
+def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_target(
+    numbered, tmp_path, statement, monkeypatch
+):
+    bank = numbered[0]
+    cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
+    held = Deriver(bank, "cpu", RESIDENT)
+    given = dict(statement, loss="balanced", measures=["balanced", "mse"])
+    started = time.perf_counter()
+    fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
+    LOG.info("fit of mixed targets exit seconds=%.3f", time.perf_counter() - started)
+    saved = read_json(tmp_path / "result.json")
+    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20 and saved["loss"] == "balanced"
+    assert sorted(saved["measures"]["balanced"]["series"]) == ["far", "near", "size"]
+    assert saved["holdout_rows"] == len(held.members(cfg, 1)) and saved["statement"] == given
+    with np.load(tmp_path / "predictions.npz") as found:
+        aim, tau = found["aim"], found["field/tau"]
+        assert set(aim.tolist()) == {0, 1} and np.isnan(tau[aim == 0]).all() and (tau[aim == 1] > 0).all()
+        assert np.isfinite(found["prediction"]).all() and len(aim) == saved["holdout_rows"]

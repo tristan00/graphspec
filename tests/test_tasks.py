@@ -269,7 +269,7 @@ def test_the_table_of_tasks_reads_back_from_the_bank_equal_to_what_was_stated(ba
     assert manifest["version"] == 8 and manifest["splits"] == ["east", "north", "south", "west"]
     assert manifest["trained"] == ["north", "south"]
     assert manifest["split_rows"] == dict(east=6, north=6, south=6, west=6)
-    assert manifest["spec"]["extras"]["series"] == ["total", "mark", "wide"]
+    assert schema.series() == ("total", "mark", "wide") and schema.targets() == ("number",)
     written = support.written(bank.parent / "tasks.staging", schema)
     for entry in manifest["graphs"]:
         truth = Facts.load(held.truth(entry["index"]))

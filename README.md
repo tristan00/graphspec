@@ -1,6 +1,6 @@
 **graphspec**
 
-Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. What is predicted is stated as tasks: a task has a kind, a time, named references to nodes, edges, sets of nodes, paths, subgraphs or the graph, and a target, a number or a path of many `(series, tau, y)` points, each predicted from the task's embedding, a learned embedding of the series and an encoding of the elapsed time `tau`. A fit and a search run on the device their statement names, `cpu` or `cuda`, and stop with an error when it names a GPU and none is present.
+Build a static or temporal truth graph, derive graph variants, and tune graph transforms and GNN components together. Node types and relations come from the input schema. What is predicted is stated as tasks: a task has a kind, a time, named references to nodes, edges, sets of nodes, paths, subgraphs or the graph, and a target of a registered kind, shipped a number or a path of many `(tau, series, y)` points, each point predicted by the head of its kind from the task's embedding and a learned embedding of the series, and for a path an encoding of the elapsed time `tau`; one bank may hold kinds of task with different kinds of target. A kind of task states a utility, the value of an outcome. A fit and a search run on the device their statement names, `cpu` or `cuda`, and stop with an error when it names a GPU and none is present.
 
 **Install and storage**
 

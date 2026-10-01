@@ -7,7 +7,7 @@ from conftest import SPLITS
 from graphspec.build.output import Stage
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, write_json
-from graphspec.schema.schema import TARGET
+from graphspec.schema.schema import TARGET, Schema
 from graphspec.sources.synthetic import Counter, graph_rows, uniform
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
@@ -28,13 +28,13 @@ def staged_points(root, name, edit):
 
 def test_path_bank_records_one_row_per_point_and_splits_by_task(path_bank):
     manifest = read_json(path_bank / "manifest.json")
-    assert manifest["spec"]["extras"]["target"] == "path" and manifest["rows"] == 208
+    assert Schema(manifest["spec"]["schema"]).targets() == ("path",) and manifest["rows"] == 208
     supervision = read_json(path_bank / "supervision.json")
     rows = supervision["rows"]
     assert all(row["tau"] >= 1 for row in rows)
     opened = Deriver(path_bank, "cpu", RESIDENT)
-    assert opened.path and len(opened.taus) == 208
-    assert opened.series_names == opened.registry.extras["series"] == ["level", "trend"]
+    assert opened.aims.tolist() == [0] * 208 and len(opened.fields["tau"]) == 208
+    assert opened.series_names == list(opened.registry.schema.series()) == ["level", "trend"]
     assert np.bincount(opened.series).tolist() == [104, 104]
     for code, entry in enumerate(supervision["split"]["series"]):
         train = [row["y"] for row in rows if row["series"] == entry["name"]]
@@ -49,7 +49,7 @@ def test_path_bank_records_one_row_per_point_and_splits_by_task(path_bank):
     for index in range(4):
         points, places = shown.labels[index]
         steps = shown.row_steps[index][places]
-        keys = np.stack((steps, opened.series[points], opened.taus[points]), 1)
+        keys = np.stack((steps, opened.series[points], opened.fields["tau"][points]), 1)
         assert all(tuple(a) < tuple(b) for a, b in zip(keys[:-1], keys[1:]))
         assert len(set(opened.partitions(cfg)[points].tolist())) == 1
     tasks = {(row["graph"], row["key"]) for row in rows}
@@ -87,7 +87,8 @@ def test_path_targets_require_a_series(tmp_path):
 
 
 def test_targets_without_tau_stay_scalar(bank):
-    assert read_json(bank / "manifest.json")["spec"]["extras"]["target"] == "number"
+    assert Schema(read_json(bank / "manifest.json")["spec"]["schema"]).targets() == ("number",)
+    assert Deriver(bank, "cpu", RESIDENT).fields == {}
 
 
 def expected_points(opened, block):
@@ -113,7 +114,8 @@ def test_path_windows_carry_every_point_of_their_step(path_bank):
             b = recipe(opened, block, cfg)
             rows = b["rows"].value
             assert sorted(rows.tolist()) == expected_points(opened, block) and len(rows) > 0
-            assert np.array_equal(b["tau"], opened.taus[rows]) and b["tau"].dtype == np.float32
+            tau = b["field/tau"]
+            assert np.array_equal(tau, opened.fields["tau"][rows]) and tau.dtype == np.float32
             assert b["tasks"] == int(b["selected"].sum()) == 1
             assert np.all(b["point_row"] == 0) and len(b["point_row"]) == len(rows)
             covered.extend(rows.tolist())
@@ -121,7 +123,7 @@ def test_path_windows_carry_every_point_of_their_step(path_bank):
     full = [block for block in opened.blocks(0, 4, cfg) if block[2] - block[1] == 4]
     b = recipe_batch(opened, full[:3], cfg)
     assert b["tasks"] == 3 and b["point_row"].tolist() == sorted(b["point_row"].tolist())
-    assert set(b["point_row"].tolist()) == {0, 1, 2} and len(b["tau"]) == len(b["rows"].value)
+    assert set(b["point_row"].tolist()) == {0, 1, 2} and len(b["field/tau"]) == len(b["rows"].value)
 
 
 def test_path_windows_join_like_the_windows_of_numbers(path_bank):
@@ -298,10 +300,10 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     batch = pack_batch(opened, period_blocks(opened, full[:2], cfg), cfg, "cpu")
     net = build(cfg, opened.fitted(cfg))
     prediction = net(batch)
-    assert prediction.shape == batch["target"].shape == batch["tau"].shape
+    assert prediction.shape == batch["target"].shape == batch["field/tau"].shape
     assert len(prediction) > batch["tasks"] == 2
     assert torch.isfinite(prediction).all()
     value = loss(prediction, batch, opened)
     value.backward()
-    assert torch.isfinite(value) and net.head.time.frequency.grad is not None
+    assert torch.isfinite(value) and net.head.kinds[0].time.frequency.grad is not None
     assert net.head.series.weight.grad is not None and set(batch["series"].tolist()) == {0, 1}

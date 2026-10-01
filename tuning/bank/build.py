@@ -438,11 +438,11 @@ def build(task_path, output, workers, trained):
     )
     write_json(output / "manifest.json", manifest)
     LOG.info(
-        "bank exit seconds=%.3f graphs=%d rows=%d target=%s",
+        "bank exit seconds=%.3f graphs=%d rows=%d targets=%s",
         manifest["seconds"],
         len(metrics),
         manifest["rows"],
-        registry.extras["target"],
+        ",".join(registry.schema.targets()),
     )
     return manifest
 

@@ -7,6 +7,7 @@ import numpy as np
 from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from tuning.bank.bank import ROWS
+from tuning.families.heads import FIELD
 from tuning.families.periods import enabled
 
 from .inputs import frame_inputs, recipe
@@ -227,7 +228,7 @@ def recipe_batch(bank, blocks, cfg):
         "selected",
         "target",
         "weight",
-        "tau",
+        "aim",
         "series",
         "row_kind",
         "member_name",
@@ -284,13 +285,12 @@ def recipe_batch(bank, blocks, cfg):
         "history_token",
         "walk_token",
     )
-    for key in direct:
+    for key in direct + tuple(key for key in parts[0] if key.startswith(FIELD)):
         if key in parts[0]:
             b[key] = joined([p[key] for p in parts])
-    if "point_row" in parts[0]:
-        offsets = np.r_[0, np.cumsum([p["tasks"] for p in parts])]
-        b["point_row"] = np.concatenate([p["point_row"] + int(offset) for p, offset in zip(parts, offsets)])
-        b["tasks"] = int(offsets[-1])
+    offsets = np.r_[0, np.cumsum([p["tasks"] for p in parts])]
+    b["point_row"] = np.concatenate([p["point_row"] + int(offset) for p, offset in zip(parts, offsets)])
+    b["tasks"] = int(offsets[-1])
     member_offsets = np.r_[0, np.cumsum([len(p["member_row"]) for p in parts])]
     if "end_steps" in parts[0]:
         b["end_steps"] = moved(parts, "end_steps", [i * t for i in range(size)])

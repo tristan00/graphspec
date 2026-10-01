@@ -37,10 +37,10 @@ class GraphTables:
             if not SORTS.named(entry["sort"]).whole
             and (SORTS.named(entry["sort"]).columns() != {} or SORTS.named(entry["sort"]).most != 1)
         ]
-        if asked["grouping"] is not None or asked["signals"] or schema.aim() != "number" or held:
+        if asked["grouping"] is not None or asked["signals"] or held:
             raise ValueError(
-                "graph tables state tasks without a grouping and without signals, whose targets are numbers "
-                "and whose references are one node each or the graph"
+                "graph tables state tasks without a grouping and without signals, whose references are one node "
+                "each or the graph"
             )
         if schema.sets or schema.holds:
             raise ValueError("graph tables state no edges joining sets and no held graphs")

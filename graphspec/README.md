@@ -86,7 +86,6 @@ A table whose relations are taken from a column is one table with a value. Each 
 
 The markers `non_relation` and `period_context` take codes above every relation. The registry extras record:
 
-- the kind of target, a number or a path, and the series
 - whether a kind of task is seen as an event
 - the signal width
 - the base relations

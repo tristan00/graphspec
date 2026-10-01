@@ -6,6 +6,8 @@ from graphspec.operations.parameters import GROUPS, among, choice, draw, equals,
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
+from .heads import reading
+
 LOG = logging.getLogger(__name__)
 DERIVES = "representations/%s"
 VIEWS = (
@@ -103,6 +105,7 @@ def space(registry):
         if registry.extras["events"]
         else tuple(update for update in UPDATES if update != "mutual_rnn")
     )
+    encoded = reading(registry, "time/encoding")
     parameters = [
         choice("view", offered, offered[0]),
         number("hidden", 1, 128, 32),
@@ -173,7 +176,7 @@ def space(registry):
             "time/encoding",
             ENCODINGS,
             "log_cosine",
-            lambda spec: registry.extras["target"] == "path" or reads_time(spec),
+            lambda spec: encoded or reads_time(spec),
         ),
         flag("keys/embedding", False, embeds_keys),
         number("keys/table", 4096, 65536, 16384, lambda spec: spec.get("keys/embedding") is True),

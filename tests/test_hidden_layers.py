@@ -50,10 +50,11 @@ def test_walks_accept_every_hidden_width_with_finite_gradients():
     registry = SimpleNamespace(
         features=3,
         relation_slots=2,
-        extras={"target": "number", "series": ["out"]},
         references=("unit",),
         tasks=("ask",),
-        schema=SimpleNamespace(tasks=dict(references=dict(unit=dict(sort="node")))),
+        schema=SimpleNamespace(
+            tasks=dict(references=dict(unit=dict(sort="node"))), targets=lambda: ("number",), series=lambda: ("out",)
+        ),
     )
     for hidden in range(1, 129):
         cfg = {
@@ -80,6 +81,7 @@ def test_walks_accept_every_hidden_width_with_finite_gradients():
             "row_kind": torch.tensor([0]),
             "series": torch.tensor([0]),
             "selected": torch.tensor([0]),
+            "point_row": torch.tensor([0]),
         }
         prediction = net(batch)
         assert prediction.shape == (1,)

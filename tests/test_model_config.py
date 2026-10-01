@@ -24,8 +24,10 @@ def registry(events=True, signals=2):
     kinds = dict(ask=dict(target=dict(kind="number"), references=("unit",), absent="stop"))
     return SimpleNamespace(
         name="stated",
-        extras=dict(events=events, signals=signals, target="number"),
-        schema=SimpleNamespace(tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node")))),
+        extras=dict(events=events, signals=signals),
+        schema=SimpleNamespace(
+            tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node"))), targets=lambda: ("number",)
+        ),
     )
 
 
