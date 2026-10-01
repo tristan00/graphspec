@@ -97,7 +97,7 @@ def stated():
                 ask=dict(
                     references=["unit", "trio"],
                     columns=[],
-                    target=dict(kind="number", series="out", about="unit"),
+                    target=dict(kind="number", series="out", about="unit", utility=synthetic.valued(["out"])),
                     weight=False,
                     absent="stop",
                     event=None,

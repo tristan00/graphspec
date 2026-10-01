@@ -10,6 +10,7 @@ from graphspec.infra.files import write_json
 from graphspec.infra.runtime import output_path
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import EDGE, LINK, OBSERVED, TARGET, TASK, WRITTEN
+from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import UNITED
 
 LOG = logging.getLogger(__name__)
@@ -215,13 +216,6 @@ class GraphTables:
                     "tasks of the kind %s state %s"
                     % (kind, "one of %s for every task" % name if wanted[name] else "no " + name)
                 )
-        if (
-            targets is not None
-            and not np.isfinite(
-                np.asarray([np.nan if value is None else value for value in targets], np.float64)
-            ).all()
-        ):
-            raise ValueError("tasks of the kind %s state one finite target for every task" % kind)
         ids = self.ids("task", count)
         held = dict(
             id=ids,
@@ -251,12 +245,25 @@ class GraphTables:
                 raise ValueError("the reference %s is not stated to name nodes of the kind %s" % (name, node))
             self.put((TASK + name, "task", node), pa.table({"from": ids, "to": self.resolve(node, members)}))
         if targets is not None:
-            numbers = self.ids(TARGET, count)
-            aimed = dict(id=numbers, y=pa.array(list(targets), pa.float64()))
+            aim = entry["target"]
+            target = TARGETS.named(aim["kind"])
+            rows = [
+                (place, row)
+                for place, stated in enumerate(targets)
+                for row in target.staged(stated, aim["series"], "a task of the kind %s" % kind)
+            ]
+            numbers = self.ids(TARGET, len(rows))
+            aimed = dict(id=numbers, y=pa.array([row["y"] for _, row in rows], pa.float64()))
             if timed:
-                aimed["known"] = pa.array(list(known), pa.int64())
+                moments = list(known)
+                aimed["known"] = pa.array([moments[place] for place, _ in rows], pa.int64())
+            for name, written in schema.target_columns().items():
+                aimed[name] = pa.array(
+                    [row[name] if name in target.columns else None for _, row in rows], WRITTEN[written]
+                )
+            owners = ids[np.asarray([place for place, _ in rows], np.int64)]
             self.put((TARGET, None, None), pa.table(aimed))
-            self.put((LINK, TARGET, "task"), pa.table({"from": numbers, "to": ids}))
+            self.put((LINK, TARGET, "task"), pa.table({"from": numbers, "to": owners}))
         LOG.debug(
             "graph tables tasks exit kind=%s tasks=%d seconds=%.4f",
             kind,

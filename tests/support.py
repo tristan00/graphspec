@@ -334,7 +334,12 @@ def asked(nodes):
             outcome=dict(
                 references=["holder"],
                 columns=[],
-                target=dict(kind="number", series="outcome", about="holder"),
+                target=dict(
+                    kind="number",
+                    series="outcome",
+                    about="holder",
+                    utility=dict(name="weighted", better="higher", weights=dict(outcome=1.0)),
+                ),
                 weight=False,
                 absent="stop",
                 event=None,

@@ -71,7 +71,7 @@ def stated(model, units, ties, observers):
                 kind: synthetic.kind(
                     ["first", "second", "third"],
                     ["ask"],
-                    dict(kind="number", series="outcome", about="first"),
+                    dict(kind="number", series="outcome", about="first", utility=synthetic.valued(["outcome"])),
                     ["first", "second"],
                 )
                 for kind in ("plain", "urgent")

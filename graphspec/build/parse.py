@@ -310,12 +310,6 @@ def aimed(registry, tables, tasks, place, rows, name):
                 "a task of graph %s of the kind %s holds a target, which its kind does not state"
                 % (name, kind)
             )
-        if (
-            entry["target"] is not None
-            and entry["target"]["kind"] == "number"
-            and counts[members].max(initial=0) > 1
-        ):
-            raise ValueError("a task of graph %s of the kind %s holds more than one target" % (name, kind))
     if np.any(tasks["task_split"][owner] < 0):
         raise ValueError("a task of graph %s holds a target and states no split" % name)
     order = np.lexsort((rows, owner))

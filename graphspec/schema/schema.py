@@ -10,10 +10,11 @@ from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
 from .references import ABSENT, SORTS
+from .targets import BETTER, TARGETS, UTILITIES, UTILITY
 from .time import ABOUT, MODELS, STAMPS, TIES, UNITED
 
 LOG = logging.getLogger(__name__)
-VERSION = 5
+VERSION = 6
 EDGE = "edge_"
 OBSERVED = "observed_"
 TASK = "task_"
@@ -38,8 +39,7 @@ WRITTEN = {
 NAMED = {kind: name for name, kind in WRITTEN.items()}
 TABLES = ("graph", "observation", "task", TARGET, LINK)
 PREFIXES = (EDGE, OBSERVED, TASK, MEMBER, INNER)
-TARGETS = ("number", "path")
-FIELDS = ("version", "time", "observers", "columns", "graph", "nodes", "sets", "edges", "tasks")
+FIELDS =("version", "time", "observers", "columns", "graph", "nodes", "sets", "edges", "tasks")
 TIMED = ("model", "units", "ties")
 KINDED = ("columns", "holds")
 HOLDS = ("nodes", "edges", "encoder")
@@ -51,7 +51,8 @@ DECLARED = "declared"
 ASKED = ("key", "grouping", "signals", "references", "kinds")
 REFERRED = ("sort", "kinds")
 KIND = ("references", "columns", "target", "weight", "absent", "event", "matures")
-AIMED = ("kind", "series", "about")
+AIMED = ("kind", "series", "about", "utility")
+OWNED_TARGET = ("id", "y", "known", "task", "owner")
 MATURED = ("reference", "column")
 GIVEN = ("id", "graph", "time", "observer", "kind", "split", "weight", "signal", "signal_observed")
 VALUE = "column:"
@@ -474,6 +475,7 @@ class Schema:
                 about=about,
             )
         self.tasks = self.asked(held["tasks"])
+        self.target_columns()
         both = [name for name in self.graph if name in self.asked_columns()]
         if both:
             raise ValueError(
@@ -684,6 +686,17 @@ class Schema:
                 "the kinds of task of one schema state targets of one kind, found %s"
                 % ", ".join(sorted(forms))
             )
+        owners = {}
+        for held in kinds.values():
+            if held["target"] is None:
+                continue
+            for name in held["target"]["series"]:
+                other = owners.setdefault(name, held["target"]["kind"])
+                if other != held["target"]["kind"]:
+                    raise ValueError(
+                        "the series %s is named by targets of the kinds %s and %s; a series belongs to targets of "
+                        "one kind" % (name, other, held["target"]["kind"])
+                    )
         result = dict(
             key=entry["key"],
             grouping=entry["grouping"],
@@ -709,26 +722,31 @@ class Schema:
                 "the target of %s is about one of its references, %s, or about none of them, found %r"
                 % (where, ", ".join(names) or "none", stated["about"])
             )
-        if stated["kind"] not in TARGETS:
+        series = TARGETS.named(stated["kind"]).series(stated["series"], "the target of " + where)
+        return dict(
+            kind=stated["kind"],
+            series=series,
+            about=stated["about"],
+            utility=self.valued(stated["utility"], stated["kind"], series, where),
+        )
+
+    @timed("schema.valued")
+    def valued(self, stated, kind, series, where):
+        where = "the utility of the target of " + where
+        if not isinstance(stated, dict) or "name" not in stated:
+            raise ValueError("%s states the name of a registered utility, found %r" % (where, stated))
+        entry = UTILITIES.named(stated["name"])
+        fields(stated, UTILITY + entry.parameters, where)
+        if stated["better"] not in BETTER:
             raise ValueError(
-                "the target of %s is one of %s, found %r" % (where, ", ".join(TARGETS), stated["kind"])
+                "%s states which value is better as one of %s, found %r" % (where, ", ".join(BETTER), stated["better"])
             )
-        series = [stated["series"]] if stated["kind"] == "number" else stated["series"]
-        if (
-            not isinstance(series, list)
-            or not series
-            or len(set(series)) != len(series)
-            or any(type(name) is not str or not name or ":" in name for name in series)
-        ):
+        if kind not in entry.reads:
             raise ValueError(
-                "the target of %s names %s, found %r"
-                % (
-                    where,
-                    "its series" if stated["kind"] == "number" else "its series as a list of distinct names",
-                    stated["series"],
-                )
+                "%s, %s, reads targets of the kinds %s and the target is of the kind %s"
+                % (where, stated["name"], ", ".join(entry.reads), kind)
             )
-        return dict(kind=stated["kind"], series=tuple(series), about=stated["about"])
+        return dict(name=stated["name"], better=stated["better"], **entry.checked(stated, series, where))
 
     @timed("schema.seen")
     def seen(self, stated, names, references, absent, where):
@@ -752,8 +770,11 @@ class Schema:
         if stated is None:
             return None
         stated = fields(stated, MATURED, "what matures of " + where)
-        if target is None or target["kind"] != "number":
-            raise ValueError("%s states what matures, and only a target that is a number matures" % where)
+        if target is None or not TARGETS.named(target["kind"]).matures:
+            raise ValueError(
+                "%s states what matures, and only a target of a kind that matures into the value of a column "
+                "matures" % where
+            )
         name, column = stated["reference"], stated["column"]
         if name not in names or references[name]["sort"] != "node":
             raise ValueError(
@@ -835,10 +856,9 @@ class Schema:
                         if entry["target"] is None
                         else dict(
                             kind=entry["target"]["kind"],
-                            series=entry["target"]["series"][0]
-                            if entry["target"]["kind"] == "number"
-                            else list(entry["target"]["series"]),
+                            series=TARGETS.named(entry["target"]["kind"]).written(entry["target"]["series"]),
                             about=entry["target"]["about"],
+                            utility=copy.deepcopy(entry["target"]["utility"]),
                         ),
                         weight=entry["weight"],
                         absent=entry["absent"],
@@ -893,6 +913,42 @@ class Schema:
         if not forms:
             raise ValueError("no kind of task of the schema states a target")
         return next(iter(forms))
+
+    @timed("schema.targets")
+    def targets(self):
+        return tuple(
+            dict.fromkeys(
+                entry["target"]["kind"] for entry in self.tasks["kinds"].values() if entry["target"] is not None
+            )
+        )
+
+    @timed("schema.measured")
+    def measured(self):
+        return {
+            name: entry["target"]["kind"]
+            for entry in self.tasks["kinds"].values()
+            if entry["target"] is not None
+            for name in entry["target"]["series"]
+        }
+
+    def target_columns(self):
+        started = time.perf_counter()
+        result, owner = {}, {}
+        for kind in self.targets():
+            for name, written in TARGETS.named(kind).columns.items():
+                if name in OWNED_TARGET:
+                    raise ValueError(
+                        "the kind of target %s stores the column %s, a column of the contract of the table of "
+                        "targets" % (kind, name)
+                    )
+                if result.setdefault(name, written) != written:
+                    raise ValueError(
+                        "the kinds of target %s and %s store the column %s of the table of targets as %s and as %s"
+                        % (owner[name], kind, name, result[name], written)
+                    )
+                owner.setdefault(name, kind)
+        LOG.debug("schema target columns exit columns=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
 
     @timed("schema.events")
     def events(self):
@@ -982,9 +1038,8 @@ class Schema:
         required = dict(id="INT64", y="DOUBLE")
         if self.model != "none":
             required["known"] = STAMP
-        if self.aim() == "path":
-            required.update(tau="FLOAT", series="STRING")
-        result[TARGET] = dict(kind="NODE", required=required, columns=())
+        required.update(self.target_columns())
+        result[TARGET] =dict(kind="NODE", required=required, columns=())
         result[LINK] = dict(kind="REL", required={}, columns=(), pairs=((TARGET, "task"),))
         LOG.debug("schema tables exit tables=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result
@@ -1145,11 +1200,13 @@ class Schema:
                     wide(entry["columns"]),
                     "none"
                     if entry["target"] is None
-                    else "%s of %s%s"
+                    else "%s of %s%s, valued by %s, %s better"
                     % (
                         entry["target"]["kind"],
                         ", ".join(entry["target"]["series"]),
                         "" if entry["target"]["about"] is None else " about " + entry["target"]["about"],
+                        entry["target"]["utility"]["name"],
+                        entry["target"]["utility"]["better"],
                     ),
                     "weighted" if entry["weight"] else "not weighted",
                     entry["absent"],

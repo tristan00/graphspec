@@ -213,7 +213,7 @@ def test_graph_tables_reject_unstated_columns_and_invalid_tasks():
     with pytest.raises(ValueError, match="needs 2 values"):
         tables.observe("client", ["a", "b"], when, value=[1])
     holder, splits = dict(holder=("client", ["a", "b"])), ["train", "validation"]
-    with pytest.raises(ValueError, match="one finite target"):
+    with pytest.raises(ValueError, match="a task of the kind outcome states its target as a finite number, found nan"):
         tables.tasks("outcome", [1, 2], 0, holder, splits, [0, np.nan], [None, None], None, None)
     for call in (
         lambda: tables.observe("client", ["a", "b"], value=[1, 1]),

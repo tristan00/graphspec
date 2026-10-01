@@ -45,7 +45,7 @@ def aimed(stated):
     return (
         "t.id AS id, t.y AS y"
         + ("" if stated.model == "none" else ", t.known AS known")
-        + (", t.tau AS tau, t.series AS series" if stated.aim() == "path" else "")
+        + "".join(", t.`%s` AS `%s`" % (name, name) for name in stated.target_columns())
         + ", q.id AS owner"
     )
 

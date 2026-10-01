@@ -554,6 +554,8 @@ def supervision(bank, schema, level, staged):
                 raise ValueError("the row %d of the bank %s differs from its task" % (place, bank))
             if name not in names and name not in ("graph", "node"):
                 found[name] = value
+        if "series" not in found:
+            (found["series"],) = schema.tasks["kinds"][found["kind"]]["target"]["series"]
         rows.append(found)
     if all(name in held["split"] for name in SCALING):
         mean, sd = (held["split"][name] for name in SCALING)

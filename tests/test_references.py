@@ -46,7 +46,7 @@ def stated(order):
         kind: dict(
             references=list(order),
             columns=["ask"],
-            target=dict(kind="number", series="out", about=None),
+            target=dict(kind="number", series="out", about=None, utility=synthetic.valued(["out"])),
             weight=False,
             absent="stop",
             event=["r0", "r1"],

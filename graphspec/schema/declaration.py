@@ -7,7 +7,8 @@ import numpy as np
 from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 
-from .schema import ENCODERS, TARGETS, TYPES, Encoding, Schema, reserved
+from .schema import ENCODERS, TYPES, Encoding, Schema, reserved
+from .targets import TARGETS
 
 LOG = logging.getLogger(__name__)
 EVERYTHING = ("hop", "diffusion", "rewire", "untyped", "coupling", "boundary")
@@ -112,7 +113,7 @@ class Registry:
             raise ValueError(
                 "a registry records exactly %s; it lacks %s" % (", ".join(EXTRAS), ", ".join(lacking))
             )
-        if self.extras["target"] not in TARGETS or self.extras["target"] != self.schema.aim():
+        if self.extras["target"] not in TARGETS.names() or self.extras["target"] != self.schema.aim():
             raise ValueError(
                 "the registry records targets of the kind %r and its schema states %s"
                 % (self.extras["target"], self.schema.aim())

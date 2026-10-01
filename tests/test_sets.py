@@ -65,7 +65,7 @@ def stated():
         kind: dict(
             references=[name],
             columns=[],
-            target=dict(kind="number", series=kind, about=None),
+            target=dict(kind="number", series=kind, about=None, utility=synthetic.valued([kind])),
             weight=False,
             absent="keep",
             event=None,

@@ -2,7 +2,7 @@
 
 | Where | What is there |
 |---|---|
-| `schema/` | What a graph is stated to hold: the schema, types and encoders of columns (`schema.py`), time and its rules (`time.py`), references (`references.py`), a bank's declaration of relations (`declaration.py`), what an operation adds to it (`added.py`) |
+| `schema/` | What a graph is stated to hold: the schema, types and encoders of columns (`schema.py`), time and its rules (`time.py`), references (`references.py`), kinds of target and utilities (`targets.py`), a bank's declaration of relations (`declaration.py`), what an operation adds to it (`added.py`) |
 | `facts/` | The truth graph as a bank stores it (`stored.py`), and its check (`check.py`) |
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
@@ -26,6 +26,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `descriptions/inspect.py` | `inspect` prints the schema of a task file or of a bank. |
 | `sources/ladybug.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. `export` writes staged tables to a database. They go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `build/output.py`. |
 | `schema/references.py` | The sorts of reference, registered: what a task may refer to, how it is stored and how it resolves at the time of the task. |
+| `schema/targets.py` | The kinds of target, registered in `TARGETS`: what a target is, how it is stored as points and read back, and whether its values are scaled per series; the utilities, registered in `UTILITIES`, the value of an outcome a kind of task states. |
 | `schema/declaration.py` | `EdgeType` and `Registry`, which allocates relation codes, indexes types and fingerprints the declaration; `Registry.from_declaration` rebuilds a registry from a pinned declaration; `registry(task, encoding, several, untasked)`: the relations stated or taken from a column, and every relation a spec can derive; `Registry.grown(entry, added, states)`, the registry with what an entry of a pipeline adds. |
 | `schema/added.py` | `Added`, what an operation adds: columns, kinds of node with the tokens of their nodes in a graph, columns placed on kinds, relations, pairs joined to relations, and relations of candidates, which no message holds. |
 | `schema/time.py` | The models of time, the rules for ties and the choices among several facts, each a registry. |

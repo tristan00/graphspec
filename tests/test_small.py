@@ -52,7 +52,12 @@ def stated(edged):
                 ask=dict(
                     references=["unit", "link"] if edged else ["unit"],
                     columns=[],
-                    target=dict(kind="number", series="outcome", about="link" if edged else "unit"),
+                    target=dict(
+                        kind="number",
+                        series="outcome",
+                        about="link" if edged else "unit",
+                        utility=synthetic.valued(["outcome"]),
+                    ),
                     weight=True,
                     absent="stop",
                     event=None,

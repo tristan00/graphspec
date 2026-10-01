@@ -29,6 +29,7 @@ from graphspec.schema.schema import (
     inward,
     outward,
 )
+from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import UNITED
 
 LOG = logging.getLogger(__name__)
@@ -54,6 +55,11 @@ def edge(source, target, columns, directed=True, relation=DECLARED):
     )
 
 
+@timed("synthetic.valued")
+def valued(series):
+    return dict(name="weighted", better="higher", weights={name: 1.0 for name in series})
+
+
 @timed("synthetic.kind")
 def kind(references, columns, target, event):
     return dict(
@@ -71,9 +77,9 @@ def asked(key, grouping, columns, signals, level):
     started = time.perf_counter()
     if level not in LEVELS:
         raise ValueError("a synthetic shape states what holds its targets as one of " + ", ".join(LEVELS))
-    target = dict(kind="number", series=OUTCOME, about=None)
+    target = dict(kind="number", series=OUTCOME, about=None, utility=valued([OUTCOME]))
     if level == "path":
-        target = dict(kind="path", series=list(SERIES), about=None)
+        target = dict(kind="path", series=list(SERIES), about=None, utility=valued(SERIES))
     references = dict(REFERENCES)
     kinds = {
         name: kind(REFERENCES, columns, None if level == "node" else target, ["person", "place"])
@@ -916,25 +922,26 @@ def case_tasks(schema, index, tasks, counter, lookup, where):
             for column in stored:
                 columns[column] = pa.array(part[column], pa.int32() if column == "place" else pa.string())
             tables[(TASK + name, "task", kind)] = pa.table(columns)
-    path = schema.aim() == "path"
-    aimed = dict(task=[], y=[], known=[], tau=[], series=[])
+    stored = schema.target_columns()
+    aimed = dict(task=[], y=[], known=[], **{name: [] for name in stored})
     for task, (target, known) in enumerate(zip(tasks["target"], tasks["known"])):
         if target is None:
             continue
-        for point in target if path else [(None, None, target)]:
+        stated = asked["kinds"][tasks["kind"][task]]["target"]
+        if stated is None:
+            raise ValueError("%s, tasks: a task of the kind %s states a target" % (where, tasks["kind"][task]))
+        kind = TARGETS.named(stated["kind"])
+        for row in kind.staged(target, stated["series"], "%s, the task %r" % (where, tasks["key"][task])):
             aimed["task"].append(int(ids[task]))
-            aimed["tau"].append(point[0])
-            aimed["series"].append(point[1])
-            aimed["y"].append(point[2])
+            aimed["y"].append(row["y"])
             aimed["known"].append(known)
+            for name in stored:
+                aimed[name].append(row[name] if name in kind.columns else None)
     numbers = counter.take(TARGET, len(aimed["y"]))
     columns = dict(id=pa.array(numbers), y=pa.array(aimed["y"], pa.float64()))
     if schema.model != "none":
         columns["known"] = pa.array(aimed["known"], pa.int64())
-    if path:
-        columns.update(
-            tau=pa.array(aimed["tau"], pa.float32()), series=pa.array(aimed["series"], pa.string())
-        )
+    columns.update({name: pa.array(aimed[name], WRITTEN[written]) for name, written in stored.items()})
     tables[(TARGET, None, None)] = pa.table(columns)
     tables[(LINK, TARGET, "task")] = pa.table(
         {"from": pa.array(numbers), "to": pa.array(aimed["task"], pa.int64())}

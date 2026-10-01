@@ -87,7 +87,9 @@ def stated(absent):
         kind: dict(
             references=references[kind],
             columns=["ask"] if kind == "wide" else [],
-            target=dict(kind="number", series=target[kind], about=about[kind]),
+            target=dict(
+                kind="number", series=target[kind], about=about[kind], utility=synthetic.valued([target[kind]])
+            ),
             weight=kind == "wide",
             absent=absent,
             event=None,

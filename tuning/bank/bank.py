@@ -34,6 +34,7 @@ from graphspec.operations import pipeline, sets
 from graphspec.operations.pipeline import resolved
 from graphspec.representations import groups as representations
 from graphspec.schema.schema import ENCODERS, Encoding, fitted
+from graphspec.schema.targets import TARGETS
 from graphspec.views.graph import Graph
 from graphspec.views.view import beside, finished, sampled, sequences, view
 from graphspec.views.visible import STATEMENT, Looking
@@ -44,7 +45,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 20
+VIEW = 21
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -294,26 +295,30 @@ class Bank:
         self.weights = np.asarray(
             [row["weight"] if "weight" in row else 1.0 for row in self.rows], np.float32
         )
-        self.series_names = [entry["name"] for entry in self.split["series"]]
-        if self.series_names != self.registry.extras["series"]:
-            raise ValueError("bank supervision and declaration name different series")
+        schema = self.registry.schema
+        self.series_names = list(schema.series())
+        measured, scaled = schema.measured(), {entry["name"]: entry for entry in self.split["series"]}
+        wrong = [name for name in self.series_names if TARGETS.named(measured[name]).scaled != (name in scaled)]
+        if wrong or len(scaled) != sum(TARGETS.named(measured[name]).scaled for name in self.series_names):
+            raise ValueError(
+                "the supervision of the bank scales the series %s, and its kinds of target scale the series %s"
+                % (
+                    ", ".join(scaled) or "none",
+                    ", ".join(name for name in self.series_names if TARGETS.named(measured[name]).scaled) or "none",
+                )
+            )
         code = {name: index for index, name in enumerate(self.series_names)}
-        kinds = self.registry.schema.tasks["kinds"]
-        self.series = np.asarray(
-            [
-                code[row["series"] if self.path else kinds[row["kind"]]["target"]["series"][0]]
-                for row in self.rows
-            ],
-            np.int64,
-        )
+        self.series = np.asarray([code[row["series"]] for row in self.rows], np.int64)
         owners = {graph["name"]: graph["index"] for graph in self.manifest["graphs"]}
         asked = self.registry.schema.tasks["key"]
         keys = np.asarray([(owners[row["graph"]], row[asked]) for row in self.rows], np.int64).reshape(-1, 2)
         self.task_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
         if self.path:
             self.taus = np.asarray([row["tau"] for row in self.rows], np.float32)
-        self.center = np.asarray([entry["mean"] for entry in self.split["series"]], np.float32)
-        self.scale = np.asarray([entry["sd"] for entry in self.split["series"]], np.float32)
+        self.center = np.asarray(
+            [scaled[name]["mean"] if name in scaled else 0.0 for name in self.series_names], np.float32
+        )
+        self.scale = np.asarray([scaled[name]["sd"] if name in scaled else 1.0 for name in self.series_names], np.float32)
         self.variants = {}
         self._groups = {}
         self._viewed = {}

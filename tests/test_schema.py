@@ -85,6 +85,15 @@ def test_the_schema_is_built_from_a_mapping_and_written_back_to_one():
         (("tasks", "kinds", "buy", "columns"), "the kind of task buy lacks columns"),
         (("tasks", "kinds", "buy", "target"), "the kind of task buy lacks target"),
         (("tasks", "kinds", "buy", "target", "series"), "the target of the kind of task buy lacks series"),
+        (("tasks", "kinds", "buy", "target", "utility"), "the target of the kind of task buy lacks utility"),
+        (
+            ("tasks", "kinds", "buy", "target", "utility", "better"),
+            "the utility of the target of the kind of task buy lacks better",
+        ),
+        (
+            ("tasks", "kinds", "buy", "target", "utility", "weights"),
+            "the utility of the target of the kind of task buy lacks weights",
+        ),
         (("tasks", "kinds", "buy", "weight"), "the kind of task buy lacks weight"),
         (("tasks", "kinds", "buy", "absent"), "the kind of task buy lacks absent"),
         (("tasks", "kinds", "buy", "event"), "the kind of task buy lacks event"),
@@ -98,7 +107,7 @@ def test_a_schema_with_a_statement_absent_stops_naming_it(path, message):
 
 def test_a_schema_of_another_version_or_with_an_unknown_name_is_refused():
     mapping = synthetic.varied("task")["schema"]
-    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 5"):
+    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 6"):
         Schema(dict(mapping, version=0))
     with pytest.raises(KeyError, match="no column type is registered under the name 'colourful'"):
         Schema(dict(mapping, columns=dict(mapping["columns"], size=dict(type="colourful", encoder="value"))))
@@ -283,7 +292,8 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
 
 def test_the_varied_graph_reads_back_from_the_bank_equal_to_what_was_stated(varied):
     opened = Deriver(varied, "cpu", RESIDENT)
-    assert set(opened.rows[0]) == {"graph", "kind", "time", "ticket", "week", "y"}
+    assert set(opened.rows[0]) == {"graph", "kind", "time", "ticket", "week", "series", "y"}
+    assert {row["series"] for row in opened.rows} == {synthetic.OUTCOME}
     assert opened.split["series"][0]["name"] == synthetic.OUTCOME and len(opened.split["series"]) == 1
     assert sorted(opened.split["indices"]) == ["train", "validation"]
     schema = opened.registry.schema
@@ -345,12 +355,12 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
     monkeypatch.setattr(sys, "argv", ["graphspec", "inspect", str(varied)])
     main()
     printed = capsys.readouterr().out
-    assert "schema version 5" in printed and "  place: size number by standard\n" in printed
+    assert "schema version 6" in printed and "  place: size number by standard\n" in printed
     assert ", width" not in printed and "  lends: from links" in printed
     assert "  reference person: node of person" in printed and "keyed by ticket, grouped by week" in printed
     assert (
         "  kind buy: references person, place, team; size number by standard, speed number by standard; "
-        "target number of outcome; not weighted; absent stop; "
+        "target number of outcome, valued by weighted, higher better; not weighted; absent stop; "
         "seen as an event between person and place; nothing matures" in printed
     )
 

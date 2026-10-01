@@ -8,7 +8,7 @@ The schema is one object, `graphspec.Schema`, built from a plain mapping and wri
 
 | Field | Holds |
 |---|---|
-| `version` | The version of the schema, 5. |
+| `version` | The version of the schema, 6. |
 | `time` | `model`, one of `none`, `order`, `clock`, `clocks`; `units`, the names of the units in which the graphs of the source may count time, stated when the model has a clock and empty when it has none; `ties`, the name of the rule that orders facts with the same time, or `null`. |
 | `observers` | `true` when facts and tasks may name observers, `false` when none does. |
 | `columns` | Every column by name, each with its `type` and its `encoder`. A column is one thing wherever it is used: a name listed by two kinds is the same column, fitted once. |
@@ -26,13 +26,13 @@ A reference states its `sort` and `kinds`, the kinds its table starts from, each
 |---|---|
 | `references` | The names of its references. No family reads their order: a family reads the references of a task as a set keyed by name (see What a family reads). |
 | `columns` | Its features. |
-| `target` | `null`, or `kind`, `series` and `about`: `number` with the name of the one series its targets belong to, or `path` with the list of the series its points may name; `about`, the name of the one of its references the target is about, or `null` when it is about none of them, such as a target about the graph. `about` has no default. The kinds of one schema state targets of one kind. |
+| `target` | `null`, or `kind`, `series`, `about` and `utility`: `kind`, a kind of target registered in `graphspec.TARGETS` (see Kinds of target); `series`, the series its targets belong to, in the form the kind reads, the name of the one series for `number` and the list of the series its points may name for `path`; `about`, the name of the one of its references the target is about, or `null` when it is about none of them, such as a target about the graph; `utility`, the value of an outcome (see Utilities). `about` and `utility` have no default. The kinds of one schema state targets of one kind. A series belongs to targets of one kind of target: a series named by two kinds of target stops the schema naming it. |
 | `weight` | `true` when every task of the kind carries a weight above zero and finite at float32 precision, `false` when none does. A weight that is not stops the build with an error naming the task, its kind and its graph. |
 | `absent` | What a reference to a node not observed at the time of the task resolves to: `stop`, which stops the build and every derivation with an error naming the reference, the task and the graph, or `keep`, which keeps the reference and gives the model nothing to read for that node. |
 | `event` | `null`, or two of its references of the sort `node`: a task of the kind is then seen by later tasks as an event between the two, their nodes are the pair of the task, and its kind states `absent` as `stop`. |
-| `matures` | `null`, or `reference` and `column`: the target of a task of the kind, once known, is read as the value of that column of the node the reference names. The reference is of the sort `node`, the column a column of numbers of every kind of node the reference may name, the target a number. |
+| `matures` | `null`, or `reference` and `column`: the target of a task of the kind, once known, is read as the value of that column of the node the reference names. The reference is of the sort `node`, the column a column of numbers of every kind of node the reference may name, the target of a kind of target that states it matures, as `number` does. |
 
-Types of column are registered by name in `graphspec.TYPES`, encoders in `graphspec.ENCODERS`, encoders of held graphs in `graphspec.HELD`, sorts of reference in `graphspec.SORTS`, rules for edges about edges in `graphspec.ABOUT`, forms of storage of set edges in `graphspec.STORAGE`; each accepts registration from outside the library, and a name registered twice stops with an error. Every entry registered from outside the library, in any registry, is passed to every process the library starts (the workers of a build, of a derivation and of packing, the pool that draws candidates, and the worker of a trial) and registered there before use; an object defined at the top level of a module is passed by reference, and its module must be importable in the worker. An entry that cannot be passed stops the call that starts the workers with an error naming its registry and its name, and an error while a worker starts reaches the caller with its message.
+Types of column are registered by name in `graphspec.TYPES`, encoders in `graphspec.ENCODERS`, encoders of held graphs in `graphspec.HELD`, sorts of reference in `graphspec.SORTS`, kinds of target in `graphspec.TARGETS`, utilities in `graphspec.UTILITIES`, rules for edges about edges in `graphspec.ABOUT`, forms of storage of set edges in `graphspec.STORAGE`; each accepts registration from outside the library, and a name registered twice stops with an error. Every entry registered from outside the library, in any registry, is passed to every process the library starts (the workers of a build, of a derivation and of packing, the pool that draws candidates, and the worker of a trial) and registered there before use; an object defined at the top level of a module is passed by reference, and its module must be importable in the worker. An entry that cannot be passed stops the call that starts the workers with an error naming its registry and its name, and an error while a worker starts reaches the caller with its message.
 
 | Type | Stored in a source as | Kept in the bank as |
 |---|---|---|
@@ -123,6 +123,34 @@ A sort is a `graphspec.schema.references.Sort`: whether its members are nodes, e
 
 An edge named by a reference is of a relation the schema states, between kinds the relation joins; of a relation without direction between two nodes of one kind it is kept with the lower entity first, as facts are. A reference resolves through the view: a node to its observation at the step of the task, an edge to the observations of its two nodes, the graph to everything the step shows.
 
+**Kinds of target**
+
+A kind of target says what a target is, how it is stored and read back, and how its values are scaled. It is registered in `graphspec.TARGETS` under its name, and a name registered twice stops with an error. A target is stored as rows of the table of targets, its points; every point holds a number `y`, its series and the columns its kind stores. An entry states:
+
+| Member | What it states |
+|---|---|
+| `scaled` | Whether its values are numbers scaled per series. For every series of a kind that scales, the build fits the mean and the sample standard deviation of the targets of the series in the splits trained on, and a fit predicts and is trained on values less that mean over that deviation. The values of a kind that does not scale are read as stated. |
+| `matures` | Whether a target of the kind may be read by later tasks as the value of a column (`matures` of a kind of task). |
+| `columns` | The columns of the table of targets it stores beside `id`, `y` and `known`, each with its type. Two kinds of target that store one column with two types stop the schema, and so does a column named `id`, `y`, `known`, `task` or `owner`. |
+| `fields` | Those of its columns that are numbers read per point by the head of the kind. |
+| `series(stated, where)` | The series of a target statement, read from its `series` in the form the kind states; `written(series)` gives them back in that form. |
+| `points(rows, series, where)` | From the rows of the table of targets of the tasks of one kind of task, `task`, `graph` and the columns it stores, the checks of the kind and, per row, its series under `series` and each of its fields. |
+| `staged(stated, series, where)` | The rows of the table of targets of one target as a script states it, each with `y` and the columns it stores. |
+| `read(rows)` | The target as a script states it, from its rows in their order. |
+
+| Kind | A target, as a script states it | Its `series` | Points | Scaled | Matures |
+|---|---|---|---|---|---|
+| `number` | a finite number | the name of its one series | one, of that series; a task holding two stops the build naming its graph and its kind | yes | yes |
+| `path` | a list of points, each `[tau, series, y]` | a list of names | one per point, storing `tau FLOAT` and `series STRING`: `tau` finite and above zero, the series one the kind of task states, no two points of one task with one series and one `tau`; each stops the build naming the graph or the kind | yes | no |
+
+**Utilities**
+
+A utility is the value of an outcome: a function from a predicted target to one number, with the direction that is better. Every kind of task that states a target states a utility, and the measures that order options read it and nothing else. Utilities are registered in `graphspec.UTILITIES`, each with `reads`, the kinds of target it reads; `parameters`, the names its statement holds beside `name` and `better`; `checked(stated, series, where)`, which checks them against the series of the target and gives them; and `value(stated, points)`, which takes the points of predicted targets, `task`, `series` and `y`, and gives the tasks in order and one value for each. A target states `utility` as `name`, `better`, `higher` or `lower`, and every parameter of the utility; a utility that does not read the kind of the target, a parameter absent or unknown, or a direction not stated stops the schema naming it. `graphspec.schema.targets.valued(target, points)` gives the utility of the points of a target.
+
+| Utility | Reads | Parameters | The value of a target |
+|---|---|---|---|
+| `weighted` | `number`, `path` | `weights`, a finite number for every series of the target | the sum over its points of the weight of the series of the point times its `y` |
+
 **Time**
 
 A fact is one statement about a graph: the values of a node or of a set edge, an edge that holds, an edge stated not to hold. Every fact carries the interval in which it holds, from `since` up to and not including `until`. A time is a whole number counted in the unit its graph states. Times of different graphs are never compared.
@@ -168,11 +196,10 @@ Snapshots that state `seq` must keep one order of their facts over time; a snaps
 
 **Tasks**
 
-A task is one row of the table of tasks of its graph. It states its kind, its time unless the model is `none`, the observer who is looking where the schema states observers, its key, its grouping where one is stated, the features of its kind, its signals where the schema states a width, its weight where its kind states one, its split where it holds a target, and under each reference of its kind the members the sort of the reference holds. A task of a kind that states a target may hold one: a number, or points of a path, each with its `tau` above zero and its series. A target states the time from which it is known, or none; that time is later than the time of its task, so that a target never enters the view of its own task.
+A task is one row of the table of tasks of its graph. It states its kind, its time unless the model is `none`, the observer who is looking where the schema states observers, its key, its grouping where one is stated, the features of its kind, its signals where the schema states a width, its weight where its kind states one, its split where it holds a target, and under each reference of its kind the members the sort of the reference holds. A task of a kind that states a target may hold one, in the form its kind of target states. A target states the time from which it is known, or none; that time is later than the time of its task, so that a target never enters the view of its own task.
 
 - Several tasks of one graph may share a time, and a time at which facts change may hold no task.
 - A split is any name. A task that holds a target states one; a task that holds none may state none.
-- A task of a kind holds at most one number. Two points of one task, one series and one `tau` stop the build.
 - A target whose kind states what matures is read, from the time it is known, by later tasks as the value of the stated column of the node it names, until the next target of the same node and column is known. It is shown only to the observer of its task, or to every observer when its task names none, and only in the views of a split that may see its task: a target of a split trained on in the views of every split, and a target of any other split in the views of its own split only. A view that holds targets of a split trained on, such as the one the splits without rules share when a split trained on states no rule, shows the matured targets of the splits trained on and of no other. A task never sees its own target, and a target not yet known is not shown.
 
 **Tables of a source**
@@ -191,7 +218,7 @@ A source is a staging directory of Parquet tables or a database holding the same
 | `held_edge_<kind>` | relationship | FROM and TO `held_<kind>`; `relation STRING`; the columns of every held relation of the kind | One held edge. A column its relation does not state is missing. |
 | `task` | node | `id INT64` key, `graph INT32`, `kind STRING`, `time INT64` unless the model is `none`, `observer STRING` when the schema states observers, `split STRING`, `weight FLOAT`, the grouping column `INT32` when one is stated, the key column `INT64`, the columns of every kind of task, and with signals `signal FLOAT[S]` and `signal_observed FLOAT[S]` | One task. A column its kind does not state is missing. |
 | `task_<reference>` | relationship, for every reference whose sort stores members | FROM `task` TO the kinds the reference states; with edges `relation STRING`, `to_kind STRING`, `to_key STRING`; with order `place INT32` | One member of what a task refers to under that name. |
-| `target` | node | `id INT64` key, `y DOUBLE`, `known INT64` unless the model is `none`, and where the targets are paths `tau FLOAT` and `series STRING` | One number of a target. |
+| `target` | node | `id INT64` key, `y DOUBLE`, `known INT64` unless the model is `none`, and the columns every kind of target the schema states stores | One point of a target. A column its kind of target does not store is missing; a point that states one stops the build naming its kind of task and the column. |
 | `target_of` | relationship | FROM `target` TO `task` | The task a number belongs to. |
 
 A table the schema states and the source lacks, a column of a table that the schema does not state, a column stored as another type than stated, and a relationship joining other kinds than stated each stop with an error naming it.
@@ -217,7 +244,7 @@ A table the schema states and the source lacks, a column of a table that the sch
 
 **Bank version 8**
 
-`tuning.build_bank(task, output, workers, trained)` reads the source twice: once to find the dictionaries, which hold every value stated, the relations taken from columns and the names of the observers, and once to write the graphs. `trained` names the splits the scaling of the targets is fitted on, each a split the source holds; a fit trains on exactly these. Every series needs two targets that differ in those splits. No encoder is fitted by the build. Every graph written is also shown once under the shipped choice of steps `tasks`, or `changes` for a graph that holds no task, with the shipped rule `first` for several facts where the bank holds them, with every kind of set edge under the form `node`, which shows every fact, member and edge about a set edge, and with no rule stated for any split, so that a graph the operations cannot read stops the build; what else is registered does not change it. A bank of another version is refused with an error naming the version found.
+`tuning.build_bank(task, output, workers, trained)` reads the source twice: once to find the dictionaries, which hold every value stated, the relations taken from columns and the names of the observers, and once to write the graphs. `trained` names the splits the scaling of the targets is fitted on, each a split the source holds; a fit trains on exactly these. Every series of a kind of target that scales needs two targets that differ in those splits. No encoder is fitted by the build. Every graph written is also shown once under the shipped choice of steps `tasks`, or `changes` for a graph that holds no task, with the shipped rule `first` for several facts where the bank holds them, with every kind of set edge under the form `node`, which shows every fact, member and edge about a set edge, and with no rule stated for any split, so that a graph the operations cannot read stops the build; what else is registered does not change it. A bank of another version is refused with an error naming the version found.
 
 A source with kinds of set edge or held graphs is read from a staging directory; a database source stating either stops with an error naming them.
 
@@ -233,7 +260,7 @@ A source with kinds of set edge or held graphs is read from a staging directory;
 | `several` | Whether a shipped choice of steps can show two facts about one node or set edge of a graph of the bank at one step: two whose intervals overlap, or, under `tasks`, two that hold from after one time of a task of an observer up to and including its next, the earlier an event and the later an event or still holding at that next time. Times of tasks are those the source states; when a fact is known, whether it was replaced and who may see it are not read. |
 | `untasked` | The names of the graphs that hold no task, in the order of the source. |
 
-`supervision.json` holds `rows` and `split`. There is one row per number of a target, in the order of the `target` table. A row holds `graph`, `kind`, the key of its task and, where one is stated, its grouping, under the names the schema states, `time` unless the model is `none`, `y`, `weight` where the kind states one and `known` where the target states one; rows of paths add `tau` and `series`. `split` holds `indices`, the rows of every split by name, and `series`, a list with one entry per series of `name`, `mean` and `sd` over the rows of the splits trained on.
+`supervision.json` holds `rows` and `split`. There is one row per point of a target, in the order of the `target` table. A row holds `graph`, `kind`, the key of its task and, where one is stated, its grouping, under the names the schema states, `time` unless the model is `none`, `weight` where the kind states one, `known` where the target states one, `series`, the series of the point, the fields of its kind of target, such as `tau` for a path, and `y`. `split` holds `indices`, the rows of every split by name, and `series`, a list with one entry for every series of a kind of target that scales, in the order of the series of the schema, of `name`, `mean` and `sd` over the rows of the splits trained on. Every such series needs two differing targets in those splits.
 
 `truth/graph_NNNN/` holds one graph as arrays of facts, `graphspec.facts.stored.Facts`, with `graph.json` giving its name, the keys of its entities, its unit, under `inner` the keys of its held nodes and under `observers` the names of the observers of the bank, which views and their errors name.
 

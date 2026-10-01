@@ -23,6 +23,7 @@ from graphspec.infra.runtime import output_path
 from graphspec.registries import carried, restored
 from graphspec.schema import declaration
 from graphspec.schema.schema import Encoding, Schema
+from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER
 from graphspec.sources import ladybug
 
@@ -154,6 +155,38 @@ def untasked(tasks, names):
     return result
 
 
+def pointed(stated, found, owner, kinds, graphs, rows):
+    started = time.perf_counter()
+    stored = stated.target_columns()
+    columns = {name: found.column(name).to_pylist() for name in stored}
+    graphs, result = np.asarray(graphs, object), [dict(row) for row in rows]
+    for kind, entry in stated.tasks["kinds"].items():
+        chosen = np.flatnonzero(kinds == kind)
+        if entry["target"] is None or not len(chosen):
+            continue
+        target, where = TARGETS.named(entry["target"]["kind"]), "the target of the kind of task " + kind
+        for name in stored:
+            if name not in target.columns and any(columns[name][place] is not None for place in chosen.tolist()):
+                raise ValueError(
+                    "%s states the column %s of the table of targets, which its kind of target %s does not store"
+                    % (where, name, entry["target"]["kind"])
+                )
+        given = {name: [columns[name][place] for place in chosen.tolist()] for name in target.columns}
+        points = target.points(
+            dict(task=owner[chosen], graph=graphs[chosen], **given), entry["target"]["series"], where
+        )
+        if sorted(points) != sorted(("series",) + tuple(target.fields)):
+            raise ValueError(
+                "the kind of target %s gives for its points %s, and states the fields %s beside their series"
+                % (entry["target"]["kind"], ", ".join(sorted(points)), ", ".join(target.fields) or "none")
+            )
+        for name, values in points.items():
+            for place, value in zip(chosen.tolist(), values):
+                result[place][name] = value
+    LOG.debug("pointed exit points=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def supervision(source, trained, names):
     started = time.perf_counter()
     stated = source.stated
@@ -174,11 +207,10 @@ def supervision(source, trained, names):
     grouping = tasks.column("period").to_numpy().astype(np.int64) if "period" in tasks.column_names else None
     splits, weights = tasks.column("split").to_pylist(), tasks.column("weight").to_pylist()
     known = found.column("known").to_pylist() if "known" in found.column_names else [None] * len(owner)
-    path = stated.aim() == "path"
     y = found.column("y").to_numpy().astype(np.float64)
     if not np.isfinite(y.astype(np.float32)).all():
         raise ValueError("targets must be finite at float32 precision")
-    rows, series = [], []
+    rows = []
     for place, task in enumerate(owner.tolist()):
         kind = stated.tasks["kinds"][kinds[task]]
         if kind["target"] is None:
@@ -207,34 +239,9 @@ def supervision(source, trained, names):
             entry["weight"] = weight
         if known[place] is not None:
             entry["known"] = int(known[place])
-        series.append(kind["target"]["series"][0])
         rows.append(entry)
-    if path:
-        tau = found.column("tau").to_numpy(zero_copy_only=False).astype(np.float64)
-        if not np.isfinite(tau).all() or np.any(tau <= 0):
-            raise ValueError("path tau values must be finite and strictly positive")
-        series = found.column("series").to_pylist()
-        for place, (task, name) in enumerate(zip(owner.tolist(), series)):
-            if name not in stated.tasks["kinds"][kinds[task]]["target"]["series"]:
-                raise ValueError(
-                    "a point of a task of the kind %s names the series %r, which its kind does not state"
-                    % (kinds[task], name)
-                )
-        listed = list(stated.series())
-        order = np.lexsort((tau, [listed.index(name) for name in series], owner))
-        same = (
-            (np.diff(owner[order]) == 0)
-            & (np.diff(tau[order]) == 0)
-            & (np.asarray(series, object)[order][1:] == np.asarray(series, object)[order][:-1])
-        )
-        if same.any():
-            raise ValueError(
-                "graph %s has two points with one task, one series and one tau"
-                % names[int(graphs[order][np.flatnonzero(same)[0]])]
-            )
-        rows = [dict(entry, tau=value, series=name) for entry, value, name in zip(rows, tau.tolist(), series)]
-    elif len(np.unique(owner)) != len(owner):
-        raise ValueError("a task carries more than one target")
+    rows = pointed(stated, found, owner, np.asarray(kinds, object)[owner], [row["graph"] for row in rows], rows)
+    series = [row["series"] for row in rows]
     rows = [dict(entry, y=value) for entry, value in zip(rows, y.tolist())]
     held = np.asarray([splits[task] for task in owner.tolist()], object)
     found_splits = sorted({name for name in splits if name is not None})
@@ -246,7 +253,10 @@ def supervision(source, trained, names):
         )
     chosen = np.isin(held, list(trained))
     statistics = []
+    measured = stated.measured()
     for name in stated.series():
+        if not TARGETS.named(measured[name]).scaled:
+            continue
         values = y[chosen & (np.asarray(series, object) == name)]
         if len(values) < 2 or np.ptp(values.astype(np.float32)) == 0:
             raise ValueError(

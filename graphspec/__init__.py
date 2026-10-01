@@ -15,6 +15,7 @@ from .representations.registry import REPRESENTATIONS, Representation
 from .schema.declaration import EdgeType, Registry
 from .schema.references import SORTS
 from .schema.schema import ENCODERS, HELD, TYPES, Schema
+from .schema.targets import TARGETS, UTILITIES
 from .schema.time import ABOUT, SEVERAL, TIES
 from .views.view import STEPS
 from .views.visible import SEES
@@ -34,8 +35,10 @@ __all__ = [
     "SORTS",
     "STEPS",
     "STORAGE",
+    "TARGETS",
     "TIES",
     "TYPES",
+    "UTILITIES",
     "EdgeType",
     "Registry",
     "GraphTables",
