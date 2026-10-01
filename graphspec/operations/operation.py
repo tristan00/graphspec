@@ -5,6 +5,7 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 
+from graphspec import registries
 from graphspec.registries import Names
 from graphspec.schema.added import Added
 from graphspec.views.graph import CHANGES as CHECKED
@@ -212,15 +213,15 @@ class Operation:
 
     def stated(self, registry):
         held = STATED.setdefault(registry, {})
-        if self in held:
-            return held[self]
+        if self in held and held[self][0] == registries.GENERATION:
+            return held[self][1]
         started = time.perf_counter()
         found = tuple(self.parameters(registry))
         counted = Counter(parameter.name for parameter in found)
         twice = sorted(name for name, count in counted.items() if count > 1)
         if twice:
             raise ValueError("the operation %s states the parameters %s twice" % (self.name, ", ".join(twice)))
-        held[self] = found
+        held[self] = registries.GENERATION, found
         LOG.debug(
             "stated exit operation=%s parameters=%d seconds=%.4f",
             self.name,

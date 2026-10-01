@@ -5,7 +5,7 @@ import time
 import numpy as np
 import pytest
 import support
-from registered import HUB, KEPT, LINKED, PARITY, RUNNING
+from registered import HUB, KEPT, LINKED, PARITY, RUNNING, Halved
 
 from conftest import SPLITS
 from graphspec import NEGATIVES, OPERATIONS, REPRESENTATIONS, Representation
@@ -23,6 +23,7 @@ from graphspec.operations.pipeline import resolved
 from graphspec.operations.rows import FACTS, keyed_relations, select
 from graphspec.representations.registry import FAMILIES, families
 from graphspec.schema.added import Added
+from graphspec.schema.schema import ENCODERS
 from graphspec.views.graph import Graph
 from tuning.bank.bank import Deriver
 from tuning.families.model_spec import DERIVES, derived
@@ -970,7 +971,6 @@ def hops_of(graph, present, anchor, hops):
 def test_negative_links_are_absent_edges_drawn_by_their_rule_for_every_present_edge_or_labelled_task(opened, parity):
     started = time.perf_counter()
     held, registry, graph, names = opened
-    registry = registry.fitted(registry.encoding)
     tokens = np.asarray(graph.entity_token).astype(np.uint64)
     weights = {
         "uniform": lambda step, anchor, node, present, visits: True,
@@ -1048,3 +1048,28 @@ def test_a_rule_of_negative_sampling_draws_each_candidate_in_proportion_to_its_w
         shares = np.bincount(picked % len(places), minlength=len(places)) / DRAWS
         assert np.abs(shares - weights / weights.sum()).max() < 0.015, (rule, shares, weights)
     LOG.info("negative proportions exit draws=%d seconds=%.3f", DRAWS, time.perf_counter() - started)
+
+
+class Later(Halved):
+    types = ("number",)
+
+
+@timed("added.options")
+def options(name, registry, parameter):
+    return {held.name: held.options for held in OPERATIONS.named(name).stated(registry)}.get(parameter, ())
+
+
+def test_a_rule_or_an_encoder_registered_after_a_registry_was_used_is_offered_to_it(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    rules, encoders = ("graphspec.negatives", registry, "negatives/rule"), ("graphspec.product", registry, "product/encoder")
+    assert "test.parity" not in options(*rules) and "test.later" not in options(*encoders)
+    NEGATIVES.register("test.parity", PARITY)
+    ENCODERS.register("test.later", Later())
+    try:
+        assert "test.parity" in options(*rules) and "test.later" in options(*encoders)
+        assert options("graphspec.negatives", registry, "negatives/test.parity/odd") == (False, True)
+    finally:
+        del NEGATIVES.held["test.parity"], ENCODERS.held["test.later"]
+    assert "test.parity" not in options(*rules) and "test.later" not in options(*encoders)
+    LOG.info("registered later exit seconds=%.3f", time.perf_counter() - started)

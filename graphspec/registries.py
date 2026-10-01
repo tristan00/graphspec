@@ -1,9 +1,48 @@
+import itertools
 import logging
 import pickle
 import time
+from collections.abc import MutableMapping
 
 LOG = logging.getLogger(__name__)
 REGISTRIES = []
+CHANGES = itertools.count(1)
+GENERATION = 0
+
+
+def changed():
+    global GENERATION
+    started = time.perf_counter()
+    GENERATION = next(CHANGES)
+    LOG.debug("changed exit generation=%d seconds=%.6f", GENERATION, time.perf_counter() - started)
+
+
+class Held(MutableMapping):
+    def __init__(self, entries):
+        started = time.perf_counter()
+        self.entries = dict(entries)
+        LOG.debug("held exit entries=%d seconds=%.6f", len(self.entries), time.perf_counter() - started)
+
+    def __getitem__(self, name):
+        return self.entries[name]
+
+    def __setitem__(self, name, entry):
+        started = time.perf_counter()
+        self.entries[name] = entry
+        changed()
+        LOG.debug("held set exit name=%s seconds=%.6f", name, time.perf_counter() - started)
+
+    def __delitem__(self, name):
+        started = time.perf_counter()
+        del self.entries[name]
+        changed()
+        LOG.debug("held removed exit name=%s seconds=%.6f", name, time.perf_counter() - started)
+
+    def __iter__(self):
+        return iter(self.entries)
+
+    def __len__(self):
+        return len(self.entries)
 
 
 class Names:
@@ -12,6 +51,12 @@ class Names:
             raise ValueError("a registry is labelled %s twice" % label)
         self.label, self.held, self.shipped = label, {}, frozenset()
         REGISTRIES.append(self)
+
+    def __setattr__(self, name, value):
+        if name == "held":
+            value = value if type(value) is Held else Held(value)
+            changed()
+        object.__setattr__(self, name, value)
 
     def register(self, name, entry):
         started = time.perf_counter()
