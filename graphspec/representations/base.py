@@ -9,7 +9,7 @@ from graphspec.budgets import GraphBudget
 from graphspec.infra.files import write_pack
 from graphspec.infra.hashing import hashed
 from graphspec.infra.timing import timed
-from graphspec.infra.workspace import finite
+from graphspec.infra.workspace import finite, gathered
 from graphspec.operations.parameters import enabled
 from graphspec.operations.rows import keyed_relations
 from graphspec.operations.state import EMPTY, Table
@@ -53,7 +53,7 @@ def initial(registry, spec, chosen):
 
 def mapped(glob, values):
     values = np.asarray(values)
-    return np.where(values >= 0, glob[np.maximum(values, 0)], -1).astype(np.int32)
+    return gathered(glob, values, -1).astype(np.int32)
 
 
 @timed("segments.shifted")

@@ -4,6 +4,7 @@ import time
 import numpy as np
 
 from graphspec.infra.timing import timed
+from graphspec.infra.workspace import gathered
 from graphspec.views.spans import encode
 
 LOG = logging.getLogger(__name__)
@@ -36,16 +37,15 @@ class Table:
 
     def find(self, keys):
         keys = np.asarray(keys, np.int64)
-        if not len(self.keys):
-            return np.full(len(keys), -1, np.int64)
-        position = np.minimum(np.searchsorted(self.keys, keys), len(self.keys) - 1)
-        return np.where(self.keys[position] == keys, position, -1)
+        position = np.searchsorted(self.keys, keys)
+        inside = np.flatnonzero(position < len(self.keys))
+        named = inside[self.keys[position[inside]] == keys[inside]]
+        result = np.full(len(keys), -1, np.int64)
+        result[named] = position[named]
+        return result
 
     def lookup(self, name, keys, default):
-        found = self.find(keys)
-        if not len(self.keys):
-            return np.full(len(found), default, np.int64)
-        return np.where(found >= 0, self.columns[name][np.maximum(found, 0)], default)
+        return gathered(self.columns[name], self.find(keys), default)
 
     @timed("carry.table.replaced")
     def replaced(self, touched, keys, **columns):
@@ -145,7 +145,7 @@ class Segment:
         arrays = {}
         for name in ENTITIES:
             values = np.asarray(graph.arrays[name])
-            arrays[name] = np.where(values >= 0, position[np.maximum(values, 0)], -1).astype(values.dtype)
+            arrays[name] = gathered(position, values, -1).astype(values.dtype)
         for name, table in (("kinds", "kinds"), ("entity_token", "tokens"), ("entity_connected", "connected")):
             values = np.asarray(graph.arrays[name])
             grown = np.empty(len(glob), values.dtype)

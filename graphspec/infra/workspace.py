@@ -102,6 +102,14 @@ def take(values, indices):
     return result
 
 
+def gathered(table, rows, fill):
+    table, rows = np.asarray(table), np.asarray(rows)
+    result = np.full(rows.shape + table.shape[1:], fill, table.dtype)
+    named = rows >= 0
+    result[named] = table[rows[named]]
+    return result
+
+
 def finite(values):
     return all(
         np.isfinite(values[start : start + block_rows(values)]).all()

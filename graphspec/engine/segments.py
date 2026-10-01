@@ -4,6 +4,7 @@ import time
 import numpy as np
 
 from graphspec.infra.timing import measure, timed
+from graphspec.infra.workspace import gathered
 from graphspec.operations.state import EMPTY, ENTITIES, SECOND, Entities, Second, Segment
 from graphspec.representations import base as representations
 from graphspec.representations.registry import chosen as representing
@@ -323,7 +324,7 @@ def opened(plan, member, graph, low, high, edit, entities, seen):
     arrays = dict(piece.arrays)
     for name in ENTITIES:
         held = np.asarray(arrays[name])
-        arrays[name] = np.where(held >= 0, local[np.maximum(held, 0)], -1).astype(held.dtype)
+        arrays[name] = gathered(local, held, -1).astype(held.dtype)
     lasting = entities.connected[glob].copy()
     if high < graph.steps:
         lasting[np.searchsorted(glob, every)] = True

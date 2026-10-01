@@ -7,7 +7,7 @@ from graphspec.infra.timing import timed
 
 from .operation import OPERATIONS, Operation, Phase
 from .parameters import choice
-from .rows import FACTS, OBSERVATIONS, fact_keys, keyed_relations, prune, pruned, second_of
+from .rows import FACTS, OBSERVATIONS, fact_keys, keyed_relations, prune, pruned, second_of, shown
 
 LOG = logging.getLogger(__name__)
 PREFERRED = ("first", "second")
@@ -96,12 +96,6 @@ def merge(graph, registry, spec, seed, limits, carry, held):
             for step, present in ((graph.fact_step, graph.fact_present), (second.fact_step, second.fact_present))
         ),
     )
-    structural = ~observations["obs_anchor"]
-    lit = np.unique(
-        observations["obs_step"][structural].astype(np.int64) * count + observations["obs_entity"][structural]
-    )
-    moment = facts["fact_step"].astype(np.int64) * count
-    shown = np.isin(moment + facts["fact_source"], lit) & np.isin(moment + facts["fact_target"], lit)
     merged = graph.replace(
         x_table=np.concatenate((graph.x_table, second.x_table.astype(graph.x_table.dtype))),
         value_table=np.concatenate((graph.value_table, second.value_table.astype(graph.value_table.dtype))),
@@ -110,7 +104,8 @@ def merge(graph, registry, spec, seed, limits, carry, held):
     )
     carry.x_global = np.concatenate((carry.x_global, second.x_global))
     carry.value_global = np.concatenate((carry.value_global, second.value_global))
-    return prune(merged, ~facts["fact_present"] | shown, carry, "merge")
+    lit = shown(merged, merged.fact_step, merged.fact_source, merged.fact_target)
+    return prune(merged, ~merged.fact_present | lit, carry, "merge")
 
 
 MERGE = OPERATIONS.register(
@@ -125,7 +120,7 @@ MERGE = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=None,
-        version=4,
+        version=5,
         graphs=2,
     ),
 )

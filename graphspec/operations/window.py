@@ -10,7 +10,7 @@ from graphspec.infra.workspace import concatenate, take
 from . import kernels
 from .operation import OPERATIONS, Operation, Phase
 from .parameters import choice, equals, holds, number
-from .rows import FACTS, OBSERVATIONS, counted, extend, fact_bytes, member_end
+from .rows import FACTS, OBSERVATIONS, counted, extend, fact_bytes, member_end, shown
 from .state import EMPTY, FOREVER
 
 LOG = logging.getLogger(__name__)
@@ -221,12 +221,15 @@ def window(graph, registry, spec, seed, limits, carry, given):
     )
     budget.pairs(int(counts.sum()), "time window facts")
     origin = np.repeat(present, counts)
+    moment = graph.fact_step[origin].astype(np.int64) + counted(counts) + 1
+    lit = shown(graph, moment, graph.fact_source[origin], graph.fact_target[origin])
+    origin, moment = origin[lit], moment[lit]
     graph = extend(
         graph,
         graph.fact_source[origin],
         graph.fact_target[origin],
         graph.fact_code[origin],
-        (graph.fact_step[origin].astype(np.int64) + counted(counts) + 1).astype(np.int32),
+        moment.astype(np.int32),
         np.ones(len(origin), bool),
         graph.fact_ref[origin],
     )
@@ -247,7 +250,7 @@ WINDOW = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=None,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

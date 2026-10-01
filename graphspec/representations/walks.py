@@ -4,6 +4,7 @@ import time
 import numpy as np
 
 from graphspec.infra.hashing import hashed
+from graphspec.infra.workspace import gathered
 
 from .base import localized, resolved
 from .groups import PERIOD_LOOKBACK, neighbor_lists, neighbor_members, walk_arrays
@@ -44,7 +45,7 @@ def piece(shown, state):
     ids, offsets = neighbor_lists(ext, neighbor_members(ext, spec), len(values), identity)
     held = moments - shown.carry.step0
     keys = hashed(
-        np.where(roots >= 0, shown.carry.entities.tokens[np.maximum(roots, 0)], 0),
+        gathered(shown.carry.entities.tokens, roots, 0),
         np.asarray(shown.graph.step_time)[held],
         np.asarray(shown.graph.step_token)[held],
     )
@@ -77,7 +78,7 @@ def check(arrays, name, registry, spec):
     moments = np.asarray(arrays["row_step"], np.int64)[np.asarray(arrays["member_row"], np.int64)]
     for held, limit in (("walks", moments[:, None] * 2), ("period_walks", moments[:, None, None] * 2)):
         walks = arrays[held]
-        times = np.where(walks >= 0, events[np.maximum(walks, 0), 2], -1)
+        times = gathered(events[:, 2], walks, -1)
         if np.any(times[..., 0] > limit) or np.any((np.diff(times, axis=-1) >= 0) & (times[..., 1:] >= 0)):
             raise ValueError("%s of graph %s are not strictly causal" % (held, name))
 

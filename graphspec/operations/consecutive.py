@@ -17,14 +17,19 @@ SIDES = ("sources", "targets")
 WHOLE = -1
 
 
+@timed("operators.selves")
+def selves(registry, edge):
+    return {first for first, second in edge.pairs if first == second and first in registry.declared}
+
+
 @timed("operators.orderable")
 def orderable(registry):
     found = []
     for edge in registry.edges:
-        selves = {first for first, second in edge.pairs if first == second}
-        if edge.origin[0] != "base" or edge.attributes or len(selves) != 1:
+        kinds = selves(registry, edge)
+        if edge.origin[0] != "base" or edge.attributes or len(kinds) != 1:
             continue
-        (kind,) = selves
+        (kind,) = kinds
         found.append(edge.name)
         for other in registry.edges:
             if other.origin[0] != "base":
@@ -91,7 +96,7 @@ def consecutive(graph, registry, spec, seed, limits, carry, held):
         )
     pairing = spec["consecutive/pairing"].split(":")
     edge, gap = registry.by_name[pairing[0]], spec["consecutive/gap"]
-    (kind,) = {registry.kind(first) for first, second in edge.pairs if first == second}
+    (kind,) = {registry.kind(first) for first in selves(registry, edge)}
     state, budget = carry.state, GraphBudget(limits, fact_bytes(graph))
     joined, last = state["consecutive/joined"], state["consecutive/last"]
     tokens, found = carry.tokens(np.arange(len(graph.kinds))), []
@@ -160,7 +165,7 @@ CONSECUTIVE = OPERATIONS.register(
         requires=(),
         changes=("facts",),
         adds=None,
-        version=2,
+        version=3,
         graphs=1,
     ),
 )

@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 from graphspec.infra.hashing import unit
-from graphspec.infra.workspace import allocate, block_rows
+from graphspec.infra.workspace import allocate, block_rows, gathered
 from graphspec.views import spans
 from graphspec.views.graph import DENSE, Dense, verify_dense
 
@@ -82,7 +82,7 @@ def joined(graphs, registry, spec, seed):
             for start in range(0, len(values), width):
                 part = values[start : start + width]
                 if name in entities:
-                    part = np.where(part >= 0, table[np.maximum(part, 0)], -1)
+                    part = gathered(table, part, -1)
                 elif name in moments:
                     part = part + step_offset
                 elif name in tasks:

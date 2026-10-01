@@ -67,6 +67,17 @@ def fact_keys(registry, *graphs):
     return tuple(inverse[low:high] for low, high in zip(bounds[:-1], bounds[1:]))
 
 
+@timed("operators.shown")
+def shown(graph, step, source, target):
+    count = len(graph.kinds)
+    structural = ~np.asarray(graph.obs_anchor, bool)
+    lit = np.unique(
+        np.asarray(graph.obs_step, np.int64)[structural] * count + np.asarray(graph.obs_entity, np.int64)[structural]
+    )
+    moment = np.asarray(step, np.int64) * count
+    return np.isin(moment + np.asarray(source, np.int64), lit) & np.isin(moment + np.asarray(target, np.int64), lit)
+
+
 def fact_bytes(graph):
     return sum(graph.arrays[name].dtype.itemsize for name in FACTS)
 

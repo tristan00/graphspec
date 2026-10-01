@@ -32,8 +32,11 @@ def sequence(observer, moments, looking, tasks, task_step):
 
 @timed("view.at")
 def at(graph, moments, times):
+    times = np.asarray(times)
     found = np.searchsorted(moments, times, "right") - 1
-    absent = (found < 0) | (moments[np.maximum(found, 0)] != times)
+    inside = found >= 0
+    absent = ~inside
+    absent[inside] = moments[found[inside]] != times[inside]
     if absent.any():
         raise ValueError(
             "a task of graph %s sits at %s, which no step of the view shows"

@@ -20,6 +20,8 @@ from graphspec.infra.files import Arrays
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
+from graphspec.operations.contract import groupable
+from graphspec.schema.references import ends
 from graphspec.views.graph import DENSE, PER_STEP, Graph, verify_dense
 from tuning.bank.bank import Deriver
 
@@ -88,6 +90,8 @@ EMPTIED = dict(
         "edges/owns/persistence": 2,
     },
 )
+DRAWN, SPAN, CUTS, REWIRES = 20, 8, 2, 4
+REWIRING = "pipeline/graphspec.derive/derive/rewiring_budget"
 DENSE_READ = dict(obs_ref="x_table", fact_ref="value_table")
 VARIANT_READ = dict(x_ref="x_table")
 
@@ -404,6 +408,59 @@ def test_every_operation_derives_steps_that_hold_nothing_in_segments_as_it_deriv
         assert unequal(derived.arrays, expected.arrays, DENSE_READ) == [], step.name
         assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], step.name
     LOG.info("steps that hold nothing exit operations=%d seconds=%.3f", len(steps), time.perf_counter() - started)
+
+
+@timed("segments.groupings")
+def groupings(registry, graphs):
+    kinds = np.asarray(graphs[0].kinds)
+    referred = set(kinds[ends(graphs[0].member_source, graphs[0].member_target)[1]].tolist())
+    found = []
+    for grouping in groupable(registry):
+        kind, column = grouping.split(":")
+        flags, chosen = registry.encoding.slots(column)[1], registry.kind(kind)
+        rows = [
+            np.asarray(graph.x_table)[graph.obs_ref[np.asarray(graph.kinds)[graph.obs_entity] == chosen]]
+            for graph in graphs
+        ]
+        if chosen not in referred or all((held[:, flags] > 0).all() for held in rows):
+            found.append(grouping)
+    return found
+
+
+@GROUP
+def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_equal_whole_and_in_segments(
+    bank, registered
+):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", RESIDENT)
+    registry = support.fitted(opened)
+    graph = sliced(support.shown(opened, 0).dense(), 0, SPAN)
+    graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
+    beside = {name: [sliced(support.beside(opened, 0, name), 0, SPAN)] for name in sorted(set(graphs.values()))}
+    chosen = groupings(registry, [graph] + [held[0] for held in beside.values()])
+    bounds = {"pipeline/graphspec.contract/contract/grouping": chosen, REWIRING: dict(low=1, high=REWIRES)}
+    spec = specs.configured(specs.settings(registry, specs.GROUPS), SETTINGS)
+    names, found = sorted(OPERATIONS.names()), []
+    for draw in range(DRAWN):
+        rng = np.random.default_rng(draw)
+        order = [names[place] for place in rng.permutation(len(names))]
+        template = [dict(operation=name, **({"graph": graphs[name]} if name in graphs else {})) for name in order]
+        stated = specs.draw(specs.narrow(pipeline.space(registry, template), bounds), lambda held: held.uniform(rng))
+        steps = pipeline.resolved(registry, pipeline.entries(template, stated))
+        grown = pipeline.grown(registry, steps, None)
+        given = {name: held for name, held in beside.items() if name in {step.graph for step in steps}}
+        whole = begun(graph, given, grown, steps, spec, 0).continued(graph.steps, None)
+        line = begun(graph, given, grown, steps, spec, 0)
+        for high in sorted(set(rng.integers(1, graph.steps, CUTS).tolist())) + [graph.steps]:
+            line = line.continued(high, None)
+        expected = whole.derived()
+        verify_dense(expected, grown)
+        assert unequal(line.derived().arrays, expected.arrays, DENSE_READ) == [], draw
+        assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], draw
+        found.append(tuple(step.operation.name for step in steps))
+    assert len(set(found)) == DRAWN and sorted({name for held in found for name in held}) == names
+    assert len(chosen) < len(groupable(registry)) and {grouping.split(":")[0] for grouping in chosen} > {"item"}
+    LOG.info("random pipelines exit pipelines=%d seconds=%.3f", len(found), time.perf_counter() - started)
 
 
 def clocked(make):

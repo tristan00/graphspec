@@ -7,7 +7,9 @@ import numpy as np
 from graphspec.facts.stored import HALF
 from graphspec.infra.hashing import hashed, token
 from graphspec.infra.timing import timed
+from graphspec.infra.workspace import gathered
 from graphspec.schema.added import Added
+from graphspec.schema.declaration import EVERYTHING
 from graphspec.views.graph import unresolved
 
 from .operation import OPERATIONS, Operation, Phase
@@ -28,7 +30,6 @@ from .state import EMPTY, Table
 
 LOG = logging.getLogger(__name__)
 REDUCTIONS = ("mean", "sum", "min", "max")
-JOINED = ("base", "member", "pairs", "added")
 LACKING = (
     "graphspec.contract groups the nodes of a kind by one of the columns the bank states for it, and the bank %s "
     "states no kind of node with a column"
@@ -90,7 +91,7 @@ def adds(registry, settings, entry):
                 if kind in (first, second)
             )
         )
-        if edge.origin[0] in JOINED and pairs:
+        if edge.origin[0] not in EVERYTHING and pairs:
             joins[edge.name] = pairs
     columns = tuple(registry.schema.entities()[kind])
     tokens = functools.partial(grouping_tokens, entry, kind, column)
@@ -162,7 +163,7 @@ def followed(graph, registry, group, keys, holding, kind, column):
     result = {}
     for name in ("member_source", "member_target"):
         ends = np.asarray(graph.arrays[name], np.int64)
-        named = np.flatnonzero((ends >= 0) & holding[np.maximum(ends, 0)])
+        named = np.flatnonzero(gathered(holding, ends, False))
         wanted = ends[named] * graph.steps + moments[named]
         place = np.minimum(np.searchsorted(keys[order], wanted), max(len(keys) - 1, 0))
         seen = keys[order][place] == wanted if len(keys) else np.zeros(len(named), bool)
@@ -277,7 +278,7 @@ CONTRACT = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=adds,
-        version=1,
+        version=2,
         graphs=1,
     ),
 )

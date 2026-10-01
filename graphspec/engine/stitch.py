@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from graphspec.infra.files import Arrays, write_pack
+from graphspec.infra.workspace import gathered
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import DENSE, Dense
 
@@ -106,7 +107,7 @@ def joined(pieces):
 def globalized(carry, name, values):
     values = np.asarray(values)
     if name in ENTITIES:
-        return np.where(values >= 0, carry.glob[np.maximum(values, 0)], -1).astype(values.dtype)
+        return gathered(carry.glob, values, -1).astype(values.dtype)
     if name in MOMENTS:
         return (values + carry.step0).astype(values.dtype)
     if name in TASKED:
@@ -114,8 +115,7 @@ def globalized(carry, name, values):
     if name == "obs_ref":
         return carry.x_global[values].astype(values.dtype)
     if name == "fact_ref":
-        table = np.r_[carry.value_global, -1]
-        return np.where(values >= 0, table[np.maximum(values, 0)], -1).astype(values.dtype)
+        return gathered(carry.value_global, values, -1).astype(values.dtype)
     return values
 
 
