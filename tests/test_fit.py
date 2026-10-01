@@ -43,6 +43,8 @@ def arguments(bank, output, statement):
         mix=["random=100"],
         objective=None,
         bounds=None,
+        loss=statement["loss"],
+        measures=statement["measures"],
     )
 
 
@@ -190,6 +192,11 @@ def test_fit_with_a_field_absent_stops_naming_the_field(tmp_path, statement, nam
         ("sees", ["train", "validation"]),
         ("sees", dict(train=["unregistered"], validation=[])),
         ("sees", dict(train="without_targets", validation=[])),
+        ("loss", ""),
+        ("loss", None),
+        ("measures", []),
+        ("measures", "mse"),
+        ("measures", ["mse", "mse"]),
     ],
 )
 def test_a_statement_with_a_value_outside_its_meaning_stops_naming_it(monkeypatch, statement, name, value):

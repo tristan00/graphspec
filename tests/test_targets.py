@@ -1,11 +1,15 @@
 import copy
+import time
 
 import numpy as np
 import pytest
 
+from conftest import SPLITS
 from graphspec.schema.schema import Schema
 from graphspec.schema.targets import TARGETS, UTILITIES, valued
 from graphspec.sources import synthetic
+from tuning.fits.training import fit
+from tuning.statement import state
 
 pytestmark = pytest.mark.xdist_group("targets")
 
@@ -47,3 +51,17 @@ def test_the_utility_of_a_target_is_one_number_per_task():
     number = Schema(restated()).tasks["kinds"]["buy"]["target"]
     tasks, values = valued(number, dict(task=[1, 0], series=["outcome", "outcome"], y=[2.5, -1.0]))
     assert tasks.tolist() == [0, 1] and np.array_equal(values, [-1.0, 2.5])
+
+
+def test_a_statement_naming_what_cannot_read_a_kind_of_target_of_the_bank_stops_naming_both(
+    path_bank, tmp_path, statement
+):
+    config = dict(seed=statement["seed"], splits=SPLITS, pipeline=[])
+    with pytest.raises(
+        ValueError,
+        match="names the measure r2, which reads targets of the kinds number and cannot read the kind of target path",
+    ):
+        fit(path_bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(statement))
+    with pytest.raises(KeyError, match="no loss is registered under the name 'absolute'"):
+        fit(path_bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(dict(statement, loss="absolute")))
+    assert not list(tmp_path.iterdir())

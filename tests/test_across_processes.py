@@ -220,7 +220,7 @@ def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_an
     LOG.info("fit with two workers exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
-    assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
+    assert np.isfinite(saved["measures"]["mse"]["value"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
 def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(entries, monkeypatch):

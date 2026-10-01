@@ -90,7 +90,7 @@ from tuning import configuration, fit
 
 bank = runtime / "banks" / "example"
 statement = dict(
-    version=1,
+    version=2,
     device="cpu",
     seed=1,
     seconds=600,
@@ -101,6 +101,8 @@ statement = dict(
     trained=["train"],
     scored=["validation"],
     sees=dict(train=[], validation=[]),
+    loss="squared",
+    measures=["mse", "r2"],
 )
 config = configuration(
     bank,

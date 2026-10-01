@@ -96,6 +96,7 @@ class Dashboard:
                             "val_loss",
                             "val_r2",
                             "series",
+                            "measures",
                             "parameters",
                         )
                     },

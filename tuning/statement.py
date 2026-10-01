@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from graphspec.infra.log import emit
 
 LOG = logging.getLogger(__name__)
-VERSION = 1
+VERSION = 2
 SEEDS = 2**32
 
 
@@ -54,6 +54,10 @@ def splits(value):
     return named(value) and len(value) > 0
 
 
+def word(value):
+    return type(value) is str and len(value) > 0
+
+
 def seeing(value):
     from graphspec.views.visible import SEES
 
@@ -89,6 +93,12 @@ class Statement:
         seeing,
         "a mapping from every split trained on or scored on to the list of the registered rules "
         "of what its tasks may see",
+    )
+    loss: str = held(word, "the name of a registered loss that reads every kind of target of the bank")
+    measures: list = held(
+        splits,
+        "a list of the distinct names of the registered measures computed, at least one, each reading every kind "
+        "of target of the bank",
     )
 
     def __init__(self, **mapping):

@@ -161,56 +161,66 @@ def test_path_windows_join_like_the_windows_of_numbers(path_bank):
         assert sorted(covered) == opened.split["indices"][("train", "validation")[partition]]
 
 
-def test_path_loss_averages_within_task_and_series_then_tasks_then_series():
-    import torch
+def balanced(predictions, targets, weights, point_row, series, tasks, count):
+    from types import SimpleNamespace
 
-    from tuning.fits.training import path_loss
+    from tuning.fits.losses import LOSSES
+
+    held = SimpleNamespace(center=np.zeros(count, np.float32), scale=np.ones(count, np.float32))
+    batch = dict(target=targets, weight=weights, point_row=point_row, series=series, tasks=tasks)
+    return LOSSES.named("balanced")(predictions, batch, held)
+
+
+def test_the_balanced_loss_averages_within_task_and_series_then_tasks_then_series():
+    import torch
 
     predictions = torch.tensor([1.0, 3.0, 1.0, 2.0, 4.0, 2.0])
     targets = torch.zeros(6)
     point_row = torch.tensor([0, 1, 1, 2, 0, 0])
     series = torch.tensor([0, 0, 0, 0, 1, 1])
     first, second = (1 + 5 + 4) / 3, (16 + 4) / 2
-    value = path_loss(predictions, targets, torch.ones(6), point_row, series, 3, 2)
+    value = balanced(predictions, targets, torch.ones(6), point_row, series, 3, 2)
     assert float(value) == pytest.approx((first + second) / 2)
     weights = torch.tensor([2.0, 1.0, 1.0, 1.0, 2.0, 2.0])
-    weighted = path_loss(predictions, targets, weights, point_row, series, 3, 2)
+    weighted = balanced(predictions, targets, weights, point_row, series, 3, 2)
     assert float(weighted) == pytest.approx(((2 * 1 + 5 + 4) / 4 + (16 + 4) / 2) / 2)
 
 
-def test_path_score_is_the_training_loss_on_validation_points():
-    from tuning.fits.training import path_score, score
+def test_the_balanced_measure_is_the_balanced_loss_on_the_points_scored():
+    from tuning.measures.measures import measured, scored
 
     targets = np.array([2.0, 1.0, -1.0, 4.0, 2.0])
     predictions = np.array([1.0, 1.0, 1.0, 0.0, 0.0])
     owners = np.array([0, 1, 1, 0, 1])
     series = np.array([0, 0, 0, 1, 1])
-    metrics = path_score(targets, predictions, owners, series, ["a", "b"], np.array([1.0, 2.0]))
+    metrics = measured(
+        ["balanced", "mse"], scored(targets, predictions, owners, series, ["a", "b"], np.array([1.0, 2.0]))
+    )
     mse = (1.0 * 1 + 0.5 * 0 + 0.5 * 4) / 2
-    first, second = metrics["series"]["a"], metrics["series"]["b"]
-    assert first["raw_val_mse"] == pytest.approx(mse) and first["val_loss"] == pytest.approx(mse)
-    assert second["raw_val_mse"] == pytest.approx(10) and second["val_loss"] == pytest.approx(2.5)
-    assert second["tasks"] == 2 and second["points"] == 2
-    assert metrics["val_loss"] == pytest.approx((mse + 2.5) / 2) and set(metrics) == {"val_loss", "series"}
-    assert score(targets[:3], predictions[:3])["raw_val_mse"] == pytest.approx(5 / 3)
+    assert metrics["balanced"]["series"] == pytest.approx(dict(a=mse, b=2.5))
+    assert metrics["balanced"]["value"] == pytest.approx((mse + 2.5) / 2)
+    assert metrics["mse"]["series"] == pytest.approx(dict(a=5 / 3, b=10.0))
+    assert metrics["mse"]["value"] == pytest.approx(5.0) and set(metrics["mse"]) == {"value", "series"}
+    with pytest.raises(ValueError, match="the series c have no point scored"):
+        scored(targets, predictions, owners, series, ["a", "b", "c"], np.ones(3))
 
 
 def test_validation_loss_matches_the_training_loss_on_the_same_points():
     import torch
 
-    from tuning.fits.training import path_loss, path_score
+    from tuning.measures.measures import measured, scored
 
     rng = np.random.default_rng(4)
     owners = np.repeat(np.arange(6), 4)
     series = np.tile(np.array([0, 0, 1, 1]), 6)
     targets, predictions = rng.normal(size=24), rng.normal(size=24)
     center, scale = np.array([0.3, -0.2]), np.array([1.5, 0.4])
-    scored = path_score(targets, predictions, owners, series, ["a", "b"], scale)["val_loss"]
+    found = measured(["balanced"], scored(targets, predictions, owners, series, ["a", "b"], scale))
 
     def standard(values):
         return torch.tensor((values - center[series]) / scale[series])
 
-    trained = path_loss(
+    trained = balanced(
         standard(predictions),
         standard(targets),
         torch.ones(24, dtype=torch.float64),
@@ -219,31 +229,39 @@ def test_validation_loss_matches_the_training_loss_on_the_same_points():
         6,
         2,
     )
-    assert float(trained) == pytest.approx(scored)
+    assert float(trained) == pytest.approx(found["balanced"]["value"])
 
 
-def test_objective_blends_series_losses_by_their_weights(path_bank):
+def test_objective_ranks_by_the_first_measure_and_blends_its_series_by_their_weights(path_bank):
     from tuning.measures import objective
 
-    opened = Deriver(path_bank, "cpu", RESIDENT)
-    assert objective.weights(opened, None) == {"level": 1.0, "trend": 1.0}
-    assert objective.weights(opened, ["trend=2"]) == {"level": 0.0, "trend": 2.0}
-    chosen = objective.weights(opened, ["trend=3", "level=1"])
-    result = dict(series=dict(level=dict(val_loss=2.0), trend=dict(val_loss=6.0)))
-    assert objective.value(result, dict(objective=chosen)) == pytest.approx(5.0)
-    assert objective.value(dict(raw_val_mse=0.5), dict(objective=None)) == 0.5
-    plan = dict(objective=chosen)
+    names = Deriver(path_bank, "cpu", RESIDENT).series_names
+    assert objective.weights(names, None) is None
+    assert objective.weights(names, ["trend=2"]) == {"level": 0.0, "trend": 2.0}
+    chosen = objective.weights(names, ["trend=3", "level=1"])
+    result = dict(measures=dict(balanced=dict(value=4.0, series=dict(level=2.0, trend=6.0)), mse=dict(value=9.0)))
+    plan = dict(objective=chosen, measures=["balanced", "mse"])
+    assert objective.value(result, plan) == pytest.approx(5.0)
+    assert objective.value(result, dict(plan, objective=None)) == 4.0
     assert [entry["key"] for entry in objective.measures(plan)] == [
         "mse",
+        "measure/mse",
         "series/level/loss",
         "series/trend/loss",
     ]
+    assert objective.measures(plan)[0]["label"] == "Validation loss"
     assert objective.columns(plan) == ["series/level/loss", "series/trend/loss"]
-    assert objective.scores(result, plan) == {"series/level/loss": 2.0, "series/trend/loss": 6.0}
+    assert objective.scores(result, plan) == {"measure/mse": 9.0, "series/level/loss": 2.0, "series/trend/loss": 6.0}
     assert objective.scores(dict(error="x"), plan) == {} and objective.columns(dict(objective=None)) == []
+    with pytest.raises(ValueError, match="ranks its trials by the first measure .* r2 states that higher is better"):
+        objective.measures(dict(plan, measures=["r2"]))
+    earlier = dict(series=dict(level=dict(val_loss=2.0), trend=dict(val_loss=6.0)))
+    assert objective.value(earlier, dict(objective=chosen)) == pytest.approx(5.0)
+    assert objective.value(dict(raw_val_mse=0.5), dict(objective=None)) == 0.5
+    assert objective.scores(earlier, dict(objective=chosen)) == {"series/level/loss": 2.0, "series/trend/loss": 6.0}
     for given in (["other=1"], ["level=1", "level=2"], ["level=0"], ["level=-1", "trend=2"]):
         with pytest.raises(ValueError, match="objective"):
-            objective.weights(opened, given)
+            objective.weights(names, given)
 
 
 @pytest.mark.parametrize(
@@ -270,8 +288,9 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     from tuning.batches.batching import pack_batch
     from tuning.families.models import build
     from tuning.families.periods import blocks as period_blocks
-    from tuning.fits.training import loss
+    from tuning.fits.losses import LOSSES
 
+    loss = LOSSES.named("balanced")
     opened = Deriver(path_bank, "cpu", RESIDENT)
     cfg = configuration(opened.registry, dict(model, hidden=8), {"time/history": 2}, 11, SPLITS)
     assert cfg["model"]["time/encoding"] == "log_cosine"

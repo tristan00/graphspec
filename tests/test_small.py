@@ -172,7 +172,7 @@ def test_a_view_without_any_edge_completes_one_fit_on_cpu(banks, packed, tmp_pat
     LOG.info("fit without edges exit bank=%s seconds=%.3f", name, time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
-    assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
+    assert np.isfinite(saved["measures"]["mse"]["value"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
 def test_a_value_beyond_sixteen_bits_stops_the_view_naming_the_node_the_column_and_the_encoder(banks):

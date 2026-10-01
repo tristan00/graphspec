@@ -15,7 +15,7 @@ from tuning.batches.batching import pack_batch
 from tuning.families.model_spec import VIEWS, configuration, groups, space, views
 from tuning.families.models import build
 from tuning.families.periods import blocks as period_blocks
-from tuning.fits.training import loss
+from tuning.fits.losses import LOSSES
 from tuning.searches.selector import graph_space
 
 LOG = logging.getLogger(__name__)
@@ -172,7 +172,7 @@ def passed(held, model, graph, pipeline):
     bank = held["bank"]
     cfg, b, net = read(held, model, graph, pipeline)
     predicted = net(b)
-    lost = loss(predicted, b, bank)
+    lost = LOSSES.named("squared")(predicted, b, bank)
     lost.backward()
     gradients = [parameter.grad for parameter in net.parameters() if parameter.grad is not None]
     if predicted.shape != b["target"].shape or not torch.isfinite(predicted).all():

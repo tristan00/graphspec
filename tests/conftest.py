@@ -335,6 +335,8 @@ def statement():
         variant_cache_bytes=1 << 30,
         batch_sequences=16,
         **SPLITS,
+        loss="squared",
+        measures=["mse", "r2"],
     )
 
 

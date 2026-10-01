@@ -138,6 +138,8 @@ def arguments(bank, output, **overrides):
         trained=["train"],
         scored=["validation"],
         sees=["train=", "validation="],
+        loss="squared",
+        measures=["mse", "r2"],
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -370,6 +372,14 @@ def test_bounds_that_hold_the_seconds_of_a_trial_are_refused_naming_them(bank, t
     assert not (tmp_path / "run").exists()
 
 
+def test_a_search_ranks_by_a_first_measure_lower_being_better_that_reads_the_kinds_of_the_bank(bank, tmp_path):
+    with pytest.raises(ValueError, match="the first measure of its statement, .* r2 states that higher is better"):
+        run(arguments(bank, tmp_path / "run", measures=["r2", "mse"], **FRESH))
+    with pytest.raises(KeyError, match="no measure is registered under the name 'spread'"):
+        run(arguments(bank, tmp_path / "run", measures=["mse", "spread"], **FRESH))
+    assert not (tmp_path / "run").exists()
+
+
 @pytest.mark.parametrize("seconds", [0, -1, True, 1.5, None])
 def test_seconds_of_a_trial_outside_their_meaning_are_refused(seconds):
     from tuning.searches.selector import runtime_parameter
@@ -388,6 +398,7 @@ def test_seconds_of_a_trial_outside_their_meaning_are_refused(seconds):
         ("workers", 2, "workers"),
         ("variant_gb", 2, "variant_bytes"),
         ("batch_sequences", 16, "batch_sequences"),
+        ("measures", ["balanced"], "measures"),
     ],
 )
 def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_field(
@@ -396,7 +407,7 @@ def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_fie
     output = tmp_path / "run"
     run(arguments(bank, output, seconds=1200, **FRESH))
     before = read_json(output / "plan.json")
-    with pytest.raises(ValueError, match="plan.json holds %s %r and" % (field, before[field])):
+    with pytest.raises(ValueError, match=re.escape("plan.json holds %s %r and" % (field, before[field]))):
         run(arguments(bank, output, **{"seconds": 1200, flag: value}))
     with pytest.raises(KeyError, match="the statement lacks"):
         run(arguments(bank, output, **{"seconds": 1200, flag: None}))
@@ -420,6 +431,7 @@ def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_fie
         "bounds",
         "objective",
         "pipeline",
+        "loss",
     ],
 )
 def test_a_plan_on_disk_that_lacks_a_field_stops_naming_it(bank, tmp_path, field):

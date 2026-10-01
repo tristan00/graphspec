@@ -1,8 +1,10 @@
 import itertools
 import logging
 import pickle
+import sys
 import time
 from collections.abc import MutableMapping
+from importlib import import_module
 
 LOG = logging.getLogger(__name__)
 REGISTRIES = []
@@ -50,6 +52,7 @@ class Names:
         if any(registry.label == label for registry in REGISTRIES):
             raise ValueError("a registry is labelled %s twice" % label)
         self.label, self.held, self.shipped = label, {}, frozenset()
+        self.module = sys._getframe(1).f_globals["__name__"]
         REGISTRIES.append(self)
 
     def __setattr__(self, name, value):
@@ -79,11 +82,11 @@ class Names:
         return tuple(self.held)
 
 
-def ship():
+def ship(registries):
     started = time.perf_counter()
-    for registry in REGISTRIES:
+    for registry in registries:
         registry.shipped = frozenset(registry.held)
-    LOG.debug("ship exit registries=%d seconds=%.4f", len(REGISTRIES), time.perf_counter() - started)
+    LOG.debug("ship exit registries=%d seconds=%.4f", len(registries), time.perf_counter() - started)
 
 
 def carried():
@@ -94,7 +97,7 @@ def carried():
             if name in registry.shipped:
                 continue
             try:
-                found.append((registry.label, name, pickle.dumps(entry)))
+                found.append((registry.label, name, pickle.dumps(entry), registry.module))
             except Exception as error:
                 raise ValueError(
                     "the %s %s is registered from outside the library and cannot be passed to the processes "
@@ -106,8 +109,10 @@ def carried():
 
 def restored(entries):
     started = time.perf_counter()
+    for module in sorted({entry[3] for entry in entries}):
+        import_module(module)
     registries = {registry.label: registry for registry in REGISTRIES}
-    for label, name, entry in entries:
+    for label, name, entry, _ in entries:
         registry = registries[label]
         if name in registry.held:
             continue

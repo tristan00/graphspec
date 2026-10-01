@@ -39,13 +39,13 @@ function readLocation() {
   state.proposal = params.get('proposal') || '';
   state.query = params.get('q') || '';
   state.status = ['all','complete','running','pending','failed','timeout','interrupted'].includes(params.get('status')) ? params.get('status') : 'all';
-  state.sort = Object.hasOwn(RESULTS,params.get('sort')) || /^(config|result|series)\//.test(params.get('sort') || '') || ['mse','r2'].includes(params.get('sort')) ? params.get('sort') : 'number';
+  state.sort = Object.hasOwn(RESULTS,params.get('sort')) || /^(config|result|series|measure)\//.test(params.get('sort') || '') || ['mse','r2'].includes(params.get('sort')) ? params.get('sort') : 'number';
   state.direction = params.get('dir') === 'asc' ? 'asc' : 'desc';
   state.page = Math.max(1, Math.min(1000000, Number.parseInt(params.get('page'), 10) || 1));
-  state.metric = Object.hasOwn(RESULTS,params.get('metric')) || /^(config|result|series)\//.test(params.get('metric') || '') || params.get('metric') === 'r2' ? params.get('metric') : 'mse';
+  state.metric = Object.hasOwn(RESULTS,params.get('metric')) || /^(config|result|series|measure)\//.test(params.get('metric') || '') || params.get('metric') === 'r2' ? params.get('metric') : 'mse';
   state.x = params.get('x') || '';
   state.target = params.get('target') || '';
-  state.columns = [...new Set(params.getAll('column'))].filter(field => /^(config|result|series)\//.test(field));
+  state.columns = [...new Set(params.getAll('column'))].filter(field => /^(config|result|series|measure)\//.test(field));
   state.conditions = params.getAll('where').flatMap(text => {
     try {
       const condition = JSON.parse(text);

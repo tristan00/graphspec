@@ -23,6 +23,7 @@ from graphspec.registries import carried, restored
 from tuning import statement as statements
 from tuning.bank.bank import PACKAGES
 from tuning.fits.budget import TIMEOUT_EXIT_CODE
+from tuning.fits.losses import admitted
 from tuning.fits.training import fit
 from tuning.measures import objective
 
@@ -47,6 +48,8 @@ COPIES = dict(
     trained="trained",
     scored="scored",
     sees="sees",
+    loss="loss",
+    measures="measures",
 )
 
 
@@ -163,6 +166,8 @@ def opened(stated, given, bank_path, manifest, limit):
         trained=list(stated.trained),
         scored=list(stated.scored),
         sees=stated.splits()["sees"],
+        loss=stated.loss,
+        measures=list(stated.measures),
         train_rows=counted(manifest, stated.trained),
         holdout_rows=counted(manifest, stated.scored),
         supervision_sha256=manifest["supervision_sha256"],
@@ -188,6 +193,8 @@ def run(args):
         if value is not None and (type(value) is not int or value < 0):
             raise ValueError(name + " must be a nonnegative integer")
     bank = Bank(args.bank)
+    admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
+    objective.ranking(stated.measures)
     mix = None
     if args.mix is not None:
         pairs = [item.split("=") for item in args.mix]
@@ -210,7 +217,7 @@ def run(args):
             mix=mix,
             random_params=args.random_params,
             bounds=read_json(args.bounds) if args.bounds else None,
-            objective=objective.weights(bank, args.objective) if args.objective else None,
+            objective=objective.weights(bank.series_names, args.objective) if args.objective else None,
         )
         plan = continued(plan, stated, given)
         plan["bank"] = str(Path(args.bank).resolve())
@@ -223,7 +230,7 @@ def run(args):
             random_params=args.random_params,
             pipeline=read_json(args.pipeline) if args.pipeline else None,
             bounds=read_json(args.bounds) if args.bounds else {},
-            objective=objective.weights(bank, args.objective),
+            objective=objective.weights(bank.series_names, args.objective),
         )
         plan = opened(stated, given, str(Path(args.bank).resolve()), bank.manifest, args.trials)
     check_bounds(bank.registry, plan["bounds"], plan["pipeline"])
@@ -264,6 +271,8 @@ def flags(args):
         trained=args.trained,
         scored=args.scored,
         sees=statements.seen(args.sees),
+        loss=args.loss,
+        measures=args.measures,
     )
     result = {name: value for name, value in given.items() if value is not None}
     emit("statement_flags", fields=sorted(result), seconds=time.perf_counter() - started)
@@ -544,7 +553,15 @@ def main():
     run_parser.add_argument(
         "--objective",
         nargs="*",
-        help="series=weight pairs that blend per-series validation losses into the trial score; every series weighs 1 when omitted on a new run",
+        help="series=weight pairs that blend the per-series values of the first measure into the trial score; "
+        "its value over every series when omitted on a new run",
+    )
+    run_parser.add_argument("--loss", required=True, help="the registered loss every trial trains with")
+    run_parser.add_argument(
+        "--measures",
+        nargs="+",
+        required=True,
+        help="the registered measures every trial records; the first, lower being better, ranks the trials",
     )
     run_parser.add_argument("--bounds")
     run_parser.add_argument(

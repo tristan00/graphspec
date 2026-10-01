@@ -17,10 +17,10 @@ from tuning.families.model_spec import configuration, describe, groups, samples
 from tuning.families.models import build
 from tuning.statement import seen
 
-from .training import loss
+from .losses import LOSSES, admitted
 
 
-def probe(bank, block, cfg, device):
+def probe(bank, block, cfg, device, loss):
     from tuning.families.periods import blocks as period_blocks
 
     started = time.perf_counter()
@@ -32,7 +32,7 @@ def probe(bank, block, cfg, device):
     values = net(b)
     if values.shape != b["target"].shape or not torch.isfinite(values).all():
         raise ValueError("model output must be finite and match the target shape")
-    loss(values, b, bank).backward()
+    LOSSES.named(loss)(values, b, bank).backward()
     if torch.device(device).type == "cuda":
         torch.cuda.synchronize()
     gradients = [p.grad for p in net.parameters() if p.grad is not None]
@@ -71,11 +71,12 @@ def settled(registry, model, given):
 
 
 @exclusive
-def check(directory, output, device, seed, splits, pipeline_path, settings_path, graph=None):
+def check(directory, output, device, seed, splits, loss, pipeline_path, settings_path, graph=None):
     entered = time.perf_counter()
     output = output_path(output)
     compute.reserve(device)
     bank = Deriver(directory, device, RESIDENT)
+    admitted(bank.registry.schema.targets(), loss, ())
     pipeline, given = read_json(pipeline_path), read_json(settings_path)
     models = samples(bank.registry)
     unknown = sorted(
@@ -99,7 +100,7 @@ def check(directory, output, device, seed, splits, pipeline_path, settings_path,
         if not candidates:
             raise ValueError("graph %d has no labels to check" % chosen)
         block = candidates[-1]
-        outcome = probe(bank, block, cfg, device)
+        outcome = probe(bank, block, cfg, device, loss)
         if torch.device(device).type == "cuda":
             torch.cuda.empty_cache()
         result = dict(
@@ -121,12 +122,15 @@ def main():
     parser.add_argument("--scored", nargs="+", required=True)
     parser.add_argument("--sees", nargs="+", required=True)
     parser.add_argument("--graph", type=int)
+    parser.add_argument("--loss", required=True, help="the registered loss every model is checked with")
     parser.add_argument("--pipeline", required=True, help="the pipeline every model derives its variant by")
     parser.add_argument("--settings", required=True, help="every setting of the graph any model reads")
     args = parser.parse_args()
     configure()
     splits = dict(trained=args.trained, scored=args.scored, sees=seen(args.sees))
-    check(args.directory, args.output, args.device, args.seed, splits, args.pipeline, args.settings, args.graph)
+    check(
+        args.directory, args.output, args.device, args.seed, splits, args.loss, args.pipeline, args.settings, args.graph
+    )
 
 
 if __name__ == "__main__":

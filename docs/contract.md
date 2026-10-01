@@ -419,6 +419,8 @@ The statement of a fit, `tuning.statement.Statement`, holds beside its other fie
 | `trained` | The names of the splits trained on, at least one. They are the splits the bank was built for. |
 | `scored` | The names of the splits scored on, at least one, none of them trained on. |
 | `sees` | For every split trained on or scored on, the list of the rules of what its tasks may see; an empty list states that they see every fact. |
+| `loss` | The registered loss the fit trains with (`tuning.LOSSES`). |
+| `measures` | The registered measures the fit records, at least one (`tuning.MEASURES`). A loss or a measure that cannot read a kind of target of the bank stops the fit naming both. |
 
 A configuration carries the same three under `splits`, and a fit whose configuration and statement differ in them stops. The rows of a split neither trained on nor scored on enter no fit.
 

@@ -878,7 +878,7 @@ def test_a_case_of_time_completes_one_fit_on_cpu(prepared, tmp_path, statement):
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
     assert saved["train_unique_rows"] == len(held.members(cfg, 0))
-    assert np.isfinite(saved["raw_val_mse"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
+    assert np.isfinite(saved["measures"]["mse"]["value"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
 def test_a_database_gives_the_facts_of_two_clocks_and_their_observers_as_the_staging_does(banks, tmp_path):
