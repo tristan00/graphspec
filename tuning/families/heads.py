@@ -42,6 +42,18 @@ def scores(hidden, spec, registry):
     return ScoreHead(hidden)
 
 
+@timed("heads.sequence")
+def sequence(hidden, spec, registry):
+    from .layers import SequenceHead
+
+    longest = max(
+        entry["target"]["length"]
+        for entry in registry.schema.tasks["kinds"].values()
+        if entry["target"] is not None and entry["target"]["kind"] == "sequence"
+    )
+    return SequenceHead(hidden, longest)
+
+
 @timed("heads.nodes")
 def nodes(hidden, spec, registry):
     from .layers import NodeHead
@@ -61,6 +73,7 @@ HEADS.register("path", Attached(("time/encoding",), path))
 HEADS.register("class", Attached((), scores))
 HEADS.register("classes", Attached((), scores))
 HEADS.register("proportions", Attached((), scores))
+HEADS.register("sequence", Attached((), sequence))
 HEADS.register("ranking", Attached((), nodes))
 HEADS.register("nodes", Attached((), nodes))
 HEADS.register("link", Attached((), nodes))

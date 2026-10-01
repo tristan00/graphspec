@@ -116,6 +116,24 @@ def normalised(values, task):
     return raised / np.bincount(owner, raised)[owner]
 
 
+@timed("targets.ended")
+def ended(values, task, place):
+    keys = np.stack((np.asarray(task, np.int64), np.asarray(place, np.int64)), 1)
+    group = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
+    values = np.asarray(values, np.float64)
+    top = np.zeros(group.max() + 1)
+    np.maximum.at(top, group, values)
+    raised = np.exp(values - top[group])
+    return raised / (np.exp(-top)[group] + np.bincount(group, raised)[group])
+
+
+@timed("targets.whole")
+def whole(stated, least, where):
+    if type(stated) is not int or stated < least:
+        raise ValueError("%s is a whole number of at least %d, found %r" % (where, least, stated))
+    return stated
+
+
 @timed("targets.single")
 def single(column, series, where):
     if type(column) is not str:
@@ -400,6 +418,78 @@ class Proportions(Over):
         return normalised(values, task)
 
 
+class Sequence(Over):
+    least = 1
+    matures = None
+    parameters = ("length",)
+    columns = dict(series="STRING", place="INT32")
+    fields = ("place",)
+
+    @timed("targets.sequence.checked")
+    def checked(self, stated, schema, references, where):
+        return dict(length=whole(stated["length"], 1, "the greatest length of the target of " + where))
+
+    def points(self, rows, target, where):
+        started = time.perf_counter()
+        series, length = target["series"], target["length"]
+        owner, names = np.asarray(rows["task"], np.int64), list(rows["series"])
+        strangers = sorted({repr(name) for name in names if name not in series})
+        if strangers:
+            raise ValueError(
+                "a point of %s names the token %s, which its kind does not state" % (where, ", ".join(strangers))
+            )
+        place = np.asarray([-1 if value is None else value for value in rows["place"]], np.int64)
+        if np.any((place < 0) | (place >= length)):
+            raise ValueError("the points of %s state their place, a whole number from 0 below %d" % (where, length))
+        width = length * len(series)
+        slot = place * len(series) + np.asarray([series.index(name) for name in names], np.int64)
+        order = np.lexsort((slot, owner))
+        _, first, counts = np.unique(owner[order], return_index=True, return_counts=True)
+        wrong = counts != width
+        if not wrong.any():
+            wrong = (slot[order].reshape(-1, width) != np.arange(width)).any(1)
+        if wrong.any():
+            raise ValueError(
+                "a task of graph %s holds under %s one point for every token its kind states, %s, at each of its %d "
+                "places, each once" % (rows["graph"][int(order[first[np.argmax(wrong)]])], where, ", ".join(series), length)
+            )
+        y = np.asarray(rows["y"], np.float64)[order].reshape(-1, length, len(series))
+        held = y.sum(2)
+        if np.any((y != 0) & (y != 1)) or np.any(held > 1) or np.any(np.diff(held, axis=1) > 0):
+            raise ValueError(
+                "the points of %s state 1 for the token at each place of the sequence of a task and 0 for every "
+                "other, the places that hold a token coming before those that hold none" % where
+            )
+        LOG.debug("sequence points exit points=%d seconds=%.4f", len(owner), time.perf_counter() - started)
+        return dict(series=names, place=place.tolist())
+
+    @timed("targets.sequence.staged")
+    def staged(self, stated, target, where):
+        series, length = target["series"], target["length"]
+        if (
+            not isinstance(stated, list)
+            or len(stated) > length
+            or any(type(token) is not str or token not in series for token in stated)
+        ):
+            raise ValueError(
+                "%s states its target as a list of at most %d tokens of %s, possibly none, found %r"
+                % (where, length, ", ".join(series), stated)
+            )
+        return [
+            dict(series=name, place=place, y=float(place < len(stated) and stated[place] == name))
+            for place in range(length)
+            for name in series
+        ]
+
+    @timed("targets.sequence.read")
+    def read(self, rows):
+        return [row["series"] for row in sorted(rows, key=lambda row: row["place"]) if row["y"] == 1]
+
+    @timed("targets.sequence.predicted")
+    def predicted(self, values, task, fields):
+        return ended(values, task, fields["place"])
+
+
 class Pointed:
     scaled = False
     matures = None
@@ -540,7 +630,7 @@ class Link(Pointed):
 
 
 class Weighted:
-    reads = ("number", "path", "class", "classes", "proportions", "ranking", "nodes", "link")
+    reads = ("number", "path", "class", "classes", "proportions", "sequence", "ranking", "nodes", "link")
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")
@@ -588,6 +678,7 @@ TARGETS.register("path", Path())
 TARGETS.register("class", Class())
 TARGETS.register("classes", Classes())
 TARGETS.register("proportions", Proportions())
+TARGETS.register("sequence", Sequence())
 TARGETS.register("ranking", Ranking())
 TARGETS.register("nodes", Nodes())
 TARGETS.register("link", Link())

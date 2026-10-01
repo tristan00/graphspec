@@ -249,6 +249,21 @@ class NodeHead(nn.Module):
         return (self.query(torch.cat((task, series), -1)) * node).sum(-1) + self.bias(node).squeeze(-1)
 
 
+class SequenceHead(nn.Module):
+    @timed("layers.sequencehead")
+    def __init__(self, hidden, longest):
+        super().__init__()
+        self.place = nn.Embedding(longest, hidden)
+        self.task = nn.Linear(hidden * 2, hidden)
+        self.bias = nn.Linear(hidden * 2, 1)
+
+    def forward(self, h, series, b, points):
+        place = self.place(b[FIELD + "place"][points].long())
+        return (self.task(torch.cat((h, place), -1)) * series).sum(-1) + self.bias(
+            torch.cat((series, place), -1)
+        ).squeeze(-1)
+
+
 class PathHead(nn.Module):
     @timed("layers.pathhead")
     def __init__(self, hidden, encoding):

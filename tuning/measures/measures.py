@@ -273,6 +273,76 @@ class Jaccard:
         return tasked(held, owner, np.where(union > 0, both / np.maximum(union, 1), 1.0))
 
 
+def positioned(held):
+    started = time.perf_counter()
+    keys = np.stack((held.task, held.fields["place"].astype(np.int64)), 1)
+    found, group = np.unique(keys, axis=0, return_inverse=True)
+    group, groups, stated = group.reshape(-1), len(found), held.target == 1
+    chance = np.maximum(1 - np.bincount(group, held.prediction, groups), 0.0)
+    order = np.lexsort((held.series, -held.prediction, group))
+    top = order[np.unique(group[order], return_index=True)[1]]
+    best = np.where(held.prediction[top] > chance, held.series[top], -1)
+    truth = np.full(groups, -1, np.int64)
+    truth[group[stated]] = held.series[stated]
+    chance[group[stated]] = held.prediction[stated]
+    owner = np.unique(found[:, 0], return_inverse=True)[1].reshape(-1)
+    LOG.debug("positioned exit places=%d seconds=%.4f", groups, time.perf_counter() - started)
+    return found[:, 1], owner, truth, best, chance
+
+
+@timed("measures.agreeing")
+def agreeing(held, best, truth, chosen):
+    return {name: float(((best == code) == (truth == code))[chosen].mean()) for code, name in enumerate(held.names)}
+
+
+class Tokens:
+    reads = ("sequence",)
+    better = "lower"
+    label, short = "Validation loss per token", "Token loss"
+
+    @timed("measures.tokens")
+    def __call__(self, held):
+        _, _, truth, _, chance = positioned(held)
+        part = -np.log(chance)
+        return dict(
+            value=float(part.mean()),
+            series={name: float(part[truth == code].sum() / len(part)) for code, name in enumerate(held.names)},
+        )
+
+
+class Placed:
+    reads = ("sequence",)
+    better = "higher"
+    label, short = "Validation token accuracy", "Token accuracy"
+
+    @timed("measures.placed")
+    def __call__(self, held):
+        place, owner, truth, best, _ = positioned(held)
+        counted = place <= np.bincount(owner, truth >= 0)[owner]
+        return dict(value=float((best == truth)[counted].mean()), series=agreeing(held, best, truth, counted))
+
+
+class Exact:
+    reads = ("sequence",)
+    better = "higher"
+    label, short = "Validation exact sequences", "Exact"
+
+    @timed("measures.exact")
+    def __call__(self, held):
+        _, owner, truth, best, _ = positioned(held)
+        stops = np.cumsum(best < 0)
+        start = np.r_[0, np.flatnonzero(np.diff(owner)) + 1]
+        before = np.repeat(stops[start] - (best[start] < 0), np.diff(np.r_[start, len(owner)]))
+        decoded = np.where(stops > before, -1, best)
+        return dict(
+            value=float((np.bincount(owner, decoded != truth) == 0).mean()),
+            series={
+                name: float((np.bincount(owner, (decoded == code) != (truth == code)) == 0).mean())
+                for code, name in enumerate(held.names)
+            },
+        )
+
+
 def predicted(kinds, aims, task, values, fields):
     started = time.perf_counter()
     result = np.asarray(values, np.float64).copy()
@@ -325,6 +395,9 @@ MEASURES.register("accuracy", Accuracy())
 MEASURES.register("entropy", Entropy())
 MEASURES.register("binary", Binary())
 MEASURES.register("divergence", Divergence())
+MEASURES.register("tokens", Tokens())
+MEASURES.register("token_accuracy", Placed())
+MEASURES.register("exact", Exact())
 MEASURES.register("gain", Gain())
 MEASURES.register("reciprocal", Reciprocal())
 MEASURES.register("hits1", Hits(1))

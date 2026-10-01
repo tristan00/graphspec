@@ -73,6 +73,21 @@ class Listwise:
         return crossed(predictions, target / total[row], batch)
 
 
+class Tokens:
+    reads = ("sequence",)
+
+    def __call__(self, predictions, batch, bank):
+        row, place, target = batch["point_row"], batch[FIELD + "place"].long(), batch["target"]
+        places = int(place.max()) + 1
+        group, count = row * places + place, batch["tasks"] * places
+        top = predictions.new_zeros(count).scatter_reduce(0, group, predictions.detach(), "amax", include_self=True)
+        total = (-top).exp().index_add(0, group, (predictions - top[group]).exp())
+        stated = predictions.new_zeros(count).index_add(0, group, target * predictions)
+        points = predictions.new_zeros(count).index_add(0, group, predictions.new_ones(len(row)))
+        weight = predictions.new_zeros(count).index_add(0, group, batch["weight"]) / points.clamp_min(1)
+        return (weight * (total.log() + top - stated)).sum() / weight.sum()
+
+
 class Binary:
     reads = ("classes", "nodes")
 
@@ -155,4 +170,5 @@ LOSSES.register("balanced", Balanced())
 LOSSES.register("entropy", Entropy())
 LOSSES.register("binary", Binary())
 LOSSES.register("listwise", Listwise())
+LOSSES.register("tokens", Tokens())
 ship([LOSSES])
