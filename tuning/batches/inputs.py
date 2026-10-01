@@ -362,7 +362,7 @@ def drawing(schema, pipeline):
     return result
 
 
-def negatives(window, b, owner, node):
+def negatives(window, b, owner):
     started = time.perf_counter()
     held, registry, start = window.held, window.registry, window.start
     names, entities = list(registry.references), len(held.numpy("entity_kind"))
@@ -384,11 +384,8 @@ def negatives(window, b, owner, node):
         wanted = (b["row_steps"][owner[chosen]] + start) * entities + anchor[owner[chosen]]
         low = np.where(known, np.searchsorted(keys[order], wanted, "left"), 0)
         high = np.where(known, np.searchsorted(keys[order], wanted, "right"), 0)
-        point = np.repeat(chosen, high - low)
-        found = candidates["target"][drawing_entry][order[np.repeat(low, high - low) + counted(high - low)]]
-        kept = found != node[point]
-        link.append(point[kept])
-        drawn.append(found[kept])
+        link.append(np.repeat(chosen, high - low))
+        drawn.append(candidates["target"][drawing_entry][order[np.repeat(low, high - low) + counted(high - low)]])
     result = np.concatenate(link), np.concatenate(drawn)
     LOG.debug(
         "negatives exit graph=%d drawn=%d seconds=%.4f", window.graph, len(result[0]), time.perf_counter() - started
@@ -412,9 +409,7 @@ def pointed(bank, window, b, rows, owner):
             "of its task, and the kind states absent as stop"
             % (found["node"], found[registry.schema.tasks["key"]], found["kind"], found["graph"])
         )
-    node = np.full(len(rows), -1, np.int64)
-    node[named[observed >= 0]] = held.numpy("entity")[observed[observed >= 0]]
-    point, drawn = negatives(window, b, owner, node)
+    point, drawn = negatives(window, b, owner)
     point, drawn = point[~left[point]], drawn[~left[point]]
     moments = b["row_steps"][owner[point]] + start
     placed = observing(held, moments, drawn, np.arange(len(held.numpy("entity_kind"))))

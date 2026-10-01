@@ -43,6 +43,9 @@ KINDS = dict(
 NEGATIVES = support.SEVEN + ("graphspec.negatives",)
 DRAWN = {"negatives/of": "link:buys:who", "negatives/rule": "uniform", "negatives/count": 5}
 NAMED = {token("item:" + key) & MASK: key for key in ITEMS}
+OWNED = dict(u0=("i0", "i1", "i4"), u1=("i1", "i2", "i5"), u2=("i2", "i3", "i6"), u3=("i3", "i0", "i7"))
+NEXT, BOUGHT = dict(u0="i2", u1="i3", u2="i0", u3="i1"), (1, 2, 3, 4)
+SHIPPED = dict(uniform={}, degree={}, hops={"negatives/hops/within": 3})
 OPENED, HELD, NETS = {}, {}, {}
 
 
@@ -186,18 +189,75 @@ def case(changed):
     return dict(schema=schema(KINDS), graphs=[graph(place, KINDS, changed) for place in range(2)])
 
 
+@timed("nodes.bought")
+def bought():
+    items = sorted({item for held in OWNED.values() for item in held})
+    tasks = dict(key=[], kind=[], time=[], split=[], weight=[], target=[], known=[], signal=[], signal_observed=[])
+    for at, moment in enumerate(BOUGHT):
+        for user in USERS:
+            tasks["key"].append(len(tasks["key"]))
+            tasks["kind"].append("next")
+            tasks["time"].append(moment)
+            tasks["split"].append("train" if at < 2 else "validation")
+            tasks["weight"].append(None)
+            tasks["known"].append(moment + 1)
+            tasks["signal"].append([0.1 * at])
+            tasks["signal_observed"].append([True])
+            tasks["target"].append(NEXT[user])
+    pairs = [(user, item) for user in USERS for item in OWNED[user]]
+    rows = dict(
+        source=[pair[0] for pair in pairs],
+        target=[pair[1] for pair in pairs],
+        present=[True] * len(pairs),
+        since=[0] * len(pairs),
+        until=[None] * len(pairs),
+    )
+    users = dict(key=list(USERS), since=[0] * 4, until=[None] * 4, load=[1.0 + at for at in range(4)])
+    priced = dict(key=items, since=[0] * len(items), until=[None] * len(items), price=[1.0 * at for at in range(len(items))])
+    graph = dict(
+        name="g0",
+        unit="tick",
+        columns={},
+        nodes=dict(user=list(USERS), item=items),
+        values=[
+            dict(form="state", parameters={}, rows=users, kind="user"),
+            dict(form="state", parameters={}, rows=priced, kind="item"),
+        ],
+        edges=[
+            dict(form="state", parameters={}, table="buys", ends=("user", "item"), rows=rows),
+            dict(
+                form="state",
+                parameters={},
+                table="near",
+                ends=("item", "item"),
+                rows=dict(source=["i0"], target=["i5"], present=[True], since=[0], until=[None]),
+            ),
+        ],
+        tasks=dict(
+            tasks,
+            references=dict(
+                who=[USERS[key % len(USERS)] for key in tasks["key"]],
+                at=[None] * len(tasks["key"]),
+                items=[None] * len(tasks["key"]),
+            ),
+        ),
+    )
+    return dict(schema=schema(dict(next=KINDS["next"])), graphs=[graph])
+
+
 @timed("nodes.made")
 def made(root):
     started = time.perf_counter()
     for name in ("stated", "changed"):
         build(synthetic.stage(root, name, case(name == "changed")), root / name, 1, ("train",))
+    build(synthetic.stage(root, "bought", bought()), root / "bought", 1, ("train",))
     LOG.info("banks of nodes exit seconds=%.3f", time.perf_counter() - started)
 
 
 @pytest.fixture(scope="module")
 def banks():
     root = shared("nodes", made)
-    yield {name: root / name for name in ("stated", "changed")}
+    yield {name: root / name for name in ("stated", "changed", "bought")}
     OPENED.clear()
     gc.collect()
 
@@ -534,6 +594,27 @@ def test_a_link_whose_nodes_the_pipeline_does_not_keep_is_left_out_and_its_kept_
             assert np.array_equal(np.asarray(b["left"]), rows)
         assert shortened(held, cfg["pipeline"], np.concatenate(every))[1]["next"] >= counts["left"]
     LOG.info("links left out exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_draw_of_a_links_negatives_leaves_out_its_positive_under_every_shipped_rule(banks):
+    started, held = time.perf_counter(), opened(banks, "bought")
+    for rule, extra in SHIPPED.items():
+        values = dict(DRAWN, **{"time/history": 2, "negatives/rule": rule, "negatives/count": 2}, **extra)
+        cfg = support.configuration(held.registry, dict(view="snapshot"), values, 5, copy.deepcopy(OPEN), NEGATIVES)
+        code, found = held.fitted(cfg).by_candidate["negatives"].code, {}
+        for entry in held.viewed(cfg).graphs:
+            variant = held.arrays(entry["index"], cfg)
+            tokens, times = variant["entity_token"], np.asarray(variant["step_time"]).tolist()
+            chosen = np.asarray(variant["candidate_code"]) == code
+            columns = (np.asarray(variant["candidate_" + name])[chosen] for name in ("step", "source", "target"))
+            for step, source, target in zip(*columns):
+                found.setdefault((times[step], int(tokens[source])), []).append(int(tokens[target]))
+        for index, row in enumerate(held.rows):
+            user = USERS[row["ticket"] % len(USERS)]
+            drawn = found[(row["time"], token("user:" + user) & MASK)]
+            assert row["node"] == NEXT[user] and token("item:" + NEXT[user]) & MASK == held.nodes[index]
+            assert int(held.nodes[index]) not in drawn and len(drawn) == len(set(drawn)) == 2, (rule, row)
+    LOG.info("negatives without their positive exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_fit_whose_pipeline_draws_no_negatives_for_a_link_stops_naming_its_kind(banks, tmp_path, statement):

@@ -278,8 +278,8 @@ class Frame:
 @timed("negatives.referenced")
 def referenced(graph, registry, tasks, reference):
     task = np.asarray(graph.member_task, np.int64)
-    held = np.isin(task, tasks) & (np.asarray(graph.member_name) < len(registry.references))
-    named = held & (np.asarray(graph.member_name) == list(registry.references).index(reference))
+    held = np.isin(task, tasks)
+    named = held &(np.asarray(graph.member_name) == list(registry.references).index(reference))
     ends = np.r_[np.asarray(graph.member_source, np.int64)[held], np.asarray(graph.member_target, np.int64)[held]]
     owners = np.r_[task[held], task[held]]
     moments = np.asarray(graph.task_step, np.int64)[task[named]]
@@ -438,7 +438,7 @@ NEGATIVE = OPERATIONS.register(
         changes=(),
         adds=adds,
         kinds=named,
-        version=4,
+        version=5,
         graphs=1,
     ),
 )
