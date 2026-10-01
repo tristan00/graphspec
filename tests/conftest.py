@@ -279,6 +279,15 @@ def warmup(request):
             request.getfixturevalue(name)
 
 
+@pytest.fixture(autouse=True)
+def processes_early(request):
+    started = time.perf_counter()
+    grouped = request.node.get_closest_marker("xdist_group")
+    if WORKER and grouped is not None and grouped.args[0] == "workers":
+        request.getfixturevalue("packers")
+    LOG.debug("processes early exit seconds=%.4f", time.perf_counter() - started)
+
+
 @pytest.fixture(scope="session")
 def packers(bank):
     held = {view: running(bank, view) for view in ("snapshot", "event_graph")}
