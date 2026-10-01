@@ -130,16 +130,16 @@ def share(at, place):
 
 @pytest.fixture(scope="module")
 def shared(tmp_path_factory):
-    import registered
+    import shares
 
     from tuning import HEADS, LOSSES, MEASURES
 
     entries = (
-        (TARGETS, "share", registered.Share()),
-        (UTILITIES, "expected", registered.Expected()),
-        (HEADS, "share", registered.SHARE_HEAD),
-        (LOSSES, "crossed", registered.Crossed()),
-        (MEASURES, "absolute", registered.Absolute()),
+        (TARGETS, "share", shares.Share()),
+        (UTILITIES, "expected", shares.Expected()),
+        (HEADS, "share", shares.HEAD),
+        (LOSSES, "crossed", shares.Crossed()),
+        (MEASURES, "absolute", shares.Absolute()),
     )
     for names, name, entry in entries:
         names.register(name, entry)
@@ -212,7 +212,8 @@ def test_a_statement_naming_what_cannot_read_a_kind_of_target_of_the_bank_stops_
     bank, config = numbered[0], dict(seed=statement["seed"], splits=SPLITS, pipeline=[])
     with pytest.raises(
         ValueError,
-        match="names the measure r2, which reads targets of the kinds number and cannot read the kind of target path",
+        match="names the measure r2, which reads targets of the kinds number and cannot read the kind of target path "
+        "of the bank; those that read every kind of target of the bank are mse, balanced$",
     ):
         fit(bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(statement))
     with pytest.raises(KeyError, match="no loss is registered under the name 'absolute'"):

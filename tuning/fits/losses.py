@@ -1,6 +1,7 @@
 import logging
 import time
 
+from graphspec.infra.timing import timed
 from graphspec.registries import Names, ship
 from tuning.measures.measures import MEASURES
 
@@ -39,15 +40,22 @@ class Balanced:
         return (series_total / series_tasks.clamp_min(1e-12)).sum() / (series_tasks > 0).sum()
 
 
+@timed("losses.readers")
+def readers(registry, kinds):
+    return tuple(name for name in registry.names() if set(kinds) <= set(registry.named(name).reads))
+
+
 def admitted(kinds, loss, measures):
     started = time.perf_counter()
-    named = [("loss", loss, LOSSES.named(loss))] + [("measure", name, MEASURES.named(name)) for name in measures]
-    for sort, name, entry in named:
+    named = [("loss", loss, LOSSES)] + [("measure", name, MEASURES) for name in measures]
+    for sort, name, registry in named:
+        entry = registry.named(name)
         unread = [kind for kind in kinds if kind not in entry.reads]
         if unread:
             raise ValueError(
                 "the statement names the %s %s, which reads targets of the kinds %s and cannot read the kind of "
-                "target %s of the bank" % (sort, name, ", ".join(entry.reads), unread[0])
+                "target %s of the bank; those that read every kind of target of the bank are %s"
+                % (sort, name, ", ".join(entry.reads), unread[0], ", ".join(readers(registry, kinds)) or "none")
             )
     LOG.debug(
         "admitted exit loss=%s measures=%d seconds=%.4f", loss, len(measures), time.perf_counter() - started
