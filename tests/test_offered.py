@@ -48,6 +48,20 @@ ADDING = [
         operation="graphspec.contract",
         parameters={"contract/grouping": "item:v0", "contract/aggregate": "mean", "contract/parallel": "keep"},
     ),
+    dict(
+        operation="graphspec.product",
+        parameters={
+            "product/path": "visits:forward:weight,visits:backward:weight",
+            "product/length": 2,
+            "product/aggregate": "product",
+            "product/cap": 2,
+            "product/encoder": "standard",
+        },
+    ),
+    dict(
+        operation="graphspec.negatives",
+        parameters={"negatives/of": "link:visits:person", "negatives/rule": "degree", "negatives/count": 2},
+    ),
 ]
 
 
@@ -167,5 +181,6 @@ def test_every_family_reads_the_kinds_relations_and_columns_a_pipeline_adds(held
     cfg = configuration(held["bank"].registry, model, pipeline, graph, 5, copy.deepcopy(SPLITS))
     registry = held["bank"].fitted(cfg)
     assert registry.nodes[-1] == "contract" and "relation_forms.loops" in registry.by_name
+    assert {"product", "negatives"} <= set(registry.by_name) and registry.encoding.states["product.value"]
     assert registry.features > held["bank"].viewed(cfg).registry.features
     LOG.info("added read family=%s seconds=%.3f", family, time.perf_counter() - started)

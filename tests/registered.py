@@ -249,7 +249,7 @@ def parities(registry):
 
 
 @timed("registered.parity")
-def parity(near, anchors, candidates, settings):
+def parity(near, steps, anchors, candidates, settings):
     return (near.tokens[candidates] % np.uint64(2) == settings["negatives/test.parity/odd"]).astype(np.float64)
 
 

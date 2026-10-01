@@ -982,11 +982,11 @@ def test_a_rule_of_negative_sampling_draws_each_candidate_in_proportion_to_its_w
     tokens = np.asarray(graph.entity_token).astype(np.uint64)
     step = int(np.argmax(np.bincount(graph.fact_step[graph.fact_code == registry.code("visits")], minlength=graph.steps)))
     shown = np.unique(graph.obs_entity[(graph.obs_step == step) & ~graph.obs_anchor].astype(np.int64))
-    rows = np.flatnonzero((graph.fact_step == step) & graph.fact_present)
-    near = negatives.Step(graph, step, rows, shown, tokens).near(len(graph.kinds), registry.coded["visits"])
+    near = negatives.Frame(graph, tokens, len(registry.nodes)).near(registry.coded["visits"])
     places = shown[graph.kinds[shown] == registry.kind("place")]
     for rule in ("uniform", "degree"):
-        weights = NEGATIVES.named(rule).weights(near, np.zeros(len(places), np.int64), places, None)
+        steps, anchors = np.full(len(places), step, np.int64), np.zeros(len(places), np.int64)
+        weights = NEGATIVES.named(rule).weights(near, steps, anchors, places, None)
         assert (weights > 0).sum() > 2 and len(set(weights.tolist())) > (rule == "degree")
         groups = np.repeat(np.arange(DRAWS), len(places))
         keys = (groups.astype(np.uint64), np.tile(tokens[places], DRAWS))
