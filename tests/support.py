@@ -49,6 +49,7 @@ ADDED = (
     "graphspec.consecutive",
     "graphspec.neighbourhood",
     "graphspec.measures",
+    "graphspec.contract",
 )
 KEYS = ("id", "from", "to", "since", "seq", "present")
 VALUES = dict(value=dict(type="number", encoder="value"))

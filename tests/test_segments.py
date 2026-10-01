@@ -67,6 +67,9 @@ VALUES = {
     "measures/components": True,
     "measures/cores": True,
     "measures/encoder": "standard",
+    "contract/grouping": "item:v0",
+    "contract/aggregate": "mean",
+    "contract/parallel": "sum",
 }
 SETTINGS = {"coupling/periods": 1, "events/periods": 1, "mixed/trace": 2}
 GROUPS = specs.GROUPS + (RUNNING.name,)

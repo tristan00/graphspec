@@ -270,8 +270,8 @@ def peel(obs_entity, obs_step, alive, minimum, fact_source, fact_target, fact_st
 
 
 @njit(cache=True)
-def untyped(typed, pairs, present, base, typed_groups, pair_groups):
-    state = np.zeros(typed_groups, np.bool_)
+def collapsing(typed, pairs, present, base, typed_groups, pair_groups):
+    current = np.full(typed_groups, -1, np.int64)
     live = np.zeros(pair_groups, np.int64)
     kept = np.ones(len(typed), np.bool_)
     for row in range(len(typed)):
@@ -279,13 +279,15 @@ def untyped(typed, pairs, present, base, typed_groups, pair_groups):
             continue
         group, pair = typed[row], pairs[row]
         if present[row]:
-            if not state[group]:
-                state[group] = True
+            if current[group] != pair:
+                if current[group] >= 0:
+                    live[current[group]] -= 1
+                current[group] = pair
                 live[pair] += 1
         else:
-            if state[group]:
-                state[group] = False
-                live[pair] -= 1
+            if current[group] >= 0:
+                live[current[group]] -= 1
+                current[group] = -1
             kept[row] = live[pair] == 0
     return kept
 

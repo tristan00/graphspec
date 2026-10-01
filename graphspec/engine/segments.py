@@ -341,7 +341,7 @@ def opened(plan, member, graph, low, high, edit, entities, seen):
         plan.base,
         int(plan.steps[member] + low),
         int(plan.tasks[member] + first),
-        np.isin(glob, seen),
+        np.isin(glob, seen) | (np.isin(glob, plan.made[member]) & (low > 0)),
         x_global,
         value_global,
         entities,

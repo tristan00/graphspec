@@ -13,6 +13,8 @@ from . import kernels
 from .state import EMPTY, Table
 
 LOG = logging.getLogger(__name__)
+AGGREGATES = ("sum", "mean", "min", "max")
+PARALLEL = ("keep", "first", "last") + AGGREGATES
 FACTS = ("fact_source", "fact_target", "fact_code", "fact_step", "fact_present", "fact_ref")
 OBSERVATIONS = ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
 SAMPLE = "graphspec.nodes/sample"
@@ -188,6 +190,84 @@ def pruned():
 
 def kept():
     return Table(EMPTY, value=EMPTY)
+
+
+def lived():
+    return Table(EMPTY, pair=EMPTY, source=EMPTY, target=EMPTY, code=EMPTY)
+
+
+@timed("operators.collapsed")
+def collapsed(graph, carry, name, base, pair):
+    live = carry.state[name]
+    chosen = np.flatnonzero(np.isin(live.columns["pair"], pair))
+    added = len(chosen)
+    source = np.r_[carry.local(live.columns["source"][chosen]), graph.fact_source].astype(np.int64)
+    target = np.r_[carry.local(live.columns["target"][chosen]), graph.fact_target].astype(np.int64)
+    code = np.r_[live.columns["code"][chosen], graph.fact_code].astype(np.int64)
+    pair = np.r_[live.columns["pair"][chosen], pair]
+    present = np.r_[np.ones(added, bool), graph.fact_present]
+    base = np.r_[np.ones(added, bool), base]
+    typed, typed_count = kernels.keyed(source, target, code)
+    pairs, pair_count = kernels.keyed(pair, np.zeros(len(pair), np.int64), np.zeros(len(pair), np.int64))
+    result = kernels.collapsing(typed, pairs, present, base, typed_count, pair_count)[added:]
+    rows = np.flatnonzero(base & graph.entity_connected[source] & graph.entity_connected[target])
+    last = np.full(typed_count, -1, np.int64)
+    np.maximum.at(last, typed[rows], rows)
+    final = last[last >= 0]
+    keys = carry.keys(code[final], source[final], target[final])
+    held = present[final]
+    carry.state[name] = live.replaced(
+        keys,
+        keys[held],
+        pair=pair[final][held],
+        source=carry.glob[source[final][held]],
+        target=carry.glob[target[final][held]],
+        code=code[final][held],
+    )
+    return result
+
+
+@timed("operators.reduced")
+def reduced(graph, carry, aggregate, chosen):
+    ids, count = kernels.keyed(
+        graph.fact_step.astype(np.int64) * 2 + graph.fact_present,
+        graph.fact_code * len(graph.kinds) + graph.fact_source,
+        graph.fact_target,
+    )
+    ids = np.where(chosen, ids, count + np.arange(len(ids)))
+    count += len(ids)
+    if aggregate == "first":
+        return select(graph, FACTS, kernels.first_rows(ids, count))
+    remains = kernels.last_rows(ids, count)
+    if aggregate == "last":
+        return select(graph, FACTS, remains)
+    reference = np.asarray(graph.fact_ref, np.int64)
+    valued = np.flatnonzero(np.asarray(graph.fact_present, bool) & (reference >= 0))
+    sizes = np.bincount(ids[valued], minlength=count)
+    valued = valued[sizes[ids[valued]] > 1]
+    if not len(valued):
+        return select(graph, FACTS, remains)
+    owners = np.unique(ids[valued])
+    place = np.searchsorted(owners, ids[valued])
+    values = np.asarray(graph.value_table, np.float64)[reference[valued]]
+    known = ~np.isnan(values)
+    if aggregate in ("sum", "mean"):
+        found = np.zeros((len(owners), values.shape[1]))
+        np.add.at(found, place, np.where(known, values, 0.0))
+        seen = np.zeros(found.shape)
+        np.add.at(seen, place, known)
+        divisor = seen if aggregate == "mean" else np.ones(found.shape)
+        found = np.divide(found, divisor, out=np.full(found.shape, np.nan), where=seen > 0)
+    else:
+        found = np.full((len(owners), values.shape[1]), np.nan)
+        (np.fmin if aggregate == "min" else np.fmax).at(found, place, values)
+    graph, rows = made_values(graph, carry, found)
+    last = np.flatnonzero(remains)
+    picked = last[np.isin(ids[last], owners)]
+    reference = reference.copy()
+    reference[picked] = rows[np.searchsorted(owners, ids[picked])]
+    graph = graph.replace(fact_ref=reference.astype(graph.fact_ref.dtype))
+    return select(graph, FACTS, remains)
 
 
 @timed("operators.first_kept")

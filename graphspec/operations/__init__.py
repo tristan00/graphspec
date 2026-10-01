@@ -1,5 +1,6 @@
 from . import (
     consecutive,
+    contract,
     derive,
     difference,
     edges,
@@ -16,6 +17,7 @@ from . import (
 
 __all__ = [
     "consecutive",
+    "contract",
     "derive",
     "difference",
     "edges",

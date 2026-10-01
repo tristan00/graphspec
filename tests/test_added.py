@@ -15,7 +15,7 @@ from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.operations import operation, pipeline
+from graphspec.operations import contract, operation, pipeline
 from graphspec.operations.consecutive import CONSECUTIVE
 from graphspec.operations.nearby import NEARBY, measured, placed
 from graphspec.operations.pipeline import resolved
@@ -465,6 +465,103 @@ def test_measures_of_structure_are_columns_on_every_kind_of_node_at_every_step(o
     stated = np.asarray(found.x_table)[found.obs_ref][:, : registry.encoding.values]
     assert np.array_equal(stated, np.asarray(graph.x_table)[graph.obs_ref][:, : registry.encoding.values])
     LOG.info("measures exit observations=%d seconds=%.3f", len(measured), time.perf_counter() - started)
+
+
+@timed("added.valued")
+def valued(graph, row):
+    reference = int(graph.fact_ref[row])
+    found = () if reference < 0 else np.asarray(graph.value_table[reference], np.float32).tolist()
+    return tuple("nan" if value != value else value for value in found)
+
+
+@timed("added.rounded")
+def rounded(graph, registry, column, missing):
+    values, flags = registry.encoding.slots(column)
+    table = np.array(graph.x_table)
+    owners = np.full(len(table), -1, np.int64)
+    owners[graph.obs_ref] = graph.obs_entity
+    table[:, values] = np.round(table[:, values].astype(np.float64) / 2).astype(table.dtype)
+    table[:, flags] = 1
+    table[np.isin(owners, missing), flags[0]] = 0
+    return graph.replace(x_table=table)
+
+
+@timed("added.contracted")
+def contracted(graph, grown, entry, aggregate):
+    person, tokens = grown.kind("person"), np.asarray(graph.entity_token).astype(np.uint64)
+    known, held = contract.blocks(grown, "v0", np.asarray(graph.x_table)[graph.obs_ref])
+    members = (graph.kinds[graph.obs_entity] == person)
+    grouping = np.zeros(len(members), np.uint64)
+    grouping[members & known] = contract.group_tokens(entry, held[members & known])
+    at = {(int(step), int(who)): int(grouping[row]) if members[row] and known[row] else (-1 if members[row] else int(tokens[who])) for row, (step, who) in enumerate(zip(graph.obs_step, graph.obs_entity))}
+    observations, rows = set(), {}
+    for row, (step, who) in enumerate(zip(graph.obs_step.tolist(), graph.obs_entity.tolist())):
+        if not members[row]:
+            observations.add((int(graph.step_time[step]), int(tokens[who]), graph.x_table[graph.obs_ref[row]].tobytes()))
+        elif known[row]:
+            rows.setdefault((step, int(grouping[row])), []).append(np.asarray(graph.x_table[graph.obs_ref[row]], np.float64))
+    for (step, group), found in rows.items():
+        found, made = np.stack(found), np.zeros(grown.features)
+        for column in grown.schema.entities()["person"]:
+            values, flags = grown.encoding.slots(column)
+            have = found[np.all(found[:, flags] > 0, axis=1)][:, values]
+            reduce = dict(mean=np.mean, sum=np.sum, min=np.min, max=np.max)[aggregate]
+            made[values] = reduce(have, axis=0) if len(have) else 0.0
+            made[flags] = len(have) > 0
+        observations.add((int(graph.step_time[step]), group, made.astype(graph.x_table.dtype).tobytes()))
+    facts = []
+    for row in np.flatnonzero(graph.fact_present):
+        step = int(graph.fact_step[row])
+        ends = [at[(step, int(end))] for end in (graph.fact_source[row], graph.fact_target[row])]
+        if -1 in ends:
+            continue
+        facts.append((int(graph.step_time[step]), int(graph.fact_code[row]), *ends, valued(graph, row)))
+    return observations, sorted(facts), at
+
+
+def test_contraction_makes_one_node_per_group_of_a_column_with_reduced_values_and_edges_that_follow(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    person = registry.kind("person")
+    referred = set(graph.member_source.tolist()) | set(graph.member_target.tolist())
+    quiet = [who for who in np.flatnonzero(graph.kinds == person).tolist() if who not in referred][:2]
+    given = rounded(graph, registry, "v0", quiet)
+    for aggregate in ("mean", "max"):
+        parameters = {"contract/grouping": "person:v0", "contract/aggregate": aggregate, "contract/parallel": "keep"}
+        steps = resolved(registry, [dict(operation="graphspec.contract", parameters=parameters)])
+        grown = pipeline.grown(registry, steps, None)
+        assert grown.nodes[-1] == "contract" and grown.schema.entities()["contract"] == registry.schema.entities()["person"]
+        assert grown.by_name["visits"].pairs == (("person", "place"), ("contract", "place"))
+        assert grown.by_name["member"].pairs == (("person", "team"), ("contract", "team"))
+        found = segments.whole(given, {}, grown, steps, SEED, LIMITS, None)
+        observations, facts, at = contracted(given, grown, "contract", aggregate)
+        tokens = np.asarray(found.entity_token).astype(np.uint64)
+        assert {
+            (int(found.step_time[step]), int(tokens[who]), found.x_table[reference].tobytes())
+            for step, who, reference in zip(found.obs_step, found.obs_entity, found.obs_ref)
+        } == observations
+        ends = (found.fact_source, found.fact_target)
+        assert sorted(
+            (int(found.step_time[found.fact_step[row]]), int(found.fact_code[row]))
+            + tuple(int(tokens[end[row]]) for end in ends)
+            + (valued(found, row),)
+            for row in np.flatnonzero(found.fact_present)
+        ) == facts
+        moments = given.task_step[given.member_task]
+        assert [int(tokens[who]) for who in found.member_source] == [
+            at[(int(step), int(who))] for step, who in zip(moments, given.member_source)
+        ]
+        silent = np.asarray(given.entity_token)[quiet]
+        assert not np.isin(tokens[found.obs_entity], silent).any() and (found.kinds[found.obs_entity] != person).all()
+    summed = dict(parameters, **{"contract/parallel": "sum"})
+    steps = resolved(registry, [dict(operation="graphspec.contract", parameters=summed)])
+    fewer = segments.whole(given, {}, grown, steps, SEED, LIMITS, None)
+    assert 0 < fewer.fact_present.sum() < found.fact_present.sum()
+    task = int(np.flatnonzero(graph.kinds[graph.member_source] == person)[0])
+    lacking = rounded(graph, registry, "v0", quiet + [int(graph.member_source[task])])
+    with pytest.raises(ValueError, match="so graphspec.contract puts it in no group and the reference cannot follow it"):
+        segments.whole(lacking, {}, grown, steps, SEED, LIMITS, None)
+    LOG.info("contraction exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("added.sessions")
