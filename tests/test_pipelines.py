@@ -108,7 +108,9 @@ def stated(registry):
 
 OPERATIONS.register(
     "probe.edited",
-    Operation("probe", "edited", (Phase("probe", probe, None, None),), stated, (), (), (), ("time",), None, VERSION, 1),
+    Operation(
+        "probe", "edited", (Phase("probe", probe, None, None),), stated, (), (), (), ("time",), None, None, VERSION, 1
+    ),
 )
 '''
 
@@ -216,11 +218,22 @@ def sighted():
 
     found = [
         Operation(
-            "test", "blind", (Phase("blind", blind, None, None),), lambda registry: (), (), (), (), ("time",), None, 1, 1
+            "test",
+            "blind",
+            (Phase("blind", blind, None, None),),
+            lambda registry: (),
+            (),
+            (),
+            (),
+            ("time",),
+            None,
+            None,
+            1,
+            1,
         ),
         Operation(
             "test", "looking", (Phase("looking", looking, None, None),), lambda registry: (), (), ("trained",), (),
-            ("time",), None, 1, 1,
+            ("time",), None, None, 1, 1,
         ),
     ]
     for operation in found:

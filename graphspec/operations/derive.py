@@ -79,6 +79,19 @@ def stated(registry):
     return tuple(result)
 
 
+def named(registry, settings):
+    started = time.perf_counter()
+    result = {}
+    for edge in registry.edges:
+        if edge.origin[0] == "project" and enabled(settings, "derive/" + edge.name):
+            result.update(dict.fromkeys(edge.origin[3:], "names"))
+    for kind in registry.declared:
+        if enabled(settings, "derive/complete/" + kind) or enabled(settings, "derive/complete_within/" + kind):
+            result[kind] = "names"
+    LOG.debug("derive named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def closing(spec):
     return "derive/hops" in spec and spec["derive/hops"] > 1
 
@@ -714,7 +727,8 @@ DERIVE = OPERATIONS.register(
         ),
         changes=("facts",),
         adds=None,
-        version=8,
+        kinds=named,
+        version=9,
         graphs=1,
     ),
 )

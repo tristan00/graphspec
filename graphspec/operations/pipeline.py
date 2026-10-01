@@ -206,8 +206,29 @@ def resolved(registry, entries):
         )
         for name, operation, label, entry in found
     )
+    emptied(registry, result)
     LOG.debug("resolved exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
+
+
+def emptied(registry, steps):
+    started = time.perf_counter()
+    removed = {}
+    for step in steps:
+        roles = step.operation.roles(registry, step.spec)
+        lost = [kind for kind, role in roles.items() if role != "fills" and kind in removed]
+        if lost:
+            raise ValueError(
+                "the entry %s of the pipeline names the kind %s, which the entry %s before it removed; an entry "
+                "derives nothing for a kind no node of which is left" % (step.name, lost[0], removed[lost[0]])
+            )
+        for kind, role in roles.items():
+            if role == "removes":
+                removed[kind] = step.name
+            elif role == "fills":
+                removed.pop(kind, None)
+    LOG.debug("emptied exit steps=%d removed=%d seconds=%.4f", len(steps), len(removed), time.perf_counter() - started)
+    return removed
 
 
 def called(step):

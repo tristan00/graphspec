@@ -13,6 +13,7 @@ LOG = logging.getLogger(__name__)
 CHANGES = CHECKED + ("references",)
 SPLITS = ("trained", "scored")
 TREATMENTS = ("stored", "refuses")
+ROLES = ("names", "removes", "fills")
 STATED = WeakKeyDictionary()
 EDGES = dict(
     sets="the edges joining sets of the kind %s", about="the edges of the table %s, which are about edges"
@@ -163,7 +164,9 @@ class Phase:
 
 
 class Operation:
-    def __init__(self, namespace, name, phases, parameters, reads, splits, requires, changes, adds, version, graphs):
+    def __init__(
+        self, namespace, name, phases, parameters, reads, splits, requires, changes, adds, kinds, version, graphs
+    ):
         started = time.perf_counter()
         for label, part in (("namespace", namespace), ("name", name)):
             if type(part) is not str or not part or "." in part:
@@ -184,6 +187,7 @@ class Operation:
             requires=type(requires) is tuple and all(isinstance(count, Count) for count in requires),
             changes=type(changes) is tuple and all(change in CHANGES for change in changes),
             adds=adds is None or callable(adds),
+            kinds=kinds is None or callable(kinds),
             version=type(version) is int and version >= 1,
             graphs=graphs in (1, 2) and type(graphs) is int,
         )
@@ -195,13 +199,15 @@ class Operation:
                 "is; a function from a registry to its parameters; a tuple of the "
                 "names of the operations whose parameters it reads; a tuple of the splits it may read, among %s; "
                 "a tuple of counts; a tuple of what it changes, among %s; none, or a function from a registry, "
-                "settings and the name of its entry to what it adds; a whole version from 1; the number of "
-                "graphs it takes, 1, or 2 where it reads a second graph beside the one it changes"
-                % (self.name, ", ".join(wrong), ", ".join(SPLITS), ", ".join(CHANGES))
+                "settings and the name of its entry to what it adds; none, or a function from a registry and "
+                "settings to what it does with kinds of node, as a mapping from each to one of %s; a whole "
+                "version from 1; the number of graphs it takes, 1, or 2 where it reads a second graph beside the "
+                "one it changes"
+                % (self.name, ", ".join(wrong), ", ".join(SPLITS), ", ".join(CHANGES), ", ".join(ROLES))
             )
         self.namespace, self.phases, self.parameters, self.reads = namespace, phases, parameters, reads
         self.splits, self.requires, self.changes, self.version = splits, requires, changes, version
-        self.adds, self.graphs = adds, graphs
+        self.adds, self.kinds, self.graphs = adds, kinds, graphs
         LOG.debug("operation exit name=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
     def stated(self, registry):
@@ -273,6 +279,21 @@ class Operation:
         LOG.debug("added exit operation=%s entry=%s seconds=%.4f", self.name, entry, time.perf_counter() - started)
         return result
 
+    def roles(self, registry, spec):
+        if self.kinds is None:
+            return {}
+        started = time.perf_counter()
+        result = self.kinds(registry, self.settings(registry, spec, None, None))
+        if type(result) is not dict or not all(
+            kind in registry.declared and role in ROLES for kind, role in result.items()
+        ):
+            raise ValueError(
+                "the operation %s states what it does with kinds of node as a mapping from kinds the registry "
+                "declares to one of %s, found %r" % (self.name, ", ".join(ROLES), result)
+            )
+        LOG.debug("roles exit operation=%s kinds=%d seconds=%.4f", self.name, len(result), time.perf_counter() - started)
+        return result
+
     def initial(self, registry, spec):
         started = time.perf_counter()
         settings = self.settings(registry, spec, None, None)
@@ -326,6 +347,7 @@ class Operation:
             requires=[count.declaration() for count in self.requires],
             changes=list(self.changes),
             adds=self.adds is not None,
+            kinds=self.kinds is not None,
             graphs=self.graphs,
             phases=[
                 dict(name=phase.name, carries=phase.carries is not None, parts=phase.parts is not None)

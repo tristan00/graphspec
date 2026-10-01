@@ -24,6 +24,14 @@ def stated(registry):
     return result
 
 
+def named(registry, settings):
+    started = time.perf_counter()
+    around = settings["neighbourhood/around"]
+    result = {} if around == REFERENCES else {around: "names"}
+    LOG.debug("neighbourhood named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def carried(registry, spec):
     return {"neighbourhood/kept": kept(), "prune/neighbourhood": pruned()}
 
@@ -83,7 +91,8 @@ NEIGHBOURHOOD = OPERATIONS.register(
         ),
         changes=("observations", "facts"),
         adds=None,
-        version=2,
+        kinds=named,
+        version=3,
         graphs=1,
     ),
 )

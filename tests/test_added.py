@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 
 import numpy as np
@@ -33,6 +34,17 @@ pytestmark = pytest.mark.xdist_group("segments")
 SHIPPED = dict(structure=("coupling", "events", "mixed"), sample=("neighbors", "walks"), encode=())
 ADDED = (LINKED, KEPT, RUNNING)
 LIMITS = GraphLimits("cpu")
+REFUSED = (
+    ("graphspec.nodes", {"nodes/item/keep": False}, "item"),
+    ("graphspec.nodes", {"nodes/item/filter": "degree"}, "item"),
+    ("graphspec.derive", {"derive/project:owns:targets:item:item": True}, "item"),
+    ("graphspec.derive", {"derive/complete/item": True}, "item"),
+    ("graphspec.derive", {"derive/complete/person": True, "derive/complete_within/item": True}, "item"),
+    ("graphspec.nearby", {"nearby/kinds": "person:item", "nearby/encoder": "standard"}, "item"),
+    ("graphspec.consecutive", {"consecutive/pairing": "near:visits:targets"}, "place"),
+    ("graphspec.neighbourhood", {"neighbourhood/around": "item"}, "item"),
+    ("graphspec.contract", {"contract/grouping": "item:v1"}, "item"),
+)
 
 
 @pytest.fixture(scope="module")
@@ -673,3 +685,30 @@ def test_a_neighbourhood_keeps_what_lies_within_a_number_of_hops_of_its_nodes_at
         sizes[around, hops] = len(observations), len(facts)
     assert sizes["references", 0][1] < sizes["references", 2][1] and sizes["references", 2][0] < len(graph.obs_step)
     LOG.info("neighbourhood exit sizes=%s seconds=%.3f", sizes, time.perf_counter() - started)
+
+
+@timed("added.entry")
+def entry(registry, name, values, label, graph):
+    entries, rest = support.pipelined(registry, values, (name,), [label], None if graph is None else {name: graph})
+    assert rest == {}
+    return entries[0]
+
+
+def test_an_entry_that_names_a_kind_an_earlier_contraction_removed_is_refused_when_the_pipeline_is_stated(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    merged = entry(registry, "graphspec.merge", {}, None, names[1])
+    quiet = [entry(registry, name, {}, None, None) for name in ("graphspec.nodes", "graphspec.derive")]
+    quiet.append(entry(registry, "graphspec.neighbourhood", {"neighbourhood/around": "team"}, None, None))
+    for name, values, kind in REFUSED:
+        contraction = entry(registry, "graphspec.contract", {"contract/grouping": kind + ":v0"}, None, None)
+        later = entry(registry, name, values, "again" if name == "graphspec.contract" else None, None)
+        named = "again" if name == "graphspec.contract" else name
+        message = "the entry %s of the pipeline names the kind %s, which the entry graphspec.contract before it removed"
+        with pytest.raises(ValueError, match=re.escape(message % (named, kind))):
+            resolved(registry, [contraction, later])
+        if named != "again":
+            assert [step.name for step in resolved(registry, [later, contraction])] == [named, "graphspec.contract"]
+        assert len(resolved(registry, [contraction, merged, later])) == 3
+        assert len(resolved(registry, [contraction] + quiet)) == 4
+    LOG.info("refused exit cases=%d seconds=%.3f", len(REFUSED), time.perf_counter() - started)

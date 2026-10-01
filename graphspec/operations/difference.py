@@ -66,7 +66,8 @@ DIFFERENCE = OPERATIONS.register(
         requires=(),
         changes=("facts",),
         adds=None,
-        version=3,
+        kinds=None,
+        version=4,
         graphs=2,
     ),
 )

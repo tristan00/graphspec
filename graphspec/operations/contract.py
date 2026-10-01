@@ -55,6 +55,13 @@ def stated(registry):
     return result
 
 
+def named(registry, settings):
+    started = time.perf_counter()
+    result = {settings["contract/grouping"].split(":")[0]: "removes"} if groupable(registry) else {}
+    LOG.debug("contract named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 @timed("operators.blocks")
 def blocks(registry, column, rows):
     values, flags = registry.encoding.slots(column)
@@ -278,7 +285,8 @@ CONTRACT = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=adds,
-        version=2,
+        kinds=named,
+        version=3,
         graphs=1,
     ),
 )

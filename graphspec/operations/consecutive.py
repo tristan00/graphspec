@@ -53,6 +53,16 @@ def stated(registry):
     return result
 
 
+def named(registry, settings):
+    started = time.perf_counter()
+    result = {}
+    if orderable(registry):
+        edge = registry.by_name[settings["consecutive/pairing"].split(":")[0]]
+        result = dict.fromkeys(sorted(selves(registry, edge)), "names")
+    LOG.debug("consecutive named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def carried(registry, spec):
     return {
         "consecutive/joined": Table(EMPTY, value=EMPTY),
@@ -165,7 +175,8 @@ CONSECUTIVE = OPERATIONS.register(
         requires=(),
         changes=("facts",),
         adds=None,
-        version=3,
+        kinds=named,
+        version=4,
         graphs=1,
     ),
 )

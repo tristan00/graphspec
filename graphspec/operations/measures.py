@@ -215,7 +215,8 @@ MEASURE = OPERATIONS.register(
         ),
         changes=("observations",),
         adds=adds,
-        version=1,
+        kinds=None,
+        version=2,
         graphs=1,
     ),
 )

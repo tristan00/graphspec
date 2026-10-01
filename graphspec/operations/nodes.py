@@ -37,6 +37,17 @@ def stated(registry):
     return tuple(result)
 
 
+def named(registry, settings):
+    started = time.perf_counter()
+    result = {
+        kind: "names"
+        for kind in registry.declared
+        if not settings["nodes/%s/keep" % kind] or settings["nodes/%s/filter" % kind] != "none"
+    }
+    LOG.debug("nodes named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 @timed("transform.filtered")
 def filtered(registry, spec, mode):
     return any(holds(spec, "nodes/%s/filter" % kind, mode) for kind in registry.declared)
@@ -158,7 +169,8 @@ NODES = OPERATIONS.register(
         ),
         changes=("observations", "facts", "references"),
         adds=None,
-        version=5,
+        kinds=named,
+        version=6,
         graphs=1,
     ),
 )

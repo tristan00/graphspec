@@ -20,6 +20,13 @@ def stated(registry):
     return result
 
 
+def filled(registry, settings):
+    started = time.perf_counter()
+    result = dict.fromkeys(registry.declared, "fills")
+    LOG.debug("merge filled exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def carried(registry, spec):
     return {"prune/merge": pruned()}
 
@@ -120,7 +127,8 @@ MERGE = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=None,
-        version=5,
+        kinds=filled,
+        version=6,
         graphs=2,
     ),
 )

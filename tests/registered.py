@@ -244,10 +244,21 @@ def hubbed(graph, registry, settings, seed, limits, carry, held):
 TRIPLE = Sort(True, False, 3, 3, True)
 STORED = Form(node, True, True)
 TALLY = Operation(
-    "test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), None, 1, 1
+    "test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), None, None, 1, 1
 )
 HUB = Operation(
-    "test", "hub", (Phase("hub", hubbed, None, None),), unstated, (), (), (), ("observations", "facts"), adding, 1, 1
+    "test",
+    "hub",
+    (Phase("hub", hubbed, None, None),),
+    unstated,
+    (),
+    (),
+    (),
+    ("observations", "facts"),
+    adding,
+    None,
+    1,
+    1,
 )
 RUNNING = Representation("test.running", "encode", uncounted, unlooking, running, None, None, unchecked)
 LINKED = Representation("test.linked", "structure", unlinked, unlooking, linked, None, None, checked_links)

@@ -77,7 +77,9 @@ def stated(registry):
 
 
 def made(name, function):
-    return Operation("test", name, (Phase("apply", function, None, None),), stated, (), (), (), ("time",), None, 2, 1)
+    return Operation(
+        "test", name, (Phase("apply", function, None, None),), stated, (), (), (), ("time",), None, None, 2, 1
+    )
 
 
 @pytest.fixture
@@ -104,6 +106,7 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         requires=[],
         changes=["time"],
         adds=False,
+        kinds=False,
         graphs=1,
         phases=[dict(name="apply", carries=False, parts=False)],
     )

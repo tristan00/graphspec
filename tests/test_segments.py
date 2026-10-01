@@ -1,5 +1,6 @@
 import gc
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -95,6 +96,8 @@ REWIRING = "pipeline/graphspec.derive/derive/rewiring_budget"
 JOINED = {"graphs/join": "single", "graphs/join_size": MEMBERS}
 CONTRACTED = {"contract/grouping": "item:v0", "contract/aggregate": "mean", "contract/parallel": "keep"}
 WINDOWED = {"time/scheme": "window", "time/unit": "step", "time/window": 2}
+GROUPING = "pipeline/graphspec.contract/contract/grouping"
+REFUSAL = re.compile(r"the entry (\S+) of the pipeline names the kind (\w+), which the entry graphspec\.contract before ")
 CONTRACTIONS = (
     (("graphspec.contract", CONTRACTED),),
     (("graphspec.window", WINDOWED), ("graphspec.contract", CONTRACTED)),
@@ -476,10 +479,10 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
     beside = {name: [sliced(support.beside(opened, 0, name), 0, SPAN)] for name in sorted(set(graphs.values()))}
     chosen = groupings(registry, shown + [held[0] for held in beside.values()])
-    bounds = {"pipeline/graphspec.contract/contract/grouping": chosen, REWIRING: dict(low=1, high=REWIRES)}
+    bounds = {GROUPING: chosen, REWIRING: dict(low=1, high=REWIRES)}
     spec = specs.configured(specs.settings(registry, specs.GROUPS), SETTINGS)
     joined = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **JOINED))
-    names, found = sorted(OPERATIONS.names()), []
+    names, found, refused = sorted(OPERATIONS.names()), [], []
     single = [name for name in names if OPERATIONS.named(name).graphs == 1]
     for draw in range(DRAWN):
         rng = np.random.default_rng(draw)
@@ -487,7 +490,15 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
         order = [pool[place] for place in rng.permutation(len(pool))]
         template = [dict(operation=name, **({"graph": graphs[name]} if name in graphs else {})) for name in order]
         stated = specs.draw(specs.narrow(pipeline.space(registry, template), bounds), lambda held: held.uniform(rng))
-        steps = pipeline.resolved(registry, pipeline.entries(template, stated))
+        try:
+            steps = pipeline.resolved(registry, pipeline.entries(template, stated))
+        except ValueError as error:
+            named = REFUSAL.match(str(error))
+            assert named is not None, (draw, str(error))
+            assert stated[pipeline.PRESENT % named[1]] and order.index(named[1]) > order.index("graphspec.contract")
+            assert named[2] == stated[GROUPING].split(":")[0], draw
+            refused.append(named[1])
+            continue
         grown = pipeline.grown(registry, steps, None)
         if draw % JOINING == 0:
             picked = sorted(rng.choice(MEMBERS, int(rng.integers(2, MEMBERS + 1)), replace=False).tolist())
@@ -509,10 +520,12 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
         assert unequal(line.derived().arrays, expected.arrays, DENSE_READ) == [], draw
         assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], draw
         found.append((draw % JOINING == 0, tuple(step.operation.name for step in steps)))
-    assert len(set(found)) == DRAWN and sorted({name for _, held in found for name in held}) == names
-    assert any(together and "graphspec.contract" in held for together, held in found)
+    assert len(set(found)) + len(refused) == DRAWN and sorted({name for _, held in found for name in held}) == names
+    assert any(together and "graphspec.contract" in held for together, held in found) and refused
     assert len(chosen) < len(groupable(registry)) and {grouping.split(":")[0] for grouping in chosen} > {"item"}
-    LOG.info("random pipelines exit pipelines=%d seconds=%.3f", len(found), time.perf_counter() - started)
+    LOG.info(
+        "random pipelines exit pipelines=%d refused=%s seconds=%.3f", len(found), refused, time.perf_counter() - started
+    )
 
 
 def clocked(make):

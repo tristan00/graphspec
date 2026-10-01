@@ -71,7 +71,8 @@ PERIODS = OPERATIONS.register(
         requires=(),
         changes=("time",),
         adds=None,
-        version=4,
+        kinds=None,
+        version=5,
         graphs=1,
     ),
 )

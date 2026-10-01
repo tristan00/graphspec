@@ -142,7 +142,8 @@ RELATION_FORMS = OPERATIONS.register(
         requires=(),
         changes=("facts",),
         adds=adds,
-        version=2,
+        kinds=None,
+        version=3,
         graphs=1,
     ),
 )

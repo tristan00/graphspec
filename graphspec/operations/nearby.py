@@ -59,6 +59,13 @@ def stated(registry):
     return result
 
 
+def named(registry, settings):
+    started = time.perf_counter()
+    result = dict.fromkeys(settings["nearby/kinds"].split(":") if pairable(registry) else (), "names")
+    LOG.debug("nearby named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 @timed("operators.nearby_adds")
 def adds(registry, settings, entry):
     if not pairable(registry):
@@ -173,7 +180,8 @@ NEARBY = OPERATIONS.register(
         requires=(),
         changes=("facts",),
         adds=adds,
-        version=3,
+        kinds=named,
+        version=4,
         graphs=1,
     ),
 )
