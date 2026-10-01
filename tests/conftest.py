@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import sys
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -23,6 +24,7 @@ SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], vali
 HOME = Path(os.environ["GRAPHSPEC_HOME"])
 RECORD = HOME.parent.parent / (HOME.parent.name + ".durations.json")
 SPENT = {}
+EARLY = []
 
 
 def suite_singleton(name, message, original=locks.singleton):
@@ -83,6 +85,23 @@ def pytest_runtest_logreport(report):
     name = unit(report.nodeid)
     SPENT[name] = SPENT.get(name, 0.0) + report.duration
     LOG.debug("spent exit unit=%s seconds=%.6f", name, time.perf_counter() - started)
+
+
+def made_early():
+    started = time.perf_counter()
+    shared("bank", lambda root: synthetic_bank(root, "task"))
+    shared("path", lambda root: synthetic_bank(root, "path"))
+    ground = Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "ground" / "fixture"
+    shared("ground", lambda made: ground_banks(made, ground))
+    LOG.debug("made early exit seconds=%.4f", time.perf_counter() - started)
+
+
+def pytest_sessionstart(session):
+    started = time.perf_counter()
+    if not WORKER and session.config.pluginmanager.has_plugin("dsession"):
+        EARLY.append(threading.Thread(target=made_early, daemon=True))
+        EARLY[0].start()
+    LOG.debug("session start exit early=%d seconds=%.4f", len(EARLY), time.perf_counter() - started)
 
 
 def pytest_sessionfinish(session):
@@ -166,6 +185,8 @@ def pytest_unconfigure(config):
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(0)
+    for thread in EARLY:
+        thread.join()
     if suite().exists():
         shutil.rmtree(suite())
     cleared(Path(os.environ["GRAPHSPEC_HOME"]).parent)
