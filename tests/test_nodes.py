@@ -420,6 +420,36 @@ def test_a_fit_whose_pipeline_draws_no_negatives_for_a_link_stops_naming_its_kin
         fit(banks["stated"], tmp_path, cfg, [], 16, time.perf_counter() + 30, given)
 
 
+def test_a_search_holds_the_negatives_a_link_needs_and_a_template_without_them_stops_naming_its_kind(banks):
+    from tuning.batches.inputs import drawing
+    from tuning.searches.selector import check_bounds, pipeline_space, random_suggest
+
+    registry, entry = opened(banks, "stated").registry, "pipeline/graphspec.negatives"
+    template = support.template(NEGATIVES)
+    found = {parameter.name: parameter.options for parameter in pipeline_space(registry, template, {})}
+    assert found[entry] == (True,) and found[entry + "/negatives/of"] == ("link:buys:who",)
+    for seed in range(3):
+        config = random_suggest(registry, seed, 5, {}, 30, template)[0]
+        assert list(drawing(registry.schema, config["pipeline"]).values()) == ["negatives"]
+    needs = "the kind of task next states a target that needs an entry of graphspec.negatives with negatives/of "
+    refused = (
+        (support.template(), {}),
+        (template, {entry: [False]}),
+        (template, {entry + "/negatives/of": ["link:buys"]}),
+    )
+    for stated_template, bounds in refused:
+        with pytest.raises(ValueError, match=needs + "link:buys:who, and the template holds none"):
+            check_bounds(registry, bounds, stated_template)
+    twice = template + [dict(operation="graphspec.negatives", label="more")]
+    found = {parameter.name: parameter.options for parameter in pipeline_space(registry, twice, {})}
+    assert found["pipeline/more"] == (False, True) and "link:buys:who" not in found["pipeline/more/negatives/of"]
+    bounds = {entry + "/negatives/of": ["link:near"], "pipeline/more/negatives/of": ["link:buys:who"]}
+    found = {parameter.name: parameter.options for parameter in pipeline_space(registry, twice, bounds)}
+    assert found[entry] == (False, True) and found["pipeline/more"] == (True,)
+    with pytest.raises(ValueError, match="the bounds hold the entry more of the template present, and every value"):
+        check_bounds(registry, {"pipeline/more": [True], "pipeline/more/negatives/of": ["link:buys:who"]}, twice)
+
+
 def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, statement, monkeypatch):
     bank = banks["stated"]
     inline(bank, (), monkeypatch)

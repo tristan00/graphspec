@@ -9,6 +9,7 @@ from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
+from graphspec.schema.targets import needed
 from graphspec.views.view import STEPS
 from tuning.families.model_spec import TRAINING, describe, groups
 from tuning.families.model_spec import space as model_space
@@ -58,7 +59,51 @@ def graph_space(registry, model, bounds):
 
 @timed("selector.pipeline_space")
 def pipeline_space(registry, template, bounds):
-    return narrow_group(pipeline.space(registry, template), bounds)
+    return needing(registry, template, narrow_group(pipeline.space(registry, template), bounds))
+
+
+@timed("selector.needing")
+def needing(registry, template, parameters):
+    found = [(name, operation.name) for name, operation, _, _ in pipeline.checked(template, pipeline.TEMPLATE)]
+    named, taken, held = {parameter.name: parameter for parameter in parameters}, {}, {}
+    for kind, (operation, values) in needed(registry.schema).items():
+        wanted = (operation, tuple(sorted(values.items())))
+        if wanted in taken:
+            continue
+        free = [
+            name
+            for name, entry in found
+            if entry == operation
+            and name not in taken.values()
+            and True in named[pipeline.PRESENT % name].options
+            and all(value in named[pipeline.NAMED % name + key].options for key, value in values.items())
+        ]
+        if not free:
+            raise ValueError(
+                "the kind of task %s states a target that needs an entry of %s with %s, and the template holds none "
+                "that its bounds leave free to be it" % (kind, operation, ", ".join("%s %s" % pair for pair in wanted[1]))
+            )
+        taken[wanted] = free[0]
+        held[pipeline.PRESENT % free[0]] = [True]
+        held.update({pipeline.NAMED % free[0] + key: [value] for key, value in values.items()})
+    for name, entry in found:
+        if name in taken.values():
+            continue
+        refused = {}
+        for operation, pairs in taken:
+            for key, value in pairs if entry == operation else ():
+                refused.setdefault(pipeline.NAMED % name + key, set()).add(value)
+        left = {key: [option for option in named[key].options if option not in values] for key, values in refused.items()}
+        if all(left.values()):
+            held.update(left)
+        elif False in named[pipeline.PRESENT % name].options:
+            held[pipeline.PRESENT % name] = [False]
+        else:
+            raise ValueError(
+                "the bounds hold the entry %s of the template present, and every value it may take repeats an entry "
+                "a target needs" % name
+            )
+    return specs.narrow(parameters, held)
 
 
 def keyed(prefix, parameter, static):

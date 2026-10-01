@@ -15,6 +15,7 @@ UTILITIES = Names("utility")
 BETTER = ("higher", "lower")
 UTILITY = ("name", "better")
 SUMMED = 1e-6
+NEGATIVES = "graphspec.negatives"
 
 
 @timed("targets.real")
@@ -565,6 +566,17 @@ class Weighted:
 def valued(target, points):
     stated = target["utility"]
     return UTILITIES.named(stated["name"]).value(stated, points)
+
+
+def needed(schema):
+    started = time.perf_counter()
+    result = {}
+    for kind, entry in schema.tasks["kinds"].items():
+        target = entry["target"]
+        if target is not None and TARGETS.named(target["kind"]).names == "linked":
+            result[kind] = (NEGATIVES, {"negatives/of": "link:%s:%s" % (target["relation"], target["about"])})
+    LOG.debug("needed exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 TARGETS.register("number", Number())

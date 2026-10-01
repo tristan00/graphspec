@@ -14,7 +14,7 @@ from graphspec.infra.hashing import hashed, salted
 from graphspec.operations.rows import counted, keyed_relations
 from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.references import SORTS
-from graphspec.schema.targets import TARGETS
+from graphspec.schema.targets import needed
 from tuning.families.heads import FIELD
 
 from . import gather
@@ -340,23 +340,21 @@ def observing(held, steps, wanted, keys):
 
 def drawing(schema, pipeline):
     started = time.perf_counter()
-    result = {}
-    for code, (kind, entry) in enumerate(schema.tasks["kinds"].items()):
-        aim = entry["target"]
-        if aim is None or TARGETS.named(aim["kind"]).names != "linked":
-            continue
-        wanted = "link:%s:%s" % (aim["relation"], aim["about"])
+    kinds, result = list(schema.tasks["kinds"]), {}
+    for kind, (operation, values) in needed(schema).items():
         found = [
             step.get("label", step["operation"].split(".", 1)[1])
             for step in pipeline
-            if step["operation"] == "graphspec.negatives" and step["parameters"]["negatives/of"] == wanted
+            if step["operation"] == operation
+            and all(step["parameters"][name] == value for name, value in values.items())
         ]
         if len(found) != 1:
             raise ValueError(
                 "the kind of task %s states a link among sampled negatives, and the pipeline draws them in %d entries "
-                "of graphspec.negatives with negatives/of %s; it draws them in one" % (kind, len(found), wanted)
+                "of %s with %s; it draws them in one"
+                % (kind, len(found), operation, ", ".join("%s %s" % pair for pair in values.items()))
             )
-        result[code] = found[0]
+        result[kinds.index(kind)] = found[0]
     LOG.debug("drawing exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
