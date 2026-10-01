@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from graphspec.infra.timing import timed
 from graphspec.registries import Names, ship
 
 LOG = logging.getLogger(__name__)
@@ -36,11 +37,20 @@ def scored(target, prediction, task, series, names, scale):
     return result
 
 
+@timed("measures.determined")
+def determined(target, prediction, where):
+    variance = float(target.var())
+    if variance == 0:
+        raise ValueError("R² requires varying targets scored in %s" % where)
+    return 1 - float(((prediction - target) ** 2).mean()) / variance
+
+
 class Squared:
     reads = ("number", "path")
     better = "lower"
     label, short = "Validation MSE", "MSE"
 
+    @timed("measures.squared")
     def __call__(self, held):
         error = (held.prediction - held.target) ** 2
         return dict(
@@ -54,13 +64,8 @@ class Determination:
     better = "higher"
     label, short = "Validation R²", "R²"
 
+    @timed("measures.determination")
     def __call__(self, held):
-        def determined(target, prediction, where):
-            variance = float(target.var())
-            if variance == 0:
-                raise ValueError("R² requires varying targets scored in %s" % where)
-            return 1 - float(((prediction - target) ** 2).mean()) / variance
-
         return dict(
             value=determined(held.target, held.prediction, "every series"),
             series={
@@ -77,6 +82,7 @@ class Balanced:
     better = "lower"
     label, short = "Validation loss", "Loss"
 
+    @timed("measures.balanced")
     def __call__(self, held):
         series = {}
         for code, name in enumerate(held.names):

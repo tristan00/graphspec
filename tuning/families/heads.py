@@ -1,6 +1,7 @@
 import logging
 import time
 
+from graphspec.infra.timing import timed
 from graphspec.registries import Names, ship
 
 LOG = logging.getLogger(__name__)
@@ -20,12 +21,14 @@ class Attached:
         LOG.debug("attached exit reads=%d seconds=%.4f", len(reads), time.perf_counter() - started)
 
 
+@timed("heads.number")
 def number(hidden, spec, registry):
     from .layers import NumberHead
 
     return NumberHead(hidden)
 
 
+@timed("heads.path")
 def path(hidden, spec, registry):
     from .layers import PathHead
 
