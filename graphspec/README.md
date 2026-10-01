@@ -216,14 +216,15 @@ The entry names its second graph as a merge does. At every step the difference r
 
 10. Edges computed from the columns of two nodes, `graphspec.nearby`
 
-Fills a relation the schema states, whose edges then come from the values of its ends rather than from the source. It requires a relation stated without columns whose ends are kinds of node that share a column of numbers, and stops naming the bank where none is; the distance between two nodes is the Euclidean distance between the encoded values of the columns of numbers their kinds share, and stops naming the relation where the encoders fitted for the statement give none of those columns a width. At every step it reads the nodes of the relation's kinds observed at the step, other than as anchors, and joins no node missing a value in one of those columns. An edge is stated at every step it is found, as stated edges are, without a value and with no absent row when it is no longer found. A relation without direction between nodes of one kind holds each pair once, the lower entity first; a directed relation between nodes of one kind holds both directions under a distance and each node's own nearest under nearest. It carries no state from segment to segment and draws nothing.
+Adds a relation named after its entry, from nodes of a first kind to nodes of a second, whose edges hold their distance in a column it adds, `<entry>.distance`, a number encoded by the encoder the entry states and fitted as every added column is. It requires two kinds of node or of set edge that state a column of numbers both state, and stops naming the bank where none are; the distance between two nodes is the Euclidean distance between the encoded values of the columns of numbers their kinds state alike, never of columns an operation added, and stops naming the kinds where the encoders fitted for the statement give none of those columns a width. At every step it reads the nodes of the two kinds observed at the step, other than as anchors, and joins no node missing a value in one of those columns. An edge is stated at every step it is found, as stated edges are, with no absent row when it is no longer found. Under a threshold the relation has no direction and holds each pair once, the lower entity first where both ends are of one kind; under nearest it is directed, from each node to its own nearest. It carries no state from segment to segment and draws nothing.
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `nearby/relation` | the relations that qualify | The relation it fills, from a node of its first kind to a node of its second. |
-| `nearby/rule` | threshold, nearest | threshold: every two nodes within the distance; nearest: every node to its nearest. |
+| `nearby/kinds` | `<first>:<second>`, every two kinds that qualify | The kinds it joins, from the first to the second. |
+| `nearby/rule` | threshold, nearest | threshold: every two nodes within the distance; nearest: every node of the first kind to its nearest of the second. |
 | `nearby/threshold` | 0.01–100, logarithmic | The distance. Offered for threshold. |
 | `nearby/k` | 1–16 | How many nearest each node joins, fewer where fewer are observed; candidates at equal distances are taken in the order of their tokens. Offered for nearest. |
+| `nearby/encoder` | the encoders of numbers, no default | The encoder of the distance. |
 
 11. Edges between consecutive rows of a group, `graphspec.consecutive`
 

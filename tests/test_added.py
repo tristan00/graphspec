@@ -15,9 +15,9 @@ from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
-from graphspec.operations import operation
+from graphspec.operations import operation, pipeline
 from graphspec.operations.consecutive import CONSECUTIVE
-from graphspec.operations.nearby import NEARBY, fillable, measured, placed
+from graphspec.operations.nearby import NEARBY, measured, placed
 from graphspec.operations.pipeline import resolved
 from graphspec.operations.rows import keyed_relations
 from graphspec.representations.registry import FAMILIES, families
@@ -250,39 +250,60 @@ def added(found, graph, code):
     return sorted(row for row in rows if row not in before), before
 
 
-def test_nearby_joins_the_rows_whose_columns_lie_within_a_distance_or_are_nearest(opened):
+@timed("added.near")
+def near(graph, rows, values, flags):
+    table, tokens = np.asarray(graph.x_table), np.asarray(graph.entity_token)
+    rows = rows[np.all(table[graph.obs_ref[rows]][:, flags] > 0, axis=1)]
+    return table[graph.obs_ref[rows]][:, values].astype(np.float64), tokens[graph.obs_entity[rows]].astype(np.uint64)
+
+
+def test_nearby_adds_a_relation_whose_edges_hold_the_distance_within_which_rows_lie_or_are_nearest(opened):
     started = time.perf_counter()
     held, registry, graph, names = opened
-    edge, place = registry.by_name["near"], registry.kind("place")
-    assert fillable(registry) == ("owns", "member", "near")
+    place, person = registry.kind("place"), registry.kind("person")
     assert measured(registry, "place", "place") == ("v0", "v1", "v2", "v3")
-    values, flags = placed(registry, measured(registry, "place", "place"), "near", "place", "place")
-    table, tokens = np.asarray(graph.x_table), np.asarray(graph.entity_token)
-    for rule, stated_rule, count in (("threshold", {"nearby/threshold": 1.5}, None), ("nearest", {"nearby/k": 3}, 3)):
-        entry = dict(
-            operation="graphspec.nearby", parameters={"nearby/relation": "near", "nearby/rule": rule, **stated_rule}
-        )
-        found = segments.whole(graph, {}, registry, resolved(registry, [entry]), SEED, LIMITS, None)
+    assert {"place:place", "person:place", "place:person"} <= set(NEARBY.stated(registry)[0].options)
+    values, flags = placed(registry, measured(registry, "place", "place"))
+    for kinds, rule, stated_rule, count in (
+        ("place:place", "threshold", {"nearby/threshold": 1.5}, None),
+        ("place:place", "nearest", {"nearby/k": 3}, 3),
+        ("person:place", "nearest", {"nearby/k": 2}, 2),
+    ):
+        parameters = {"nearby/kinds": kinds, "nearby/rule": rule, "nearby/encoder": "standard", **stated_rule}
+        steps = resolved(registry, [dict(operation="graphspec.nearby", parameters=parameters)])
+        grown = pipeline.grown(registry, steps, None)
+        edge = grown.by_name["nearby"]
+        assert (edge.symmetric, edge.attributes, edge.origin) == (rule == "threshold", ("nearby.distance",), ("added", "nearby"))
+        found = segments.whole(graph, {}, grown, steps, SEED, LIMITS, None)
         expected = set()
         for step in range(graph.steps):
-            rows = np.flatnonzero(
-                (graph.obs_step == step) & (graph.kinds[graph.obs_entity] == place) & ~graph.obs_anchor
-            )
-            rows = rows[np.all(table[graph.obs_ref[rows]][:, flags] > 0, axis=1)]
-            vectors = table[graph.obs_ref[rows]][:, values].astype(np.float64)
-            who = tokens[graph.obs_entity[rows]].astype(np.uint64)
-            for first in range(len(rows)):
-                distance = np.sqrt(((vectors - vectors[first]) ** 2).sum(1))
-                others = sorted((distance[second], int(who[second])) for second in range(len(rows)) if second != first)
-                chosen = others[:count] if rule == "nearest" else [held for held in others if held[0] <= 1.5]
-                expected |= {(int(graph.step_time[step]), int(who[first]), token) for _, token in chosen}
-        new, before = added(found, graph, edge.code)
-        assert new == sorted(expected - before) and new
-    plain = support.registry("plain", ["thing"], [])
-    carry, dense = segments.opening(graph, {}, registry)
-    assert NEARBY.stated(plain) == ()
-    with pytest.raises(ValueError, match="fills a relation stated without columns between kinds of node that share"):
-        NEARBY(dense, plain, {}, SEED, LIMITS, carry, NEARBY.initial(plain, {}), None)
+            at = (graph.obs_step == step) & ~graph.obs_anchor
+            ends = [
+                near(graph, np.flatnonzero(at & (graph.kinds[graph.obs_entity] == kind)), values, flags)
+                for kind in (person if kinds.startswith("person") else place, place)
+            ]
+            for first, origin in zip(*ends[0]):
+                distance = np.sqrt(((ends[1][0] - first) ** 2).sum(1))
+                others = sorted((distance[second], int(token)) for second, token in enumerate(ends[1][1]) if token != origin)
+                chosen = others[:count] if rule == "nearest" else [pair for pair in others if pair[0] <= 1.5]
+                expected |= {
+                    (int(graph.step_time[step]),) + ((int(origin), token) if rule == "nearest" else tuple(sorted((int(origin), token))))
+                    + (np.float32(length),)
+                    for length, token in chosen
+                }
+        tokens, rows = np.asarray(found.entity_token).astype(np.uint64), np.flatnonzero(found.fact_code == edge.code)
+        assert found.fact_present[rows].all() and (found.fact_ref[rows] >= 0).all()
+        new = {
+            (int(found.step_time[found.fact_step[row]]),)
+            + ((int(tokens[found.fact_source[row]]), int(tokens[found.fact_target[row]])) if rule == "nearest" else tuple(sorted((int(tokens[found.fact_source[row]]), int(tokens[found.fact_target[row]])))))
+            + (np.float32(found.value_table[found.fact_ref[row], 0]),)
+            for row in rows
+        }
+        assert new == expected and len(new) == len(rows) > 0
+    flagged = support.columned("flagged", ["thing"], [], dict(open=dict(type="flag", encoder="value")))
+    assert NEARBY.stated(flagged) == ()
+    with pytest.raises(ValueError, match="by the distance between the values of the columns of numbers both kinds"):
+        pipeline.grown(flagged, resolved(flagged, [dict(operation="graphspec.nearby", parameters={})]), None)
     LOG.info("nearby exit seconds=%.3f", time.perf_counter() - started)
 
 

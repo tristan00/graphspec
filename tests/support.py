@@ -371,18 +371,22 @@ def stated(nodes, edges, columns, tasks):
 
 
 def registry(name, nodes, edges):
+    return columned(name, nodes, edges, VALUES)
+
+
+def columned(name, nodes, edges, columns):
     started = time.perf_counter()
     base = [edge for edge in edges if edge.origin[0] == "base"]
     schema = stated(
-        {kind: ["value"] for kind in nodes},
+        {kind: list(columns) for kind in nodes},
         {
             edge.name: dict(endpoints=edge.pairs, directed=not edge.symmetric, columns=list(edge.attributes))
             for edge in base
         },
-        VALUES,
+        columns,
         asked(nodes),
     )
-    encoding = Encoding(schema, {}, dict(value={}), {edge.name: [edge.name] for edge in base})
+    encoding = Encoding(schema, {}, {column: {} for column in columns}, {edge.name: [edge.name] for edge in base})
     extras = dict(
         target="number",
         series=["outcome"],

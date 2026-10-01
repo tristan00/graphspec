@@ -124,11 +124,11 @@ RECORDED = {
     "graphspec.merging": (4, "758716e18bbeb4459620602ddcf7045c859adc505b2b796f354290f0268525dd"),
     "graphspec.merge": (3, "afdb91c799bcde74c9462c3f612ea7feb1adaa8ee087077eeb3a9cd6f17151df"),
     "graphspec.difference": (2, "9adfe2580659300250191f439fbf126cf40dbd40f3d05ac1a16443f2efbd6add"),
-    "graphspec.nearby": (2, "0eb7fc7fbdf05f91f38721a889629d3595d6f8cf60a7d4a0218c76a14dcf71c9"),
+    "graphspec.nearby": (3, "903ff24554e9d3c80484b42ca19c9259e4b32c89799c9260816318922db84c85"),
     "graphspec.consecutive": (2, "ea9ecdde8c855684f92f3b32b2c8bf3f50ed1fa424643e115c4ffc936b576e75"),
     "graphspec.neighbourhood": (2, "02dc2af70bd30e2210f58b83494302577d4063a4998954f09a449aac1a7fcae8"),
     "derivation": (15, "9123c426334fa315540acb6b0f3727a00bcfe0cbe7052d0339abba7ba69e5f73"),
-    "views": (12, "638c66bd130633774d8daf9907e996bf1be1f89fc9f23e69721b7d19a4ca7e08"),
+    "views": (13, "3eb287743bceebe060d2a184c8c3aa42fa4f7f0adadd9eb4318dc267e7f82f06"),
     "representations": (7, "73b6b108220c0b31b983ed46c838accc87119970a2ec9fe07e912ae73808253a"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }

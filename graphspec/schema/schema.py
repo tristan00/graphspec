@@ -568,9 +568,13 @@ class Schema:
         LOG.debug("schema holding exit kinds=%d seconds=%.4f", len(nodes), time.perf_counter() - started)
         return held
 
+    @timed("schema.declared")
+    def declared(self):
+        return dict(self.nodes, **{kind: entry["columns"] for kind, entry in self.sets.items()})
+
     @timed("schema.entities")
     def entities(self):
-        result = dict(self.nodes, **{kind: entry["columns"] for kind, entry in self.sets.items()})
+        result = self.declared()
         for _, added in self.grown:
             for kind, columns in added.placed.items():
                 result[kind] = tuple(result[kind]) + columns
@@ -861,8 +865,7 @@ class Schema:
         return held
 
     def layout(self):
-        groups = list(self.nodes.values()) + [entry["columns"] for entry in self.sets.values()]
-        groups.append(self.asked_columns())
+        groups = list(self.declared().values()) + [self.asked_columns()]
         return tuple(dict.fromkeys(name for columns in groups for name in columns))
 
     @timed("schema.asked_columns")
