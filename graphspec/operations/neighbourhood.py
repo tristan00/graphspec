@@ -54,7 +54,8 @@ def neighbourhood(graph, registry, spec, seed, limits, carry, held):
     entity, step = np.asarray(graph.obs_entity, np.int64), np.asarray(graph.obs_step, np.int64)
     member, named = ends(graph.member_source, graph.member_target)
     moments = np.asarray(graph.task_step, np.int64)[np.asarray(graph.member_task, np.int64)[member]]
-    seeds = moments * count + named
+    linked = np.asarray(graph.member_name)[member] == len(registry.references)
+    seeds, protected = moments[~linked] * count + named[~linked], moments[linked] * count + named[linked]
     if spec["neighbourhood/around"] != REFERENCES:
         chosen = np.asarray(graph.kinds)[entity] == registry.kind(spec["neighbourhood/around"])
         seeds = np.r_[seeds, step[chosen] * count + entity[chosen]]
@@ -63,7 +64,9 @@ def neighbourhood(graph, registry, spec, seed, limits, carry, held):
     moment = np.asarray(graph.fact_step, np.int64)
     source = moment * count + np.asarray(graph.fact_source, np.int64)
     target = moment * count + np.asarray(graph.fact_target, np.int64)
-    reached = within(seeds[np.isin(seeds, key)], source[present], target[present], spec["neighbourhood/hops"])
+    reached = np.union1d(
+        within(seeds[np.isin(seeds, key)], source[present], target[present], spec["neighbourhood/hops"]), protected
+    )
     alive = np.isin(key, reached)
     first = first_kept(carry, "neighbourhood/kept", graph, entity, step, alive)
     absent = (first[graph.fact_source] <= moment) & (first[graph.fact_target] <= moment)
@@ -92,7 +95,7 @@ NEIGHBOURHOOD = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=None,
         kinds=named,
-        version=3,
+        version=4,
         graphs=1,
     ),
 )

@@ -133,11 +133,13 @@ def nodes(graph, registry, spec, seed, limits, carry, held):
             use,
             entities,
         )
-    needed = np.zeros(len(obs_step), bool)
-    if spec["nodes/referenced"] == "keep":
-        member, entity = ends(graph.member_source, graph.member_target)
-        moments = graph.task_step[graph.member_task[member]].astype(np.int64)
-        needed = np.isin(obs_step.astype(np.int64) * entities + obs_entity, moments * entities + entity)
+    member, entity = ends(graph.member_source, graph.member_target)
+    task, name = graph.member_task[member].astype(np.int64), graph.member_name[member].astype(np.int64)
+    keys = graph.task_step[task].astype(np.int64) * entities + entity
+    observed = obs_step.astype(np.int64) * entities + obs_entity
+    structural |= np.isin(observed, keys[name == len(registry.references)])
+    protected = registry.required[graph.task_kind[task].astype(np.int64), name] | (spec["nodes/referenced"] == "keep")
+    needed = np.isin(observed, keys[protected])
     first = first_kept(carry, "nodes/structural", graph, obs_entity, obs_step, structural)
     present = kernels.observed_at(
         obs_entity, obs_step, structural, graph.fact_source, graph.fact_step, entities
@@ -171,7 +173,7 @@ NODES = OPERATIONS.register(
         changes=("observations", "facts", "references"),
         adds=None,
         kinds=named,
-        version=7,
+        version=8,
         graphs=1,
     ),
 )

@@ -16,7 +16,7 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 13
+VERSION = 14
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"
@@ -143,7 +143,7 @@ def referred(graph, registry, rows, found):
         chosen = np.flatnonzero((names == code) & (owner >= 0))
         first[chosen], second[chosen] = sort.resolved(source[chosen], target[chosen], moments[chosen], found)
     member, entity = ends(source, target)
-    kept = owner[member] >= 0
+    kept = (owner[member] >= 0) & (names[member] < len(registry.references))
     member, entity = member[kept], entity[kept]
     side = np.r_[False, member[1:] == member[:-1]][: len(member)]
     place = np.asarray(graph.member_place, np.int64)[member]

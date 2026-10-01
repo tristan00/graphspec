@@ -413,6 +413,55 @@ def test_a_link_withholds_its_target_edge_from_its_split_and_is_scored_among_the
     assert len(sizes) == len(TIMES) * 2 and max(sizes) == len(ITEMS) > min(sizes)
 
 
+@timed("nodes.late")
+def late(absent, kind, key):
+    linking = dict(next=KINDS["next"])
+    given = dict(schema=schema(linking), graphs=[graph(0, linking, False)])
+    given["schema"]["tasks"]["kinds"]["next"]["absent"] = absent
+    stated_graph = given["graphs"][0]
+    stated_graph["tasks"]["references"]["items"] = [None] * len(stated_graph["tasks"]["key"])
+    stated_graph["edges"][1]["rows"]["since"] = [2, 0]
+    rows = stated_graph["values"][0 if kind == "user" else 1]["rows"]
+    rows["since"][rows["key"].index(key)] = 2
+    return given
+
+
+def test_a_link_from_or_to_a_node_not_observed_at_its_task_is_refused_when_the_bank_is_built(tmp_path):
+    started = time.perf_counter()
+    refused = (
+        ("item", "i1", "the target of the task 0 of the kind next of graph g0 names the node i1, which is not"),
+        ("user", "u2", "the reference who of the task 0 of the kind next of graph g0 names the node u2, which is not"),
+    )
+    for absent in ("keep", "stop"):
+        for kind, key, message in refused:
+            with pytest.raises(ValueError, match=message + " observed at the time of the task; a link starts from"):
+                built(tmp_path, "%s_%s" % (absent, key), late(absent, kind, key))
+            assert not (tmp_path / ("%s_%s" % (absent, key)) / "manifest.json").exists()
+    LOG.info("links refused exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_no_operation_removes_the_node_a_link_names_at_the_step_of_its_task(banks):
+    started, held = time.perf_counter(), opened(banks, "stated")
+    link, item = held.registry.schema.targets().index("link"), held.registry.kind("item")
+    sampled = {"nodes/item/filter": "sample", "nodes/item/sample": 0.5}
+    observed = {}
+    for name, values in (("whole", {}), ("sampled", sampled)):
+        graph_values = dict(DRAWN, **{"time/history": 2}, **values)
+        cfg = support.configuration(
+            held.registry, dict(view="snapshot"), graph_values, 5, copy.deepcopy(SEEING), NEGATIVES
+        )
+        observed[name] = sum(
+            int((held.arrays(index, cfg)["entity_kind"][held.arrays(index, cfg)["entity"]] == item).sum())
+            for index in held.graphs(cfg)
+        )
+        for partition in (0, 1):
+            for block in held.blocks(partition, 2, cfg):
+                b = pack_batch(held, [block], cfg, "cpu")
+                assert (np.asarray(b["point_node"])[np.asarray(b["aim"]) == link] >= 0).all()
+    assert observed["sampled"] < observed["whole"]
+    LOG.info("links kept exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_a_fit_whose_pipeline_draws_no_negatives_for_a_link_stops_naming_its_kind(banks, tmp_path, statement):
     held = opened(banks, "stated")
     cfg = dict(configured(held.registry, "snapshot", SEEING, support.SEVEN, 4), epochs=1)

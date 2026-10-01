@@ -403,14 +403,20 @@ def pointed(bank, window, b, rows, owner):
     named = np.flatnonzero(tokens >= 0)
     row = owner[named]
     observed = observing(held, b["row_steps"][row] + start, tokens[named], held.numpy("entity_token"))
-    stops = registry.stops[b["row_kind"][row].astype(np.int64)]
-    lost = np.flatnonzero((observed < 0) & stops)
+    kinds = b["row_kind"][row].astype(np.int64)
+    lost = np.flatnonzero((observed < 0) & registry.required[kinds, len(registry.references)])
     if len(lost):
         found = bank.rows[rows[named[lost[0]]]]
         raise ValueError(
             "the node %s that a point of the task %s of the kind %s of graph %s names is not observed at the time "
-            "of its task, and the kind states absent as stop"
-            % (found["node"], found[registry.schema.tasks["key"]], found["kind"], found["graph"])
+            "of its task, and %s"
+            % (
+                found["node"],
+                found[registry.schema.tasks["key"]],
+                found["kind"],
+                found["graph"],
+                "a link names an observed node" if registry.linked[kinds[lost[0]]] else "the kind states absent as stop",
+            )
         )
     node = np.full(len(rows), -1, np.int64)
     node[named[observed >= 0]] = held.numpy("entity")[observed[observed >= 0]]

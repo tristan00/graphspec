@@ -8,7 +8,6 @@ from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema import time as clock
-from graphspec.schema.references import MEMBERS
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ABOUT, ALWAYS, NEVER, SEVERAL
 
@@ -353,21 +352,35 @@ def about(facts, registry, lit, rows):
     return kept
 
 
-def referred(facts, held):
+def referred(facts, registry, held):
     started = time.perf_counter()
     place = np.full(len(facts.task_key), -1, np.int64)
     place[held["tasks"]] = np.arange(len(held["tasks"]))
-    owner = place[np.asarray(facts.member_task)]
-    kept = owner >= 0
-    result = {name: np.asarray(facts.arrays[name])[kept] for name in MEMBERS}
-    result["member_task"] = owner[kept].astype(np.int32)
-    labels = held["labels"]
-    result["label_task"] = place[np.asarray(facts.target_task)[labels]].astype(np.int32)
+    labels, owner = held["labels"], np.asarray(facts.target_task, np.int64)
+    linking = labels[registry.linked[np.asarray(facts.task_kind, np.int64)[owner[labels]]]]
+    stated = place[np.asarray(facts.member_task)]
+    kept = np.flatnonzero(stated >= 0)
+    task = np.r_[stated[kept], place[owner[linking]]]
+    order = np.argsort(task, kind="stable")
+    added = dict(
+        member_name=np.full(len(linking), len(registry.references)),
+        member_place=np.zeros(len(linking)),
+        member_source=np.asarray(facts.target_node)[linking],
+        member_target=np.full(len(linking), -1),
+        member_code=np.full(len(linking), -1),
+    )
+    result = {
+        name: np.r_[np.asarray(facts.arrays[name])[kept], added[name]].astype(facts.arrays[name].dtype)[order]
+        for name in added
+    }
+    result["member_task"] = task[order].astype(np.int32)
+    result["label_task"] = place[owner[labels]].astype(np.int32)
     result["label_row"] = np.asarray(facts.target_row)[labels]
     LOG.debug(
-        "referred exit graph=%s members=%d labels=%d seconds=%.4f",
+        "referred exit graph=%s members=%d linked=%d labels=%d seconds=%.4f",
         facts.name,
-        int(kept.sum()),
+        len(task),
+        len(linking),
         len(labels),
         time.perf_counter() - started,
     )
@@ -496,7 +509,7 @@ def showing(facts, registry, held, several, period):
         task_values=np.asarray(facts.task_values)[tasks],
         task_signals=np.asarray(facts.task_signals)[tasks],
         graph_values=np.asarray(facts.graph_values),
-        **referred(facts, held),
+        **referred(facts, registry, held),
     )
     verify(graph, registry)
     LOG.info(

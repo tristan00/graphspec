@@ -171,7 +171,8 @@ def referring(graph, registry):
     started = time.perf_counter()
     member, entity = ends(graph.member_source, graph.member_target)
     task = np.asarray(graph.member_task, np.int64)[member]
-    stops = registry.stops[np.asarray(graph.task_kind, np.int64)[task]]
+    kinds, names = np.asarray(graph.task_kind, np.int64)[task], np.asarray(graph.member_name, np.int64)[member]
+    stops = registry.required[kinds, names]
     result = (
         member,
         entity,
@@ -186,12 +187,24 @@ def referring(graph, registry):
 
 @timed("truth.unresolved")
 def unresolved(graph, registry, member):
-    task = int(graph.member_task[member])
-    return "the reference %s of the task %d of the kind %s of graph %s" % (
-        list(registry.schema.tasks["references"])[int(graph.member_name[member])],
+    task, name = int(graph.member_task[member]), int(graph.member_name[member])
+    return "the %s of the task %d of the kind %s of graph %s" % (
+        "target" if name == len(registry.references) else "reference " + registry.references[name],
         int(graph.task_key[task]),
-        list(registry.schema.tasks["kinds"])[int(graph.task_kind[task])],
+        registry.tasks[int(graph.task_kind[task])],
         graph.name,
+    )
+
+
+@timed("truth.unreached")
+def unreached(graph, registry, member, node):
+    if registry.anchored[int(graph.task_kind[int(graph.member_task[member])]), int(graph.member_name[member])]:
+        return (
+            "%s names %s, which is not observed at the time of the task; a link starts from an observed node and "
+            "names one, whatever its kind states as absent" % (unresolved(graph, registry, member), node)
+        )
+    return "%s names a node not observed at the time of the task, and its kind states that this stops the work" % (
+        unresolved(graph, registry, member)
     )
 
 
@@ -309,10 +322,7 @@ def verify_dense(graph, registry, known=None):
     member, entity, moments, stops = referring(graph, registry)
     lost = stops & unobserved(entities, graph.obs_entity, graph.obs_step, entity, moments)
     if lost.any():
-        raise ValueError(
-            "%s names a node not observed at the time of the task, and its kind states that this stops the work"
-            % unresolved(graph, registry, member[np.flatnonzero(lost)[0]])
-        )
+        raise ValueError(unreached(graph, registry, member[np.flatnonzero(lost)[0]], "a node"))
 
 
 def ordered(*keys):
@@ -470,8 +480,7 @@ def verify(graph, registry):
     )
     if lost >= 0:
         raise ValueError(
-            "%s names a node not observed at the time of the task, and its kind states that this stops the work"
-            % unresolved(graph, registry, member[chosen[lost]])
+            unreached(graph, registry, member[chosen[lost]], "the node %s" % graph.keys[int(entity[chosen[lost]])])
         )
     if len(graph.period) != steps:
         raise ValueError("graph %s does not state a period for every step" % name)

@@ -8,6 +8,7 @@ from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 
 from .schema import ENCODERS, TYPES, Encoding, Schema, reserved
+from .targets import TARGETS
 
 LOG = logging.getLogger(__name__)
 EVERYTHING = ("hop", "diffusion", "rewire", "untyped", "coupling", "boundary")
@@ -123,6 +124,18 @@ class Registry:
             [self.events.index(kind) if kind in self.events else -1 for kind in kinds], np.int64
         )
         self.references = tuple(self.schema.tasks["references"])
+        self.linked = np.asarray(
+            [
+                entry["target"] is not None and TARGETS.named(entry["target"]["kind"]).names == "linked"
+                for entry in kinds.values()
+            ],
+            bool,
+        )
+        self.anchored = np.zeros((len(kinds), len(self.references) + 1), bool)
+        for code, entry in enumerate(kinds.values()):
+            if self.linked[code]:
+                self.anchored[code, [self.references.index(entry["target"]["about"]), len(self.references)]] = True
+        self.required = self.anchored | self.stops[:, None]
         if not set(self.extras["base"]) <= set(self.by_name):
             raise ValueError("base relation types must be declared")
         self.tables, self.stored, self.about = {}, {}, {}
