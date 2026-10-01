@@ -485,8 +485,57 @@ class Nodes(Members):
         return logistic(values)
 
 
+class Link(Pointed):
+    names = "linked"
+    parameters = ("relation",)
+
+    @timed("targets.link.checked")
+    def checked(self, stated, schema, references, where):
+        about, relation = stated["about"], stated["relation"]
+        sort = None if about is None else SORTS.named(references[about]["sort"])
+        if sort is None or not sort.nodes or sort.edges or sort.most != 1:
+            raise ValueError(
+                "the target of %s is about the reference of the one node its link starts from, found %r"
+                % (where, about)
+            )
+        edge = schema.edges.get(relation) if type(relation) is str else None
+        joined = set() if edge is None else {pair[0] for pair in edge["endpoints"]}
+        if edge is not None and not edge["directed"]:
+            joined |= {pair[1] for pair in edge["endpoints"]}
+        if edge is None or not set(references[about]["kinds"]) <= joined:
+            raise ValueError(
+                "the target of %s states as its relation an edge table that joins the kinds of %s to other nodes, "
+                "found %r" % (where, about, relation)
+            )
+        return dict(relation=relation)
+
+    @timed("targets.link.points")
+    def points(self, rows, series, where):
+        owner, y = located(rows, where)
+        if len(np.unique(owner)) != len(owner) or np.any(y != 1):
+            raise ValueError("the points of %s state one node, the one its task links to, with y 1" % where)
+        return dict(series=[series[0]] * len(owner), node=list(rows["node"]))
+
+    @timed("targets.link.staged")
+    def staged(self, stated, series, where):
+        if type(stated) is not str or not stated:
+            raise ValueError(
+                "%s states its target as the key of the node its task links to, found %r" % (where, stated)
+            )
+        return [dict(node=stated, y=1.0)]
+
+    @timed("targets.link.read")
+    def read(self, rows):
+        (row,) = rows
+        return row["node"]
+
+    @timed("targets.link.predicted")
+    def predicted(self, values, task):
+        return normalised(values, task)
+
+
 class Weighted:
-    reads = ("number", "path", "class", "classes", "proportions", "ranking", "nodes")
+    reads = ("number", "path", "class", "classes", "proportions", "ranking", "nodes", "link")
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")
@@ -525,4 +574,5 @@ TARGETS.register("classes", Classes())
 TARGETS.register("proportions", Proportions())
 TARGETS.register("ranking", Ranking())
 TARGETS.register("nodes", Nodes())
+TARGETS.register("link", Link())
 UTILITIES.register("weighted", Weighted())

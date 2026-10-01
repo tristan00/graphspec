@@ -402,6 +402,7 @@ class TrainingSession:
 
 
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, statement):
+    from tuning.batches.inputs import drawing
     from tuning.statement import stated as checked
 
     from .budget import FitBudget
@@ -422,8 +423,9 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         )
     if "pipeline" not in config:
         raise KeyError("the configuration states no pipeline")
-    declared = read_json(Path(bank_directory) / "manifest.json")["spec"]["schema"]
-    admitted(Schema(declared).targets(), stated.loss, stated.measures)
+    declared = Schema(read_json(Path(bank_directory) / "manifest.json")["spec"]["schema"])
+    admitted(declared.targets(), stated.loss, stated.measures)
+    drawing(declared, config["pipeline"])
     with FitBudget(directory, deadline, stated.preparation_seconds) as budget:
         with budget.measure("prepare"):
             session = TrainingSession(bank_directory, directory, config, budget, stated)

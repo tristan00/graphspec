@@ -58,7 +58,7 @@ def crossed(predictions, target, batch):
 
 
 class Entropy:
-    reads = ("class", "proportions")
+    reads = ("class", "proportions", "link")
 
     def __call__(self, predictions, batch, bank):
         return crossed(predictions, batch["target"], batch)

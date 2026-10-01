@@ -11,9 +11,10 @@ from graphspec.engine.transform import SEED
 from graphspec.infra import workspace
 from graphspec.infra.arrays import Resident, between
 from graphspec.infra.hashing import hashed, salted
-from graphspec.operations.rows import keyed_relations
+from graphspec.operations.rows import counted, keyed_relations
 from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.references import SORTS
+from graphspec.schema.targets import TARGETS
 from tuning.families.heads import FIELD
 
 from . import gather
@@ -23,6 +24,7 @@ LOG = logging.getLogger(__name__)
 NEIGHBOURS = "tuning.batches/neighbors"
 BASIS = "tuning.families/projection"
 ORDERS = dict(recent=0, uniform=1, decay=2)
+CANDIDATES = ("code", "step", "source", "target")
 
 
 def sampling(spec):
@@ -318,21 +320,78 @@ def member_inputs(window, first, last):
     return result
 
 
-def observing(held, steps, tokens):
+def observing(held, steps, wanted, keys):
     started = time.perf_counter()
-    offsets, entity, token = held.numpy("snapshot_offsets"), held.numpy("entity"), held.numpy("entity_token")
+    offsets, entity = held.numpy("snapshot_offsets"), held.numpy("entity")
     result = np.full(len(steps), -1, np.int64)
     for step in np.unique(steps).tolist():
         lo, hi = int(offsets[step]), int(offsets[step + 1])
         if hi == lo:
             continue
-        found = token[entity[lo:hi]]
+        found = keys[entity[lo:hi]]
         order = np.argsort(found, kind="stable")
         chosen = np.flatnonzero(steps == step)
-        at = np.minimum(np.searchsorted(found[order], tokens[chosen]), hi - lo - 1)
-        known = found[order][at] == tokens[chosen]
+        at = np.minimum(np.searchsorted(found[order], wanted[chosen]), hi - lo - 1)
+        known = found[order][at] == wanted[chosen]
         result[chosen[known]] = lo + order[at[known]]
     LOG.debug("observing exit points=%d seconds=%.4f", len(steps), time.perf_counter() - started)
+    return result
+
+
+def drawing(schema, pipeline):
+    started = time.perf_counter()
+    result = {}
+    for code, (kind, entry) in enumerate(schema.tasks["kinds"].items()):
+        aim = entry["target"]
+        if aim is None or TARGETS.named(aim["kind"]).names != "linked":
+            continue
+        wanted = "link:%s:%s" % (aim["relation"], aim["about"])
+        found = [
+            step.get("label", step["operation"].split(".", 1)[1])
+            for step in pipeline
+            if step["operation"] == "graphspec.negatives" and step["parameters"]["negatives/of"] == wanted
+        ]
+        if len(found) != 1:
+            raise ValueError(
+                "the kind of task %s states a link among sampled negatives, and the pipeline draws them in %d entries "
+                "of graphspec.negatives with negatives/of %s; it draws them in one" % (kind, len(found), wanted)
+            )
+        result[code] = found[0]
+    LOG.debug("drawing exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def negatives(window, b, owner, node):
+    started = time.perf_counter()
+    held, registry, start = window.held, window.registry, window.start
+    names, entities = list(registry.references), len(held.numpy("entity_kind"))
+    stated = list(registry.schema.tasks["kinds"].values())
+    kinds, link, drawn = b["row_kind"][owner].astype(np.int64), [np.zeros(0, np.int64)], [np.zeros(0, np.int64)]
+    entries, candidates = drawing(registry.schema, window.cfg["pipeline"]), {}
+    if entries:
+        left, right = between(held.numpy("candidate_step"), start, window.stop)
+        candidates = {name: held.numpy("candidate_" + name)[left:right].astype(np.int64) for name in CANDIDATES}
+    for code, entry in entries.items():
+        chosen = np.flatnonzero(kinds == code)
+        referred = np.flatnonzero(b["member_name"] == names.index(stated[code]["target"]["about"]))
+        anchor = np.full(len(b["row_kind"]), -1, np.int64)
+        anchor[b["member_row"][referred]] = b["member_entity"][referred]
+        drawing_entry = candidates["code"] == registry.by_candidate[entry].code
+        keys = candidates["step"][drawing_entry] * entities + candidates["source"][drawing_entry]
+        order = np.argsort(keys, kind="stable")
+        known = anchor[owner[chosen]] >= 0
+        wanted = (b["row_steps"][owner[chosen]] + start) * entities + anchor[owner[chosen]]
+        low = np.where(known, np.searchsorted(keys[order], wanted, "left"), 0)
+        high = np.where(known, np.searchsorted(keys[order], wanted, "right"), 0)
+        point = np.repeat(chosen, high - low)
+        found = candidates["target"][drawing_entry][order[np.repeat(low, high - low) + counted(high - low)]]
+        kept = found != node[point]
+        link.append(point[kept])
+        drawn.append(found[kept])
+    result = np.concatenate(link), np.concatenate(drawn)
+    LOG.debug(
+        "negatives exit graph=%d drawn=%d seconds=%.4f", window.graph, len(result[0]), time.perf_counter() - started
+    )
     return result
 
 
@@ -342,7 +401,7 @@ def pointed(bank, window, b, rows, owner):
     tokens = bank.nodes[rows]
     named = np.flatnonzero(tokens >= 0)
     row = owner[named]
-    observed = observing(held, b["row_steps"][row] + start, tokens[named])
+    observed = observing(held, b["row_steps"][row] + start, tokens[named], held.numpy("entity_token"))
     stops = registry.stops[b["row_kind"][row].astype(np.int64)]
     lost = np.flatnonzero((observed < 0) & stops)
     if len(lost):
@@ -352,12 +411,25 @@ def pointed(bank, window, b, rows, owner):
             "of its task, and the kind states absent as stop"
             % (found["node"], found[registry.schema.tasks["key"]], found["kind"], found["graph"])
         )
+    node = np.full(len(rows), -1, np.int64)
+    node[named[observed >= 0]] = held.numpy("entity")[observed[observed >= 0]]
+    point, drawn = negatives(window, b, owner, node)
+    moments = b["row_steps"][owner[point]] + start
+    placed = observing(held, moments, drawn, np.arange(len(held.numpy("entity_kind"))))
+    if np.any(placed < 0):
+        raise ValueError("a negative drawn for graph %d is not observed at the step of its task" % window.graph)
     seen = observed >= 0
     count = len(b["member_row"])
     point_node = np.full(len(rows), -1, np.int64)
     point_node[named[seen]] = count + np.arange(int(seen.sum()))
-    observed, row = observed[seen], row[seen]
+    point_node = np.r_[point_node, count + int(seen.sum()) + np.arange(len(point))]
+    observed, row = np.r_[observed[seen], placed], np.r_[row[seen], owner[point]]
     entity = held.numpy("entity")[observed]
+    for key in ("target",) + tuple(key for key in b if key.startswith(FIELD)):
+        b[key] = np.r_[b[key], np.full(len(point), 0.0 if key == "target" else np.nan, b[key].dtype)]
+    for key in ("weight", "series", "aim", "point_row"):
+        b[key] = np.r_[b[key], b[key][point]]
+    b["drawn"] = Host(rows[point])
     b.update(
         member_row=np.concatenate((b["member_row"], row)),
         member_name=np.concatenate((b["member_name"], np.full(len(row), len(registry.references), np.int64))),

@@ -290,9 +290,8 @@ def recipe_batch(bank, blocks, cfg):
     real = [len(p["rows"].value) for p in parts]
 
     def points(values):
-        return np.concatenate(
-            [value[:count] for value, count in zip(values, real)] + [value[count:] for value, count in zip(values, real)]
-        )
+        pairs = list(zip(values, real))
+        return np.concatenate([value[:count] for value, count in pairs] + [value[count:] for value, count in pairs])
 
     for key in POINTS + tuple(key for key in parts[0] if key.startswith(FIELD)):
         b[key] = points([p[key] for p in parts])

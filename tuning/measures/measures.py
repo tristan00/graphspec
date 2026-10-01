@@ -124,7 +124,7 @@ class Accuracy:
 
 
 class Entropy:
-    reads = ("class", "proportions")
+    reads = ("class", "proportions", "link")
     better = "lower"
     label, short = "Validation log loss", "Log loss"
 
@@ -211,7 +211,7 @@ class Gain:
 
 
 class Reciprocal:
-    reads = ("ranking",)
+    reads = ("ranking", "link")
     better = "higher"
     label, short = "Validation reciprocal rank", "MRR"
 
@@ -219,6 +219,23 @@ class Reciprocal:
     def __call__(self, held):
         owner, best = first(held)
         return tasked(held, owner, 1 / best)
+
+
+class Hits:
+    reads = ("ranking", "link")
+    better = "higher"
+
+    @timed("measures.hits.init")
+    def __init__(self, count):
+        if type(count) is not int or count < 1:
+            raise ValueError("hits are counted within a whole number of ranks of at least 1, found %r" % count)
+        self.count = count
+        self.label, self.short = "Validation hits within %d" % count, "Hits@%d" % count
+
+    @timed("measures.hits")
+    def __call__(self, held):
+        owner, best = first(held)
+        return tasked(held, owner, (best <= self.count).astype(np.float64))
 
 
 @timed("measures.decided")
@@ -304,6 +321,8 @@ MEASURES.register("binary", Binary())
 MEASURES.register("divergence", Divergence())
 MEASURES.register("gain", Gain())
 MEASURES.register("reciprocal", Reciprocal())
+MEASURES.register("hits1", Hits(1))
+MEASURES.register("hits10", Hits(10))
 MEASURES.register("f1", Agreement())
 MEASURES.register("jaccard", Jaccard())
 ship([MEASURES])

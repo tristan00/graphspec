@@ -7,6 +7,7 @@ from graphspec.facts.stored import GROUPS
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema.references import ends
+from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER
 
 from .spans import encode
@@ -130,6 +131,34 @@ def withheld(keys, named, moments):
     return result
 
 
+def linked(facts, registry, aimed):
+    started = time.perf_counter()
+    schema, names = registry.schema, list(registry.schema.tasks["references"])
+    owner, node = np.asarray(facts.target_task, np.int64), np.asarray(facts.target_node, np.int64)
+    kind, entities = np.asarray(facts.task_kind, np.int64), len(facts.kinds)
+    keys, moments = [np.zeros(0, np.int64)], [np.zeros(0, np.int64)]
+    for code, entry in enumerate(schema.tasks["kinds"].values()):
+        aim = entry["target"]
+        if aim is None or TARGETS.named(aim["kind"]).names != "linked":
+            continue
+        members = np.flatnonzero(np.asarray(facts.member_name) == names.index(aim["about"]))
+        anchor = np.full(len(facts.task_key), -1, np.int64)
+        anchor[np.asarray(facts.member_task, np.int64)[members]] = np.asarray(facts.member_source, np.int64)[members]
+        chosen = np.flatnonzero(aimed[owner] & (kind[owner] == code) & (node >= 0))
+        source, target = anchor[owner[chosen]], node[chosen]
+        moment = np.asarray(facts.task_time, np.int64)[owner[chosen]]
+        for relation in np.asarray(registry.coded[aim["relation"]], np.int64).tolist():
+            pairs = ((source, target),)
+            if registry.flipped[relation] == relation:
+                pairs += ((target, source),)
+            for first, second in pairs:
+                keys.append(encode(np.full(len(chosen), relation, np.int64), first, second, entities))
+                moments.append(moment)
+    result = np.concatenate(keys), np.concatenate(moments)
+    LOG.debug("linked exit graph=%s edges=%d seconds=%.4f", facts.name, len(result[0]), time.perf_counter() - started)
+    return result
+
+
 def without_targets(facts, registry, held):
     started = time.perf_counter()
     schema, names = registry.schema, list(registry.schema.tasks["references"])
@@ -163,12 +192,13 @@ def without_targets(facts, registry, held):
         encode(code[edge], source[edge], target[edge], entities),
         encode(code[either], target[either], source[either], entities),
     ]
+    linking, moments = linked(facts, registry, aimed)
     stated = encode(facts.fact_code, facts.fact_source, facts.fact_target, entities)
     result = (
         withheld(facts.obs_entity, source[whole], moment[whole]),
         np.minimum.reduce(
             (
-                withheld(stated, named, np.r_[moment[edge], moment[either]]),
+                withheld(stated, np.r_[named, linking], np.r_[moment[edge], moment[either], moments]),
                 withheld(facts.fact_source, source[whole], moment[whole]),
                 withheld(facts.fact_target, source[whole], moment[whole]),
             )

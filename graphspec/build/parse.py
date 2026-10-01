@@ -383,8 +383,16 @@ def noded(registry, tasks, members, keys, kinds, owner, nodes, name):
             ]
             if len(ends) != 1:
                 raise ValueError(
-                    "%s names the node %s, which %d nodes of the kinds %s joins to the node of %s hold"
-                    % (where, stated[at], len(ends), target["relation"], target["about"])
+                    "%s names the node %s for the task %d; the graph holds %d nodes of that key of a kind the "
+                    "relation %s joins to the node of %s, and a link names one"
+                    % (
+                        where,
+                        stated[at],
+                        tasks["task_key"][owner[point]],
+                        len(ends),
+                        target["relation"],
+                        target["about"],
+                    )
                 )
             result[point] = ends[0]
     LOG.debug("noded exit graph=%s points=%d seconds=%.4f", name, len(owner), time.perf_counter() - started)

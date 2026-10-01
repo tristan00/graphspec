@@ -711,7 +711,9 @@ class Schema:
         if stated is None:
             return None
         if not isinstance(stated, dict) or "kind" not in stated:
-            raise ValueError("the target of %s states the name of a registered kind of target, found %r" % (where, stated))
+            raise ValueError(
+                "the target of %s states the name of a registered kind of target, found %r" % (where, stated)
+            )
         kind = TARGETS.named(stated["kind"])
         stated = fields(stated, AIMED + kind.parameters, "the target of " + where)
         if stated["about"] is not None and stated["about"] not in names:
