@@ -29,7 +29,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("added")
+pytestmark = pytest.mark.xdist_group("segments")
 SHIPPED = dict(structure=("coupling", "events", "mixed"), sample=("neighbors", "walks"), encode=())
 ADDED = (LINKED, KEPT, RUNNING)
 LIMITS = GraphLimits("cpu")
