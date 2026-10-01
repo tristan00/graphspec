@@ -98,7 +98,7 @@ class SnapshotNet(nn.Module):
             )
             self.final_spatial = Spatial(hidden, "mean", registry.group_codes, {}, spec["dropout"])
         self.references = References(registry, hidden, hidden * 3)
-        self.head = Head(hidden * 4, spec, registry)
+        self.head = Head(hidden * 4, spec, registry, hidden)
 
     def values(self, h, sequence, b):
         rows, whole = b["row_frames"], b["whole_row"]
@@ -133,7 +133,7 @@ class SnapshotNet(nn.Module):
             members = self.periods(
                 members, self.previous(later, sequence, b), b["end_gaps"][owner], b["end_mask"][owner]
             )
-        return self.references(b, members, whole)
+        return self.references(b, members, whole), members
 
     def framed(self, h, b):
         seen, event, frames = b["frame_starts"], b["frame_event"], b["frames"]
@@ -231,11 +231,13 @@ class SnapshotNet(nn.Module):
                 frame = self.frames(
                     frame, sequence[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"]
                 )
-            held = self.referred(before, None, b, h)
+            held, members = self.referred(before, None, b, h)
             features = torch.cat((held[:, :width] + frame, held[:, width:], q), -1)
         elif self.temporal_mode == "coupling_edges":
             h = self.coupling(h, b)
-            features = torch.cat((self.referred(h, None, b, h), q), -1)
+            held, members = self.referred(h, None, b, h)
+            features = torch.cat((held, q), -1)
         else:
-            features = torch.cat((self.referred(h, self.entity_sequence(h, b), b, h), q), -1)
-        return self.head(features[b["selected"]], b)
+            held, members = self.referred(h, self.entity_sequence(h, b), b, h)
+            features = torch.cat((held, q), -1)
+        return self.head(features[b["selected"]], b, members)

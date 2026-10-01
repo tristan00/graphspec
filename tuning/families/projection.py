@@ -37,7 +37,7 @@ class ProjectionNet(nn.Module):
         self.crossing = nn.Sequential(nn.Linear((hops + 1) ** 2, hidden), nn.SiLU(), normalization(hidden))
         self.whole = nn.Linear(registry.features, hidden * 2)
         self.references = References(registry, hidden * 2, hidden * 3)
-        self.head = Head(hidden * 5, spec, registry)
+        self.head = Head(hidden * 5, spec, registry, hidden * 2)
 
     def structural(self, b):
         spec = self.cfg["model"]
@@ -113,4 +113,4 @@ class ProjectionNet(nn.Module):
             ),
             -1,
         )
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, members)

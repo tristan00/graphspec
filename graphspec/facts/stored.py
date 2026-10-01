@@ -14,7 +14,7 @@ from graphspec.schema.schema import VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 8
+VERSION = 9
 PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
 HELD = ("inner_owner", "inner_kind", "inner_values")
@@ -31,7 +31,7 @@ STORED = (
     + ("task_time", "task_observer", "task_grouping", "task_key", "task_kind", "task_split")
     + ("task_weight", "task_values", "task_signals")
     + MEMBERS
-    + ("target_task", "target_row", "target_known", "target_y", "target_series")
+    + ("target_task", "target_row", "target_known", "target_y", "target_series", "target_node")
     + ("graph_values",)
     + JOINED
     + HELD

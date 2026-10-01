@@ -45,7 +45,8 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 27
+VIEW = 28
+TOKEN = (1 << 62) - 1
 
 
 def layout(index, steps, labels, partitions, partition, history, windowed):
@@ -330,6 +331,7 @@ class Bank:
         keys = np.asarray([(owners[row["graph"]], row[asked]) for row in self.rows], np.int64).reshape(-1, 2)
         self.task_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
         self.aims, self.fields = pointed(schema, self.rows)
+        self.nodes = self.named()
         self.center = np.asarray(
             [scaled[name]["mean"] if name in scaled else 0.0 for name in self.series_names], np.float32
         )
@@ -347,6 +349,18 @@ class Bank:
             len(self.rows),
             ",".join(schema.targets()),
         )
+
+    def named(self):
+        started = time.perf_counter()
+        result = np.full(len(self.rows), -1, np.int64)
+        if any(TARGETS.named(kind).names is not None for kind in self.registry.schema.targets()):
+            for graph in self.manifest["graphs"]:
+                held = load_arrays(self.truth(graph["index"]), ("target_row", "target_node", "entity_token"))
+                chosen = held["target_node"] >= 0
+                tokens = held["entity_token"][held["target_node"][chosen]] & np.uint64(TOKEN)
+                result[held["target_row"][chosen]] = tokens.astype(np.int64)
+        LOG.debug("bank named exit named=%d seconds=%.4f", int((result >= 0).sum()), time.perf_counter() - started)
+        return result
 
     def looking(self, cfg):
         if "splits" not in cfg:

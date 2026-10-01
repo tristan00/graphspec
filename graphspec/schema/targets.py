@@ -7,6 +7,8 @@ import numpy as np
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
+from .references import SORTS
+
 LOG = logging.getLogger(__name__)
 TARGETS = Names("kind of target")
 UTILITIES = Names("utility")
@@ -60,6 +62,44 @@ def classed(rows, series, where):
     return held, np.asarray(rows["y"], np.float64)
 
 
+@timed("targets.one")
+def one(stated, where):
+    if type(stated) is not str or not stated or ":" in stated:
+        raise ValueError("%s names its one series without colons, found %r" % (where, stated))
+    return (stated,)
+
+
+@timed("targets.unconstrained")
+def unconstrained(stated, schema, references, where):
+    return {}
+
+
+@timed("targets.listing")
+def listing(about, references, where):
+    sort = None if about is None else SORTS.named(references[about]["sort"])
+    if sort is None or not sort.nodes or sort.edges:
+        raise ValueError(
+            "the target of %s is about the reference that lists the nodes its points name, of a sort that holds "
+            "nodes only, found %r" % (where, about)
+        )
+    return sort
+
+
+def located(rows, where):
+    started = time.perf_counter()
+    owner = np.asarray(rows["task"], np.int64)
+    nodes = list(rows["node"])
+    if any(type(node) is not str for node in nodes):
+        raise ValueError("every point of %s names by its key the node it scores" % where)
+    names, code = np.unique(np.asarray(nodes, str), return_inverse=True)
+    _, first, counts = np.unique(owner * max(len(names), 1) + code.reshape(-1), return_index=True, return_counts=True)
+    if np.any(counts > 1):
+        at = int(first[np.argmax(counts > 1)])
+        raise ValueError("a task of graph %s names the node %s twice as %s" % (rows["graph"][at], nodes[at], where))
+    LOG.debug("located exit points=%d seconds=%.4f", len(owner), time.perf_counter() - started)
+    return owner, np.asarray(rows["y"], np.float64)
+
+
 @timed("targets.normalised")
 def normalised(values, task):
     owner = np.unique(np.asarray(task, np.int64), return_inverse=True)[1].reshape(-1)
@@ -94,8 +134,11 @@ def each(column, series, where):
 class Number:
     scaled = True
     matures = "number"
+    names = None
+    parameters = ()
     columns = {}
     fields = ()
+    checked = staticmethod(unconstrained)
 
     @timed("targets.number.ripe")
     def ripe(self, column, series, where):
@@ -107,9 +150,7 @@ class Number:
 
     @timed("targets.number.series")
     def series(self, stated, where):
-        if type(stated) is not str or not stated or ":" in stated:
-            raise ValueError("%s names its one series without colons, found %r" % (where, stated))
-        return (stated,)
+        return one(stated, where)
 
     @timed("targets.number.written")
     def written(self, series):
@@ -145,8 +186,11 @@ class Number:
 class Path:
     scaled = True
     matures = None
+    names = None
+    parameters = ()
     columns = dict(tau="FLOAT", series="STRING")
     fields = ("tau",)
+    checked = staticmethod(unconstrained)
 
     @timed("targets.path.series")
     def series(self, stated, where):
@@ -203,8 +247,11 @@ class Path:
 
 class Over:
     scaled = False
+    names = None
+    parameters = ()
     columns = dict(series="STRING")
     fields = ()
+    checked = staticmethod(unconstrained)
 
     @timed("targets.over.series")
     def series(self, stated, where):
@@ -343,8 +390,62 @@ class Proportions(Over):
         return normalised(values, task)
 
 
+class Ranking:
+    scaled = False
+    matures = None
+    names = "members"
+    parameters = ()
+    columns = dict(node="STRING")
+    fields = ()
+
+    @timed("targets.ranking.checked")
+    def checked(self, stated, schema, references, where):
+        listing(stated["about"], references, where)
+        return {}
+
+    @timed("targets.ranking.series")
+    def series(self, stated, where):
+        return one(stated, where)
+
+    @timed("targets.ranking.written")
+    def written(self, series):
+        return series[0]
+
+    @timed("targets.ranking.points")
+    def points(self, rows, series, where):
+        owner, y = located(rows, where)
+        if not np.isfinite(y).all() or np.any(y < 0):
+            raise ValueError("the points of %s state the relevance of each item, a finite number of at least 0" % where)
+        found = np.unique(owner)
+        if np.any(np.bincount(np.searchsorted(found, owner), y > 0, len(found)) == 0):
+            raise ValueError("the points of %s state for every task one item at least of a relevance above 0" % where)
+        return dict(series=[series[0]] * len(owner), node=list(rows["node"]))
+
+    @timed("targets.ranking.staged")
+    def staged(self, stated, series, where):
+        if (
+            not isinstance(stated, dict)
+            or any(type(key) is not str for key in stated)
+            or not all(real(value) and value >= 0 for value in stated.values())
+            or not any(value > 0 for value in stated.values())
+        ):
+            raise ValueError(
+                "%s states its target as a mapping from the key of every item its task lists to its relevance, a "
+                "finite number of at least 0, one at least above 0, found %r" % (where, stated)
+            )
+        return [dict(node=key, y=float(value)) for key, value in stated.items()]
+
+    @timed("targets.ranking.read")
+    def read(self, rows):
+        return {row["node"]: row["y"] for row in rows}
+
+    @timed("targets.ranking.predicted")
+    def predicted(self, values, task):
+        return normalised(values, task)
+
+
 class Weighted:
-    reads = ("number", "path", "class", "classes", "proportions")
+    reads = ("number", "path", "class", "classes", "proportions", "ranking")
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")
@@ -381,4 +482,5 @@ TARGETS.register("path", Path())
 TARGETS.register("class", Class())
 TARGETS.register("classes", Classes())
 TARGETS.register("proportions", Proportions())
+TARGETS.register("ranking", Ranking())
 UTILITIES.register("weighted", Weighted())

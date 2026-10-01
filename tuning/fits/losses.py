@@ -42,23 +42,35 @@ class Balanced:
         return (series_total / series_tasks.clamp_min(1e-12)).sum() / (series_tasks > 0).sum()
 
 
+def crossed(predictions, target, batch):
+    import torch
+
+    row, tasks = batch["point_row"], batch["tasks"]
+    top = predictions.new_full((tasks,), -torch.inf).scatter_reduce(
+        0, row, predictions.detach(), "amax", include_self=True
+    )
+    shifted = predictions - top[row]
+    total = predictions.new_zeros(tasks).index_add_(0, row, shifted.exp())
+    task = predictions.new_zeros(tasks).index_add_(0, row, -target * (shifted - total[row].log()))
+    points = predictions.new_zeros(tasks).index_add_(0, row, predictions.new_ones(len(row)))
+    weight = predictions.new_zeros(tasks).index_add_(0, row, batch["weight"]) / points.clamp_min(1)
+    return (weight * task).sum() / weight.sum()
+
+
 class Entropy:
     reads = ("class", "proportions")
 
     def __call__(self, predictions, batch, bank):
-        import torch
+        return crossed(predictions, batch["target"], batch)
 
-        row, tasks = batch["point_row"], batch["tasks"]
-        top = predictions.new_full((tasks,), -torch.inf).scatter_reduce(
-            0, row, predictions.detach(), "amax", include_self=True
-        )
-        shifted = predictions - top[row]
-        total = predictions.new_zeros(tasks).index_add_(0, row, shifted.exp())
-        crossed = -batch["target"] * (shifted - total[row].log())
-        task = predictions.new_zeros(tasks).index_add_(0, row, crossed)
-        points = predictions.new_zeros(tasks).index_add_(0, row, predictions.new_ones(len(row)))
-        weight = predictions.new_zeros(tasks).index_add_(0, row, batch["weight"]) / points.clamp_min(1)
-        return (weight * task).sum() / weight.sum()
+
+class Listwise:
+    reads = ("ranking",)
+
+    def __call__(self, predictions, batch, bank):
+        row, target = batch["point_row"], batch["target"]
+        total = target.new_zeros(batch["tasks"]).index_add_(0, row, target)
+        return crossed(predictions, target / total[row], batch)
 
 
 class Binary:
@@ -142,4 +154,5 @@ LOSSES.register("squared", Squared())
 LOSSES.register("balanced", Balanced())
 LOSSES.register("entropy", Entropy())
 LOSSES.register("binary", Binary())
+LOSSES.register("listwise", Listwise())
 ship([LOSSES])

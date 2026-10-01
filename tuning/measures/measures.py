@@ -163,6 +163,64 @@ class Divergence:
         return pertask(held, part)
 
 
+def ranked(held):
+    started = time.perf_counter()
+    owner = np.unique(held.task, return_inverse=True)[1].reshape(-1)
+    order = np.lexsort((-held.prediction, owner))
+    first = np.r_[0, np.flatnonzero(np.diff(owner[order])) + 1]
+    position = np.arange(len(order)) - np.repeat(first, np.diff(np.r_[first, len(order)]))
+    tied = np.cumsum(np.r_[True, (np.diff(owner[order]) != 0) | (np.diff(held.prediction[order]) != 0)]) - 1
+    counts = np.bincount(tied)
+    rank, discount = np.empty(len(order)), np.empty(len(order))
+    rank[order] = (np.bincount(tied, position) / counts)[tied] + 1
+    discount[order] = (np.bincount(tied, 1 / np.log2(position + 2)) / counts)[tied]
+    LOG.debug("ranked exit points=%d seconds=%.4f", len(order), time.perf_counter() - started)
+    return owner, rank, discount, 1 / np.log2(position + 2)
+
+
+@timed("measures.tasked")
+def tasked(held, owner, values):
+    series = np.zeros(owner.max() + 1, np.int64)
+    series[owner] = held.series
+    return dict(
+        value=float(values.mean()),
+        series={name: float(values[series == code].mean()) for code, name in enumerate(held.names)},
+    )
+
+
+@timed("measures.first")
+def first(held):
+    owner, rank, _, _ = ranked(held)
+    best = np.full(owner.max() + 1, np.inf)
+    np.minimum.at(best, owner[held.target > 0], rank[held.target > 0])
+    return owner, best
+
+
+class Gain:
+    reads = ("ranking",)
+    better = "higher"
+    label, short = "Validation normalised discounted gain", "NDCG"
+
+    @timed("measures.gain")
+    def __call__(self, held):
+        owner, _, discount, ideal = ranked(held)
+        tasks = owner.max() + 1
+        gained = np.bincount(owner, held.target * discount, tasks)
+        best = np.lexsort((-held.target, owner))
+        return tasked(held, owner, gained / np.bincount(owner[best], held.target[best] * ideal, tasks))
+
+
+class Reciprocal:
+    reads = ("ranking",)
+    better = "higher"
+    label, short = "Validation reciprocal rank", "MRR"
+
+    @timed("measures.reciprocal")
+    def __call__(self, held):
+        owner, best = first(held)
+        return tasked(held, owner, 1 / best)
+
+
 def predicted(kinds, aims, task, values):
     started = time.perf_counter()
     result = np.asarray(values, np.float64).copy()
@@ -213,4 +271,6 @@ MEASURES.register("accuracy", Accuracy())
 MEASURES.register("entropy", Entropy())
 MEASURES.register("binary", Binary())
 MEASURES.register("divergence", Divergence())
+MEASURES.register("gain", Gain())
+MEASURES.register("reciprocal", Reciprocal())
 ship([MEASURES])

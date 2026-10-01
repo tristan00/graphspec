@@ -6,11 +6,13 @@ import numpy as np
 import torch
 
 from graphspec import Registry
+from graphspec.budgets import GraphBudget
 from graphspec.engine.transform import SEED
 from graphspec.infra import workspace
 from graphspec.infra.arrays import Resident, between
-from graphspec.infra.hashing import salted
+from graphspec.infra.hashing import hashed, salted
 from graphspec.operations.rows import keyed_relations
+from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.references import SORTS
 from tuning.families.heads import FIELD
 
@@ -316,6 +318,66 @@ def member_inputs(window, first, last):
     return result
 
 
+def observing(held, steps, tokens):
+    started = time.perf_counter()
+    offsets, entity, token = held.numpy("snapshot_offsets"), held.numpy("entity"), held.numpy("entity_token")
+    result = np.full(len(steps), -1, np.int64)
+    for step in np.unique(steps).tolist():
+        lo, hi = int(offsets[step]), int(offsets[step + 1])
+        if hi == lo:
+            continue
+        found = token[entity[lo:hi]]
+        order = np.argsort(found, kind="stable")
+        chosen = np.flatnonzero(steps == step)
+        at = np.minimum(np.searchsorted(found[order], tokens[chosen]), hi - lo - 1)
+        known = found[order][at] == tokens[chosen]
+        result[chosen[known]] = lo + order[at[known]]
+    LOG.debug("observing exit points=%d seconds=%.4f", len(steps), time.perf_counter() - started)
+    return result
+
+
+def pointed(bank, window, b, rows, owner):
+    started = time.perf_counter()
+    held, registry, start = window.held, window.registry, window.start
+    tokens = bank.nodes[rows]
+    named = np.flatnonzero(tokens >= 0)
+    row = owner[named]
+    observed = observing(held, b["row_steps"][row] + start, tokens[named])
+    stops = registry.stops[b["row_kind"][row].astype(np.int64)]
+    lost = np.flatnonzero((observed < 0) & stops)
+    if len(lost):
+        found = bank.rows[rows[named[lost[0]]]]
+        raise ValueError(
+            "the node %s that a point of the task %s of the kind %s of graph %s names is not observed at the time "
+            "of its task, and the kind states absent as stop"
+            % (found["node"], found[registry.schema.tasks["key"]], found["kind"], found["graph"])
+        )
+    seen = observed >= 0
+    count = len(b["member_row"])
+    point_node = np.full(len(rows), -1, np.int64)
+    point_node[named[seen]] = count + np.arange(int(seen.sum()))
+    observed, row = observed[seen], row[seen]
+    entity = held.numpy("entity")[observed]
+    b.update(
+        member_row=np.concatenate((b["member_row"], row)),
+        member_name=np.concatenate((b["member_name"], np.full(len(row), len(registry.references), np.int64))),
+        member_entity=np.concatenate((b["member_entity"], entity.astype(np.int64))),
+        member_index=np.concatenate((b["member_index"], observed - window.lo)),
+        member_place=np.concatenate((b["member_place"], np.zeros(len(row), np.int64))),
+        member_stored=np.concatenate((b["member_stored"], np.full(len(row), -1, np.int64))),
+        member_x=joined([b["member_x"], features(window.graph, (len(row),), ("x", observed, 1.0))]),
+        partner=np.concatenate((b["partner"], np.full(len(row), -1, np.int64))),
+        point_node=point_node,
+    )
+    LOG.debug(
+        "pointed exit graph=%d points=%d nodes=%d seconds=%.4f",
+        window.graph,
+        len(rows),
+        len(row),
+        time.perf_counter() - started,
+    )
+
+
 def couples(registry):
     started = time.perf_counter()
     names, result = list(registry.references), {}
@@ -519,7 +581,31 @@ def dag_inputs(b, window, left, right, position):
     )
 
 
-def walks_inputs(b, window, context):
+def walked(bank, window, roots, moments):
+    started = time.perf_counter()
+    held, roots, moments = window.held, np.asarray(roots, np.int64), np.asarray(moments, np.int64)
+    prior = held.numpy("period_membership")[moments][:, None].astype(np.int64) - np.arange(1, PERIOD_LOOKBACK + 1)
+    starts, ends = held.numpy("period_starts"), held.numpy("period_ends")
+    result = walk_arrays(
+        held.numpy("neighbor_ids"),
+        held.numpy("neighbor_offsets"),
+        held.numpy("events"),
+        held.numpy("event_identity"),
+        roots,
+        hashed(held.numpy("entity_token")[roots], held.numpy("step_time")[moments], held.numpy("step_token")[moments]),
+        moments,
+        prior,
+        starts[prior.clip(0)].astype(np.int64),
+        ends[prior.clip(0)].astype(np.int64),
+        window.cfg["graph"],
+        SEED,
+        GraphBudget(bank.limits()),
+    )
+    LOG.debug("walked exit roots=%d seconds=%.4f", len(roots), time.perf_counter() - started)
+    return result
+
+
+def walks_inputs(b, window, context, bank):
     from tuning.families.periods import enabled, lookback
 
     graph, start = window.graph, window.start
@@ -530,9 +616,14 @@ def walks_inputs(b, window, context):
     stored = held.numpy("walks")
     if walk_count > stored.shape[1] or hops > stored.shape[2]:
         raise ValueError("requested walks exceed the walks stored for this graph variant")
-    walks = stored[chosen, :walk_count, :hops]
+    drawn = walked(bank, window, b["member_entity"][chosen < 0], moment[chosen < 0]) if np.any(chosen < 0) else None
+    found = {name: held.numpy(name)[np.maximum(chosen, 0)] for name in ("walks", "period_walks")[: 1 + enabled(cfg)]}
+    for name, values in found.items():
+        if drawn is not None:
+            values[chosen < 0] = drawn[name]
+    walks = found["walks"][:, :walk_count, :hops]
     if enabled(cfg):
-        extra = held.numpy("period_walks")[chosen, : lookback(cfg), :walk_count, :hops]
+        extra = found["period_walks"][:, : lookback(cfg), :walk_count, :hops]
         walks = np.concatenate((walks, extra.reshape(len(chosen), lookback(cfg) * walk_count, hops)), 1)
         kinds = np.zeros(walks.shape, np.int64)
         kinds[:, walk_count:] = 1
@@ -592,6 +683,7 @@ def base_inputs(bank, block, window):
         frame_rows=[np.arange(bounds[t], bounds[t + 1], dtype=np.int64) for t in range(n)],
         selected=array(selected),
         rows=Host(rows),
+        drawn=Host(np.zeros(0, np.int64)),
         target=array(bank.targets[rows]),
         weight=array(bank.weights[rows]),
         series=array(bank.series[rows], torch.long),
@@ -605,6 +697,7 @@ def base_inputs(bank, block, window):
     )
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
     b["partner"] = partnered(b["pair"], len(b["member_row"]))
+    pointed(bank, window, b, rows, np.flatnonzero(selected)[point_row])
     if tokens is not None:
         b["member_token"] = array(tokens[b["member_entity"]])
     return b
@@ -826,7 +919,7 @@ def recipe(bank, block, cfg):
     if "history" in blocks:
         neighbor_history_inputs(b, window, blocks)
     if "walks" in blocks:
-        walks_inputs(b, window, context)
+        walks_inputs(b, window, context, bank)
     context_inputs(b, window, blocks, context)
     entity_space(b, window, blocks)
     LOG.debug(

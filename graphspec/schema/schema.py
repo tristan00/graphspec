@@ -670,7 +670,7 @@ class Schema:
                     "%s states what a reference to a node not observed resolves to as one of %s, found %r"
                     % (where, ", ".join(ABSENT), found["absent"])
                 )
-            target = self.aimed(found["target"], names, where)
+            target = self.aimed(found["target"], names, references, where)
             kinds[kind] = dict(
                 references=tuple(names),
                 columns=listed(found["columns"], self.columns, where),
@@ -707,21 +707,25 @@ class Schema:
         return result
 
     @timed("schema.aimed")
-    def aimed(self, stated, names, where):
+    def aimed(self, stated, names, references, where):
         if stated is None:
             return None
-        stated = fields(stated, AIMED, "the target of " + where)
+        if not isinstance(stated, dict) or "kind" not in stated:
+            raise ValueError("the target of %s states the name of a registered kind of target, found %r" % (where, stated))
+        kind = TARGETS.named(stated["kind"])
+        stated = fields(stated, AIMED + kind.parameters, "the target of " + where)
         if stated["about"] is not None and stated["about"] not in names:
             raise ValueError(
                 "the target of %s is about one of its references, %s, or about none of them, found %r"
                 % (where, ", ".join(names) or "none", stated["about"])
             )
-        series = TARGETS.named(stated["kind"]).series(stated["series"], "the target of " + where)
+        series = kind.series(stated["series"], "the target of " + where)
         return dict(
             kind=stated["kind"],
             series=series,
             about=stated["about"],
             utility=self.valued(stated["utility"], stated["kind"], series, where),
+            **kind.checked(stated, self, references, where),
         )
 
     @timed("schema.valued")
@@ -867,6 +871,10 @@ class Schema:
                             series=TARGETS.named(entry["target"]["kind"]).written(entry["target"]["series"]),
                             about=entry["target"]["about"],
                             utility=copy.deepcopy(entry["target"]["utility"]),
+                            **{
+                                name: entry["target"][name]
+                                for name in TARGETS.named(entry["target"]["kind"]).parameters
+                            },
                         ),
                         weight=entry["weight"],
                         absent=entry["absent"],
@@ -1204,11 +1212,15 @@ class Schema:
                     wide(entry["columns"]),
                     "none"
                     if entry["target"] is None
-                    else "%s of %s%s, valued by %s, %s better"
+                    else "%s of %s%s%s, valued by %s, %s better"
                     % (
                         entry["target"]["kind"],
                         ", ".join(entry["target"]["series"]),
                         "" if entry["target"]["about"] is None else " about " + entry["target"]["about"],
+                        "".join(
+                            ", %s %s" % (name, entry["target"][name])
+                            for name in TARGETS.named(entry["target"]["kind"]).parameters
+                        ),
                         entry["target"]["utility"]["name"],
                         entry["target"]["utility"]["better"],
                     ),

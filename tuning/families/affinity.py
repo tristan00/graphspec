@@ -24,7 +24,8 @@ class AffinityNet(nn.Module):
         self.task = nn.Linear(registry.features, hidden)
         self.asked = Asked(registry, hidden)
         self.references = References(registry, kinds * 2, kinds * 2)
-        self.head = Head(kinds * 2 + hidden, spec, registry)
+        self.head = Head(kinds * 2 + hidden, spec, registry, kinds * 2)
+        self.names = len(registry.references)
 
     def forward(self, b):
         kinds = b["global_affinity"].shape[-1]
@@ -41,7 +42,8 @@ class AffinityNet(nn.Module):
             known = torch.stack(tuple(buffer)).mean(0) if buffer else frames.new_zeros(b["batch_size"], kinds)
             overall[step] = known[part[step]]
             around = known[part[owner[chosen]]]
-            held, inverse = torch.unique(entity[chosen], return_inverse=True)
+            referred = b["member_name"][chosen] < self.names
+            held, inverse = torch.unique(entity[chosen][referred], return_inverse=True)
             keep = (self.xh(x) + self.hh(state[entity[chosen]]) + self.bh).sigmoid()
             hidden = keep * state[entity[chosen]] + (1 - keep) * x
             select = (self.xs(x) + self.hs(hidden) + self.gs(around) + self.bs).sigmoid()
@@ -58,7 +60,7 @@ class AffinityNet(nn.Module):
                 value = self.periods(value, previous, b["end_gaps"][rows], b["end_mask"][rows])
             values.append(value)
             order.append(chosen)
-            state = state.index_copy(0, held, mean(hidden, inverse, len(held)))
+            state = state.index_copy(0, held, mean(hidden[referred], inverse, len(held)))
             buffer.append(frames[:, time_step].log1p())
         members = torch.cat(values)[torch.argsort(torch.cat(order))]
         whole = torch.cat((b["global_affinity"].log1p(), overall), -1)[b["whole_row"]]
@@ -66,4 +68,4 @@ class AffinityNet(nn.Module):
             (self.references(b, members, whole), self.asked(self.task(b["task"]), b)),
             -1,
         )
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, members)

@@ -8,8 +8,14 @@ from tuning.families.heads import FIELD, Attached
 class Share:
     scaled = False
     matures = None
+    names = None
+    parameters = ()
     columns = dict(trials="FLOAT")
     fields = ("trials",)
+
+    @timed("shares.share.checked")
+    def checked(self, stated, schema, references, where):
+        return {}
 
     @timed("shares.share.series")
     def series(self, stated, where):

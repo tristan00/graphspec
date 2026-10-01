@@ -2,6 +2,7 @@ import copy
 import logging
 import time
 
+import numpy as np
 import pytest
 import support
 import torch
@@ -158,6 +159,8 @@ def same(left, right):
             and torch.equal(left.isnan(), right.isnan())
             and torch.equal(left.nan_to_num(), right.nan_to_num())
         )
+    if isinstance(left, np.ndarray):
+        return isinstance(right, np.ndarray) and left.dtype == right.dtype and np.array_equal(left, right)
     if isinstance(left, dict):
         return isinstance(right, dict) and sorted(left) == sorted(right) and all(same(left[key], right[key]) for key in left)
     if isinstance(left, (list, tuple)):

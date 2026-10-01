@@ -59,7 +59,8 @@ def add(b, window, members):
     age = np.maximum(ends[owner] - step[observed.clip(0)], 0)
     age[~mask] = 0
     oldest = np.zeros(valid.shape, np.int64)
-    np.maximum.at(oldest, owner, age)
+    referred = members["member_name"] < len(window.registry.references)
+    np.maximum.at(oldest, owner[referred], age[referred])
     numbers = held.numpy("period_numbers")
     period_gap = numbers[membership, None] - numbers[prior]
     gaps = np.stack((tasks[:, None] - ends, period_gap, oldest), -1).clip(0).astype(np.float32)

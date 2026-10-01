@@ -270,7 +270,7 @@ class TrainingSession:
         from tuning.batches.batching import batches
         from tuning.families.periods import blocks as period_blocks
 
-        values, indices = [], []
+        values, indices, drawn, owners = [], [], [], []
         with measure("validation_schedule"):
             validation = batches(
                 period_blocks(self.bank, self.bank.blocks(1, self.history, self.config), self.config),
@@ -293,9 +293,11 @@ class TrainingSession:
                             raise FloatingPointError("nonfinite holdout predictions")
                         series = batch["series"]
                         raw = predictions * predictions.new_tensor(self.bank.scale)[series]
-                        raw = raw + predictions.new_tensor(self.bank.center)[series]
-                        values.extend(raw.cpu().tolist())
+                        raw = (raw + predictions.new_tensor(self.bank.center)[series]).cpu()
+                        values.extend(raw[: len(batch["rows"])].tolist())
                         indices.extend(batch["rows"].tolist())
+                        drawn.extend(raw[len(batch["rows"]) :].tolist())
+                        owners.extend(batch["drawn"].tolist())
                 if (index + 1) % 256 == 0:
                     emit(
                         "validation_progress",
@@ -305,27 +307,34 @@ class TrainingSession:
                         seconds=time.perf_counter() - self.entered,
                     )
                 del batch, predictions
-        return np.asarray(indices, np.int64), np.asarray(values, np.float64)
+        return (
+            np.asarray(indices, np.int64),
+            np.asarray(values, np.float64),
+            np.asarray(owners, np.int64),
+            np.asarray(drawn, np.float64),
+        )
 
     @timed("score_and_save")
-    def save_result(self, indices: np.ndarray, values: np.ndarray, batch_size: int) -> dict:
+    def save_result(self, found: tuple, batch_size: int) -> dict:
         import torch
 
         from .budget import policy
 
         self.budget.pulse("scoring")
+        indices, values, owners, drawn = found
         ordering = np.argsort(indices)
         indices, values = indices[ordering], values[ordering]
         if not np.array_equal(indices, self.scored):
             raise ValueError("holdout predictions do not exactly cover the frozen partition")
         with measure("metrics"):
-            schema = self.bank.registry.schema
-            values = predicted(schema.targets(), self.bank.aims[indices], self.bank.task_of[indices], values)
+            schema, every = self.bank.registry.schema, np.r_[indices, owners]
+            both = predicted(schema.targets(), self.bank.aims[every], self.bank.task_of[every], np.r_[values, drawn])
+            values, drawn = both[: len(indices)], both[len(indices) :]
             held = scored(
-                self.bank.targets[indices],
-                values,
-                self.bank.task_of[indices],
-                self.bank.series[indices],
+                np.r_[self.bank.targets[indices], np.zeros(len(owners))],
+                both,
+                self.bank.task_of[every],
+                self.bank.series[every],
                 self.bank.series_names,
                 self.bank.scale,
             )
@@ -338,6 +347,8 @@ class TrainingSession:
                 target=self.bank.targets[indices],
                 series=self.bank.series[indices],
                 aim=self.bank.aims[indices],
+                drawn_row=owners,
+                drawn_prediction=drawn,
                 **{FIELD + name: values[indices] for name, values in self.bank.fields.items()},
             )
         self.budget.check()
@@ -422,12 +433,12 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
             session.net.train()
             session.train(session.packer, schedule)
             session.checkpoint(training_blocks)
-            indices, values = session.evaluate(session.packer, schedule)
+            found = session.evaluate(session.packer, schedule)
         finally:
             budget.pulse("cleanup")
             with measure("packer_cleanup"):
                 session.packer.close()
-        result = session.save_result(indices, values, batch_size)
+        result = session.save_result(found, batch_size)
     result["timeline"] = budget.timeline.snapshot()
     write_json(Path(directory) / "result.json", result)
     return result

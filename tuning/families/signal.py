@@ -34,7 +34,7 @@ class SignalNet(nn.Module):
         self.asked = Asked(registry, hidden)
         self.member = nn.Linear(registry.features, hidden)
         self.references = References(registry, hidden, hidden)
-        self.head = Head(hidden * 3, spec, registry)
+        self.head = Head(hidden * 3, spec, registry, hidden)
 
     def adjacency(self):
         left, right = self.left_map(self.left).tanh(), self.right_map(self.right).tanh()
@@ -64,12 +64,13 @@ class SignalNet(nn.Module):
         values = frames[b["row_frames"]]
         if self.has_periods:
             values = self.periods(values, frames[b["end_steps"].clamp_min(0)], b["end_gaps"], b["end_mask"])
+        members = self.member(b["member_x"])
         features = torch.cat(
             (
                 values,
-                self.references(b, self.member(b["member_x"]), values[b["whole_row"]]),
+                self.references(b, members, values[b["whole_row"]]),
                 self.asked(self.task(b["task"]), b),
             ),
             -1,
         )
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, members)

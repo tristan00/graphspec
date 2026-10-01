@@ -37,7 +37,7 @@ class EventGraphNet(nn.Module):
         )
         self.whole = nn.Linear(registry.features, hidden * 2)
         self.references = References(registry, hidden * 2, hidden * 3)
-        self.head = Head(hidden * 4, spec, registry)
+        self.head = Head(hidden * 4, spec, registry, hidden * 2)
 
     def forward(self, b):
         event = self.input(b["event_x"]) + self.kind(b["events"][:, 3]) + self.relation(related(b["events"]))
@@ -89,4 +89,4 @@ class EventGraphNet(nn.Module):
             ),
             -1,
         )
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, values)

@@ -415,7 +415,7 @@ def serving(held, graph, step):
 def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, name):
     held, _ = opened(banks, name)
     schema = held.registry.schema
-    assert held.manifest["version"] == 8 and schema.tasks["grouping"] is None
+    assert held.manifest["version"] == 9 and schema.tasks["grouping"] is None
     written = support.written(banks[name].parent / (name + ".staging"), schema)
     found = truths(held)
     assert sorted(found) == sorted(written)

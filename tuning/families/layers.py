@@ -7,6 +7,7 @@ from torch.nn import functional as F
 
 from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
+from graphspec.schema.targets import TARGETS
 
 from .heads import FIELD, HEADS
 
@@ -176,12 +177,16 @@ class References(nn.Module):
         self.place = nn.Linear(1, width, bias=False)
         bound = 1 / math.sqrt(width)
         self.project = nn.Parameter(torch.empty(self.names, width, output).uniform_(-bound, bound))
+        self.pointing = any(TARGETS.named(kind).names is not None for kind in registry.schema.targets())
 
     def forward(self, b, members, whole):
-        name = b["member_name"]
-        place = self.place(torch.log1p(b["member_place"].float())[:, None])
+        name, place, row = b["member_name"], b["member_place"], b["member_row"]
+        if self.pointing:
+            referred = name < self.names
+            members, name, place, row = members[referred], name[referred], place[referred], row[referred]
+        place = self.place(torch.log1p(place.float())[:, None])
         members = members + place * self.ordered[name][:, None]
-        keys = torch.cat((b["member_row"] * self.names + name, b["whole_row"] * self.names + b["whole_name"]))
+        keys = torch.cat((row * self.names + name, b["whole_row"] * self.names + b["whole_name"]))
         pooled = mean(torch.cat((members, whole)), keys, b["predictions"] * self.names)
         pooled = pooled.reshape(b["predictions"], self.names, pooled.shape[-1])
         return torch.einsum("rnw,nwo->ro", pooled, self.project)
@@ -232,6 +237,18 @@ class ScoreHead(nn.Module):
         return (self.task(h) * series).sum(-1) + self.bias(series).squeeze(-1)
 
 
+class NodeHead(nn.Module):
+    @timed("layers.nodehead")
+    def __init__(self, hidden):
+        super().__init__()
+        self.query = nn.Linear(hidden * 2, hidden)
+        self.bias = nn.Linear(hidden, 1)
+
+    def forward(self, h, series, b, points):
+        task, node = h.chunk(2, -1)
+        return (self.query(torch.cat((task, series), -1)) * node).sum(-1) + self.bias(node).squeeze(-1)
+
+
 class PathHead(nn.Module):
     @timed("layers.pathhead")
     def __init__(self, hidden, encoding):
@@ -245,22 +262,27 @@ class PathHead(nn.Module):
 
 class Head(nn.Module):
     @timed("layers.head")
-    def __init__(self, width, spec, registry):
+    def __init__(self, width, spec, registry, nodes):
         super().__init__()
         hidden = spec["hidden"]
         self.targets = registry.schema.targets()
         self.task = nn.Sequential(nn.Linear(width, hidden), nn.SiLU())
         self.series = nn.Embedding(len(registry.schema.series()), hidden)
         self.kinds = nn.ModuleList(HEADS.named(kind).module(hidden, spec, registry) for kind in self.targets)
+        self.named = [TARGETS.named(kind).names is not None for kind in self.targets]
+        self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU()) if any(self.named) else None
 
-    def forward(self, features, b):
+    def forward(self, features, b, members):
         h, series = self.task(features)[b["point_row"]], self.series(b["series"])
+        node = None if self.node is None else padded(self.node(members), b["point_node"])
         if len(self.kinds) == 1:
-            return self.kinds[0](h, series, b, torch.arange(len(h), device=h.device))
+            given = h if node is None else torch.cat((h, node), -1)
+            return self.kinds[0](given, series, b, torch.arange(len(h), device=h.device))
         outputs, places = [], []
         for code, kind in enumerate(self.kinds):
             points = (b["aim"] == code).nonzero().flatten()
-            outputs.append(kind(h[points], series[points], b, points))
+            given = torch.cat((h[points], node[points]), -1) if self.named[code] else h[points]
+            outputs.append(kind(given, series[points], b, points))
             places.append(points)
         values = torch.cat(outputs)
         return values.new_zeros(len(h)).scatter(0, torch.cat(places), values)

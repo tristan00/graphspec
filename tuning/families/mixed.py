@@ -61,7 +61,7 @@ class MixedNet(nn.Module):
         self.asked = Asked(registry, hidden)
         self.whole = nn.Linear(registry.features, hidden)
         self.references = References(registry, hidden, hidden)
-        self.head = Head(hidden * 2, spec, registry)
+        self.head = Head(hidden * 2, spec, registry, hidden)
         self.register_buffer("shifts", torch.arange(CODE_BITS), persistent=False)
 
     def forward(self, b):
@@ -72,11 +72,12 @@ class MixedNet(nn.Module):
         edge = torch.cat((((mixed["edge_code"][:, None] >> self.shifts) & 1).float(), mixed["edge_gap"]), 1)
         for layer in self.layers:
             h = layer(h, mixed["edge_index"], edge)
+        members = h[mixed["row"]]
         features = torch.cat(
             (
-                self.references(b, h[mixed["row"]], self.whole(b["whole_x"])),
+                self.references(b, members, self.whole(b["whole_x"])),
                 self.asked(self.task(b["task"]), b),
             ),
             -1,
         )
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, members)

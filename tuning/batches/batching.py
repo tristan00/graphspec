@@ -18,6 +18,7 @@ ENTITY_FRAMES = 1 << 20
 FACTS = 4 << 20
 CHUNK = 64
 GRAPHS, GROUPS = "tuning.batches/graphs", "tuning.batches/groups"
+POINTS = ("target", "weight", "aim", "series")
 
 
 @dataclass(frozen=True)
@@ -226,10 +227,6 @@ def recipe_batch(bank, blocks, cfg):
     )
     direct = (
         "selected",
-        "target",
-        "weight",
-        "aim",
-        "series",
         "row_kind",
         "member_name",
         "member_place",
@@ -285,13 +282,26 @@ def recipe_batch(bank, blocks, cfg):
         "history_token",
         "walk_token",
     )
-    for key in direct + tuple(key for key in parts[0] if key.startswith(FIELD)):
+    for key in direct:
         if key in parts[0]:
             b[key] = joined([p[key] for p in parts])
     offsets = np.r_[0, np.cumsum([p["tasks"] for p in parts])]
-    b["point_row"] = np.concatenate([p["point_row"] + int(offset) for p, offset in zip(parts, offsets)])
-    b["tasks"] = int(offsets[-1])
     member_offsets = np.r_[0, np.cumsum([len(p["member_row"]) for p in parts])]
+    real = [len(p["rows"].value) for p in parts]
+
+    def points(values):
+        return np.concatenate(
+            [value[:count] for value, count in zip(values, real)] + [value[count:] for value, count in zip(values, real)]
+        )
+
+    for key in POINTS + tuple(key for key in parts[0] if key.startswith(FIELD)):
+        b[key] = points([p[key] for p in parts])
+    b["point_row"] = points([p["point_row"] + int(offset) for p, offset in zip(parts, offsets)])
+    b["point_node"] = points(
+        [np.where(p["point_node"] >= 0, p["point_node"] + int(shift), -1) for p, shift in zip(parts, member_offsets)]
+    )
+    b["drawn"] = Host(np.concatenate([p["drawn"].value for p in parts]))
+    b["tasks"] = int(offsets[-1])
     if "end_steps" in parts[0]:
         b["end_steps"] = moved(parts, "end_steps", [i * t for i in range(size)])
         b["member_end_local"] = moved(parts, "member_end_local", nodes)

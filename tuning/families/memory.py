@@ -194,7 +194,7 @@ class MemoryNet(nn.Module):
             self.query_key, self.query_value = nn.Linear(hidden, hidden), nn.Linear(hidden, hidden)
         self.whole = nn.Linear(registry.features, hidden)
         self.references = References(registry, hidden, hidden * 2)
-        self.head = Head(hidden * (7 if self.pair_terms else 3), spec, registry)
+        self.head = Head(hidden * (7 if self.pair_terms else 3), spec, registry, hidden)
 
     def readout(self, values, neighbors, end_values, b):
         if self.attention:
@@ -312,4 +312,4 @@ class MemoryNet(nn.Module):
         if self.pair_terms:
             parts.append(self.paired(values, torch.cat(common)[torch.argsort(torch.cat(rows))], b))
         features = torch.cat(parts + [self.asked(self.input(b["task"]), b)], -1)
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, values)

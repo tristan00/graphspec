@@ -181,8 +181,8 @@ def test_kinds_of_target_and_utilities_are_registered_and_a_target_names_them():
     )
     assert schema.targets() == ("number",) and schema.target_columns() == {}
     assert Schema(synthetic.varied("path")["schema"]).target_columns() == dict(tau="FLOAT", series="STRING")
-    with pytest.raises(KeyError, match="no kind of target is registered under the name 'ranking'"):
-        Schema(restated(kind="ranking"))
+    with pytest.raises(KeyError, match="no kind of target is registered under the name 'unheard'"):
+        Schema(restated(kind="unheard"))
     with pytest.raises(ValueError, match="the target of the kind of task buy names its one series without colons"):
         Schema(restated(series=["outcome"]))
     with pytest.raises(KeyError, match="no utility is registered under the name 'profit'"):
@@ -273,7 +273,7 @@ def test_a_head_gives_every_point_the_prediction_of_the_head_of_its_kind_of_targ
 
     schema = SimpleNamespace(targets=lambda: ("number", "path"), series=lambda: ("size", "near", "far"))
     torch.manual_seed(3)
-    head = Head(5, {"hidden": 4, "time/encoding": "log_cosine"}, SimpleNamespace(schema=schema))
+    head = Head(5, {"hidden": 4, "time/encoding": "log_cosine"}, SimpleNamespace(schema=schema), 2)
     features = torch.randn(3, 5)
     b = {
         "point_row": torch.tensor([0, 1, 1, 2, 0]),
@@ -281,7 +281,7 @@ def test_a_head_gives_every_point_the_prediction_of_the_head_of_its_kind_of_targ
         "aim": torch.tensor([1, 0, 1, 0, 1]),
         "field/tau": torch.tensor([1.0, float("nan"), 2.0, float("nan"), 3.0]),
     }
-    found = head(features, b)
+    found = head(features, b, torch.zeros(0, 2))
     h, series = head.task(features)[b["point_row"]], head.series(b["series"])
     assert found.shape == (5,) and torch.isfinite(found).all()
     for code in (0, 1):

@@ -80,7 +80,7 @@ class SequenceNet(nn.Module):
         self.asked = Asked(registry, hidden)
         self.whole = nn.Linear(registry.features, hidden)
         self.references = References(registry, hidden, hidden * 2)
-        self.head = Head(hidden * 3, spec, registry)
+        self.head = Head(hidden * 3, spec, registry, hidden)
 
     def mixer(self, x, raw, mask, roots, b):
         for layer in self.layers:
@@ -149,4 +149,4 @@ class SequenceNet(nn.Module):
         features = torch.cat(
             (self.references(b, summary, self.whole(b["whole_x"])), self.asked(self.input(b["task"]), b)), -1
         )
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, summary)

@@ -179,10 +179,16 @@ def pointed(stated, found, owner, kinds, graphs, rows):
         points = target.points(
             dict(task=owner[chosen], graph=graphs[chosen], y=numbers[chosen], **given), entry["target"]["series"], where
         )
-        if sorted(points) != sorted(("series",) + tuple(target.fields)):
+        given = ("series",) + tuple(target.fields) + (() if target.names is None else ("node",))
+        if sorted(points) != sorted(given):
             raise ValueError(
-                "the kind of target %s gives for its points %s, and states the fields %s beside their series"
-                % (entry["target"]["kind"], ", ".join(sorted(points)), ", ".join(target.fields) or "none")
+                "the kind of target %s gives for its points %s, and states the fields %s beside their series%s"
+                % (
+                    entry["target"]["kind"],
+                    ", ".join(sorted(points)),
+                    ", ".join(target.fields) or "none",
+                    "" if target.names is None else " and the node each names",
+                )
             )
         for name, values in points.items():
             for place, value in zip(chosen.tolist(), values):

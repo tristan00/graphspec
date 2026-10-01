@@ -8,6 +8,7 @@ from graphspec.facts.stored import Facts, codes, column, matrix, sparse, tokens
 from graphspec.schema import time as clock
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import VALUE, absent, inward, outward
+from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
@@ -281,7 +282,7 @@ def referred(registry, tables, tasks, place, local, kinds, name):
     return result
 
 
-def aimed(registry, tables, tasks, place, rows, series, name):
+def aimed(registry, tables, tasks, place, rows, series, referred, keys, kinds, name):
     started = time.perf_counter()
     stated = registry.schema.tasks
     listed = list(stated["kinds"])
@@ -312,6 +313,8 @@ def aimed(registry, tables, tasks, place, rows, series, name):
             )
     if np.any(tasks["task_split"][owner] < 0):
         raise ValueError("a task of graph %s holds a target and states no split" % name)
+    nodes = found.column("node").to_pylist() if "node" in found.column_names else [None] * len(owner)
+    node = noded(registry, tasks, referred, keys, kinds, owner, nodes, name)
     order = np.lexsort((rows, owner))
     result = dict(
         target_task=owner[order].astype(np.int32),
@@ -319,8 +322,72 @@ def aimed(registry, tables, tasks, place, rows, series, name):
         target_known=known[order],
         target_y=column(found, "y", np.float64)[order],
         target_series=series[order],
+        target_node=node[order].astype(np.int32),
     )
     LOG.debug("aimed exit graph=%s targets=%d seconds=%.4f", name, len(order), time.perf_counter() - started)
+    return result
+
+
+def noded(registry, tasks, members, keys, kinds, owner, nodes, name):
+    started = time.perf_counter()
+    schema, result = registry.schema, np.full(len(owner), -1, np.int64)
+    references, count = list(schema.tasks["references"]), len(tasks["task_key"])
+    names, code = np.unique(np.asarray(keys, str), return_inverse=True)
+    code = code.reshape(-1)
+    for number, (kind, entry) in enumerate(schema.tasks["kinds"].items()):
+        target = entry["target"]
+        chosen = np.flatnonzero(tasks["task_kind"][owner] == number)
+        if target is None or TARGETS.named(target["kind"]).names is None or not len(chosen):
+            continue
+        where = "the target of the kind of task %s of graph %s" % (kind, name)
+        stated = np.asarray([nodes[at] for at in chosen.tolist()], str)
+        wanted = np.searchsorted(names, stated)
+        lost = (wanted >= len(names)) | (names[np.minimum(wanted, len(names) - 1)] != stated)
+        if lost.any():
+            raise ValueError("%s names the node %s, which the graph does not hold" % (where, stated[np.argmax(lost)]))
+        held = np.flatnonzero(members["member_name"] == references.index(target["about"]))
+        task, source = members["member_task"][held].astype(np.int64), members["member_source"][held].astype(np.int64)
+        if TARGETS.named(target["kind"]).names == "members":
+            listed = task * len(names) + code[source]
+            order = np.argsort(listed, kind="stable")
+            asked = owner[chosen] * len(names) + wanted
+            low = np.searchsorted(listed[order], asked, "left")
+            ones = np.searchsorted(listed[order], asked, "right") - low == 1
+            if not ones.all():
+                raise ValueError(
+                    "%s names the node %s, which is not one member of the reference %s of its task"
+                    % (where, stated[np.argmin(ones)], target["about"])
+                )
+            result[chosen] = source[order[low]]
+            points, listing = np.bincount(owner[chosen], minlength=count), np.bincount(task, minlength=count)
+            unnamed = np.flatnonzero((points > 0) & (points != listing))
+            if len(unnamed):
+                raise ValueError(
+                    "%s names %d of the %d members of the reference %s of the task %d; it names every member once"
+                    % (where, points[unnamed[0]], listing[unnamed[0]], target["about"], tasks["task_key"][unnamed[0]])
+                )
+            continue
+        anchor = np.full(count, -1, np.int64)
+        anchor[task] = source
+        edge = schema.edges[target["relation"]]
+        pairs = {(registry.kind(left), registry.kind(right)) for left, right in edge["endpoints"]}
+        if not edge["directed"]:
+            pairs |= {(right, left) for left, right in pairs}
+        within = np.argsort(code, kind="stable")
+        low, high = np.searchsorted(code[within], wanted, "left"), np.searchsorted(code[within], wanted, "right")
+        for at, point in enumerate(chosen.tolist()):
+            ends = [
+                int(found)
+                for found in within[low[at] : high[at]].tolist()
+                if (int(kinds[anchor[owner[point]]]), int(kinds[found])) in pairs
+            ]
+            if len(ends) != 1:
+                raise ValueError(
+                    "%s names the node %s, which %d nodes of the kinds %s joins to the node of %s hold"
+                    % (where, stated[at], len(ends), target["relation"], target["about"])
+                )
+            result[point] = ends[0]
+    LOG.debug("noded exit graph=%s points=%d seconds=%.4f", name, len(owner), time.perf_counter() - started)
     return result
 
 
@@ -420,7 +487,7 @@ def parse(registry, splits, observers, tables, rows, series, name):
         raise ValueError("fact codes must fit 0..%d" % np.iinfo(np.int16).max)
     tasks, place = asked(registry, splits, observers, tables, name)
     members = referred(registry, tables, tasks, place, local, kinds, name)
-    targets = aimed(registry, tables, tasks, place, rows, series, name)
+    targets = aimed(registry, tables, tasks, place, rows, series, members, keys, kinds, name)
     joined = belonging(registry, tables, kinds, local, name)
     inner, held = holding(registry, tables, kinds, local, name)
     graph = Facts(

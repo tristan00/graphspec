@@ -42,6 +42,13 @@ def scores(hidden, spec, registry):
     return ScoreHead(hidden)
 
 
+@timed("heads.nodes")
+def nodes(hidden, spec, registry):
+    from .layers import NodeHead
+
+    return NodeHead(hidden)
+
+
 def reading(registry, name):
     started = time.perf_counter()
     result = any(name in HEADS.named(kind).reads for kind in registry.schema.targets())
@@ -54,4 +61,5 @@ HEADS.register("path", Attached(("time/encoding",), path))
 HEADS.register("class", Attached((), scores))
 HEADS.register("classes", Attached((), scores))
 HEADS.register("proportions", Attached((), scores))
+HEADS.register("ranking", Attached((), nodes))
 ship([HEADS])

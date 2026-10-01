@@ -35,7 +35,7 @@ class WalkNet(nn.Module):
         self.asked = Asked(registry, hidden)
         self.whole = nn.Linear(registry.features, hidden)
         self.references = References(registry, hidden, hidden * 2)
-        self.head = Head(hidden * 3, spec, registry)
+        self.head = Head(hidden * 3, spec, registry, hidden)
 
     def walked(self, raw, mask):
         members, walks, hops, hidden = raw.shape
@@ -64,4 +64,4 @@ class WalkNet(nn.Module):
         features = torch.cat(
             (self.references(b, summary, self.whole(b["whole_x"])), self.asked(self.input(b["task"]), b)), -1
         )
-        return self.head(features[b["selected"]], b)
+        return self.head(features[b["selected"]], b, summary)

@@ -286,7 +286,7 @@ def present(held, graph, relation):
 def test_sets_edges_about_edges_and_held_graphs_read_back_from_the_bank_equal_to_what_was_stated(bank):
     held = Deriver(bank, "cpu", RESIDENT)
     schema = held.registry.schema
-    assert held.manifest["version"] == 8 and schema.mapping() == stated()
+    assert held.manifest["version"] == 9 and schema.mapping() == stated()
     written = support.written(bank.parent / "sets.staging", schema)
     for entry in held.manifest["graphs"]:
         truth = Facts.load(held.truth(entry["index"]))
