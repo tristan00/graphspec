@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import threading
 import time
 import traceback
@@ -28,6 +29,10 @@ def serve(bank_directory, cfg, threads, resident, device, jobs, results, entries
     path = None if timing_directory is None else Path(timing_directory) / ("packing-%s.json" % os.getpid())
     with Timeline(path), measure("packing_worker"):
         serve_batches(bank_directory, cfg, threads, resident, device, jobs, results, entries)
+    results.close()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results, entries):
