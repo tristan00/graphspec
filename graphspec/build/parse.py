@@ -281,14 +281,14 @@ def referred(registry, tables, tasks, place, local, kinds, name):
     return result
 
 
-def aimed(registry, tables, tasks, place, rows, name):
+def aimed(registry, tables, tasks, place, rows, series, name):
     started = time.perf_counter()
     stated = registry.schema.tasks
     listed = list(stated["kinds"])
     found = tables["targets"]
     owner = place[column(found, "task", np.int64)]
-    rows = np.asarray(rows, np.int64)
-    if len(rows) != len(owner):
+    rows, series = np.asarray(rows, np.int64), np.asarray(series, np.int32)
+    if len(rows) != len(owner) or len(series) != len(owner):
         raise ValueError("graph %s reads different targets than its supervision" % name)
     known = np.full(len(owner), NEVER, np.int64)
     if "known" in found.column_names:
@@ -318,12 +318,13 @@ def aimed(registry, tables, tasks, place, rows, name):
         target_row=rows[order],
         target_known=known[order],
         target_y=column(found, "y", np.float64)[order],
+        target_series=series[order],
     )
     LOG.debug("aimed exit graph=%s targets=%d seconds=%.4f", name, len(order), time.perf_counter() - started)
     return result
 
 
-def parse(registry, splits, observers, tables, rows, name):
+def parse(registry, splits, observers, tables, rows, series, name):
     started = time.perf_counter()
     schema, encoding = registry.schema, registry.encoding
     unit = None
@@ -419,7 +420,7 @@ def parse(registry, splits, observers, tables, rows, name):
         raise ValueError("fact codes must fit 0..%d" % np.iinfo(np.int16).max)
     tasks, place = asked(registry, splits, observers, tables, name)
     members = referred(registry, tables, tasks, place, local, kinds, name)
-    targets = aimed(registry, tables, tasks, place, rows, name)
+    targets = aimed(registry, tables, tasks, place, rows, series, name)
     joined = belonging(registry, tables, kinds, local, name)
     inner, held = holding(registry, tables, kinds, local, name)
     graph = Facts(

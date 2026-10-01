@@ -9,6 +9,7 @@ from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema import time as clock
 from graphspec.schema.references import MEMBERS
+from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ABOUT, ALWAYS, NEVER, SEVERAL
 
 from . import spans, visible
@@ -237,7 +238,8 @@ def matured(facts, registry, held, entity, step, values):
     seen = ((looking == held["observer"]) | (looking < 0)) & np.isin(
         np.asarray(facts.task_split)[owner], held["matures"]
     )
-    layout = registry.encoding.layout
+    layout, encoding = registry.encoding.layout, registry.encoding
+    named = np.asarray(schema.series(), object)[np.asarray(facts.target_series, np.int64)]
     parts = []
     for code, entry in enumerate(schema.tasks["kinds"].values()):
         ripe = entry["matures"]
@@ -247,15 +249,29 @@ def matured(facts, registry, held, entity, step, values):
         members = np.flatnonzero(np.asarray(facts.member_name) == names.index(ripe["reference"]))
         place = np.full(len(facts.task_key), -1, np.int64)
         place[np.asarray(facts.member_task)[members]] = np.asarray(facts.member_source)[members]
-        parts.append(
-            (
-                place[owner[chosen]],
-                np.full(len(chosen), layout.index(ripe["column"]), np.int64),
-                np.asarray(facts.task_time, np.int64)[owner[chosen]],
-                np.asarray(facts.target_known, np.int64)[chosen],
-                np.asarray(facts.target_y, np.float64)[chosen],
-            )
+        stated = TARGETS.named(entry["target"]["kind"]).ripened(
+            named[chosen], np.asarray(facts.target_y, np.float64)[chosen]
         )
+        columns = np.asarray([ripe["columns"][name] for name in named[chosen]], object)
+        written = np.asarray([value is not None for value in stated], bool)
+        for column in dict.fromkeys(ripe["columns"].values()):
+            rows = np.flatnonzero((columns == column) & written)
+            kept = chosen[rows]
+            parts.append(
+                (
+                    place[owner[kept]],
+                    np.full(len(kept), layout.index(column), np.int64),
+                    np.asarray(facts.task_time, np.int64)[owner[kept]],
+                    np.asarray(facts.target_known, np.int64)[kept],
+                    np.asarray(
+                        schema.kind(column).codes(
+                            [stated[at] for at in rows.tolist()],
+                            encoding.dictionaries[column] if schema.kind(column).symbols else None,
+                        ),
+                        np.float64,
+                    ),
+                )
+            )
     count = 0
     if parts:
         who, column, since, known, y = (np.concatenate(found) for found in zip(*parts))

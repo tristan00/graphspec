@@ -31,7 +31,7 @@ STORED = (
     + ("task_time", "task_observer", "task_grouping", "task_key", "task_kind", "task_split")
     + ("task_weight", "task_values", "task_signals")
     + MEMBERS
-    + ("target_task", "target_row", "target_known", "target_y")
+    + ("target_task", "target_row", "target_known", "target_y", "target_series")
     + ("graph_values",)
     + JOINED
     + HELD

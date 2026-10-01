@@ -24,7 +24,20 @@ TAGS = ["red", "green", "blue"]
 TREES = ["oak", "elm", "ash"]
 SHARES = (0.5, 0.25, 0.25)
 TIMES = (1, 2, 3, 4, 5, 6, 7, 8)
-KINDS = dict(level=("number", "size"), grade=("class", GRADES), tags=("classes", TAGS), mix=("proportions", TREES))
+FLAGS = dict(red="reddish", green="greenish", blue="bluish")
+PARTS = dict(oak="oaks", elm="elms", ash="ashes")
+KINDS = dict(
+    level=("number", "size", None),
+    grade=("class", GRADES, "tier"),
+    tags=("classes", TAGS, FLAGS),
+    mix=("proportions", TREES, PARTS),
+)
+COLUMNS = dict(
+    load=dict(type="number", encoder="value"),
+    tier=dict(type="category", encoder="onehot"),
+    **{name: dict(type="flag", encoder="value") for name in FLAGS.values()},
+    **{name: dict(type="number", encoder="value") for name in PARTS.values()},
+)
 
 
 @timed("classes.aimed")
@@ -38,9 +51,9 @@ def schema(kinds):
         version=VERSION,
         time=dict(model="clock", units=["tick"], ties=None),
         observers=False,
-        columns=dict(load=dict(type="number", encoder="value")),
+        columns=COLUMNS,
         graph=dict(columns=[]),
-        nodes=dict(site=dict(columns=["load"], holds=None)),
+        nodes=dict(site=dict(columns=list(COLUMNS), holds=None)),
         sets={},
         edges=dict(link=synthetic.edge("site", "site", [])),
         tasks=dict(
@@ -52,11 +65,11 @@ def schema(kinds):
                 name: dict(
                     references=["at"],
                     columns=[],
-                    target=aimed(*kinds[name]),
+                    target=aimed(*kinds[name][:2]),
                     weight=False,
                     absent="stop",
                     event=None,
-                    matures=None,
+                    matures=None if kinds[name][2] is None else dict(reference="at", column=kinds[name][2]),
                 )
                 for name in kinds
             },
@@ -78,7 +91,8 @@ def stated(kind, at, place):
 @timed("classes.graph")
 def graph(place):
     kinds = list(KINDS)
-    values = dict(key=list(SITES), since=[0] * 6, until=[None] * 6, load=[1.0 + at + place for at in range(6)])
+    values = dict(key=list(SITES), since=[0] * 6, until=[None] * 6, **{name: [None] * 6 for name in COLUMNS})
+    values["load"] = [1.0 + at + place for at in range(6)]
     links = dict(
         source=list(SITES[:-1]), target=list(SITES[1:]), present=[True] * 5, since=[0] * 5, until=[None] * 5
     )
@@ -98,7 +112,7 @@ def graph(place):
             weight=[None] * len(TIMES),
             references=dict(at=[SITES[at % 6] for at in range(len(TIMES))]),
             target=[stated(kind[at], at, place) for at in range(len(TIMES))],
-            known=[None] * len(TIMES),
+            known=[moment + 1 for moment in TIMES],
         ),
     )
 
@@ -126,7 +140,7 @@ def test_every_kind_over_classes_reads_back_as_stated_with_its_classes_as_its_se
     bank, case = classes
     held = Deriver(bank, "cpu", RESIDENT)
     schema = held.registry.schema
-    assert schema.targets() == tuple(kind for kind, _ in KINDS.values())
+    assert schema.targets() == tuple(kind for kind, _, _ in KINDS.values())
     assert schema.series() == ("size", *GRADES, *TAGS, *TREES) and schema.target_columns() == dict(series="STRING")
     wanted = {
         (graph["name"], kind, key): target
@@ -144,7 +158,7 @@ def test_every_kind_over_classes_reads_back_as_stated_with_its_classes_as_its_se
 def test_a_class_is_one_of_at_least_two_stated_classes_and_holds_one_point_for_each():
     where = "the target of the kind of task grade"
     with pytest.raises(ValueError, match="the target of the kind of task grade names at least 2 classes"):
-        Schema(schema(dict(grade=("class", ["low"]))))
+        Schema(schema(dict(grade=("class", ["low"], None))))
     kind = TARGETS.named("class")
     with pytest.raises(ValueError, match="states its target as one of the classes low, mid, high, found 'top'"):
         kind.staged("top", tuple(GRADES), where)
@@ -155,7 +169,7 @@ def test_a_class_is_one_of_at_least_two_stated_classes_and_holds_one_point_for_e
         kind.points(dict(rows, graph=["g1"] * 3, series=["low", "low", "high"]), tuple(GRADES), where)
     assert kind.points(dict(rows, y=[0.0, 1.0, 0.0]), tuple(GRADES), where) == dict(series=GRADES)
     assert kind.read([dict(series=name, y=y) for name, y in zip(GRADES, [0.0, 1.0, 0.0])]) == "mid"
-    target = Schema(schema(dict(grade=("class", GRADES)))).tasks["kinds"]["grade"]["target"]
+    target = Schema(schema(dict(grade=KINDS["grade"]))).tasks["kinds"]["grade"]["target"]
     target = dict(target, utility=dict(target["utility"], weights=dict(low=1.0, mid=4.0, high=0.0)))
     tasks, values = valued(target, dict(task=[3, 3, 3], series=GRADES, y=[0.25, 0.5, 0.25]))
     assert tasks.tolist() == [3] and values.tolist() == [2.25]
@@ -246,6 +260,25 @@ def test_a_proportion_vector_states_a_share_of_every_class_and_is_predicted_and_
     assert found["entropy"]["value"] == pytest.approx(float(crossed.sum() / 2))
 
 
+def test_what_matures_of_a_kind_over_classes_is_a_column_or_a_column_per_class_of_its_own_type():
+    where = "what matures of the kind of task %s is "
+    refused = (
+        (dict(tags=("classes", TAGS, "reddish")), where % "tags" + "a column for every class of red, green, blue"),
+        (dict(tags=("classes", TAGS, dict(FLAGS, blue="oaks"))), where % "tags" + "a column of the type flag"),
+        (dict(mix=("proportions", TREES, dict(PARTS, ash="tier"))), where % "mix" + "a column of the type number"),
+        (dict(grade=("class", GRADES, dict.fromkeys(GRADES, "tier"))), where % "grade" + "one column, found"),
+        (dict(grade=("class", GRADES, "load")), where % "grade" + "a column of the type category"),
+        (dict(course=("path", ["near"], "load")), "only a target of a kind that matures into the values of columns"),
+    )
+    for kinds, message in refused:
+        with pytest.raises(ValueError, match=message):
+            Schema(schema(kinds))
+    stated = Schema(schema(KINDS))
+    assert Schema(stated.mapping()).mapping() == stated.mapping() == schema(KINDS)
+    assert stated.ripened() == dict(tier=GRADES)
+    assert "matures as reddish for red, greenish for green, bluish for blue of at" in stated.text(None)
+
+
 def test_a_bank_of_a_number_and_kinds_over_classes_completes_one_fit(classes, tmp_path, statement, monkeypatch):
     bank = classes[0]
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
@@ -270,3 +303,33 @@ def test_a_bank_of_a_number_and_kinds_over_classes_completes_one_fit(classes, tm
             assert np.allclose(np.bincount(task[chosen], prediction[chosen])[np.unique(task[chosen])], 1.0)
         chosen = aim != list(KINDS).index("level")
         assert ((prediction[chosen] > 0) & (prediction[chosen] < 1)).all()
+
+
+@timed("classes.observed")
+def observed(held, cfg, name, moment, key, columns):
+    from graphspec.views.graph import Graph
+
+    (entry,) = [entry for entry in held.viewed(cfg).graphs if held.manifest["graphs"][entry["source"]]["name"] == name]
+    view = Graph.load(held.view(entry["index"], cfg))
+    dense, layout = view.dense(), held.registry.encoding.layout
+    step = int(np.flatnonzero(np.asarray(view.step_time) == moment)[0])
+    rows = (dense.obs_step == step) & (dense.obs_entity == view.keys.index(key))
+    (values,) = np.asarray(view.obs_values)[dense.obs_ref[rows]]
+    return [values[layout.index(column)] for column in columns]
+
+
+def test_every_kind_over_classes_matures_into_its_own_form_once_known(classes, monkeypatch):
+    bank, case = classes
+    cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
+    held = Deriver(bank, "cpu", RESIDENT)
+    tiers = held.registry.encoding.dictionaries["tier"]
+    assert tiers == sorted(GRADES)
+    for place, graph in enumerate(case["graphs"]):
+        name, target = graph["name"], graph["tasks"]["target"]
+        assert np.isnan(observed(held, cfg, name, 2, "s1", ["tier"])).all()
+        assert [tiers[int(code)] for code in observed(held, cfg, name, 3, "s1", ["tier"])] == [target[1]]
+        assert np.isnan(observed(held, cfg, name, 8, "s5", ["tier"])).all()
+        assert observed(held, cfg, name, 4, "s2", FLAGS.values()) == [float(tag in target[2]) for tag in TAGS]
+        assert np.isnan(observed(held, cfg, name, 3, "s2", FLAGS.values())).all()
+        assert observed(held, cfg, name, 5, "s3", PARTS.values()) == [target[3][tree] for tree in TREES]
+    assert case["graphs"][1]["tasks"]["target"][2] == ["green"]

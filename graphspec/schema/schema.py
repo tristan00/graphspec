@@ -764,25 +764,39 @@ class Schema:
         if stated is None:
             return None
         stated = fields(stated, MATURED, "what matures of " + where)
-        if target is None or not TARGETS.named(target["kind"]).matures:
+        kind = None if target is None else TARGETS.named(target["kind"])
+        if kind is None or kind.matures is None:
             raise ValueError(
-                "%s states what matures, and only a target of a kind that matures into the value of a column "
+                "%s states what matures, and only a target of a kind that matures into the values of columns "
                 "matures" % where
             )
-        name, column = stated["reference"], stated["column"]
+        name = stated["reference"]
         if name not in names or references[name]["sort"] != "node":
             raise ValueError(
                 "what matures of %s is a value of one of its references of the sort node, found %r"
                 % (where, name)
             )
+        columns = kind.ripe(stated["column"], target["series"], "what matures of " + where)
         entities = self.entities()
-        lacking = [kind for kind in references[name]["kinds"] if column not in entities[kind]]
-        if lacking or column not in self.columns or not self.kind(column).ordered:
-            raise ValueError(
-                "what matures of %s is a column of numbers of every kind of node of the reference %s, "
-                "found %r" % (where, name, column)
-            )
-        return dict(reference=name, column=column)
+        for column in dict.fromkeys(columns.values()):
+            lacking = [held for held in references[name]["kinds"] if column not in entities[held]]
+            if lacking or column not in self.columns or self.columns[column]["type"] != kind.matures:
+                raise ValueError(
+                    "what matures of %s is a column of the type %s of every kind of node of the reference %s, "
+                    "found %r" % (where, kind.matures, name, column)
+                )
+        return dict(reference=name, column=copy.deepcopy(stated["column"]), columns=columns)
+
+    @timed("schema.ripened")
+    def ripened(self):
+        result = {}
+        for entry in self.tasks["kinds"].values():
+            if entry["matures"] is None:
+                continue
+            for name, column in entry["matures"]["columns"].items():
+                if self.kind(column).symbols:
+                    result.setdefault(column, []).append(name)
+        return result
 
     def mapping(self):
         started = time.perf_counter()
@@ -857,7 +871,12 @@ class Schema:
                         weight=entry["weight"],
                         absent=entry["absent"],
                         event=None if entry["event"] is None else list(entry["event"]),
-                        matures=None if entry["matures"] is None else dict(entry["matures"]),
+                        matures=None
+                        if entry["matures"] is None
+                        else dict(
+                            reference=entry["matures"]["reference"],
+                            column=copy.deepcopy(entry["matures"]["column"]),
+                        ),
                     )
                     for kind, entry in self.tasks["kinds"].items()
                 },
@@ -1200,7 +1219,15 @@ class Schema:
                     else "seen as an event between %s and %s" % entry["event"],
                     "nothing matures"
                     if entry["matures"] is None
-                    else "matures as %s of %s" % (entry["matures"]["column"], entry["matures"]["reference"]),
+                    else "matures as %s of %s"
+                    % (
+                        entry["matures"]["column"]
+                        if type(entry["matures"]["column"]) is str
+                        else ", ".join(
+                            "%s for %s" % (column, name) for name, column in entry["matures"]["columns"].items()
+                        ),
+                        entry["matures"]["reference"],
+                    ),
                 )
             )
         if self.grown:

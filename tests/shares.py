@@ -7,7 +7,7 @@ from tuning.families.heads import FIELD, Attached
 
 class Share:
     scaled = False
-    matures = False
+    matures = None
     columns = dict(trials="FLOAT")
     fields = ("trials",)
 

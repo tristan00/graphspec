@@ -72,17 +72,46 @@ def classed(rows, series, where):
 def normalised(values, task):
     owner = np.unique(np.asarray(task, np.int64), return_inverse=True)[1].reshape(-1)
     values = np.asarray(values, np.float64)
-    top = np.full(owner.max() + 1 if len(owner) else 0, -np.inf)
+    top = np.full(owner.max() + 1, -np.inf)
     np.maximum.at(top, owner, values)
     raised = np.exp(values - top[owner])
     return raised / np.bincount(owner, raised)[owner]
 
 
+@timed("targets.single")
+def single(column, series, where):
+    if type(column) is not str:
+        raise ValueError("%s is one column, found %r" % (where, column))
+    return dict.fromkeys(series, column)
+
+
+@timed("targets.each")
+def each(column, series, where):
+    if (
+        not isinstance(column, dict)
+        or set(column) != set(series)
+        or any(type(name) is not str for name in column.values())
+    ):
+        raise ValueError(
+            "%s is a column for every class of %s, as a mapping from class to column, found %r"
+            % (where, ", ".join(series), column)
+        )
+    return {name: column[name] for name in series}
+
+
 class Number:
     scaled = True
-    matures = True
+    matures = "number"
     columns = {}
     fields = ()
+
+    @timed("targets.number.ripe")
+    def ripe(self, column, series, where):
+        return single(column, series, where)
+
+    @timed("targets.number.ripened")
+    def ripened(self, series, y):
+        return [float(value) for value in y]
 
     @timed("targets.number.series")
     def series(self, stated, where):
@@ -123,7 +152,7 @@ class Number:
 
 class Path:
     scaled = True
-    matures = False
+    matures = None
     columns = dict(tau="FLOAT", series="STRING")
     fields = ("tau",)
 
@@ -182,9 +211,17 @@ class Path:
 
 class Class:
     scaled = False
-    matures = False
+    matures = "category"
     columns = dict(series="STRING")
     fields = ()
+
+    @timed("targets.class.ripe")
+    def ripe(self, column, series, where):
+        return single(column, series, where)
+
+    @timed("targets.class.ripened")
+    def ripened(self, series, y):
+        return [name if value == 1 else None for name, value in zip(series, y)]
 
     @timed("targets.class.series")
     def series(self, stated, where):
@@ -221,9 +258,17 @@ class Class:
 
 class Classes:
     scaled = False
-    matures = False
+    matures = "flag"
     columns = dict(series="STRING")
     fields = ()
+
+    @timed("targets.classes.ripe")
+    def ripe(self, column, series, where):
+        return each(column, series, where)
+
+    @timed("targets.classes.ripened")
+    def ripened(self, series, y):
+        return [bool(value == 1) for value in y]
 
     @timed("targets.classes.series")
     def series(self, stated, where):
@@ -266,9 +311,17 @@ class Classes:
 
 class Proportions:
     scaled = False
-    matures = False
+    matures = "number"
     columns = dict(series="STRING")
     fields = ()
+
+    @timed("targets.proportions.ripe")
+    def ripe(self, column, series, where):
+        return each(column, series, where)
+
+    @timed("targets.proportions.ripened")
+    def ripened(self, series, y):
+        return [float(value) for value in y]
 
     @timed("targets.proportions.series")
     def series(self, stated, where):

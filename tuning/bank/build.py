@@ -121,7 +121,11 @@ def scanned(index):
 
 def merged(stated, found):
     started = time.perf_counter()
-    result = {name: sorted(set().union(*(entry[name] for entry in found))) for name in stated.symbolic()}
+    ripened = stated.ripened()
+    result = {
+        name: sorted(set().union(*(entry[name] for entry in found), ripened.get(name, ())))
+        for name in stated.symbolic()
+    }
     LOG.info("merged exit seconds=%.3f columns=%d", time.perf_counter() - started, len(result))
     return result
 
@@ -319,7 +323,7 @@ def release():
 
 def graph(context, job):
     declared, splits, observers = context
-    index, name, ids, rows = job
+    index, name, ids, rows, series = job
     started = time.perf_counter()
     if WORKER.get("declared") != declared:
         WORKER.update(declared=declared, registry=Registry.from_declaration(declared))
@@ -329,7 +333,7 @@ def graph(context, job):
     position = np.searchsorted(ids, found)
     if len(found) != len(ids) or np.any(position >= len(ids)) or not np.array_equal(ids[position], found):
         raise ValueError("graph %s reads different targets than its supervision" % name)
-    truth = parse(registry, splits, observers, tables, rows[position], name)
+    truth = parse(registry, splits, observers, tables, rows[position], series[position], name)
     shown = validate(truth, registry, splits)
     truth.save(WORKER["output"] / "truth" / ("graph_%04d" % index))
     metrics = dict(
@@ -413,9 +417,11 @@ def build(task_path, output, workers, trained):
             registry = declaration.registry(task, encoding, any(entry[3] for entry in found), bare)
             (output / "truth").mkdir(parents=True)
             write_json(output / "supervision.json", rows)
+            code = {name: place for place, name in enumerate(stated.series())}
+            series = np.asarray([code[row["series"]] for row in rows["rows"]], np.int32)
             metrics = mapped(
                 partial(graph, (registry.declaration(), splits, observers)),
-                [(index, names[index], ids, members) for index, ids, members, _ in groups],
+                [(index, names[index], ids, members, series[members]) for index, ids, members, _ in groups],
             )
     finally:
         release()

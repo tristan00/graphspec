@@ -101,6 +101,8 @@ def check(graph, registry, splits, observers):
     for label, values in (("reference", graph.member_task), ("target", graph.target_task)):
         if np.any(values < 0) or np.any(values >= tasks):
             raise ValueError("a %s of graph %s names a task outside the graph" % (label, name))
+    if np.any(graph.target_series < 0) or np.any(graph.target_series >= len(schema.series())):
+        raise ValueError("a target of graph %s names a series its schema does not state" % name)
     if np.any(graph.task_observer < -1) or np.any(graph.task_observer >= len(observers)):
         raise ValueError("a task of graph %s names an observer the bank does not hold" % name)
     if np.any(graph.task_split < -1) or np.any(graph.task_split >= len(splits)):
