@@ -62,7 +62,7 @@ def observing(tables):
     return sorted(found)
 
 
-def several(stated, tables):
+def several(stated, tables, trained):
     started = time.perf_counter()
     parts = []
     for kind in stated.entities():
@@ -89,19 +89,24 @@ def several(stated, tables):
         tasks.column("observer").to_pylist() if "observer" in tasks.column_names else [None] * tasks.num_rows,
         object,
     )
+    splits = np.asarray(tasks.column("split").to_pylist(), object)
+    common = np.asarray([split is None or split in trained for split in splits.tolist()], bool)
     for observer in set(looking.tolist()):
-        moments = np.unique(times[looking == observer])
-        step = np.searchsorted(moments, since, "left")
-        held = until > moments[np.minimum(step, len(moments) - 1)]
-        shown = np.stack((entity, step), 1)[(step < len(moments)) & ((until == since + 1) | held)]
-        result |= len(np.unique(shown, axis=0)) < len(shown)
+        mine = looking == observer
+        own = [mine & (common | (splits == split)) for split in set(splits[mine].tolist()) - {None}]
+        for chosen in [mine] + own:
+            moments = np.unique(times[chosen])
+            step = np.searchsorted(moments, since, "left")
+            held = until > moments[np.minimum(step, len(moments) - 1)]
+            shown = np.stack((entity, step), 1)[(step < len(moments)) & ((until == since + 1) | held)]
+            result |= len(np.unique(shown, axis=0)) < len(shown)
     LOG.debug(
         "several exit facts=%d several=%s seconds=%.4f", len(order), result, time.perf_counter() - started
     )
     return result
 
 
-def scanned(index):
+def scanned(trained, index):
     started = time.perf_counter()
     stated = WORKER["reader"].source.stated
     tables = WORKER["reader"].graph(index)
@@ -113,7 +118,7 @@ def scanned(index):
             if entry["column"] is not None
         },
         observing(tables),
-        several(stated, tables),
+        several(stated, tables, trained),
     )
     LOG.info("bank scan exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
     return result
@@ -416,7 +421,7 @@ def build(task_path, output, workers, trained):
     attached = (str(task_path), str(output), LOG.getEffectiveLevel())
     try:
         with pooled(workers, len(groups), attach, attached, carried, restored) as mapped:
-            found = mapped(scanned, [index for index, _, _, _ in groups])
+            found = mapped(partial(scanned, trained), [index for index, _, _, _ in groups])
             stated = Schema(task["schema"])
             encoding = Encoding(
                 stated, merged(stated, [entry[0] for entry in found]), None, related(stated, found)

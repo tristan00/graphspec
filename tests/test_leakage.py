@@ -310,14 +310,18 @@ def test_without_targets_shows_the_edges_a_target_is_about_again_once_the_target
 @timed("leakage.scoring")
 def scoring(late):
     asked = sorted([(1, "u0", "train"), (3, "u0", "train"), (5, "u0", "train"), (6, "u0", "train"), (2, "u3", "test")])
-    asked = sorted(asked + [(late, "u3", "test")])
+    return asking(sorted(asked + [(late, "u3", "test")]), range(8), 7)
+
+
+@timed("leakage.asking")
+def asking(asked, moments, last):
     users = ("u0", "u1", "u2", "u3")
     rows = dict(key=[], since=[], until=[], load=[])
     for user in users:
-        for moment in range(8):
+        for moment in moments:
             rows["key"].append(user)
             rows["since"].append(moment)
-            rows["until"].append(moment + 1 if moment < 7 else None)
+            rows["until"].append(moment + 1 if moment < last else None)
             rows["load"].append(float(moment * moment + users.index(user)))
     number = dict(type="number", encoder="value")
     target = dict(kind="number", series="s", about="who", utility=synthetic.valued(["s"]))
@@ -363,8 +367,10 @@ def moved(tmp_path_factory):
     started, root = time.perf_counter(), tmp_path_factory.mktemp("moved")
     for late in (4, 7):
         build(synthetic.stage(root, "late%d" % late, scoring(late)), root / ("late%d" % late), 1, ("train",))
+    asked = [(moment, "u0", "train" if moment % 2 == 0 else "test") for moment in (1, 2, 3, 4)]
+    build(synthetic.stage(root, "crowded", asking(asked, (1, 2, 3, 4), 5)), root / "crowded", 1, ("train",))
     LOG.info("banks of moved tasks exit seconds=%.3f", time.perf_counter() - started)
-    return {late: root / ("late%d" % late) for late in (4, 7)}
+    return dict({late: root / ("late%d" % late) for late in (4, 7)}, crowded=root / "crowded")
 
 
 def test_the_scored_tasks_a_trained_split_hides_shape_neither_its_steps_nor_its_predictions(moved):
@@ -375,7 +381,7 @@ def test_the_scored_tasks_a_trained_split_hides_shape_neither_its_steps_nor_its_
 
     started, steps, found, net = time.perf_counter(), {}, {}, None
     splits = dict(trained=["train"], scored=["test"], sees=dict(train=["without_scored"], test=[]))
-    for late, bank in moved.items():
+    for late, bank in ((late, moved[late]) for late in (4, 7)):
         held = Deriver(bank, "cpu", RESIDENT)
         values = {"time/history": 2, "time/steps": "tasks", "time/several": "last"}
         cfg = configuration(held.registry, dict(view="snapshot"), values, 5, splits)
@@ -393,6 +399,21 @@ def test_the_scored_tasks_a_trained_split_hides_shape_neither_its_steps_nor_its_
     assert steps == {4: [1, 3, 5, 6], 7: [1, 3, 5, 6]}
     assert len(found[4]) == 4 and found[4] == pytest.approx(found[7], rel=1e-6, abs=1e-6)
     LOG.info("steps of a trained split exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_several_facts_are_a_choice_of_the_bank_where_the_coarser_steps_of_a_split_with_rules_show_them(moved):
+    started, held = time.perf_counter(), Deriver(moved["crowded"], "cpu", RESIDENT)
+    assert held.registry.extras["several"] is True
+    splits = dict(trained=["train"], scored=["test"], sees=dict(train=["without_scored"], test=[]))
+    with pytest.raises(ValueError, match=r"the pipeline states no time/several, which has no default"):
+        configuration(held.registry, dict(view="snapshot"), {"time/steps": "tasks"}, 5, copy.deepcopy(splits))
+    for several, wanted in (("first", [1.0, 9.0]), ("last", [4.0, 16.0])):
+        values = {"time/steps": "tasks", "time/several": several}
+        cfg = configuration(held.registry, dict(view="snapshot"), values, 5, copy.deepcopy(splits))
+        (entry,) = [entry for entry in held.viewed(cfg).graphs if entry["split"] == held.splits.index("train")]
+        view = Graph.load(held.view(entry["index"], cfg))
+        assert (view.step_time.tolist(), list(column(held, view, "u0", "load").values())) == ([2, 4], wanted)
+    LOG.info("several facts of coarser steps exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_graph_without_tasks_builds_and_a_choice_of_steps_that_cannot_show_it_stops_naming_both(banks):

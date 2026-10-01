@@ -1,4 +1,4 @@
-**The contract: schema, time, tasks, kinds of target, edges beyond pairs, held graphs, tables and bank version 9**
+**The contract: schema, time, tasks, kinds of target, edges beyond pairs, held graphs, tables and bank version 10**
 
 A source holds one or more graphs. What the graphs hold is stated once, by a schema; the tables of the source and the bank built from them are checked against it. Nothing is read from the names or the types of the tables beyond what the schema states.
 
@@ -267,7 +267,7 @@ A table the schema states and the source lacks, a column of a table that the sch
 
 `name`, `schema` and one source are required, and no other keys are accepted.
 
-**Bank version 9**
+**Bank version 10**
 
 `tuning.build_bank(task, output, workers, trained)` reads the source twice: once to find the dictionaries, which hold every value stated and every class of a target that matures into a column of categories, the relations taken from columns and the names of the observers, and once to write the graphs. `trained` names the splits the scaling of the targets is fitted on, each a split the source holds; a fit trains on exactly these. Every series of a kind of target that scales needs two targets that differ in those splits. No encoder is fitted by the build. Every graph written is also shown once under the shipped choice of steps `tasks`, or `changes` for a graph that holds no task, with the shipped rule `first` for several facts where the bank holds them, with every kind of set edge under the form `node`, which shows every fact, member and edge about a set edge, and with no rule stated for any split, so that a graph the operations cannot read stops the build; what else is registered does not change it. A bank of another version is refused with an error naming the version found.
 
@@ -280,7 +280,7 @@ A source with kinds of set edge or held graphs is read from a staging directory;
 | `signals` | The width of the signals. |
 | `base` | The relations stated or taken, then the relations of the forms of storage of every kind of set edge. |
 | `events` | Whether a kind of task is seen as an event. |
-| `several` | Whether a shipped choice of steps can show two facts about one node or set edge of a graph of the bank at one step: two whose intervals overlap, or, under `tasks`, two that hold from after one time of a task of an observer up to and including its next, the earlier an event and the later an event or still holding at that next time. Times of tasks are those the source states; when a fact is known, whether it was replaced and who may see it are not read. |
+| `several` | Whether a shipped choice of steps can show two facts about one node or set edge of a graph of the bank at one step: two whose intervals overlap, or, under `tasks`, two that hold from after one time of a task of an observer up to and including its next, the earlier an event and the later an event or still holding at that next time, where the times of tasks are those of every task of the observer, or those of the tasks a split with rules would be shown with: the tasks of the observer of the split, of the splits `trained` names and of no split, for every split the source states, since any split may be given rules. Times of tasks are those the source states; when a fact is known, whether it was replaced and who may see it are not read. |
 | `untasked` | The names of the graphs that hold no task, in the order of the source. |
 
 `supervision.json` holds `rows` and `split`. There is one row per point of a target, in the order of the `target` table. A row holds `graph`, `kind`, the key of its task and, where one is stated, its grouping, under the names the schema states, `time` unless the model is `none`, `weight` where the kind states one, `known` where the target states one, `series`, the series of the point, the inputs and outcomes of its kind of target, such as `tau` for a path, `node`, the key of the node the point names where its kind of target names nodes, and `y`. `split` holds `indices`, the rows of every split by name, and `series`, a list with one entry for every series of a kind of target that scales, in the order of the series of the schema, of `name`, `mean` and `sd` over the rows of the splits trained on. Every such series needs two differing targets in those splits.
@@ -342,7 +342,7 @@ In the form the operations work on, `Graph.dense()`, `step_graph` names for ever
 | the two lists of rows of the training and the validation split | `indices`, the rows of every split by name |
 | `width` and `features` of one vector for every kind | `widths` per kind, `values`, `features` |
 
-Version 9 adds to the truth the array `target_node`, the node each point of a target names; a bank of version 8 is refused with an error naming its version.
+Version 9 adds to the truth the array `target_node`, the node each point of a target names; a bank of version 8 is refused with an error naming its version. Version 10 reckons the extra `several` over the tasks a split with rules is shown with as well as over every task of an observer; a bank of version 9 is refused with an error naming its version.
 
 **Operations**
 
