@@ -10,7 +10,7 @@ from conftest import SPLITS
 from graphspec import OPERATIONS, REPRESENTATIONS, Representation
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments
-from graphspec.engine.edits import sliced
+from graphspec.engine.edits import Edit, edited, sliced
 from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -305,6 +305,91 @@ def test_nearby_adds_a_relation_whose_edges_hold_the_distance_within_which_rows_
     with pytest.raises(ValueError, match="by the distance between the values of the columns of numbers both kinds"):
         pipeline.grown(flagged, resolved(flagged, [dict(operation="graphspec.nearby", parameters={})]), None)
     LOG.info("nearby exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("added.held_facts")
+def held_facts(graph, registry, rows, changed):
+    tokens, both = np.asarray(graph.entity_token).astype(np.uint64), keyed_relations(registry)[1]
+    found = []
+    for row in np.asarray(rows).tolist():
+        code, ends = int(graph.fact_code[row]), (int(tokens[graph.fact_source[row]]), int(tokens[graph.fact_target[row]]))
+        reference = int(graph.fact_ref[row])
+        values = () if reference < 0 else np.asarray(graph.value_table[reference], np.float32)
+        values = changed[row] if row in changed else tuple("nan" if value != value else value for value in np.asarray(values).tolist())
+        time_of = int(graph.step_time[graph.fact_step[row]])
+        found.append((time_of, code) + (tuple(sorted(ends)) if both[code] else ends) + (bool(graph.fact_present[row]), values))
+    return found
+
+
+@timed("added.reduced")
+def reduced(graph, aggregate):
+    groups = {}
+    for row in range(len(graph.fact_step)):
+        key = (int(graph.fact_step[row]), bool(graph.fact_present[row]), int(graph.fact_code[row]))
+        groups.setdefault(key + (int(graph.fact_source[row]), int(graph.fact_target[row])), []).append(row)
+    kept, values = [], {}
+    for key, rows in groups.items():
+        if aggregate == "keep":
+            kept += rows
+            continue
+        kept.append(rows[0] if aggregate == "first" else rows[-1])
+        valued = [row for row in rows if key[1] and graph.fact_ref[row] >= 0]
+        if aggregate in ("first", "last") or len(valued) < 2:
+            continue
+        held = np.asarray(graph.value_table, np.float64)[graph.fact_ref[valued]]
+        found = dict(sum=np.sum, mean=np.mean, min=np.min, max=np.max)[aggregate](held, axis=0)
+        values[rows[-1]] = tuple(found.astype(np.float32).tolist())
+    return sorted(kept), values
+
+
+def test_relation_forms_keep_or_reduce_parallel_edges_and_add_reverse_edges_and_self_loops(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    rows = np.flatnonzero(graph.fact_present & (graph.fact_code == registry.code("visits")))[:6]
+    copies = np.r_[rows, rows[:3]]
+    weights = np.asarray(graph.value_table)[graph.fact_ref[copies]] + np.r_[np.ones(6), np.full(3, 2.0)][:, None]
+    nothing = dict(observations=dict(entity=[], step=[]), facts=dict(code=[], source=[], target=[], step=[]))
+    stated_facts = {name: graph.arrays["fact_" + name][copies] for name in ("source", "target", "code", "step")}
+    doubled = edited(
+        graph,
+        Edit(
+            dict(kind=[], token=np.zeros(0, np.uint64)),
+            nothing,
+            dict(
+                observations=dict(entity=[], step=[], x=np.zeros((0, graph.x_table.shape[1]))),
+                facts=dict(stated_facts, present=np.ones(len(copies), bool), values=weights),
+            ),
+        ),
+    )
+    tokens = np.asarray(doubled.entity_token).astype(np.uint64)
+    counts = {}
+    for aggregate in ("keep", "first", "last", "sum", "mean", "min", "max"):
+        stated = dict(types="typed", parallel=aggregate, reverse=True, loops=True)
+        parameters = {"relation_forms/" + name: value for name, value in stated.items()}
+        steps = resolved(registry, [dict(operation="graphspec.relation_forms", parameters=parameters)])
+        grown = pipeline.grown(registry, steps, None)
+        assert grown.by_name["relation_forms.visits"].pairs == (("place", "person"),)
+        loops = grown.by_name["relation_forms.loops"]
+        assert loops.symmetric and loops.pairs == tuple((kind, kind) for kind in registry.nodes)
+        found = segments.whole(doubled, {}, grown, steps, SEED, LIMITS, None)
+        kept, values = reduced(doubled, aggregate)
+        expected = held_facts(doubled, grown, kept, values)
+        expected += [
+            (row[0], grown.code("relation_forms." + grown.by_code[row[1]].name), row[3], row[2]) + row[4:]
+            for row in expected
+            if grown.by_code[row[1]].name in ("owns", "member", "near", "visits", "located")
+        ]
+        expected += [
+            (int(doubled.step_time[doubled.obs_step[row]]), loops.code)
+            + (int(tokens[doubled.obs_entity[row]]),) * 2
+            + (True, ())
+            for row in np.flatnonzero(~doubled.obs_anchor)
+        ]
+        assert sorted(held_facts(found, grown, np.arange(len(found.fact_step)), {})) == sorted(expected)
+        counts[aggregate] = len(found.fact_step)
+    assert counts["keep"] == counts["first"] + 2 * len(copies)
+    assert len({counts[name] for name in ("first", "last", "sum", "mean", "min", "max")}) == 1
+    LOG.info("relation forms exit counts=%s seconds=%.3f", counts, time.perf_counter() - started)
 
 
 @timed("added.sessions")

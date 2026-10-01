@@ -73,9 +73,11 @@ RELATIONS_FIRST = dict(
         "graphspec.relations",
         "graphspec.derive",
         "graphspec.edges",
-        "graphspec.merging",
+        "graphspec.relation_forms",
     ),
 )
+RENAMED = {"relations/types": "relation_forms/types", "relations/parallel": "relation_forms/parallel"}
+MERGED = dict(merge="last")
 
 
 def read(place):
@@ -367,6 +369,10 @@ def spec(held):
     for name in KINDS:
         if name in result:
             result[name] = result[name].replace("query", "task")
+    for old, new in RENAMED.items():
+        if old in result:
+            value = result.pop(old)
+            result[new] = MERGED[value] if value in MERGED else value
     LOG.debug("spec exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 

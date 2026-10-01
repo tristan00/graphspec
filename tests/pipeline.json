@@ -5,5 +5,5 @@
   {"operation": "graphspec.derive"},
   {"operation": "graphspec.relations"},
   {"operation": "graphspec.edges"},
-  {"operation": "graphspec.merging"}
+  {"operation": "graphspec.relation_forms"}
 ]

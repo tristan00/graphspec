@@ -40,7 +40,7 @@ SEVEN = (
     "graphspec.derive",
     "graphspec.relations",
     "graphspec.edges",
-    "graphspec.merging",
+    "graphspec.relation_forms",
 )
 ADDED = (
     "graphspec.merge",

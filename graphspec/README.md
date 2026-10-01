@@ -7,7 +7,7 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`, `nearby.py`, `consecutive.py`, `neighbourhood.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `relation_forms.py`, `merge.py`, `difference.py`, `nearby.py`, `consecutive.py`, `neighbourhood.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads: the registry of representations and their families, structure, sample and encode (`registry.py`), the arrays every variant holds, their carried state and the arrays over a whole variant (`base.py`), one module per shipped representation (`coupling.py`, `events.py`, `neighbors.py`, `walks.py`, `mixed.py`), what they share (`groups.py`) and their kernels (`kernels.py`) |
 | `engine/` | Derivation of variants, one engine in segments: derivations, continuations and forks, and the build of a variant in the calling process (`segments.py`), the steps of a pipeline on one segment (`transform.py`), the same on worker processes (`schedule.py`), slices and edits (`edits.py`), writing and stitching segments (`stitch.py`), the physical join tests compare against (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
@@ -38,7 +38,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 | `operations/parameters.py` | Conditional parameters, and the settings of a pipeline generated from a registry and a set of representation groups, with `draw`, `canonical` and `digest`. |
 | `operations/operation.py` | `Operation`, the registry `OPERATIONS`, the settings an operation reads its parameters and its splits through, its counts and `listed`. |
 | `operations/pipeline.py` | `resolved` checks a stated pipeline and gives its steps; `space`, `entries` and `flattened` give a search the presence and the parameters of every entry of a template under names that stay the same when another entry is added. |
-| `operations/periods.py` … `operations/merging.py`, `operations/rows.py` | One module per shipped operation, each registering its operation with its parameters; the rows of facts and observations they select, extend and prune. |
+| `operations/periods.py` … `operations/relation_forms.py`, `operations/rows.py` | One module per shipped operation, each registering its operation with its parameters; the rows of facts and observations they select, extend and prune. |
 | `representations/` | Model inputs built from a derived segment, stitched over a variant, and their validation, described below. |
 | `engine/transform.py` | `derive` runs the steps of a pipeline on one segment in the order stated, checks the schema after each and verifies the segment after the last; `validate` shows every graph of a bank once. |
 | `engine/join.py` | `unify` gives the members of a joined group one entity numbering; `joined` concatenates them into one physical graph, the reference the engine is checked against. |
@@ -189,12 +189,16 @@ Relations read symmetrically count their two directions as one pair in every edg
 
 Whenever a stage removes present facts, it also removes absent rows left without any earlier kept present row. The event history therefore never removes a relation the variant never stated.
 
-7. Relation merging
+7. Forms of one relation, `graphspec.relation_forms`
+
+Formerly `graphspec.merging`, renamed so that it is not mistaken for the merge of two graphs. In order: it collapses the types of relations, reduces parallel edges, adds reverse edges and adds self loops. Parallel edges are the facts of one relation from one node to another stated at one step, as stated, present or absent. It carries the relations made untyped that are still live, for their absent rows, and nothing else; it draws nothing; it counts nothing.
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `relations/types` | typed, untyped | untyped replaces every base relation with `untyped` and drops attributes. Its absent row stays only when no underlying relation between the pair is still present. Offered where the bank states a relation. |
-| `relations/parallel` | keep, merge | merge keeps the last of identical facts stated at one step, last in the order the rule for ties, then the time they hold from, give facts about one edge; facts of relations made untyped carry no values, so which of them is kept changes nothing. Offered where the bank states a relation. |
+| `relation_forms/types` | typed, untyped | untyped replaces every base relation with `untyped` and drops attributes. Its absent row stays only when no underlying relation between the pair is still present. Offered where the bank states a relation. |
+| `relation_forms/parallel` | keep, first, last, sum, mean, min, max | keep keeps every parallel edge; first and last keep the first or the last of them in the order the rule for ties, then the time they hold from, give facts about one edge; sum, mean, min and max keep the last, holding in each column the sum, mean, least or greatest of the values the present ones hold, missing values left out and missing where none holds one, in a row of values the operation adds. Facts of relations made untyped carry no values, so which of them is kept changes nothing. Offered where the bank states a relation. |
+| `relation_forms/reverse` | off, on | Adds for every directed relation the bank states alone in its table a relation `<entry>.<relation>` joining its kinds the other way, holding every fact of it reversed with its values. A table of relations taken from a column is not reversed. Offered where such a relation exists and types are kept. |
+| `relation_forms/loops` | off, on | Adds a relation without direction `<entry>.loops` joining every kind of node to itself, holding an edge from every node observed at a step, other than as an anchor, to itself at that step. |
 
 The operations added after the seven follow. Each states what it requires of the schema and stops naming what is missing.
 

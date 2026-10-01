@@ -49,8 +49,10 @@ VALUES = {
     "edges/near/cap": 2,
     "edges/near/cap_order": "random",
     "edges/hop:2/drop": 0.3,
-    "relations/types": "untyped",
-    "relations/parallel": "merge",
+    "relation_forms/types": "typed",
+    "relation_forms/parallel": "sum",
+    "relation_forms/reverse": True,
+    "relation_forms/loops": True,
     "merge/prefer": "second",
     "difference/match": "keys",
     "nearby/kinds": "place:place",
@@ -157,6 +159,7 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
         lambda parameter: True if parameter.name.count("/") == 1 else parameter.uniform(rng),
     )
     steps = pipeline.resolved(registry, pipeline.entries(template, stated))
+    grown = pipeline.grown(registry, steps, None)
     spec = specs.draw(
         specs.settings(registry, specs.GROUPS),
         lambda parameter: "single" if parameter.name == "graphs/join" else parameter.uniform(rng),
@@ -166,18 +169,16 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
     physical = join.joined(graphs, registry, spec, transform.SEED)
     whole = dict(spec, **{"graphs/join": "separate"})
     limits = GraphLimits("cpu")
-    reference = Derivation.begun(
-        [physical], {}, registry, steps, whole, specs.GROUPS, transform.SEED, limits, None, 0
-    )
+    reference = Derivation.begun([physical], {}, grown, steps, whole, specs.GROUPS, transform.SEED, limits, None, 0)
     reference = reference.continued(physical.steps, None)
-    line = Derivation.begun(graphs, {}, registry, steps, spec, specs.GROUPS, transform.SEED, limits, None, 0)
+    line = Derivation.begun(graphs, {}, grown, steps, spec, specs.GROUPS, transform.SEED, limits, None, 0)
     for high in sorted(set(rng.integers(1, physical.steps, 3).tolist())) + [physical.steps]:
         line = line.continued(high, None)
     derived, expected = line.derived(), reference.derived()
-    assert [name for name in DENSE if not identical(derived.arrays[name], expected.arrays[name])] == []
+    assert unequal(derived.arrays, expected.arrays, DENSE_READ) == []
     found, held = line.arrays(), reference.arrays()
     assert sorted(found) == sorted(held)
-    assert [name for name in held if not identical(found[name], held[name])] == []
+    assert unequal(found, held, VARIANT_READ) == []
 
 
 @GROUP

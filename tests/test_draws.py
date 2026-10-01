@@ -53,7 +53,7 @@ TIED = {
     "edges/visits/cap_order": "recent",
     "edges/hop:2/cap": 1,
     "edges/hop:2/cap_order": "recent",
-    "relations/parallel": "merge",
+    "relation_forms/parallel": "last",
 }
 WALKS = {"walks/bias": 0.5, "walks/fanout": 3, "walks/window": 6}
 CAPS = {"coupling/scheme": "window", "coupling/window": 4, "coupling/cap": 1, "events/cap": 1}
