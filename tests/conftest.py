@@ -94,9 +94,6 @@ def made_early():
     ground = Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "ground" / "fixture"
     shared("ground", lambda made: ground_banks(made, ground))
     shared("varied", varied_bank)
-    references = import_module("test_references")
-    shared("references", references.made(references.CASES))
-    shared("references-wide", references.made(references.WIDE))
     LOG.debug("made early exit seconds=%.4f", time.perf_counter() - started)
 
 
