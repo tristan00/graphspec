@@ -140,18 +140,15 @@ class Plan:
             name: [self.widened(second if isinstance(second, Dense) else second.dense()) for second in beside[name]]
             for name in sorted(beside)
         }
-        made, self.made, count = [], [], 0
-        for place, member in enumerate(members):
-            numbers = []
-            for code, found in self.added_entities(member, place):
-                made.append((np.full(len(found), code, np.int64), found))
-                numbers.append(count + np.arange(len(found)))
-                count += len(found)
-            self.made.append(np.concatenate(numbers + [EMPTY]))
+        made = self.added_entities(members)
+        count = sum(len(found) for _, found in made)
+        self.made = np.arange(count)
         maps = [np.asarray(own, np.int64) + count for own in maps]
-        kinds = [np.r_[np.concatenate([held[0] for held in made] + [EMPTY]), np.asarray(kinds, np.int64)]]
-        tokens = [np.concatenate([held[1] for held in made] + [np.asarray(tokens).astype(np.uint64)])]
-        connected = np.r_[np.zeros(count, bool), np.asarray(connected, bool)]
+        codes = np.concatenate([np.full(len(found), code, np.int64) for code, found in made] + [EMPTY])
+        kinds = [np.r_[codes, np.asarray(kinds, np.int64)]]
+        tokens = [np.concatenate([found for _, found in made] + [np.asarray(tokens).astype(np.uint64)])]
+        graphs = sum(int(member.step_graph[-1]) + 1 if isinstance(member, Dense) else 1 for member in members)
+        connected = np.r_[np.full(count, graphs > 1), np.asarray(connected, bool)]
         self.second_maps, total = {}, len(kinds[0])
         for name, seconds in self.seconds.items():
             if len(seconds) != len(members):
@@ -202,21 +199,21 @@ class Plan:
             len(self.seconds),
         )
 
-    def added_entities(self, member, place):
+    def added_entities(self, members):
         started = time.perf_counter()
         kinds = [(kind, held) for _, added in self.registry.schema.grown for kind, held in added.kinds.items()]
-        result = []
-        if kinds:
+        tokens = {kind: [np.zeros(0, np.uint64)] for kind, _ in kinds}
+        for place, member in enumerate(members if kinds else ()):
             entity, rows = observed_rows(member)
             found = [(np.asarray(member.kinds)[entity], self.registry.encoding.widened(rows))]
             for held in self.seconds.values():
                 entity, rows = observed_rows(held[place])
                 found.append((np.asarray(held[place].kinds)[entity], rows))
             for kind, held in kinds:
-                tokens = [np.asarray(held["tokens"](owners, rows, self.registry), np.uint64) for owners, rows in found]
-                result.append((self.registry.kind(kind), np.unique(np.concatenate(tokens + [np.zeros(0, np.uint64)]))))
+                tokens[kind] += [np.asarray(held["tokens"](owners, rows, self.registry), np.uint64) for owners, rows in found]
+        result = [(self.registry.kind(kind), np.unique(np.concatenate(tokens[kind]))) for kind, _ in kinds]
         LOG.debug(
-            "added entities exit graph=%s kinds=%d seconds=%.4f", member.name, len(result), time.perf_counter() - started
+            "added entities exit graphs=%d kinds=%d seconds=%.4f", len(members), len(result), time.perf_counter() - started
         )
         return result
 
@@ -318,7 +315,7 @@ def opened(plan, member, graph, low, high, edit, entities, seen):
         value_global = np.r_[value_global, np.full(len(piece.value_table) - tables[1], -1, np.int64)]
     piece = plan.widened(piece)
     seconds = {name: second_piece(plan, name, member, low, high) for name in plan.seconds}
-    every = np.concatenate([ids] + [plan.second_maps[name][member] for name in plan.seconds] + [plan.made[member]])
+    every = np.concatenate([ids] + [plan.second_maps[name][member] for name in plan.seconds] + [plan.made])
     glob = np.unique(every)
     local = np.searchsorted(glob, ids)
     arrays = dict(piece.arrays)
@@ -345,7 +342,7 @@ def opened(plan, member, graph, low, high, edit, entities, seen):
         plan.base,
         int(plan.steps[member] + low),
         int(plan.tasks[member] + first),
-        np.isin(glob, seen) | (np.isin(glob, plan.made[member]) & (low > 0)),
+        np.isin(glob, seen) | (np.isin(glob, plan.made) & (plan.steps[member] + low > 0)),
         x_global,
         value_global,
         entities,

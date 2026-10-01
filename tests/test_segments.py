@@ -90,8 +90,15 @@ EMPTIED = dict(
         "edges/owns/persistence": 2,
     },
 )
-DRAWN, SPAN, CUTS, REWIRES = 20, 8, 2, 4
+DRAWN, SPAN, CUTS, REWIRES, JOINING, MEMBERS = 20, 8, 2, 4, 4, 4
 REWIRING = "pipeline/graphspec.derive/derive/rewiring_budget"
+JOINED = {"graphs/join": "single", "graphs/join_size": MEMBERS}
+CONTRACTED = {"contract/grouping": "item:v0", "contract/aggregate": "mean", "contract/parallel": "keep"}
+WINDOWED = {"time/scheme": "window", "time/unit": "step", "time/window": 2}
+CONTRACTIONS = (
+    (("graphspec.contract", CONTRACTED),),
+    (("graphspec.window", WINDOWED), ("graphspec.contract", CONTRACTED)),
+)
 DENSE_READ = dict(obs_ref="x_table", fact_ref="value_table")
 VARIANT_READ = dict(x_ref="x_table")
 
@@ -202,6 +209,36 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
     found, held = line.arrays(), reference.arrays()
     assert sorted(found) == sorted(held)
     assert unequal(found, held, VARIANT_READ) == []
+
+
+@GROUP
+def test_contraction_alone_or_after_a_window_in_a_joined_group_equals_the_physical_join_of_its_graphs(bank):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", RESIDENT)
+    registry = support.fitted(opened)
+    graphs = [support.shown(opened, index).dense() for index in range(MEMBERS)]
+    spec = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **JOINED))
+    physical = join.joined(graphs, registry, spec, transform.SEED)
+    bounds = np.cumsum([member.steps for member in graphs])
+    cuts = sorted(set(bounds[:-1].tolist()) | set((bounds[:-1] + 1).tolist())) + [physical.steps]
+    separate, counts = dict(spec, **{"graphs/join": "separate"}), []
+    for stated in CONTRACTIONS:
+        steps = pipeline.resolved(registry, [dict(operation=name, parameters=values) for name, values in stated])
+        grown = pipeline.grown(registry, steps, None)
+        reference = Derivation.begun([physical], {}, grown, steps, separate, specs.GROUPS, transform.SEED, LIMITS, None, 0)
+        reference = reference.continued(physical.steps, None)
+        line = Derivation.begun(graphs, {}, grown, steps, spec, specs.GROUPS, transform.SEED, LIMITS, None, 0)
+        for high in cuts:
+            line = line.continued(high, None)
+        derived, expected = line.derived(), reference.derived()
+        assert unequal(derived.arrays, expected.arrays, DENSE_READ) == [], stated
+        assert unequal(line.arrays(), reference.arrays(), VARIANT_READ) == [], stated
+        made = np.asarray(derived.kinds) == grown.kind("contract")
+        counts.append(int(made.sum()))
+        assert np.asarray(derived.entity_connected)[made].all()
+        assert len(np.unique(np.asarray(derived.entity_token)[made])) == made.sum()
+    assert counts[0] == counts[1] > 0
+    LOG.info("contraction in a joined group exit groups=%s seconds=%.3f", counts, time.perf_counter() - started)
 
 
 @GROUP
@@ -434,31 +471,46 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", RESIDENT)
     registry = support.fitted(opened)
-    graph = sliced(support.shown(opened, 0).dense(), 0, SPAN)
+    shown = [sliced(support.shown(opened, index).dense(), 0, SPAN) for index in range(MEMBERS)]
+    graph = shown[0]
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
     beside = {name: [sliced(support.beside(opened, 0, name), 0, SPAN)] for name in sorted(set(graphs.values()))}
-    chosen = groupings(registry, [graph] + [held[0] for held in beside.values()])
+    chosen = groupings(registry, shown + [held[0] for held in beside.values()])
     bounds = {"pipeline/graphspec.contract/contract/grouping": chosen, REWIRING: dict(low=1, high=REWIRES)}
     spec = specs.configured(specs.settings(registry, specs.GROUPS), SETTINGS)
+    joined = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **JOINED))
     names, found = sorted(OPERATIONS.names()), []
+    single = [name for name in names if OPERATIONS.named(name).graphs == 1]
     for draw in range(DRAWN):
         rng = np.random.default_rng(draw)
-        order = [names[place] for place in rng.permutation(len(names))]
+        pool = single if draw % JOINING == 0 else names
+        order = [pool[place] for place in rng.permutation(len(pool))]
         template = [dict(operation=name, **({"graph": graphs[name]} if name in graphs else {})) for name in order]
         stated = specs.draw(specs.narrow(pipeline.space(registry, template), bounds), lambda held: held.uniform(rng))
         steps = pipeline.resolved(registry, pipeline.entries(template, stated))
         grown = pipeline.grown(registry, steps, None)
-        given = {name: held for name, held in beside.items() if name in {step.graph for step in steps}}
-        whole = begun(graph, given, grown, steps, spec, 0).continued(graph.steps, None)
-        line = begun(graph, given, grown, steps, spec, 0)
-        for high in sorted(set(rng.integers(1, graph.steps, CUTS).tolist())) + [graph.steps]:
+        if draw % JOINING == 0:
+            picked = sorted(rng.choice(MEMBERS, int(rng.integers(2, MEMBERS + 1)), replace=False).tolist())
+            members = [sliced(shown[index], 0, int(rng.integers(2, SPAN + 1))) for index in picked]
+            drawn = dict(joined, **{name: bool(rng.integers(2)) for name in joined if name.startswith("graphs/connect/")})
+            physical = join.joined(members, registry, drawn, transform.SEED)
+            whole = begun(physical, {}, grown, steps, dict(drawn, **{"graphs/join": "separate"}), 0)
+            whole = whole.continued(physical.steps, None)
+            line = Derivation.begun(members, {}, grown, steps, drawn, GROUPS, transform.SEED, LIMITS, None, 0)
+            total = physical.steps
+        else:
+            given = {name: held for name, held in beside.items() if name in {step.graph for step in steps}}
+            whole = begun(graph, given, grown, steps, spec, 0).continued(graph.steps, None)
+            line, total = begun(graph, given, grown, steps, spec, 0), graph.steps
+        for high in sorted(set(rng.integers(1, total, CUTS).tolist())) + [total]:
             line = line.continued(high, None)
         expected = whole.derived()
         verify_dense(expected, grown)
         assert unequal(line.derived().arrays, expected.arrays, DENSE_READ) == [], draw
         assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], draw
-        found.append(tuple(step.operation.name for step in steps))
-    assert len(set(found)) == DRAWN and sorted({name for held in found for name in held}) == names
+        found.append((draw % JOINING == 0, tuple(step.operation.name for step in steps)))
+    assert len(set(found)) == DRAWN and sorted({name for _, held in found for name in held}) == names
+    assert any(together and "graphspec.contract" in held for together, held in found)
     assert len(chosen) < len(groupable(registry)) and {grouping.split(":")[0] for grouping in chosen} > {"item"}
     LOG.info("random pipelines exit pipelines=%d seconds=%.3f", len(found), time.perf_counter() - started)
 

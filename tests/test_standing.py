@@ -131,7 +131,7 @@ RECORDED = {
     "graphspec.neighbourhood": (2, "02dc2af70bd30e2210f58b83494302577d4063a4998954f09a449aac1a7fcae8"),
     "graphspec.measures": (1, "acac779ee89e556e2e24cb89afd4bf2556f4a10d92be25121cfcd963f9a53bce"),
     "graphspec.contract": (2, "db1a85124d4eed935e50a4eb76cc29d7e3b6663a9602287a86a2156bb0c9ac21"),
-    "derivation": (22, "593c1bd5928aeebe5a0813891687a7e53714145bea3fa041912a9fbe3c7aea41"),
+    "derivation": (23, "4f8bc692e76c85396fd4d85c4264d962e9d22d8f8b43704f9cb8fce7ca664de1"),
     "views": (17, "e727b71e057db1397b2223d928e510d055302c72ae8c5fe988ec2b91105e1463"),
     "representations": (11, "8406e03fdf0ab14c75c518d546e4579d64866bbf9df275a065db0832f9a35d87"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
