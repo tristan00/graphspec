@@ -359,7 +359,8 @@ def test_a_memory_reads_a_window_alone_that_holds_no_event(classes):
 
     started = time.perf_counter()
     held = Deriver(classes[0], "cpu", RESIDENT)
-    cfg = support.configuration(held.registry, dict(view="memory"), {"time/history": 2}, 5, SPLITS)
+    values = {"view": "memory", "memory/embedding": "state", "hidden": 4}
+    cfg = support.configuration(held.registry, values, {"time/history": 2}, 5, SPLITS)
     blocks = [block for partition in (0, 1) for block in held.blocks(partition, 2, cfg)]
     ticks = {graph: np.asarray(held.arrays(graph, cfg)["events"])[:, 2] for graph in {block[0] for block in blocks}}
     quiet = [block for block in blocks if not ((ticks[block[0]] >= 2 * block[1]) & (ticks[block[0]] < 2 * block[2])).any()]

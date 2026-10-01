@@ -22,7 +22,7 @@ from tuning.families.periods import blocks as period_blocks
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("composition")
 USERS, ITEMS = ("u0", "u1", "u2", "u3"), ("i0", "i1", "i2", "i3", "i4")
-TIMES, CHANGED = (1, 2, 3, 4, 5, 6), 3
+TIMES, CHANGED, SCORED = (1, 2, 3, 4, 5, 6), 3, (2, 3, 5)
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
 ROUNDING = 1e-5
 GRAPH = {"time/history": 2, "time/context": 1, "time/periods": "every", "time/period_length": 2}
@@ -75,11 +75,11 @@ def graph(changed):
     tasks = dict(key=[], kind=[], time=[], split=[], weight=[], target=[], known=[], signal=[], signal_observed=[])
     references = dict(who=[], at=[])
     for at, moment in enumerate(TIMES):
-        for kind in ("score", "visit"):
+        for kind in ("score", "visit") if at in SCORED else ("visit",):
             tasks["key"].append(len(tasks["key"]))
             tasks["kind"].append(kind)
             tasks["time"].append(moment)
-            tasks["split"].append(None if kind == "visit" else "train" if at < CHANGED else "validation")
+            tasks["split"].append(None if kind == "visit" else "train" if at <= CHANGED else "validation")
             tasks["weight"].append(None)
             tasks["known"].append(None)
             tasks["signal"].append([0.1 * at])
@@ -164,9 +164,10 @@ def test_a_prediction_depends_neither_on_the_windows_beside_it_nor_on_a_fact_aft
     torch.manual_seed(5)
     net = network(cfg, stated.fitted(cfg)).eval()
     together, alone, later = predicted(stated, cfg, net, True), predicted(stated, cfg, net, False), predicted(changed, cfg, net, True)
-    assert sorted(together) == sorted(alone) == sorted(later) == list(TIMES)
-    beside = [moment for moment in TIMES if abs(together[moment] - alone[moment]) > ROUNDING]
+    moments = [TIMES[at] for at in SCORED]
+    assert sorted(together) == sorted(alone) == sorted(later) == moments
+    beside = [moment for moment in moments if abs(together[moment] - alone[moment]) > ROUNDING]
     assert beside == [], "predictions that depend on the windows packed beside them, at %s" % beside
-    read = [moment for moment in TIMES[: CHANGED + 1] if abs(together[moment] - later[moment]) > ROUNDING]
+    read = [moment for moment in moments if moment <= TIMES[CHANGED] and abs(together[moment] - later[moment]) > ROUNDING]
     assert read == [], "predictions that read a fact after their time, at %s" % read
     LOG.info("composition exit spec=%s seconds=%.3f", values, time.perf_counter() - started)
