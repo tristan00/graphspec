@@ -324,7 +324,7 @@ def test_a_view_holds_times_without_a_task_and_several_tasks_at_one_time(bank):
     held, cfg = opened(bank)
     assert cfg["graph"]["time/steps"] == "tasks"
     view = shown(held, cfg, "two", "north")
-    assert view.steps == 3 and view.task_step.tolist() == [0, 0, 0, 0, 1, 1, 1]
+    assert view.step_time.tolist() == [2, 6] and view.task_step.tolist() == [0, 0, 0, 0, 1, 1, 1]
     assert [held.rows[row]["ticket"] for row in view.label_row.tolist()] == [100, 101, 107]
     assert {held.rows[row]["graph"] for row in view.label_row.tolist()} == {"two"}
 

@@ -257,9 +257,10 @@ def test_held_graphs_and_graph_attributes_are_fitted_on_what_the_trained_views_s
 def test_a_matured_target_is_shown_to_its_observer_and_never_from_a_split_scored_on_to_one_trained_on(banks):
     held, cfg = opened(banks["seen"])
     shown = views(held, cfg)
-    alpha, moments = held.splits.index("alpha"), [0, 2, 4, 6]
+    alpha = held.splits.index("alpha")
     assert column(held, shown[(0, 0, alpha)], "m0", "mark") == {0: 0.0, 1: 0.0, 2: 1.0, 3: 1.0}
-    assert column(held, shown[(0, 1, alpha)], "m0", "mark") == {step: 0.0 for step in range(len(moments))}
+    assert shown[(0, 1, alpha)].step_time.tolist() == [0, 4, 6]
+    assert column(held, shown[(0, 1, alpha)], "m0", "mark") == {step: 0.0 for step in range(3)}
     assert column(held, shown[(0, 1, -1)], "m0", "mark") == {0: 0.0, 1: 0.0, 2: 777.0, 3: 777.0}
     assert column(held, shown[(0, 1, -1)], "m5", "mark")[3] == 5.0
     assert (0, 0, -1) not in shown
@@ -304,6 +305,94 @@ def test_without_targets_shows_the_edges_a_target_is_about_again_once_the_target
         found[name] = sequence["moments"].tolist(), serving(held, shown, ("m1", "s1"))
     assert found == dict(never=([0, 2, 4, 6], [0, 1]), six=([0, 2, 4, 6], [0, 1, 3]))
     LOG.info("edges withheld until known exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("leakage.scoring")
+def scoring(late):
+    asked = sorted([(1, "u0", "train"), (3, "u0", "train"), (5, "u0", "train"), (6, "u0", "train"), (2, "u3", "test")])
+    asked = sorted(asked + [(late, "u3", "test")])
+    users = ("u0", "u1", "u2", "u3")
+    rows = dict(key=[], since=[], until=[], load=[])
+    for user in users:
+        for moment in range(8):
+            rows["key"].append(user)
+            rows["since"].append(moment)
+            rows["until"].append(moment + 1 if moment < 7 else None)
+            rows["load"].append(float(moment * moment + users.index(user)))
+    number = dict(type="number", encoder="value")
+    target = dict(kind="number", series="s", about="who", utility=synthetic.valued(["s"]))
+    kinds = dict(
+        score=dict(references=["who"], columns=[], target=target, weight=False, absent="stop", event=None, matures=None)
+    )
+    references = dict(who=dict(sort="node", kinds=["user"]))
+    schema = dict(
+        version=VERSION,
+        time=dict(model="clock", units=["tick"], ties="key"),
+        observers=False,
+        columns=dict(load=number),
+        graph=dict(columns=[]),
+        nodes=dict(user=dict(columns=["load"], holds=None)),
+        sets={},
+        edges=dict(knows=synthetic.edge("user", "user", [])),
+        tasks=dict(key="ticket", grouping=None, signals=0, references=references, kinds=kinds),
+    )
+    knows = dict(source=["u0", "u1"], target=["u1", "u2"], present=[True] * 2, since=[0, 0], until=[None] * 2)
+    graph = dict(
+        name="g0",
+        unit="tick",
+        columns={},
+        nodes=dict(user=list(users)),
+        values=[dict(form="state", parameters={}, rows=rows, kind="user")],
+        edges=[dict(form="state", parameters={}, table="knows", ends=("user", "user"), rows=knows)],
+        tasks=dict(
+            key=list(range(len(asked))),
+            kind=["score"] * len(asked),
+            time=[entry[0] for entry in asked],
+            split=[entry[2] for entry in asked],
+            weight=[None] * len(asked),
+            known=[None] * len(asked),
+            target=[float(entry[0]) for entry in asked],
+            references=dict(who=[entry[1] for entry in asked]),
+        ),
+    )
+    return dict(schema=schema, graphs=[graph])
+
+
+@pytest.fixture(scope="module")
+def moved(tmp_path_factory):
+    started, root = time.perf_counter(), tmp_path_factory.mktemp("moved")
+    for late in (4, 7):
+        build(synthetic.stage(root, "late%d" % late, scoring(late)), root / ("late%d" % late), 1, ("train",))
+    LOG.info("banks of moved tasks exit seconds=%.3f", time.perf_counter() - started)
+    return {late: root / ("late%d" % late) for late in (4, 7)}
+
+
+def test_the_scored_tasks_a_trained_split_hides_shape_neither_its_steps_nor_its_predictions(moved):
+    import torch
+
+    from tuning.batches.batching import batches, pack_batch
+    from tuning.families.models import build as network
+
+    started, steps, found, net = time.perf_counter(), {}, {}, None
+    splits = dict(trained=["train"], scored=["test"], sees=dict(train=["without_scored"], test=[]))
+    for late, bank in moved.items():
+        held = Deriver(bank, "cpu", RESIDENT)
+        values = {"time/history": 2, "time/steps": "tasks", "time/several": "last"}
+        cfg = configuration(held.registry, dict(view="snapshot"), values, 5, splits)
+        (entry,) = [entry for entry in held.viewed(cfg).graphs if entry["split"] == held.splits.index("train")]
+        steps[late] = np.asarray(Graph.load(held.view(entry["index"], cfg)).step_time).tolist()
+        if net is None:
+            torch.manual_seed(5)
+            net = network(cfg, held.fitted(cfg)).eval()
+        blocks = held.blocks(0, 2, cfg)
+        with torch.inference_mode():
+            for group in batches(blocks, len(blocks), held.sizes(cfg), None, frame_budget=1024):
+                b = pack_batch(held, group, cfg, "cpu")
+                moments = [held.rows[row]["time"] for row in b["rows"].tolist()]
+                found.setdefault(late, {}).update(zip(moments, net(b).tolist()))
+    assert steps == {4: [1, 3, 5, 6], 7: [1, 3, 5, 6]}
+    assert len(found[4]) == 4 and found[4] == pytest.approx(found[7], rel=1e-6, abs=1e-6)
+    LOG.info("steps of a trained split exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_graph_without_tasks_builds_and_a_choice_of_steps_that_cannot_show_it_stops_naming_both(banks):

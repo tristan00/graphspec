@@ -59,9 +59,9 @@ class Tasks:
             untasked
         )
 
-    def __call__(self, facts, registry):
+    def __call__(self, facts, registry, tasks):
         started = time.perf_counter()
-        looking = np.asarray(facts.task_observer)
+        looking = np.asarray(facts.task_observer)[tasks]
         if not len(looking):
             raise ValueError(
                 "graph %s holds no task, and the choice of steps %s shows the times of the tasks of a graph; "
@@ -70,7 +70,7 @@ class Tasks:
         times = np.asarray(facts.task_time)
         result = []
         for observer in np.unique(looking).tolist():
-            chosen = np.flatnonzero(looking == observer)
+            chosen = tasks[looking == observer]
             moments = np.unique(times[chosen])
             result.append(
                 sequence(observer, moments, moments, chosen, at(facts.name, moments, times[chosen]))
@@ -93,7 +93,7 @@ class Changes:
     def refusal(self, registry):
         return None
 
-    def __call__(self, facts, registry):
+    def __call__(self, facts, registry, tasks):
         started = time.perf_counter()
         times = []
         for group in GROUPS:
@@ -101,10 +101,10 @@ class Changes:
                 np.asarray(facts.arrays[group + "_" + name], np.int64)
                 for name in ("since", "until", "known_time", "replaced_time")
             ]
-        looking, held = np.asarray(facts.task_observer), np.asarray(facts.task_time, np.int64)
+        looking, held = np.asarray(facts.task_observer)[tasks], np.asarray(facts.task_time, np.int64)
         result = []
         for observer in np.unique(looking).tolist() if len(looking) else [-1]:
-            chosen = np.flatnonzero(looking == observer)
+            chosen = tasks[looking == observer]
             found = np.concatenate(times + [held[chosen]])
             moments = np.unique(found[(found > ALWAYS) & (found < NEVER)])
             if len(moments):
@@ -131,31 +131,42 @@ def offered(registry):
     return tuple(name for name in STEPS.names() if STEPS.named(name).serves(registry))
 
 
-def sequences(facts, registry, steps, looking):
+def stepped(facts, registry, steps, tasks):
     started = time.perf_counter()
-    chooser = STEPS.named(steps)
-    if not chooser.serves(registry):
-        raise ValueError("the choice of steps %s does not serve the graphs of this bank" % steps)
-    found = chooser(facts, registry)
-    split, owner = np.asarray(facts.task_split), np.asarray(facts.target_task)
+    found = STEPS.named(steps)(facts, registry, tasks)
+    owner = np.asarray(facts.target_task)
     placed = np.concatenate([held["tasks"] for held in found] + [np.zeros(0, np.int64)])
-    if len(np.unique(placed)) != len(placed) or not np.isin(owner, placed).all():
+    if len(np.unique(placed)) != len(placed) or not np.isin(owner[np.isin(owner, tasks)], placed).all():
         raise ValueError(
             "the choice of steps %s does not give every task of graph %s that holds a target one step"
             % (steps, facts.name)
         )
+    LOG.debug("stepped exit graph=%s tasks=%d seconds=%.4f", facts.name, len(tasks), time.perf_counter() - started)
+    return {held["observer"]: held for held in found}
+
+
+def sequences(facts, registry, steps, looking):
+    started = time.perf_counter()
+    if not STEPS.named(steps).serves(registry):
+        raise ValueError("the choice of steps %s does not serve the graphs of this bank" % steps)
+    split, owner = np.asarray(facts.task_split), np.asarray(facts.target_task)
+    found = stepped(facts, registry, steps, np.arange(len(split)))
     ruled = [code for code, rules in looking.rules.items() if rules]
     unruled = tuple(code for code in range(len(looking.splits)) if code not in ruled)
     shared = looking.trained if set(unruled) & set(looking.trained) else unruled + looking.trained
+    common = (split < 0) | np.isin(split, looking.trained)
+    own = {
+        code: stepped(facts, registry, steps, np.flatnonzero(common | (split == code)))
+        for code in ruled
+        if np.any(split == code)
+    }
     result = []
-    for held in found:
-        own = split[held["tasks"]]
+    for observer, held in found.items():
         position = np.full(len(split), -1, np.int64)
         position[held["tasks"]] = np.arange(len(held["tasks"]))
-        labelled = position[owner] >= 0
-        rest = labelled & ~np.isin(split[owner], ruled)
-        if rest.any() or not np.isin(own, ruled).any():
-            kept = ~np.isin(own, ruled) | np.isin(own, looking.trained)
+        rest = (position[owner] >= 0) & ~np.isin(split[owner], ruled)
+        if rest.any() or not np.isin(split[held["tasks"]], ruled).any():
+            kept = ~np.isin(split[held["tasks"]], ruled) | np.isin(split[held["tasks"]], looking.trained)
             result.append(
                 dict(
                     held,
@@ -169,20 +180,20 @@ def sequences(facts, registry, steps, looking):
                     matures=shared,
                 )
             )
-        for code in ruled:
-            if not np.any(own == code):
+        for code, observed in own.items():
+            if observer not in observed or not np.any(split[observed[observer]["tasks"]] == code):
                 continue
-            kept = (own == code) | (own < 0) | np.isin(own, looking.trained)
+            part = observed[observer]
+            position = np.full(len(split), -1, np.int64)
+            position[part["tasks"]] = np.arange(len(part["tasks"]))
             result.append(
                 dict(
-                    held,
-                    tasks=held["tasks"][kept],
-                    task_step=held["task_step"][kept],
+                    part,
                     split=code,
                     rules=looking.rules[code],
                     trained=looking.trained,
                     scored=looking.scored,
-                    labels=np.flatnonzero(labelled & (split[owner] == code)),
+                    labels=np.flatnonzero((position[owner] >= 0) & (split[owner] == code)),
                     matures=looking.trained if code in looking.trained else (code,) + looking.trained,
                 )
             )

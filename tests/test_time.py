@@ -802,7 +802,7 @@ class Broken:
     def serves(self, registry):
         return True
 
-    def __call__(self, facts, registry):
+    def __call__(self, facts, registry, tasks):
         raise AssertionError("a choice of steps registered first is not the choice of validation")
 
 
@@ -955,8 +955,8 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
         def serves(self, registry):
             return registry.name == "ordered"
 
-        def __call__(self, facts, registry):
-            (whole,) = STEPS.named("tasks")(facts, registry)
+        def __call__(self, facts, registry, tasks):
+            (whole,) = STEPS.named("tasks")(facts, registry, tasks)
             kept = np.arange(0, len(whole["moments"]), 2)
             placed = np.isin(whole["task_step"], kept)
             return [
@@ -979,7 +979,7 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
         ValueError, match="the choice of steps halved does not give every task of graph first that holds"
     ):
         sequences(truth, held.registry, "halved", unstated(held.splits))
-    (chosen,) = STEPS.named("halved")(truth, held.registry)
+    (chosen,) = STEPS.named("halved")(truth, held.registry, np.arange(len(truth.task_key)))
     chosen.update(split=-1, rules=(), trained=(), scored=(), labels=np.zeros(0, np.int64), matures=())
     assert view(truth, held.registry, chosen, "last").steps == 3
     assert held.registry.extras["several"] is False
