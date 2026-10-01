@@ -143,6 +143,14 @@ def read_pack(path, mapped):
     return result
 
 
+def packed_names(path):
+    with open(path, "rb") as stream:
+        head = stream.read(len(PACK) + 8)
+        if head[: len(PACK)] != PACK:
+            raise ValueError("%s is not a pack of arrays" % path)
+        return [entry[0] for entry in json.loads(stream.read(int.from_bytes(head[len(PACK) :], "little")))]
+
+
 def aligned(size):
     return -(-size // PACK_ALIGN) * PACK_ALIGN
 
@@ -202,25 +210,26 @@ class Arrays(Mapping):
         self.sources = {path.stem: path for path in directory.glob("*.npy")}
         self.packed, self.loaded = {}, {}
         for path in sorted(directory.glob("*" + PACKS)):
-            found = read_pack(path, True)
+            found = packed_names(path)
             twice = sorted((set(found) & set(self.packed)) | (set(found) & set(self.sources)))
             if twice:
                 raise ValueError("the arrays %s are held twice in %s" % (", ".join(twice), directory))
-            self.packed.update(found)
+            self.packed.update(dict.fromkeys(found, path))
         LOG.debug(
             "arrays exit files=%d packed=%d seconds=%.4f", len(self.sources), len(self.packed), time.perf_counter() - started
         )
 
     def __getitem__(self, key):
-        if key in self.packed:
-            return self.packed[key]
         if key not in self.loaded:
-            self.loaded[key] = np.load(self.sources[key], mmap_mode="r", allow_pickle=False)
+            if key in self.packed:
+                self.loaded.update(read_pack(self.packed[key], True))
+            else:
+                self.loaded[key] = np.load(self.sources[key], mmap_mode="r", allow_pickle=False)
         return self.loaded[key]
 
     def read(self, key):
         if key in self.packed:
-            return np.array(self.packed[key])
+            return np.array(self[key])
         return load_array(self.sources[key])
 
     def __iter__(self):
