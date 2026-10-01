@@ -320,6 +320,7 @@ def recipe_batch(bank, blocks, cfg):
         if "frame_starts" in parts[0]:
             b["frame_starts"] = np.concatenate([p["frame_starts"] + int(offset) for p, offset in zip(parts, nodes)])
             b["frame_event"] = np.concatenate([p["frame_event"] + i * t for i, p in enumerate(parts)])
+            b["frame_fed"] = moved(parts, "frame_fed", nodes)
         b["step"] = np.concatenate([p["step"] + i * t for i, p in enumerate(parts)])
         b["align"] = np.concatenate(
             [

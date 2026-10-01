@@ -257,13 +257,16 @@ def snapshot_inputs(b, window):
 def frame_inputs_of(window):
     started = time.perf_counter()
     graph, start, stop, lo, held = window.graph, window.start, window.stop, window.lo, window.held
-    left, right = between(held.column("events", 2), start * 2, stop * 2)
+    left, right = between(held.column("events", 2), start * 2, stop * 2 - 1)
     seen = held.numpy("events")[left:right]
     seen = seen[seen[:, 3] == 2]
+    after = seen[:, 2].astype(np.int64) // 2 + 1
+    fed = observing(held, after, seen[:, 0].astype(np.int64), np.arange(len(held.numpy("entity_kind"))))
     result = dict(
-        frame_event=array(seen[:, 2] // 2 - start, torch.long),
+        frame_event=array(after - start, torch.long),
         frame_task=features(graph, (len(seen),), ("task", seen[:, 7], 1.0)),
         frame_starts=array(seen[:, 4:6] - lo, torch.long),
+        frame_fed=array(np.where(fed >= 0, fed - lo, -1), torch.long),
     )
     LOG.debug(
         "frame inputs exit graph=%d frames=%d events=%d seconds=%.4f",

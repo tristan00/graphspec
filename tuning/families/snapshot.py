@@ -140,10 +140,11 @@ class SnapshotNet(nn.Module):
         return mean(h[seen[:, 0]], event, frames), mean(h[seen[:, 1]], event, frames), mean(h, b["step"], frames)
 
     def graph_sequence(self, h, b):
-        event = b["frame_event"]
+        event, fed = b["frame_event"], b["frame_fed"]
         task = self.task(mean(b["frame_task"], event, b["frames"]))
         action = self.action_round(torch.cat((task, *self.framed(h, b)), -1))
-        h = h + h.new_zeros(h.shape).index_add_(0, b["frame_starts"][:, 0], self.feedback(action[event]))
+        kept = fed >= 0
+        h = h + h.new_zeros(h.shape).index_add_(0, fed[kept], self.feedback(action[event[kept]]))
         action = self.action_round(torch.cat((action, *self.framed(h, b)), -1))
         frames = action.reshape(b["batch_size"], b["time_steps"], -1)
         if self.sequence_mode == "attention":

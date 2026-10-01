@@ -363,7 +363,7 @@ def test_a_relation_taken_from_a_column_has_the_parameters_arrays_and_weights_of
     assert "attributes_links" in few["arrays"] and set(few["weights"]) == set(VIEWS)
 
 
-def test_a_frame_of_a_sequence_over_graphs_reads_every_task_seen_as_an_event_at_its_step(banks):
+def test_a_frame_of_a_sequence_over_graphs_reads_every_task_seen_as_an_event_at_the_step_before_it(banks):
     held = opened(banks, "stated")
     assert set(views(held.registry)) == set(VIEWS)
     stated = dict(view="snapshot", **{"snapshot/temporal": "graph_sequence"})
@@ -375,14 +375,14 @@ def test_a_frame_of_a_sequence_over_graphs_reads_every_task_seen_as_an_event_at_
     found = [
         pack_batch(held, group, cfg, "cpu") for group in batches(blocks, 1, held.sizes(cfg), None, frame_budget=1024)
     ]
-    b = next(batch for batch in found if torch.bincount(batch["frame_event"]).max() == 2)
+    b = next(batch for batch in found if len(batch["frame_event"]) and torch.bincount(batch["frame_event"]).max() == 2)
     frame = int(torch.bincount(b["frame_event"]).argmax())
     second = (b["frame_event"] == frame).nonzero().flatten()[1]
     moved = dict(b, frame_task=b["frame_task"].clone())
     moved["frame_task"][second] += 1
     predicted, changed = net(b), net(moved)
     rows = (b["row_frames"][b["selected"]] == frame).nonzero().flatten()
-    assert len(rows) == 2 and torch.isfinite(predicted).all() and (predicted[rows] != changed[rows]).all()
+    assert len(rows) == 1 and torch.isfinite(predicted).all() and (predicted[rows] != changed[rows]).all()
     sum(net(batch).sum() for batch in found).backward()
     assert all(torch.isfinite(parameter.grad).all() for parameter in net.parameters() if parameter.grad is not None)
 
