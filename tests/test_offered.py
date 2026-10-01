@@ -21,6 +21,34 @@ from tuning.searches.selector import graph_space
 LOG = logging.getLogger(__name__)
 TINY = {"hidden": 4, "time/history": 2}
 pytestmark = pytest.mark.xdist_group("offered")
+ADDING = [
+    dict(
+        operation="graphspec.relation_forms",
+        parameters={
+            "relation_forms/types": "typed",
+            "relation_forms/parallel": "sum",
+            "relation_forms/reverse": True,
+            "relation_forms/loops": True,
+        },
+    ),
+    dict(
+        operation="graphspec.nearby",
+        parameters={"nearby/kinds": "person:place", "nearby/rule": "nearest", "nearby/k": 2, "nearby/encoder": "standard"},
+    ),
+    dict(
+        operation="graphspec.measures",
+        parameters={
+            "measures/degree": True,
+            "measures/components": True,
+            "measures/cores": True,
+            "measures/encoder": "logarithm",
+        },
+    ),
+    dict(
+        operation="graphspec.contract",
+        parameters={"contract/grouping": "item:v0", "contract/aggregate": "mean", "contract/parallel": "keep"},
+    ),
+]
 
 
 @pytest.fixture(scope="module")
@@ -98,9 +126,9 @@ def cases(held, family, found):
 
 
 @timed("offered.passed")
-def passed(held, model, graph):
+def passed(held, model, graph, pipeline):
     bank = held["bank"]
-    cfg = configuration(bank.registry, model, held["pipeline"], graph, 5, copy.deepcopy(SPLITS))
+    cfg = configuration(bank.registry, model, pipeline, graph, 5, copy.deepcopy(SPLITS))
     block = bank.blocks(0, graph["time/history"], cfg)[-1]
     b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, "cpu")
     torch.manual_seed(5)
@@ -123,8 +151,21 @@ def test_every_value_a_search_offers_a_family_packs_a_batch_and_passes_forward_a
     listed, failures = cases(held, family, found), []
     for label, model, graph in listed:
         try:
-            passed(held, model, graph)
+            passed(held, model, graph, held["pipeline"])
         except Exception as error:
             failures.append("%s: %r" % (label, error))
     LOG.info("offered family=%s cases=%d failures=%d", family, len(listed), len(failures))
     assert failures == [], "\n".join(failures)
+
+
+@pytest.mark.parametrize("family", VIEWS)
+def test_every_family_reads_the_kinds_relations_and_columns_a_pipeline_adds(held, family):
+    started = time.perf_counter()
+    model, graph = drawn(held, dict(TINY, view=family))
+    pipeline = held["pipeline"][:-1] + ADDING
+    passed(held, model, graph, pipeline)
+    cfg = configuration(held["bank"].registry, model, pipeline, graph, 5, copy.deepcopy(SPLITS))
+    registry = held["bank"].fitted(cfg)
+    assert registry.nodes[-1] == "contract" and "relation_forms.loops" in registry.by_name
+    assert registry.features > held["bank"].viewed(cfg).registry.features
+    LOG.info("added read family=%s seconds=%.3f", family, time.perf_counter() - started)
