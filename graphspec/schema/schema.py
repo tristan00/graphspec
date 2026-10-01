@@ -1228,6 +1228,7 @@ class Encoding:
     def width(self, columns):
         return sum(sum(self.sizes[name]) for name in columns)
 
+    @timed("schema.encoding.slots")
     def slots(self, name):
         start, flagged = 0, self.values
         for held in self.table:

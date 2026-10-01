@@ -7,6 +7,7 @@ LOG = logging.getLogger(__name__)
 PROVISIONAL = "value"
 
 
+@timed("added.paired")
 def paired(stated, where):
     if (
         type(stated) is not tuple
@@ -18,12 +19,14 @@ def paired(stated, where):
     return stated
 
 
+@timed("added.named")
 def named(stated, where):
     if type(stated) is not tuple or len(set(stated)) != len(stated) or not all(type(name) is str for name in stated):
         raise ValueError("%s states its columns as a tuple of distinct names, found %r" % (where, stated))
     return stated
 
 
+@timed("added.mapping")
 def mapping(stated, where):
     if type(stated) is not dict or not all(type(name) is str and name for name in stated):
         raise ValueError("%s is a mapping from names, found %r" % (where, stated))
@@ -75,6 +78,7 @@ class Added:
             time.perf_counter() - started,
         )
 
+    @timed("added.holds")
     def holds(self):
         return any((self.columns, self.kinds, self.placed, self.relations, self.joins))
 

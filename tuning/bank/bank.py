@@ -36,7 +36,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 13
+VIEW = 14
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):

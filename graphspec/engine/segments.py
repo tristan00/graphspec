@@ -3,7 +3,7 @@ import time
 
 import numpy as np
 
-from graphspec.infra.timing import measure
+from graphspec.infra.timing import measure, timed
 from graphspec.operations.state import EMPTY, ENTITIES, SECOND, Entities, Second, Segment
 from graphspec.representations import base as representations
 from graphspec.representations.registry import chosen as representing
@@ -26,6 +26,7 @@ def features(member):
     return member.x_table if isinstance(member, Dense) else member.obs_x
 
 
+@timed("segments.observed_rows")
 def observed_rows(member):
     entity = np.asarray(member.obs_entity, np.int64)
     if isinstance(member, Dense):
@@ -33,6 +34,7 @@ def observed_rows(member):
     return entity, np.asarray(member.obs_x)
 
 
+@timed("segments.padded")
 def padded(values, width):
     values = np.asarray(values)
     if values.shape[1] == width:
@@ -45,6 +47,7 @@ def padded(values, width):
     return np.concatenate((values, np.full((len(values), width - values.shape[1]), np.nan, values.dtype)), 1)
 
 
+@timed("segments.place")
 def place(table_global, table, top):
     table_global = np.asarray(table_global, np.int64)
     made = np.flatnonzero(table_global < 0)

@@ -115,6 +115,7 @@ def read(arrays, pairs):
     return found
 
 
+@timed("segments.unequal")
 def unequal(left, right, pairs):
     left, right = read(left, pairs), read(right, pairs)
     return sorted(set(left) ^ set(right) | {name for name in set(left) & set(right) if not identical(left[name], right[name])})
