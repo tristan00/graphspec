@@ -93,6 +93,10 @@ def made_early():
     shared("path", lambda root: synthetic_bank(root, "path"))
     ground = Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "ground" / "fixture"
     shared("ground", lambda made: ground_banks(made, ground))
+    shared("varied", varied_bank)
+    references = import_module("test_references")
+    shared("references", references.made(references.CASES))
+    shared("references-wide", references.made(references.WIDE))
     LOG.debug("made early exit seconds=%.4f", time.perf_counter() - started)
 
 
@@ -213,15 +217,19 @@ def path_bank():
     return shared("path", lambda root: synthetic_bank(root, "path")) / "bank"
 
 
-@pytest.fixture(scope="session")
-def varied(tmp_path_factory):
+def varied_bank(root):
     from graphspec.sources import synthetic
     from tuning.bank.build import build
 
-    root = tmp_path_factory.mktemp("varied")
+    started = time.perf_counter()
     task = synthetic.generate(root, "varied", 4, 1, synthetic.varied("task"), **SETTINGS)
     build(task, root / "bank", 1, ("train",))
-    return root / "bank"
+    LOG.debug("varied bank exit seconds=%.4f", time.perf_counter() - started)
+
+
+@pytest.fixture(scope="session")
+def varied():
+    return shared("varied", varied_bank) / "bank"
 
 
 @pytest.fixture(scope="session")
