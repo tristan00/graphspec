@@ -49,7 +49,7 @@ class MailboxGRU(Rule):
     def prepare(self, events, raw):
         return self.event_kind(events[:, 3]) + self.status(events[:, 8] + 1)
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, last, edge, count):
         source, destination = events[:, 0], events[:, 1]
         receivers, partners = torch.cat((source, destination)), torch.cat((destination, source))
         content = torch.cat(
@@ -78,7 +78,7 @@ class MutualRNN(Rule):
             head = head * (1 + self.projection(torch.log1p((frame_tick - last[roots]).clamp_min(0))[:, None]))
         return head + right[roots] + observed[roots]
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, last, edge, count):
         left, right, observed, initialized = memory
         source, destination, kind = events[:, 0], events[:, 1], events[:, 3]
         seen = kind == 0
@@ -111,7 +111,7 @@ class Intensity(Rule):
         self.state_map = nn.Linear(hidden, hidden)
         self.change_status = nn.Embedding(3, hidden)
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, last, edge, count):
         source, destination, kind = events[:, 0], events[:, 1], events[:, 3]
         neighborhood = self.structural(memory, b["frame_edges"][time_step])
         messages = torch.zeros_like(memory)
@@ -146,19 +146,20 @@ class Antisymmetric(Rule):
             - self.damping * torch.eye(len(self.weight), device=self.weight.device)
         )
 
-    def step(self, memory, events, raw, clock, touched, b, time_step, now, previous, edge, count):
+    def step(self, memory, events, raw, clock, touched, b, time_step, now, last, edge, count):
         receivers = torch.cat((events[:, 0], events[:, 1]))
         forcing = mean(raw.repeat(2, 1), receivers, len(memory))
         matrix = self.matrix()
-        interval = 0.5 * (now - previous) / self.steps
+        interval = (0.5 * (now - last) / self.steps)[:, None]
+        state = memory
         for _ in range(self.steps):
             derivative = (
-                memory @ matrix
-                + self.neighbor(aggregate(memory, b["frame_edges"][time_step]))
+                state @ matrix
+                + self.neighbor(aggregate(state, b["frame_edges"][time_step]))
                 + self.drive(forcing)
             ).tanh()
-            memory = memory + interval * derivative
-        return memory, touched
+            state = torch.where(touched[:, None], state + interval * derivative, memory)
+        return state, touched
 
 
 class MemoryNet(nn.Module):
@@ -238,7 +239,7 @@ class MemoryNet(nn.Module):
         groups = {tick: (index, begin, end) for index, (tick, begin, end) in enumerate(b["event_groups"])}
         encoded = self.input(b["event_x"]) + self.relation(related(b["events"]))
         static = self.rule.prepare(b["events"], encoded)
-        sizes = torch.as_tensor([end - begin for _, begin, end in b["event_groups"]], device=state.device)
+        sizes = torch.as_tensor([end - begin for _, begin, end in b["event_groups"]], dtype=torch.long, device=state.device)
         member = torch.repeat_interleave(
             torch.arange(len(sizes), device=state.device), sizes, output_size=len(b["events"])
         ).repeat(2)
@@ -254,7 +255,6 @@ class MemoryNet(nn.Module):
         context = enabled(self.cfg)
         if context:
             end_values = state.new_zeros(len(b["member_row"]) * lookback(self.cfg), hidden)
-        previous = b["start"] * 2 - 1
         for time_step in range(b["time_steps"]):
             step, chosen = b["frame_rows"][time_step], b["frame_members"][time_step]
             tick = (b["start"] + time_step) * 2
@@ -288,12 +288,11 @@ class MemoryNet(nn.Module):
                     b,
                     time_step,
                     now,
-                    previous,
+                    last,
                     None if static is None else static[begin:end],
                     counts[index],
                 )
                 last = last.masked_fill(touched, float(now))
-                previous = now
             if context:
                 ids, roots = b["end_capture"][time_step]
                 if len(ids):

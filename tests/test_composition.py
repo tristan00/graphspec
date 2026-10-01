@@ -26,7 +26,11 @@ TIMES, CHANGED = (1, 2, 3, 4, 5, 6), 3
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
 ROUNDING = 1e-5
 GRAPH = {"time/history": 2, "time/context": 1, "time/periods": "every", "time/period_length": 2}
-SPECS = [dict(view=view) for view in VIEWS] + [{"view": "snapshot", "snapshot/temporal": "graph_sequence"}]
+SPECS = [dict(view=view) for view in VIEWS] + [
+    {"view": "snapshot", "snapshot/temporal": "graph_sequence"},
+    {"view": "snapshot", "snapshot/temporal": "coupling_edges"},
+    {"view": "memory", "memory/update": "antisymmetric"},
+]
 OPENED = {}
 
 

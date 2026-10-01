@@ -103,7 +103,8 @@ class SnapshotNet(nn.Module):
     def values(self, h, sequence, b):
         rows, whole = b["row_frames"], b["whole_row"]
         if sequence is None:
-            return h[b["member_index"]], mean(h, b["step"], b["frames"])[rows[whole]]
+            shown = b["step"] >= 0
+            return h[b["member_index"]], mean(h[shown], b["step"][shown], b["frames"])[rows[whole]]
         shown = b["present"].to(sequence.dtype)
         size = (sequence.shape[0], b["batch_size"])
         total = sequence.new_zeros(size + sequence.shape[-1:]).index_add_(

@@ -110,7 +110,7 @@ def temporal_edges(b, graph, held, lo, hi, registry, tokens):
         b["entity"] = np.concatenate((b["entity"], entity[ghosts].astype(np.int64)))
         if "token" in b:
             b["token"] = np.concatenate((b["token"], tokens[entity[ghosts]]))
-        b["step"] = np.concatenate((b["step"], (step[ghosts] - b["start"]).astype(np.int64)))
+        b["step"] = np.concatenate((b["step"], np.full(len(ghosts), -1, np.int64)))
         b["observations"] = count + len(ghosts)
     source_local = np.where(source >= lo, source - lo, hi - lo + np.searchsorted(ghosts, source))
     extra = np.stack((source_local, destination - lo))

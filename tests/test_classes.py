@@ -342,3 +342,25 @@ def test_every_kind_over_classes_matures_into_its_own_form_once_known(classes, m
         assert np.isnan(observed(held, cfg, name, 3, "s2", FLAGS.values())).all()
         assert observed(held, cfg, name, 5, "s3", PARTS.values()) == [target[3][tree] for tree in TREES]
     assert case["graphs"][1]["tasks"]["target"][2] == ["green"]
+
+
+def test_a_memory_reads_a_window_alone_that_holds_no_event(classes):
+    import torch
+
+    from conftest import SPLITS
+    from tuning.batches.batching import pack_batch
+    from tuning.families.models import build as network
+
+    started = time.perf_counter()
+    held = Deriver(classes[0], "cpu", RESIDENT)
+    cfg = support.configuration(held.registry, dict(view="memory"), {"time/history": 2}, 5, SPLITS)
+    blocks = [block for partition in (0, 1) for block in held.blocks(partition, 2, cfg)]
+    ticks = {graph: np.asarray(held.arrays(graph, cfg)["events"])[:, 2] for graph in {block[0] for block in blocks}}
+    quiet = [block for block in blocks if not ((ticks[block[0]] >= 2 * block[1]) & (ticks[block[0]] < 2 * block[2])).any()]
+    assert quiet
+    b = pack_batch(held, quiet[:1], cfg, "cpu")
+    torch.manual_seed(5)
+    with torch.inference_mode():
+        predicted = network(cfg, held.fitted(cfg)).eval()(b)
+    assert len(b["events"]) == 0 and len(predicted) == len(b["series"]) and torch.isfinite(predicted).all()
+    LOG.info("quiet window exit blocks=%d seconds=%.3f", len(quiet), time.perf_counter() - started)
