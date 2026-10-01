@@ -55,6 +55,8 @@ VALUES = {
     "nearby/relation": "near",
     "nearby/rule": "nearest",
     "nearby/k": 2,
+    "consecutive/pairing": "near:visits:targets",
+    "consecutive/gap": 3.0,
 }
 SETTINGS = {"coupling/periods": 1, "events/periods": 1, "mixed/trace": 2}
 GROUPS = specs.GROUPS + (RUNNING.name,)

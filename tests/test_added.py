@@ -14,6 +14,7 @@ from graphspec.engine.edits import sliced
 from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
+from graphspec.operations.consecutive import CONSECUTIVE
 from graphspec.operations.nearby import NEARBY, fillable, measured, placed
 from graphspec.operations.pipeline import resolved
 from graphspec.operations.rows import keyed_relations
@@ -210,3 +211,56 @@ def test_nearby_joins_the_rows_whose_columns_lie_within_a_distance_or_are_neares
     with pytest.raises(ValueError, match="fills a relation stated without columns between kinds of node that share"):
         NEARBY(dense, plain, {}, SEED, LIMITS, carry, NEARBY.initial(plain, {}), None)
     LOG.info("nearby exit seconds=%.3f", time.perf_counter() - started)
+
+
+def sessions(graph, registry, pairing, gap):
+    place, tokens = registry.kind("place"), np.asarray(graph.entity_token).astype(np.uint64)
+    structural = ~np.asarray(graph.obs_anchor, bool)
+    seen = {(int(step), int(who)) for step, who in zip(graph.obs_step[structural], graph.obs_entity[structural])}
+    links = sorted((step, -1, who) for step, who in seen if graph.kinds[who] == place)
+    if pairing != "near":
+        chosen = graph.fact_present & (graph.fact_code == registry.code("visits"))
+        links = sorted(
+            {
+                (int(step), int(owner), int(who))
+                for step, owner, who in zip(graph.fact_step[chosen], graph.fact_source[chosen], graph.fact_target[chosen])
+            }
+        )
+    first = {}
+    for step, owner, who in links:
+        first.setdefault((owner, who), step)
+    groups = {}
+    for (owner, who), step in first.items():
+        groups.setdefault(owner, []).append((int(graph.step_time[step]), int(tokens[who]), who, step))
+    expected = set()
+    for rows in groups.values():
+        rows.sort()
+        for (moment, token, who, _), (later, other, _, step) in zip(rows, rows[1:]):
+            if later - moment <= gap and (step, who) in seen:
+                expected.add((int(graph.step_time[step]), token, other))
+    return expected
+
+
+def test_consecutive_rows_of_a_group_are_joined_unless_a_gap_in_time_cuts_them(opened):
+    started = time.perf_counter()
+    held, registry, graph, names = opened
+    options = CONSECUTIVE.stated(registry)[0].options
+    assert {"near", "near:visits:targets", "near:near:sources", "near:located:targets"} <= set(options)
+    counts = {}
+    for pairing in ("near", "near:visits:targets"):
+        for gap in (1.0, 1e9):
+            entry = dict(
+                operation="graphspec.consecutive",
+                parameters={"consecutive/pairing": pairing, "consecutive/gap": gap},
+            )
+            found = segments.whole(graph, {}, registry, resolved(registry, [entry]), SEED, LIMITS, None)
+            new, before = added(found, graph, registry.code("near"))
+            assert new == sorted(sessions(graph, registry, pairing, gap) - before)
+            counts[pairing, gap] = len(new)
+    assert 0 < counts["near:visits:targets", 1.0] < counts["near:visits:targets", 1e9]
+    assert counts["near", 1.0] <= counts["near", 1e9]
+    plain = support.registry("plain", ["thing"], [])
+    carry, dense = segments.opening(graph, {})
+    with pytest.raises(ValueError, match="fills a relation stated without columns from a kind of node to itself"):
+        CONSECUTIVE(dense, plain, {}, SEED, LIMITS, carry, CONSECUTIVE.initial(plain, {}), None)
+    LOG.info("consecutive exit counts=%s seconds=%.3f", counts, time.perf_counter() - started)

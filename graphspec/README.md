@@ -7,7 +7,7 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`, `nearby.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`, `difference.py`, `nearby.py`, `consecutive.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads: the registry of representations and their families, structure, sample and encode (`registry.py`), the arrays every variant holds, their carried state and the arrays over a whole variant (`base.py`), one module per shipped representation (`coupling.py`, `events.py`, `neighbors.py`, `walks.py`, `mixed.py`), what they share (`groups.py`) and their kernels (`kernels.py`) |
 | `engine/` | Derivation of variants, one engine in segments: derivations, continuations and forks, and the build of a variant in the calling process (`segments.py`), the steps of a pipeline on one segment (`transform.py`), the same on worker processes (`schedule.py`), slices and edits (`edits.py`), writing and stitching segments (`stitch.py`), the physical join tests compare against (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
@@ -221,6 +221,15 @@ Fills a relation the schema states, whose edges then come from the values of its
 | `nearby/rule` | threshold, nearest | threshold: every two nodes within the distance; nearest: every node to its nearest. |
 | `nearby/threshold` | 0.01–100, logarithmic | The distance. Offered for threshold. |
 | `nearby/k` | 1–16 | How many nearest each node joins, fewer where fewer are observed; candidates at equal distances are taken in the order of their tokens. Offered for nearest. |
+
+11. Edges between consecutive rows of a group, `graphspec.consecutive`
+
+Fills a relation the schema states without columns from a kind of node to itself, and stops naming the bank where none is. The rows are the nodes of that kind. A row joins a group at the first step it is seen in it: with the whole graph as one group, at its first observation other than as an anchor; with a group per counterpart, at the first step at which a present edge of the grouping relation links it, on the side stated, to that counterpart, so that a row with several counterparts is in several groups. In a group, rows follow one another in the order of the time they joined, then of their tokens; each row is joined to the row before it, from the earlier to the later, at the step the later joined, where the earlier is observed at that step other than as an anchor and joined at most the gap before; a longer gap, or another graph of a joined group, starts the group again. Edges are stated at that step only, without values; a pipeline that states `graphspec.window` after it carries them on. It carries the rows that joined each group and the last row of each group from segment to segment. It draws nothing.
+
+| Parameter | Range | Effect |
+|---|---|---|
+| `consecutive/pairing` | the relations that qualify, alone or with a grouping | `<relation>`: the rows of the whole graph form one group; `<relation>:<grouping>:<side>`: the rows are grouped by their counterparts over the relation `<grouping>`, on which they are the sources or the targets. |
+| `consecutive/gap` | 1–10⁹, logarithmic, in the unit of time of the graph | The longest time between two consecutive rows that are joined. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 
