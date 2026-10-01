@@ -8,6 +8,7 @@ from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
 from .references import SORTS
+from .time import UNITED
 
 LOG = logging.getLogger(__name__)
 TARGETS = Names("kind of target")
@@ -125,6 +126,27 @@ def ended(values, task, place):
     np.maximum.at(top, group, values)
     raised = np.exp(values - top[group])
     return raised / (np.exp(-top)[group] + np.bincount(group, raised)[group])
+
+
+def accumulated(values, task, tau):
+    started = time.perf_counter()
+    task = np.unique(np.asarray(task, np.int64), return_inverse=True)[1].reshape(-1)
+    order = np.lexsort((np.asarray(tau, np.float64), task))
+    counts = np.bincount(task)
+    place = np.empty(len(order), np.int64)
+    place[order] = np.arange(len(order)) - np.repeat(np.cumsum(counts) - counts, counts)
+    grid = np.zeros((len(counts), counts.max()))
+    grid[task, place] = values
+    result = np.cumsum(grid, 1)[task, place]
+    LOG.debug("accumulated exit points=%d seconds=%.4f", len(order), time.perf_counter() - started)
+    return result
+
+
+@timed("targets.happening")
+def happening(values, task, tau):
+    values = np.asarray(values, np.float64)
+    lost = np.logaddexp(0, values)
+    return np.exp(lost - accumulated(lost, task, tau) - np.logaddexp(0, -values))
 
 
 @timed("targets.whole")
@@ -490,6 +512,108 @@ class Sequence(Over):
         return ended(values, task, fields["place"])
 
 
+class Survival:
+    scaled = False
+    matures = None
+    names = None
+    parameters = ("width", "intervals")
+    columns = dict(tau="FLOAT", duration="INT64", happened="BOOL")
+    fields = ("tau", "duration", "happened")
+
+    @timed("targets.survival.checked")
+    def checked(self, stated, schema, references, where):
+        if schema.model not in UNITED:
+            raise ValueError(
+                "the target of %s is a time to an event, which counts on a clock, and the time of the schema is %s"
+                % (where, schema.model)
+            )
+        return dict(
+            width=whole(stated["width"], 1, "the width of the intervals of the target of " + where),
+            intervals=whole(stated["intervals"], 1, "the number of intervals of the target of " + where),
+        )
+
+    @timed("targets.survival.series")
+    def series(self, stated, where):
+        return one(stated, where)
+
+    @timed("targets.survival.written")
+    def written(self, series):
+        return series[0]
+
+    def points(self, rows, target, where):
+        started = time.perf_counter()
+        width, count = target["width"], target["intervals"]
+        if any(type(value) is not int or value < 1 for value in rows["duration"]) or any(
+            type(value) is not bool for value in rows["happened"]
+        ):
+            raise ValueError(
+                "the points of %s state the duration of their case, a whole number of at least 1, and whether its "
+                "event happened, true or false" % where
+            )
+        owner, lasted = np.asarray(rows["task"], np.int64), np.asarray(rows["duration"], np.int64)
+        happened = np.asarray(rows["happened"], bool)
+        tau = np.asarray([np.nan if value is None else value for value in rows["tau"]], np.float64)
+        order = np.lexsort((tau, owner))
+        _, first, counts = np.unique(owner[order], return_index=True, return_counts=True)
+        wrong = counts != count
+        if not wrong.any():
+            wrong = (tau[order].reshape(-1, count) != width * np.arange(1, count + 1)).any(1)
+            for held in (lasted, happened):
+                wrong |= (held[order].reshape(-1, count) != held[order][first][:, None]).any(1)
+        if wrong.any():
+            raise ValueError(
+                "a task of graph %s holds under %s one point for each of its %d intervals of %d, by the end of the "
+                "interval as its tau, all of one duration and one outcome"
+                % (rows["graph"][int(order[first[np.argmax(wrong)]])], where, count, width)
+            )
+        if np.any(np.asarray(rows["y"], np.float64) != (happened & (tau - width < lasted) & (lasted <= tau))):
+            raise ValueError(
+                "the points of %s state 1 for the interval in which the event of their task happened and 0 for "
+                "every other" % where
+            )
+        LOG.debug("survival points exit points=%d seconds=%.4f", len(owner), time.perf_counter() - started)
+        return dict(
+            series=[target["series"][0]] * len(owner),
+            tau=tau.tolist(),
+            duration=lasted.tolist(),
+            happened=happened.tolist(),
+        )
+
+    @timed("targets.survival.staged")
+    def staged(self, stated, target, where):
+        width = target["width"]
+        if (
+            not isinstance(stated, dict)
+            or set(stated) != {"duration", "happened"}
+            or type(stated["duration"]) is not int
+            or stated["duration"] < 1
+            or type(stated["happened"]) is not bool
+        ):
+            raise ValueError(
+                "%s states its target as its duration, a whole number of at least 1 of the unit of its graph from "
+                "the time of the task to its event or to the end of its case, and whether its event happened then, "
+                "true or false, found %r" % (where, stated)
+            )
+        lasted, happened = stated["duration"], stated["happened"]
+        return [
+            dict(
+                tau=float(width * end),
+                duration=lasted,
+                happened=happened,
+                y=float(happened and width * (end - 1) < lasted <= width * end),
+            )
+            for end in range(1, target["intervals"] + 1)
+        ]
+
+    @timed("targets.survival.read")
+    def read(self, rows):
+        return dict(duration=int(rows[0]["duration"]), happened=bool(rows[0]["happened"]))
+
+    @timed("targets.survival.predicted")
+    def predicted(self, values, task, fields):
+        return happening(values, task, fields["tau"])
+
+
 class Pointed:
     scaled = False
     matures = None
@@ -630,7 +754,7 @@ class Link(Pointed):
 
 
 class Weighted:
-    reads = ("number", "path", "class", "classes", "proportions", "sequence", "ranking", "nodes", "link")
+    reads = ("number", "path", "class", "classes", "proportions", "sequence", "survival", "ranking", "nodes", "link")
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")
@@ -679,6 +803,7 @@ TARGETS.register("class", Class())
 TARGETS.register("classes", Classes())
 TARGETS.register("proportions", Proportions())
 TARGETS.register("sequence", Sequence())
+TARGETS.register("survival", Survival())
 TARGETS.register("ranking", Ranking())
 TARGETS.register("nodes", Nodes())
 TARGETS.register("link", Link())

@@ -6,7 +6,7 @@ import numpy as np
 
 from graphspec.infra.timing import timed
 from graphspec.registries import Names, ship
-from graphspec.schema.targets import TARGETS
+from graphspec.schema.targets import TARGETS, accumulated
 
 LOG = logging.getLogger(__name__)
 MEASURES = Names("measure")
@@ -343,6 +343,104 @@ class Exact:
         )
 
 
+def survived(held):
+    started = time.perf_counter()
+    owner = np.unique(held.task, return_inverse=True)[1].reshape(-1)
+    tasks, lasting = owner.max() + 1, 1 - accumulated(held.prediction, held.task, held.fields["tau"])
+    cases = dict(risk=np.bincount(owner, held.prediction, tasks), horizon=np.zeros(tasks))
+    np.maximum.at(cases["horizon"], owner, held.fields["tau"])
+    for name, values in (("duration", held.fields["duration"]), ("happened", held.fields["happened"] == 1)):
+        cases[name] = np.zeros(tasks, values.dtype)
+        cases[name][owner] = values
+    cases["series"] = np.zeros(tasks, np.int64)
+    cases["series"][owner] = held.series
+    LOG.debug("survived exit tasks=%d seconds=%.4f", tasks, time.perf_counter() - started)
+    return owner, lasting, cases
+
+
+def concordant(duration, risk, earlier):
+    started = time.perf_counter()
+    codes = (np.unique(risk, return_inverse=True)[1].reshape(-1) + 1).tolist()
+    tree, order = [0] * (max(codes, default=0) + 1), np.argsort(-duration, kind="stable").tolist()
+    agreed, pairs, inserted, low = 0.0, 0, 0, 0
+    while low < len(order):
+        high = low
+        while high < len(order) and duration[order[high]] == duration[order[low]]:
+            high += 1
+        for at in order[low:high]:
+            if earlier[at]:
+                counts = []
+                for place in (codes[at] - 1, codes[at]):
+                    count = 0
+                    while place > 0:
+                        count += tree[place]
+                        place -= place & -place
+                    counts.append(count)
+                agreed += counts[0] + 0.5 * (counts[1] - counts[0])
+                pairs += inserted
+        for at in order[low:high]:
+            place = codes[at]
+            while place < len(tree):
+                tree[place] += 1
+                place += place & -place
+        inserted, low = inserted + high - low, high
+    LOG.debug("concordant exit tasks=%d pairs=%d seconds=%.4f", len(order), pairs, time.perf_counter() - started)
+    return agreed, pairs
+
+
+@timed("measures.censoring")
+def censoring(duration, happened):
+    times = np.unique(duration)
+    risk = len(duration) - np.searchsorted(np.sort(duration), times, "left")
+    censored = np.bincount(np.searchsorted(times, duration[~happened]), minlength=len(times))
+    return times, np.r_[1.0, np.cumprod(1 - censored / risk)]
+
+
+class Concordance:
+    reads = ("survival",)
+    better = "higher"
+    label, short = "Validation concordance", "Concordance"
+
+    @timed("measures.concordance")
+    def __call__(self, held):
+        _, _, cases = survived(held)
+        earlier = cases["happened"] & (cases["duration"] <= cases["horizon"])
+        series, agreed, pairs = {}, 0.0, 0
+        for code, name in enumerate(held.names):
+            chosen = cases["series"] == code
+            found, count = concordant(cases["duration"][chosen], cases["risk"][chosen], earlier[chosen])
+            if not count:
+                raise ValueError(
+                    "concordance requires, in the series %s, a task whose event happened within its horizon before "
+                    "another task ended" % name
+                )
+            series[name], agreed, pairs = found / count, agreed + found, pairs + count
+        return dict(value=agreed / pairs, series=series)
+
+
+class Brier:
+    reads = ("survival",)
+    better = "lower"
+    label, short = "Validation integrated Brier score", "Brier"
+
+    @timed("measures.brier")
+    def __call__(self, held):
+        owner, lasting, cases = survived(held)
+        tau, part = held.fields["tau"], np.zeros(len(owner))
+        duration, happened = cases["duration"][owner], cases["happened"][owner]
+        for code in range(len(held.names)):
+            chosen = cases["series"] == code
+            times, kept = censoring(cases["duration"][chosen], cases["happened"][chosen])
+            died = (held.series == code) & happened & (duration <= tau)
+            lived = (held.series == code) & (duration > tau)
+            part[died] = lasting[died] ** 2 / kept[np.searchsorted(times, duration[died], "left")]
+            part[lived] = (1 - lasting[lived]) ** 2 / kept[np.searchsorted(times, tau[lived], "right")]
+        return dict(
+            value=float(part.mean()),
+            series={name: float(part[held.series == code].mean()) for code, name in enumerate(held.names)},
+        )
+
+
 def predicted(kinds, aims, task, values, fields):
     started = time.perf_counter()
     result = np.asarray(values, np.float64).copy()
@@ -398,6 +496,8 @@ MEASURES.register("divergence", Divergence())
 MEASURES.register("tokens", Tokens())
 MEASURES.register("token_accuracy", Placed())
 MEASURES.register("exact", Exact())
+MEASURES.register("concordance", Concordance())
+MEASURES.register("brier", Brier())
 MEASURES.register("gain", Gain())
 MEASURES.register("reciprocal", Reciprocal())
 MEASURES.register("hits1", Hits(1))

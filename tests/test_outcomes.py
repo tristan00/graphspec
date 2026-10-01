@@ -28,9 +28,12 @@ pytestmark = pytest.mark.xdist_group("outcomes")
 USERS, ITEMS = ("u0", "u1", "u2", "u3"), ("i0", "i1", "i2")
 TIMES, CHANGED = (1, 2, 3, 4, 5, 6), ("g0", 4)
 TOKENS = ["a", "b", "c"]
-KINDS = dict(spell=dict(kind="sequence", series=TOKENS, length=3))
-LOSSES = dict(sequence="tokens")
-MEASURES = ["tokens", "token_accuracy", "exact"]
+KINDS = dict(
+    spell=dict(kind="sequence", series=TOKENS, length=3),
+    wait=dict(kind="survival", series="churn", width=2, intervals=3),
+)
+LOSSES = dict(sequence="tokens", survival="hazard")
+MEASURES = ["brier", "concordance", "tokens", "token_accuracy", "exact"]
 OPENED, HELD, NETS = {}, {}, {}
 
 
@@ -41,7 +44,7 @@ def schema(kinds):
         name: dict(
             references=["who"],
             columns=[],
-            target=dict(stated, about=None, utility=synthetic.valued(stated["series"])),
+            target=dict(stated, about=None, utility=synthetic.valued(stated["series"] if name == "spell" else ["churn"])),
             weight=False,
             absent="stop",
             event=None,
@@ -73,6 +76,8 @@ def schema(kinds):
 
 @timed("outcomes.stated")
 def stated(kind, at, place, changed):
+    if kind == "wait":
+        return dict(duration=1 + (3 * at + place + 4 * changed) % 8, happened=(at + place) % 3 != 0)
     if changed:
         return ["c", "c", "a"]
     return [TOKENS[(2 * at + place + step) % 3] for step in range((at + place) % 4)]
@@ -154,16 +159,20 @@ def read(held):
 def test_every_kind_of_2_13_reads_back_as_stated(banks):
     held = opened(banks, "stated")
     schema, given = held.registry.schema, case(False)
-    assert schema.targets() == ("sequence",) and Schema(schema.mapping()).mapping() == schema.mapping()
-    assert schema.target_columns() == dict(series="STRING", place="INT32")
+    assert schema.targets() == ("sequence", "survival") and Schema(schema.mapping()).mapping() == schema.mapping()
+    columns = dict(series="STRING", place="INT32", tau="FLOAT", duration="INT64", happened="BOOL")
+    assert schema.target_columns() == columns and schema.series() == (*TOKENS, "churn")
     wanted = {
         (graph["name"], kind, key): target
         for graph in given["graphs"]
         for kind, key, target in zip(graph["tasks"]["kind"], graph["tasks"]["key"], graph["tasks"]["target"])
         if target is not None
     }
-    assert read(held) == wanted and [] in wanted.values() and len(max(wanted.values(), key=len)) == 3
-    assert held.split["series"] == [] and held.scale.tolist() == [1.0] * len(TOKENS)
+    assert read(held) == wanted and [] in wanted.values() and ["c", "a", "b"] in wanted.values()
+    waits = [target for (_, kind, _), target in wanted.items() if kind == "wait"]
+    assert {target["happened"] for target in waits} == {True, False} and max(row["duration"] for row in waits) > 6
+    assert held.split["series"] == [] and held.scale.tolist() == [1.0] * 4
+    assert np.isnan(held.fields["tau"][held.aims == 0]).all() and (held.fields["tau"][held.aims == 1] > 0).all()
     written = support.written(banks["stated"].parent / "stated.staging", schema)
     for entry in held.manifest["graphs"]:
         truth = Facts.load(held.truth(entry["index"]))
@@ -227,11 +236,124 @@ def test_a_sequence_is_predicted_place_by_place_against_its_end_and_scored_per_t
     assert np.allclose(probability, torch.cat([found.exp()[:2] for found in logged]).numpy())
     series = np.tile([0, 1], 4)
     held = scored(target.numpy(), probability, row.numpy(), series, ["x", "y"], np.ones(2), fields)
-    found = measured(MEASURES, held, dict(x="sequence", y="sequence"))
+    found = measured(["tokens", "token_accuracy", "exact"], held, dict(x="sequence", y="sequence"))
     assert found["tokens"]["value"] == pytest.approx(float(parts.mean()))
     assert found["tokens"]["series"] == pytest.approx(dict(x=float(parts[2:].sum() / 4), y=float(parts[0] / 4)))
     assert found["token_accuracy"]["value"] == 0.75 and found["token_accuracy"]["series"] == dict(x=0.75, y=0.75)
     assert found["exact"]["value"] == 0.5 and found["exact"]["series"] == dict(x=0.5, y=0.5)
+
+
+def test_a_time_to_an_event_states_its_duration_and_outcome_and_holds_a_point_per_interval():
+    where, kind = "the target of the kind of task wait", TARGETS.named("survival")
+    target = Schema(schema(KINDS)).tasks["kinds"]["wait"]["target"]
+    assert (target["width"], target["intervals"], target["series"]) == (2, 3, ("churn",))
+    for wrong in (dict(duration=0, happened=True), dict(duration=2.5, happened=True), dict(duration=2), [3, True]):
+        with pytest.raises(ValueError, match="as its duration, a whole number of at least 1 of the unit of its graph"):
+            kind.staged(wrong, target, where)
+    for stated_target, labels in ((dict(duration=4, happened=True), [0, 1, 0]), (dict(duration=9, happened=True), [0] * 3)):
+        rows = kind.staged(stated_target, target, where)
+        assert [row["tau"] for row in rows] == [2.0, 4.0, 6.0] and [row["y"] for row in rows] == labels
+        assert kind.read(rows) == stated_target
+    rows = kind.staged(dict(duration=3, happened=False), target, where)
+    points = dict(task=[0] * 3, graph=["g1"] * 3, **{name: [row[name] for row in rows] for name in rows[0]})
+    assert kind.points(points, target, where) == dict(series=["churn"] * 3, **{name: points[name] for name in kind.fields})
+    refused = (
+        (dict(points, duration=[3, 3, None]), "state the duration of their case, a whole number of at least 1"),
+        (dict(points, tau=[2.0, 4.0, 8.0]), "a task of graph g1 holds under .* 3 intervals of 2, by the end"),
+        (dict(points, happened=[False, True, False]), "a task of graph g1 holds under .* one duration and one outcome"),
+        (dict(points, y=[0.0, 1.0, 0.0]), "state 1 for the interval in which the event of their task happened"),
+    )
+    for given, message in refused:
+        with pytest.raises(ValueError, match=message):
+            kind.points(given, target, where)
+    restated = (
+        (dict(KINDS["wait"], width=0), "the width of the intervals of the target of .* at least 1, found 0"),
+        ({key: KINDS["wait"][key] for key in ("kind", "series", "width")}, "lacks intervals"),
+    )
+    for given, message in restated:
+        with pytest.raises(ValueError, match=message):
+            Schema(schema(dict(wait=given)))
+    ordered = schema(KINDS)
+    ordered["time"] = dict(model="order", units=[], ties="key")
+    with pytest.raises(ValueError, match="is a time to an event, which counts on a clock, and the time of the sch"):
+        Schema(ordered)
+    with pytest.raises(ValueError, match="only a target of a kind that matures into the values of columns"):
+        held = schema(KINDS)
+        held["tasks"]["kinds"]["wait"]["matures"] = dict(reference="who", column="load")
+        Schema(held)
+    tasks, values = valued(target, dict(task=[5] * 3, series=["churn"] * 3, y=[0.25, 0.5, 0.0]))
+    assert tasks.tolist() == [5] and values.tolist() == [0.75]
+
+
+@timed("outcomes.agreed")
+def agreed(cases, risk, horizon):
+    lasted, happened = cases[:, 0], cases[:, 1] == 1
+    pairs = [
+        (first, second)
+        for first in range(len(cases))
+        for second in range(len(cases))
+        if happened[first] and lasted[first] <= horizon and lasted[second] > lasted[first]
+    ]
+    found = sum(1.0 if risk[i] > risk[j] else 0.5 if risk[i] == risk[j] else 0.0 for i, j in pairs)
+    return found / len(pairs)
+
+
+@timed("outcomes.kept")
+def kept(cases, moment):
+    lasted, happened, found = cases[:, 0], cases[:, 1] == 1, 1.0
+    for at in sorted(set(lasted.tolist())):
+        if at <= moment:
+            found *= 1 - np.sum((lasted == at) & ~happened) / np.sum(lasted >= at)
+    return found
+
+
+def test_a_time_to_an_event_is_a_likelihood_over_intervals_that_reads_cases_ended_before_their_event():
+    from tuning.fits.losses import LOSSES
+    from tuning.measures.measures import measured, predicted, scored
+
+    cases = np.asarray([[3, 1], [4, 0], [9, 1], [1, 1], [4, 1]], np.float64)
+    tau, aims = np.asarray([2.0, 4.0, 6.0]), np.zeros(15, np.int64)
+    labels = ((cases[:, 1:] == 1) & (tau - 2 < cases[:, :1]) & (cases[:, :1] <= tau)).reshape(-1)
+    scores = torch.tensor([0.5, -1.0, 2.0, -0.5, 0.0, 1.0, -2.0, -1.5, -1.0, 1.5, 0.0, 0.0, 0.0, 0.3, 0.1])
+    weight = torch.tensor([1.0, 2.0, 1.0, 1.0, 1.0]).repeat_interleave(3)
+    fields = {"tau": np.tile(tau, 5), "duration": cases[:, 0].repeat(3), "happened": cases[:, 1].repeat(3)}
+    target, row = torch.tensor(labels, dtype=torch.float32), torch.arange(5).repeat_interleave(3)
+    batch = dict(target=target, weight=weight, point_row=row, tasks=5)
+    batch.update({"field/" + key: torch.tensor(value) for key, value in fields.items()})
+    seen = (torch.tensor(fields["tau"]) <= torch.tensor(fields["duration"])) | (target == 1)
+    error = torch.nn.functional.binary_cross_entropy_with_logits(scores, target, reduction="none")
+    expected = float((weight * error * seen).sum() / 6)
+    assert float(LOSSES.named("hazard")(scores, batch, None)) == pytest.approx(expected)
+    hazard = torch.sigmoid(scores).numpy().reshape(5, 3)
+    chance = hazard * np.c_[np.ones(5), np.cumprod(1 - hazard, 1)[:, :-1]]
+    probability = predicted(("survival",), aims, row.numpy(), scores.numpy(), fields)
+    assert np.allclose(probability, chance.reshape(-1))
+    order = np.arange(14, -1, -1)
+    shuffled = {key: value[order] for key, value in fields.items()}
+    turned = predicted(("survival",), aims, row.numpy()[order], scores.numpy()[order], shuffled)
+    assert np.allclose(turned, chance.reshape(-1)[order])
+    held = scored(labels, probability, row.numpy(), aims, ["churn"], np.ones(1), fields)
+    found = measured(["concordance", "brier"], held, dict(churn="survival"))
+    assert found["concordance"]["value"] == pytest.approx(agreed(cases, chance.sum(1), 6.0))
+    assert found["concordance"]["series"]["churn"] == found["concordance"]["value"]
+    parts = []
+    for (moment, happened), survives in zip(cases, 1 - np.cumsum(chance, 1)):
+        for end, alive in zip(tau, survives):
+            if happened and moment <= end:
+                parts.append(alive**2 / kept(cases, moment - 1))
+            else:
+                parts.append((1 - alive) ** 2 / kept(cases, end) if moment > end else 0.0)
+    assert found["brier"]["value"] == pytest.approx(np.mean(parts)) == found["brier"]["series"]["churn"]
+    rng = np.random.default_rng(3)
+    many = np.c_[rng.integers(1, 9, 60), rng.integers(0, 2, 60)].astype(np.float64)
+    values, owner = (rng.integers(0, 4, 60) - 2.0).repeat(3), np.arange(60).repeat(3)
+    fields = {"tau": np.tile(tau, 60), "duration": many[:, 0].repeat(3), "happened": many[:, 1].repeat(3)}
+    chance = predicted(("survival",), np.zeros(180, np.int64), owner, values, fields)
+    held = scored(np.zeros(180), chance, owner, np.zeros(180, np.int64), ["churn"], np.ones(1), fields)
+    risk = np.bincount(owner, chance)
+    assert len(np.unique(risk)) == 4
+    found = measured(["concordance"], held, dict(churn="survival"))["concordance"]["value"]
+    assert found == pytest.approx(agreed(many, risk, 6.0))
 
 
 def test_a_bank_of_the_kinds_of_2_13_completes_one_fit(banks, tmp_path, statement, monkeypatch):
@@ -246,12 +368,17 @@ def test_a_bank_of_the_kinds_of_2_13_completes_one_fit(banks, tmp_path, statemen
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20 and saved["loss"] == LOSSES
     found = saved["measures"]
     assert list(found["exact"]["series"]) == TOKENS and np.isfinite(found["tokens"]["value"])
-    assert all(0 <= found[name]["value"] <= 1 for name in ("token_accuracy", "exact"))
+    assert list(found["brier"]["series"]) == ["churn"] and 0 < found["brier"]["value"]
+    assert all(0 <= found[name]["value"] <= 1 for name in ("token_accuracy", "exact", "concordance"))
     with np.load(tmp_path / "predictions.npz") as stored:
-        task, prediction, place = held.task_of[stored["row_index"]], stored["prediction"], stored["field/place"]
-        assert ((prediction > 0) & (prediction < 1)).all()
-        total = np.bincount(task * 3 + place.astype(np.int64), prediction)
+        task, prediction, aim = held.task_of[stored["row_index"]], stored["prediction"], stored["aim"]
+        place, tau = stored["field/place"], stored["field/tau"]
+        assert set(aim.tolist()) == {0, 1} and ((prediction > 0) & (prediction < 1)).all()
+        assert np.isnan(place[aim == 1]).all() and np.isnan(tau[aim == 0]).all()
+        total = np.bincount(task[aim == 0] * 3 + place[aim == 0].astype(np.int64), prediction[aim == 0])
         assert (total[total > 0] < 1).all()
+        total = np.bincount(task[aim == 1], prediction[aim == 1])
+        assert (total[np.unique(task[aim == 1])] < 1).all()
 
 
 @timed("outcomes.predicted")
@@ -269,25 +396,24 @@ def predicted(banks, family, name):
                 chosen = [block for block in blocks if block[0] == graph]
                 for group in batches(chosen, len(chosen), held.sizes(cfg), None, frame_budget=1024):
                     b = pack_batch(held, group, cfg, "cpu")
-                    keys = [
-                        "%s/%d/%s/%d" % (found_row["graph"], found_row["ticket"], found_row["series"], found_row["place"])
-                        for found_row in (held.rows[at] for at in b["rows"].tolist())
-                    ]
-                    found.update(zip(keys, NETS[family](b).tolist()))
+                    found.update(zip(b["rows"].tolist(), NETS[family](b).tolist()))
         HELD[family, name] = found
     return HELD[family, name]
 
 
 @pytest.mark.parametrize("family", VIEWS)
 def test_changing_only_a_target_of_the_kinds_of_2_13_leaves_what_every_family_reads_unchanged(banks, family):
+    stated_rows, changed_rows = opened(banks, "stated").rows, opened(banks, "changed").rows
     assert family in views(opened(banks, "stated").registry)
     held, changed = predicted(banks, family, "stated"), predicted(banks, family, "changed")
-    assert len(held) == len(opened(banks, "stated").rows)
-    assert sorted(held) == sorted(changed) and held == pytest.approx(changed, rel=1e-6, abs=1e-6)
+    assert sorted(held) == sorted(changed) == list(range(len(stated_rows)))
+    assert held == pytest.approx(changed, rel=1e-6, abs=1e-6)
     tasks = {}
-    for key, value in held.items():
-        tasks.setdefault(key.split("/", 2)[1], set()).add(round(value, 6))
-    assert any(len(values) > 1 for values in tasks.values())
-    stated_targets, changed_targets = opened(banks, "stated").rows, opened(banks, "changed").rows
-    differing = {row["kind"] for row, other in zip(stated_targets, changed_targets) if row != other}
-    assert differing == set(KINDS)
+    for row, value in held.items():
+        tasks.setdefault((stated_rows[row]["graph"], stated_rows[row]["ticket"]), set()).add(round(value, 6))
+    assert all(len(values) > 1 for values in tasks.values())
+    identity = ("graph", "kind", "ticket", "series", "place", "tau")
+    assert [[row.get(name) for name in identity] for row in stated_rows] == [
+        [row.get(name) for name in identity] for row in changed_rows
+    ]
+    assert {row["kind"] for row, other in zip(stated_rows, changed_rows) if row != other} == set(KINDS)

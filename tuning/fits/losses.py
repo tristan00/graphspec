@@ -88,6 +88,21 @@ class Tokens:
         return (weight * (total.log() + top - stated)).sum() / weight.sum()
 
 
+class Hazard:
+    reads = ("survival",)
+
+    def __call__(self, predictions, batch, bank):
+        from torch.nn import functional as F
+
+        target, row, tasks = batch["target"], batch["point_row"], batch["tasks"]
+        seen = (batch[FIELD + "tau"] <= batch[FIELD + "duration"]) | (target == 1)
+        error = F.binary_cross_entropy_with_logits(predictions, target, reduction="none") * seen
+        task = error.new_zeros(tasks).index_add(0, row, error)
+        points = error.new_zeros(tasks).index_add(0, row, error.new_ones(len(row)))
+        weight = error.new_zeros(tasks).index_add(0, row, batch["weight"]) / points.clamp_min(1)
+        return (weight * task).sum() / weight.sum()
+
+
 class Binary:
     reads = ("classes", "nodes")
 
@@ -171,4 +186,5 @@ LOSSES.register("entropy", Entropy())
 LOSSES.register("binary", Binary())
 LOSSES.register("listwise", Listwise())
 LOSSES.register("tokens", Tokens())
+LOSSES.register("hazard", Hazard())
 ship([LOSSES])
