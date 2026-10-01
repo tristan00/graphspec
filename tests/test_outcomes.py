@@ -384,10 +384,12 @@ def test_a_bank_of_the_kinds_of_2_13_completes_one_fit(banks, tmp_path, statemen
 
 
 def test_the_batch_a_model_reads_holds_the_inputs_of_a_sequence_and_a_time_to_an_event_and_no_outcome(banks):
+    started = time.perf_counter()
     held = opened(banks, "stated")
     cfg = support.configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, SPLITS)
     assert held.registry.schema.targets() == ("sequence", "survival") and sorted(held.inputs) == ["place", "tau"]
     assert support.outcomeless(held, cfg) == (["field/place", "field/tau"], True)
+    LOG.info("outcomes of 2.13 exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("outcomes.predicted")

@@ -486,9 +486,11 @@ def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, stateme
 
 
 def test_the_batch_a_model_reads_holds_no_outcome_of_a_kind_naming_nodes(banks):
+    started = time.perf_counter()
     held = opened(banks, "stated")
     assert held.registry.schema.targets() == ("ranking", "nodes", "link")
     assert support.outcomeless(held, configured(held.registry, "snapshot", SEEING)) == ([], True)
+    LOG.info("outcomes of nodes exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("nodes.predicted")

@@ -129,7 +129,9 @@ def made(root):
 
 @pytest.fixture(scope="module")
 def banks():
+    started = time.perf_counter()
     root = shared("composition", made)
+    LOG.info("composition banks exit seconds=%.3f", time.perf_counter() - started)
     yield {name: root / name for name in ("stated", "changed")}
     OPENED.clear()
     gc.collect()
