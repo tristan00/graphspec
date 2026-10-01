@@ -181,13 +181,11 @@ def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
         primary, secondary = unit(seed, RANDOM, *ends), np.zeros(len(stated))
     else:
         reference = graph.fact_ref[rows[stated]]
-        value = np.where(
-            reference >= 0,
-            graph.value_table[
-                np.maximum(reference, 0), registry.attributes(name).index(order.split(":", 1)[1])
-            ],
-            np.nan,
-        )
+        valued = reference >= 0
+        value = np.full(len(stated), np.nan, graph.value_table.dtype)
+        value[valued] = graph.value_table[
+            reference[valued], registry.attributes(name).index(order.split(":", 1)[1])
+        ]
         primary, secondary = np.where(np.isnan(value), np.inf, -value), -begun
     pair, count = kernels.keyed(step[stated].astype(np.int64) * registry.relations + code[stated], low, high)
     best = kernels.smallest(pair, primary.astype(np.float64), count)
@@ -237,7 +235,7 @@ EDGES = OPERATIONS.register(
         requires=(Count("edges/cap", "degree", capping, "stored", "stored"),),
         changes=("facts",),
         adds=None,
-        version=7,
+        version=8,
         graphs=1,
     ),
 )

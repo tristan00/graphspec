@@ -29,13 +29,13 @@ def valued(*tables):
     rows = [np.ascontiguousarray(table, np.float32) for table, _ in tables]
     width = rows[0].shape[1] * 4
     found = np.concatenate([held.view(np.uint8).reshape(len(held), width) for held in rows])
-    inverse = np.zeros(len(found), np.int64)
-    if width and len(found):
-        inverse = np.unique(found, axis=0, return_inverse=True)[1]
-    inverse, bounds, result = inverse.reshape(-1), np.cumsum([0] + [len(held) for held in rows]), []
+    inverse = np.unique(found, axis=0, return_inverse=True)[1].reshape(-1)
+    bounds, result = np.cumsum([0] + [len(held) for held in rows]), []
     for (low, high), (_, reference) in zip(zip(bounds[:-1], bounds[1:]), tables):
         reference = np.asarray(reference, np.int64)
-        result.append(np.where(reference >= 0, inverse[low:high][np.maximum(reference, 0)], -1))
+        held = np.full(len(reference), -1, np.int64)
+        held[reference >= 0] = inverse[low:high][reference[reference >= 0]]
+        result.append(held)
     return result
 
 
@@ -66,7 +66,7 @@ DIFFERENCE = OPERATIONS.register(
         requires=(),
         changes=("facts",),
         adds=None,
-        version=2,
+        version=3,
         graphs=2,
     ),
 )

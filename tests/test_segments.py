@@ -12,7 +12,7 @@ from conftest import SPLITS
 from graphspec import OPERATIONS, REPRESENTATIONS
 from graphspec.budgets import GraphLimits
 from graphspec.engine import join, schedule, segments, transform
-from graphspec.engine.edits import Edit, edited
+from graphspec.engine.edits import Edit, edited, sliced
 from graphspec.engine.segments import Derivation
 from graphspec.engine.stitch import Appender
 from graphspec.infra.arrays import RESIDENT
@@ -20,7 +20,7 @@ from graphspec.infra.files import Arrays
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
-from graphspec.views.graph import DENSE, PER_STEP, Graph
+from graphspec.views.graph import DENSE, PER_STEP, Graph, verify_dense
 from tuning.bank.bank import Deriver
 
 LOG = logging.getLogger(__name__)
@@ -77,6 +77,17 @@ ADDED = support.ADDED
 TESTED = (TALLY, HUB)
 SECONDS = {"graphspec.merge": 1, "graphspec.difference": 0}
 REPEATS, MARGIN = 7, 1.1
+SHOWN, STEPS, BARE, HOLLOW, UNVALUED = 2, 5, 1, 2, 3
+EMPTIED = dict(
+    VALUES,
+    **{
+        "difference/match": "values",
+        "edges/visits/persistence": 1,
+        "edges/visits/cap": 2,
+        "edges/visits/cap_order": "largest:weight",
+        "edges/owns/persistence": 2,
+    },
+)
 DENSE_READ = dict(obs_ref="x_table", fact_ref="value_table")
 VARIANT_READ = dict(x_ref="x_table")
 
@@ -92,11 +103,11 @@ def registered():
     del REPRESENTATIONS.held[RUNNING.name]
 
 
-def every(opened, registry, joined):
+def every(opened, registry, joined, values):
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
     assert sorted(graphs) == sorted(name for name in ADDED if OPERATIONS.named(name).graphs == 2)
     names = support.SEVEN + tuple(entry.name for entry in TESTED) + ADDED
-    entries, rest = support.pipelined(registry, VALUES, names, None, graphs)
+    entries, rest = support.pipelined(registry, values, names, None, graphs)
     assert rest == {}
     graph = dict(SETTINGS, **({"graphs/join": "single", "graphs/join_size": 4} if joined else {}))
     steps = pipeline.resolved(registry, entries)
@@ -285,7 +296,7 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", RESIDENT)
     graph = support.shown(opened, 0).dense()
-    registry, steps, spec = every(opened, support.fitted(opened), False)
+    registry, steps, spec = every(opened, support.fitted(opened), False, VALUES)
     beside = seconds(opened, steps, [0])
     assert sorted(step.operation.name for step in steps) == sorted(OPERATIONS.names())
     assert sorted(GROUPS) == sorted(REPRESENTATIONS.names())
@@ -319,7 +330,7 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     missing = made(graph, removed=dict(observations=dict(entity=[len(graph.kinds)], step=[moment])))
     with pytest.raises(ValueError, match="which the graph does not hold"):
         history.continued(graph.steps, missing)
-    _, joined, stated = every(opened, support.fitted(opened), True)
+    _, joined, stated = every(opened, support.fitted(opened), True, VALUES)
     both = Derivation.begun(
         [graph, graph],
         {name: held * 2 for name, held in beside.items()},
@@ -337,6 +348,64 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     LOG.info("forks equal whole graphs exit seconds=%.3f", time.perf_counter() - started)
 
 
+@timed("segments.emptied")
+def emptied(graph):
+    graph = sliced(graph, SHOWN, SHOWN + STEPS)
+    moments = np.asarray(graph.task_step)
+    tasks = np.flatnonzero(moments != HOLLOW)
+    number = np.full(len(moments), -1, np.int64)
+    number[tasks] = np.arange(len(tasks))
+    observed = np.asarray(graph.obs_step) != HOLLOW
+    first = np.full(len(graph.kinds), STEPS, np.int64)
+    np.minimum.at(first, np.asarray(graph.obs_entity)[observed], np.asarray(graph.obs_step)[observed])
+    moment = np.asarray(graph.fact_step)
+    known = np.asarray(graph.fact_present) | (np.maximum(first[graph.fact_source], first[graph.fact_target]) <= moment)
+    kept = dict(
+        obs=observed,
+        fact=~np.isin(moment, (BARE, HOLLOW)) & known,
+        task=moments != HOLLOW,
+        member=np.isin(np.asarray(graph.member_task), tasks),
+        label=np.isin(np.asarray(graph.label_task), tasks),
+    )
+    arrays = {
+        name: np.asarray(value)[kept[name.split("_", 1)[0]]] if name.split("_", 1)[0] in kept else value
+        for name, value in graph.arrays.items()
+    }
+    for name in ("member_task", "label_task"):
+        arrays[name] = number[arrays[name]].astype(graph.arrays[name].dtype)
+    unvalued = arrays["fact_step"] == UNVALUED
+    arrays["fact_ref"] = np.where(unvalued, -1, arrays["fact_ref"]).astype(arrays["fact_ref"].dtype)
+    return type(graph)(graph.name, graph.keys, graph.steps, **arrays)
+
+
+@GROUP
+def test_every_operation_derives_steps_that_hold_nothing_in_segments_as_it_derives_them_whole(bank, registered):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", RESIDENT)
+    graph = emptied(support.shown(opened, 0).dense())
+    registry, steps, spec = every(opened, support.fitted(opened), False, EMPTIED)
+    beside = {name: [emptied(held[0])] for name, held in seconds(opened, steps, [0]).items()}
+    assert sorted(step.operation.name for step in steps) == sorted(OPERATIONS.names())
+    for held in [graph] + [held[0] for held in beside.values()]:
+        verify_dense(held, support.fitted(opened))
+        facts, observed = np.asarray(held.fact_step), np.asarray(held.obs_step)
+        assert np.isin([BARE, UNVALUED], observed).all() and HOLLOW not in observed
+        assert not np.isin([BARE, HOLLOW], facts).any() and (held.fact_ref[facts == UNVALUED] < 0).all()
+        assert (facts == UNVALUED).any() and (held.fact_ref[facts != UNVALUED] >= 0).all()
+    unchanged = begun(graph, {}, registry, (), spec, 0).continued(graph.steps, None).derived()
+    for step in steps:
+        given = {name: held for name, held in beside.items() if name == step.graph}
+        whole = begun(graph, given, registry, (step,), spec, 0).continued(graph.steps, None)
+        line = begun(graph, given, registry, (step,), spec, 0)
+        for high in range(1, graph.steps + 1):
+            line = line.continued(high, None)
+        derived, expected = line.derived(), whole.derived()
+        assert unequal(expected.arrays, unchanged.arrays, DENSE_READ), step.name
+        assert unequal(derived.arrays, expected.arrays, DENSE_READ) == [], step.name
+        assert unequal(line.arrays(), whole.arrays(), VARIANT_READ) == [], step.name
+    LOG.info("steps that hold nothing exit operations=%d seconds=%.3f", len(steps), time.perf_counter() - started)
+
+
 def clocked(make):
     gc.disable()
     try:
@@ -352,7 +421,7 @@ def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_las
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", RESIDENT)
     graph = support.shown(opened, 1).dense()
-    registry, steps, spec = every(opened, support.fitted(opened), False)
+    registry, steps, spec = every(opened, support.fitted(opened), False, VALUES)
     beside = seconds(opened, steps, [1])
     moment = graph.steps - 1
     changes = edits(graph, moment)
@@ -390,7 +459,7 @@ def test_the_arrays_of_a_joined_group_are_equal_for_one_and_two_workers(bank, re
     opened = Deriver(bank, "cpu", RESIDENT)
     cfg = support.configuration(opened.registry, dict(view="snapshot"), support.several(opened.registry), 5, SPLITS)
     paths = [opened.view(index, cfg) for index in range(2)]
-    registry, steps, spec = every(opened, support.fitted(opened), True)
+    registry, steps, spec = every(opened, support.fitted(opened), True, VALUES)
     seconds = opened.seconds(steps, [0, 1], cfg, True)
     folders = {name: tmp_path / name for name in ("one", "two", "spill")}
     for folder in folders.values():

@@ -198,8 +198,11 @@ def window(graph, registry, spec, seed, limits, carry, given):
     arranged = np.lexsort((rank, stamp))
     rows, end, stamp, rank = rows[arranged], end[arranged], stamp[arranged], rank[arranged]
     reference = graph.fact_ref[rows]
+    valued = reference >= 0
     values = np.full((len(rows), graph.value_table.shape[1]), np.nan, graph.value_table.dtype)
-    values[reference >= 0] = graph.value_table[reference[reference >= 0]]
+    values[valued] = graph.value_table[reference[valued]]
+    stored = np.full(len(rows), -1, np.int64)
+    stored[valued] = carry.value_global[reference[valued]]
     carry.state = dict(
         group=int(group0 + groups_of(graph)[-1]),
         period=int(graph.period[-1]),
@@ -212,8 +215,8 @@ def window(graph, registry, spec, seed, limits, carry, given):
             stamp=stamp,
             rank=rank,
             values=values,
-            valued=reference >= 0,
-            ref=np.where(reference >= 0, carry.value_global[np.maximum(reference, 0)], -1),
+            valued=valued,
+            ref=stored,
         ),
     )
     budget.pairs(int(counts.sum()), "time window facts")
@@ -244,7 +247,7 @@ WINDOW = OPERATIONS.register(
         requires=(),
         changes=("observations", "facts"),
         adds=None,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

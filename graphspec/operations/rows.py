@@ -60,7 +60,7 @@ def fact_keys(registry, *graphs):
                 (step, code, np.where(swap, target, source), np.where(swap, source, target))
                 + tuple(np.asarray(extra, np.int64) for extra in columns[4:]),
                 1,
-            ).reshape(len(step), -1)
+            )
         )
     _, inverse = np.unique(np.concatenate(stacked), axis=0, return_inverse=True)
     inverse, bounds = inverse.reshape(-1), np.cumsum([0] + [len(held) for held in stacked])
