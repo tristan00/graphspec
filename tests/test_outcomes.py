@@ -287,6 +287,25 @@ def test_a_time_to_an_event_states_its_duration_and_outcome_and_holds_a_point_pe
     assert tasks.tolist() == [5] and values.tolist() == [0.75]
 
 
+def test_a_kind_of_target_whose_values_are_times_is_refused_in_a_schema_of_several_units():
+    held = schema(KINDS)
+    held["time"] = dict(model="clock", units=["day", "hour"], ties="key")
+    with pytest.raises(
+        ValueError,
+        match="the kinds of task wait state targets of the kinds survival, whose values are times, and the schema "
+        "states the units day, hour; times of graphs of different units are never compared",
+    ):
+        Schema(held)
+    path = synthetic.varied("path")["schema"]
+    path["time"] = dict(path["time"], units=["step", "hour"])
+    with pytest.raises(ValueError, match="the kinds of task buy, move, sell state targets of the kinds path, .* units step, hour"):
+        Schema(path)
+    held["tasks"]["kinds"].pop("wait")
+    assert Schema(held).units == ("day", "hour")
+    timed = {name: TARGETS.named(name).times for name in TARGETS.shipped}
+    assert {name: found for name, found in timed.items() if found} == dict(path=("tau",), survival=("tau", "duration"))
+
+
 @timed("outcomes.agreed")
 def agreed(cases, risk, horizon):
     lasted, happened = cases[:, 0], cases[:, 1] == 1

@@ -185,6 +185,7 @@ class Number:
     columns = {}
     inputs = ()
     outcomes = ()
+    times = ()
     checked = staticmethod(unconstrained)
 
     @timed("targets.number.ripe")
@@ -238,6 +239,7 @@ class Path:
     columns = dict(tau="FLOAT", series="STRING")
     inputs = ("tau",)
     outcomes = ()
+    times = ("tau",)
     checked = staticmethod(unconstrained)
 
     @timed("targets.path.series")
@@ -301,6 +303,7 @@ class Over:
     columns = dict(series="STRING")
     inputs = ()
     outcomes = ()
+    times = ()
     checked = staticmethod(unconstrained)
 
     @timed("targets.over.series")
@@ -523,6 +526,7 @@ class Survival:
     columns = dict(tau="FLOAT", duration="INT64", happened="BOOL")
     inputs = ("tau",)
     outcomes = ("duration", "happened")
+    times = ("tau", "duration")
 
     @timed("targets.survival.checked")
     def checked(self, stated, schema, references, where):
@@ -624,6 +628,7 @@ class Pointed:
     columns = dict(node="STRING")
     inputs = ()
     outcomes = ()
+    times = ()
 
     @timed("targets.pointed.series")
     def series(self, stated, where):

@@ -476,7 +476,8 @@ class Schema:
             )
         self.tasks = self.asked(held["tasks"])
         self.target_columns()
-        both = [name for name in self.graph if name in self.asked_columns()]
+        self.united()
+        both =[name for name in self.graph if name in self.asked_columns()]
         if both:
             raise ValueError(
                 "the columns %s are columns of the graph and of a kind of task, and a task reads the columns of "
@@ -963,6 +964,22 @@ class Schema:
                 owner.setdefault(name, kind)
         LOG.debug("schema target columns exit columns=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result
+
+    def united(self):
+        started = time.perf_counter()
+        held = {
+            kind: entry["target"]["kind"]
+            for kind, entry in self.tasks["kinds"].items()
+            if entry["target"] is not None and TARGETS.named(entry["target"]["kind"]).times
+        }
+        if held and len(self.units) > 1:
+            raise ValueError(
+                "the kinds of task %s state targets of the kinds %s, whose values are times, and the schema states "
+                "the units %s; times of graphs of different units are never compared, so a schema holding such a "
+                "target states one unit"
+                % (", ".join(held), ", ".join(dict.fromkeys(held.values())), ", ".join(self.units))
+            )
+        LOG.debug("schema united exit timed=%d seconds=%.4f", len(held), time.perf_counter() - started)
 
     @timed("schema.events")
     def events(self):

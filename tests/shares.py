@@ -13,6 +13,7 @@ class Share:
     columns = dict(trials="FLOAT")
     inputs = ("trials",)
     outcomes = ()
+    times = ()
 
     @timed("shares.share.checked")
     def checked(self, stated, schema, references, where):
