@@ -9,7 +9,7 @@ from support import registry as registered
 from graphspec.budgets import GraphBudget, GraphCapacityError, GraphLimits
 from graphspec.build.calls import GraphTables
 from graphspec.infra import compute
-from graphspec.operations import derive, edges, kernels
+from graphspec.operations import derive, edges, kernels, paths
 from graphspec.operations import parameters as spec
 from graphspec.operations.edges import EDGES
 from graphspec.operations.pipeline import resolved
@@ -48,11 +48,12 @@ def test_completion_rejects_expansion_before_pair_allocation(monkeypatch):
 def test_projection_preserves_pairs_and_rejects_oversized_candidates():
     members = np.array([0, 1, 2, 3], np.int32)
     owners = np.array([4, 4, 4, 4], np.int32)
-    kinds = np.zeros(5, np.int32)
-    source, target = kernels.project_pairs.py_func(members, owners, kinds, 0, 0, 0, 6)
-    assert list(zip(source.tolist(), target.tolist())) == [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
-    with pytest.raises(ValueError, match="projection candidate edges"):
-        kernels.project_pairs.py_func(members, owners, kinds, 0, 0, 0, 5)
+    steps = ((members, owners, None), (owners, members, None))
+    source, target, _ = paths.product(steps, 5, None, GraphBudget(GraphLimits("cpu", max_facts=16)), "projection")
+    found = sorted((a, b) for a, b in zip(source.tolist(), target.tolist()) if a < b)
+    assert found == [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)] and len(source) == 12
+    with pytest.raises(GraphCapacityError, match="projection requires 16 candidate edges"):
+        paths.product(steps, 5, None, GraphBudget(GraphLimits("cpu", max_facts=15)), "projection")
 
 
 def test_rewiring_rejects_dense_workspace_before_allocating():

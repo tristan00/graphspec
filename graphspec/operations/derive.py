@@ -3,33 +3,20 @@ import time
 
 import numpy as np
 
-from graphspec.budgets import GraphBudget, GraphCapacityError
+from graphspec.budgets import GraphBudget
 from graphspec.infra.hashing import unit
 from graphspec.infra.timing import timed
 from graphspec.schema.declaration import HOPS, completion, hop
 
-from . import kernels
+from . import kernels, paths
 from .operation import OPERATIONS, Count, Operation, Phase
 from .parameters import among, choice, enabled, equals, flag, number, real
 from .relations import joined, relating
-from .rows import (
-    REWIRE,
-    counted,
-    extend,
-    fact_bytes,
-    grouped,
-    member_end,
-    open_runs,
-    prune,
-    pruned,
-    run_state,
-    runs,
-)
-from .state import EMPTY
+from .rows import REWIRE, fact_bytes, grouped, prune, pruned, runs
 
 LOG = logging.getLogger(__name__)
-BLOCK = 1 << 22
 TINY = 2.0**-54
+SERIES = dict(ppr=("geometric", "derive/ppr_alpha"), heat=("poisson", "derive/heat_time"))
 
 
 def anchoring(registry):
@@ -118,14 +105,6 @@ def undirected(source, target, entities):
     return (key // entities).astype(np.int32), (key % entities).astype(np.int32)
 
 
-def unique_pairs(chunks):
-    source = np.concatenate([chunk[0] for chunk in chunks] + [np.zeros(0, np.int32)])
-    target = np.concatenate([chunk[1] for chunk in chunks] + [np.zeros(0, np.int32)])
-    ids, count = kernels.keyed(source, target, np.zeros(len(source), np.int64))
-    fresh = kernels.first_rows(ids, count)
-    return source[fresh], target[fresh]
-
-
 def recalled(memo, name, inputs, budget, compute):
     held = memo.get(name)
     if held is not None and all(np.array_equal(old, new) for old, new in zip(held[0], inputs)):
@@ -145,17 +124,15 @@ def project(graph, registry, edge, source, target, code, recency, cap, tokens, b
     ages = recency[use]
 
     def compute():
-        order = np.lexsort((tokens[members], ages, owners))
-        pairs = kernels.project_pairs(
-            members[order],
-            owners[order],
-            graph.kinds,
-            registry.kind(first),
-            registry.kind(second),
-            cap,
-            budget.pair_limit,
+        kept = paths.latest(owners, members, ages, tokens, cap)
+        held, at, kinds = members[kept], owners[kept], np.asarray(graph.kinds)[members[kept]]
+        left, right = kinds == registry.kind(first), kinds == registry.kind(second)
+        source, target, _ = paths.product(
+            ((held[left], at[left], None), (at[right], held[right], None)), len(graph.kinds), None, budget, "projection"
         )
-        return unique_pairs([pairs])
+        if first == second:
+            source, target = source[source < target], target[source < target]
+        return source.astype(np.int32), target.astype(np.int32)
 
     return recalled(memo, edge.name, (members, owners, ages), budget, compute)
 
@@ -176,8 +153,8 @@ def complete(graph, registry, selected, within, present, u, v, budget):
             if len(order)
             else np.zeros(1, np.int64)
         )
-    source, target = unique_pairs(
-        [kernels.within_pairs(flat, offsets, graph.kinds, len(registry.nodes), budget.pair_limit)]
+    source, target, _, _ = paths.reduced(
+        *kernels.within_pairs(flat, offsets, graph.kinds, len(registry.nodes), budget.pair_limit), None, None
     )
     table = np.full((len(registry.nodes), len(registry.nodes)), -1, np.int64)
     for i, left in enumerate(registry.declared):
@@ -186,61 +163,12 @@ def complete(graph, registry, selected, within, present, u, v, budget):
     return source, target, table[graph.kinds[source], graph.kinds[target]]
 
 
-def widen(slots, keys_low, keys_high, count, extra, budget):
-    budget.workspace(128 * (count + extra), "hop closure index")
-    if count + extra > len(keys_low):
-        size = max(2 * len(keys_low), count + extra, 16)
-        grown_low, grown_high = np.empty(size, np.int64), np.empty(size, np.int64)
-        grown_low[:count], grown_high[:count] = keys_low[:count], keys_high[:count]
-        keys_low, keys_high = grown_low, grown_high
-    capacity = max(len(slots), 16)
-    while capacity < 2 * (count + extra):
-        capacity *= 2
-    if capacity != len(slots):
-        slots = np.zeros(capacity, np.int64)
-        kernels.rehash(slots, keys_low, keys_high, count)
-    return slots, keys_low, keys_high
-
-
 @timed("operators.closure")
 def closure(registry, u, v, limit, entities, budget):
-    source, target = np.concatenate((u, v)).astype(np.int64), np.concatenate((v, u)).astype(np.int64)
-    order = np.argsort(source, kind="stable")
-    source, target = source[order], target[order]
-    starts = np.searchsorted(source, np.arange(entities + 1))
-    slots, keys_low, keys_high = widen(
-        np.zeros(16, np.int64), np.zeros(16, np.int64), np.zeros(16, np.int64), 0, len(source), budget
-    )
-    count, _ = kernels.novel(
-        slots, keys_low, keys_high, 0, np.minimum(source, target), np.maximum(source, target)
-    )
-    left, middle = source, target
-    result = []
-    for distance in range(2, limit + 1):
-        counts = starts[middle + 1] - starts[middle]
-        edges = np.cumsum(counts)
-        budget.workspace(int(edges[-1]) * 32 if len(edges) else 0, "hop closure candidates")
-        pieces, lo = [], 0
-        while lo < len(counts):
-            hi = max(int(np.searchsorted(edges, (edges[lo - 1] if lo else 0) + BLOCK, "right")), lo + 1)
-            block = counts[lo:hi]
-            reached = target[np.repeat(starts[middle[lo:hi]], block) + counted(block)]
-            origin = np.repeat(left[lo:hi], block)
-            use = origin != reached
-            low, high = np.minimum(origin[use], reached[use]), np.maximum(origin[use], reached[use])
-            budget.pairs(len(low), "hop closure candidates")
-            slots, keys_low, keys_high = widen(slots, keys_low, keys_high, count, len(low), budget)
-            count, fresh = kernels.novel(slots, keys_low, keys_high, count, low, high)
-            budget.retain(int(fresh.sum()), "hop closure")
-            pieces.append((low[fresh], high[fresh]))
-            lo = hi
-        a = np.concatenate([piece[0] for piece in pieces] + [np.zeros(0, np.int64)])
-        b = np.concatenate([piece[1] for piece in pieces] + [np.zeros(0, np.int64)])
-        result.append(
-            (a.astype(np.int32), b.astype(np.int32), np.full(len(a), registry.code(hop(distance)), np.int64))
-        )
-        left, middle = np.concatenate((a, b)), np.concatenate((b, a))
-    return result
+    return [
+        (a, b, np.full(len(a), registry.code(hop(distance)), np.int64))
+        for distance, (a, b) in enumerate(paths.closure(u, v, limit, entities, budget, True, "hop closure"), 2)
+    ]
 
 
 def blocks(labels):
@@ -250,17 +178,8 @@ def blocks(labels):
 
 
 def diffusion_scores(adjacency, spec, device):
-    from graphspec.infra import compute
-
-    count = len(adjacency)
-    scale = 1 / np.sqrt(adjacency.sum(1))
-    transition = scale[:, None] * adjacency * scale[None, :]
-    if spec["derive/diffusion"] == "ppr":
-        alpha = spec["derive/ppr_alpha"]
-        scores = alpha * compute.inverse(np.eye(count) - (1 - alpha) * transition, device)
-    else:
-        values, vectors = compute.eigh(transition, device)
-        scores = compute.compose(vectors, np.exp(-spec["derive/heat_time"] * (1 - values)), device)
+    series, parameter = SERIES[spec["derive/diffusion"]]
+    scores = paths.summed(adjacency, series, spec[parameter], device)
     scores[adjacency] = -np.inf
     np.fill_diagonal(scores, -np.inf)
     return scores
@@ -493,22 +412,6 @@ def derivable(graph, registry):
     return graph.fact_present & np.isin(graph.fact_code, grouped(registry, registry.groups))
 
 
-@timed("operators.derive_prepare")
-def derive_prepare(graph, registry, spec, carry):
-    stated = derivable(graph, registry)
-    recency = np.zeros(len(graph.fact_step), np.int64)
-    statements = np.flatnonzero(stated)
-    ids, count = kernels.keyed(
-        graph.fact_code[statements], graph.fact_source[statements], graph.fact_target[statements]
-    )
-    keys = carry.keys(graph.fact_code[statements], graph.fact_source[statements], graph.fact_target[statements])
-    (_, recency[statements]), piece = run_state(
-        carry, "derive/recency", graph, ids, count, graph.fact_step[statements], keys
-    )
-    open_runs(carry, "derive/recency", [piece])
-    return recency
-
-
 @timed("operators.derive_steps")
 def derive_steps(graph, registry, spec, seed, recency, carry, limits):
     projected, selected, within = derivation(registry, spec)
@@ -590,73 +493,11 @@ def derive_steps(graph, registry, spec, seed, recency, carry, limits):
     return (source, target, code, step), removed, budget
 
 
-def unlived():
-    return dict(key=EMPTY, source=EMPTY, target=EMPTY, code=EMPTY)
-
-
-def derive_handoff(carry, found, steps, connected):
-    source, target, code, step = found
-    live = carry.state["derive/live"]
-    stop = (np.zeros(0, np.int32),) * 2 + (np.zeros(0, np.int64),)
-    if len(live["source"]):
-        begun = carry.keys(code[step == 0], source[step == 0], target[step == 0])
-        ended = ~np.isin(live["key"], begun)
-        stop = (
-            carry.local(live["source"][ended]).astype(np.int32),
-            carry.local(live["target"][ended]).astype(np.int32),
-            live["code"][ended],
-        )
-    final = np.flatnonzero((step == steps - 1) & connected[source] & connected[target])
-    final = final[np.lexsort((target[final], source[final], code[final]))]
-    carry.state["derive/live"] = dict(
-        key=carry.keys(code[final], source[final], target[final]),
-        source=carry.glob[source[final]],
-        target=carry.glob[target[final]],
-        code=code[final],
-    )
-    return stop
-
-
-def derived_rows(graph, found, stop, budget):
-    source, target, code, step = found
-    entities = len(graph.kinds)
-    if (int(code.max(initial=0)) + 1) * entities * entities >= 1 << 63:
-        raise GraphCapacityError("derived fact keys exceed 63 bits for %d entities" % entities)
-    if np.any(np.diff(step) < 0):
-        by_step = np.argsort(step, kind="stable")
-        source, target, code, step = source[by_step], target[by_step], code[by_step], step[by_step]
-    pair = (code.astype(np.int64) * entities + source) * entities + target
-    bounds = np.flatnonzero(np.r_[True, np.diff(step) != 0, True])
-    order = np.empty(len(step), np.int64)
-    for lo, hi in zip(bounds[:-1], bounds[1:]):
-        order[lo:hi] = lo + np.argsort(pair[lo:hi])
-    source, target, code, step = source[order], target[order], code[order], step[order]
-    ids, count = kernels.keyed(code, source, target)
-    continues = kernels.continuing(ids, step.astype(np.int64), count)
-    limit = np.where(
-        graph.entity_connected[source] & graph.entity_connected[target],
-        graph.steps,
-        member_end(graph)[step],
-    )
-    ends = np.flatnonzero(~continues & (step + 1 < limit))
-    total = len(step) + len(ends) + len(stop[0])
-    budget.workspace(total * 32 + (len(ends) + len(stop[0])) * budget.fact_bytes * 2, "derived fact assembly")
-    return extend(
-        graph,
-        np.concatenate((source, source[ends], stop[0])),
-        np.concatenate((target, target[ends], stop[1])),
-        np.concatenate((code, code[ends], stop[2])),
-        np.concatenate((step, step[ends] + 1, np.zeros(len(stop[0]), np.int32))),
-        np.concatenate((np.ones(len(step), bool), np.zeros(len(ends) + len(stop[0]), bool))),
-        np.full(total, -1, np.int32),
-    )
-
-
 @timed("operators.derive_begin")
 def derive_begin(graph, registry, spec, seed, limits, carry, held):
     if derivation(registry, spec) is None:
         return None
-    return derive_prepare(graph, registry, spec, carry)
+    return paths.recency(graph, carry, "derive/recency", derivable(graph, registry))
 
 
 @timed("operators.derive_each")
@@ -671,15 +512,14 @@ def derive_each(graph, registry, spec, seed, limits, carry, held):
 def derive_finish(graph, registry, spec, seed, limits, carry, held):
     if held is None:
         return graph, None
-    (source, target, code, step), removed, facts = held
-    live = carry.state["derive/live"]
-    graph, position = carry.widened(graph, np.r_[live["source"], live["target"]])
-    found = (position[source].astype(source.dtype), position[target].astype(target.dtype), code, step)
+    found, removed, facts = held
+    lived = len(carry.state["derive/live"]["source"])
+    graph, found = paths.widened(graph, carry, "derive/live", found)
     graph = prune(graph, ~removed, carry, "derive")
-    if not facts and not len(live["source"]):
-        carry.state["derive/live"] = unlived()
+    if not facts and not lived:
+        carry.state["derive/live"] = paths.unlived()
         return graph, None
-    return graph, (found, derive_handoff(carry, found, graph.steps, graph.entity_connected), facts)
+    return graph, (found, paths.handoff(carry, "derive/live", found, graph.steps, graph.entity_connected), facts)
 
 
 @timed("operators.derive_assemble")
@@ -690,7 +530,7 @@ def derive_assemble(graph, registry, spec, seed, limits, carry, held):
     found, stop, facts = rest
     budget = GraphBudget(limits, fact_bytes(graph))
     budget.facts = facts
-    return derived_rows(graph, found, stop, budget)
+    return paths.assembled(graph, found + (np.full(len(found[0]), -1, np.int64),), stop, budget)
 
 
 def recent(registry, spec):
@@ -698,7 +538,7 @@ def recent(registry, spec):
 
 
 def living(registry, spec):
-    return {"prune/derive": pruned(), "derive/live": unlived()}
+    return {"prune/derive": pruned(), "derive/live": paths.unlived()}
 
 
 DERIVE = OPERATIONS.register(
@@ -728,7 +568,7 @@ DERIVE = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=named,
-        version=9,
+        version=10,
         graphs=1,
     ),
 )

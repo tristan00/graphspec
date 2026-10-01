@@ -325,62 +325,6 @@ def first_rows(ids, groups):
 
 
 @njit(cache=True)
-def project_pairs(members, owners, kinds, left_kind, right_kind, cap, max_pairs):
-    rows = len(owners)
-    stamp = np.zeros(len(kinds), np.int64)
-    picked = np.empty(rows, np.int64)
-    bounds = np.empty(rows + 1, np.int64)
-    bounds[0] = 0
-    groups, fill, start = 0, 0, 0
-    while start < rows:
-        stop = start
-        while stop < rows and owners[stop] == owners[start]:
-            stop += 1
-        groups += 1
-        taken = 0
-        for index in range(stop - 1, start - 1, -1):
-            member = members[index]
-            if stamp[member] == groups:
-                continue
-            stamp[member] = groups
-            picked[fill] = member
-            fill += 1
-            taken += 1
-            if cap > 0 and taken == cap:
-                break
-        bounds[groups] = fill
-        start = stop
-    total = 0
-    for group in range(groups):
-        lo, hi = bounds[group], bounds[group + 1]
-        picked[lo:hi] = np.sort(picked[lo:hi])
-        left, right = 0, 0
-        for slot in range(lo, hi):
-            if kinds[picked[slot]] == left_kind:
-                left += 1
-            if kinds[picked[slot]] == right_kind:
-                right += 1
-        total += left * (left - 1) // 2 if left_kind == right_kind else left * right
-        if total > max_pairs:
-            raise ValueError("projection candidate edges exceed the graph resource budget")
-    source = np.empty(total, np.int32)
-    target = np.empty(total, np.int32)
-    at = 0
-    for group in range(groups):
-        lo, hi = bounds[group], bounds[group + 1]
-        for i in range(lo, hi):
-            if kinds[picked[i]] != left_kind:
-                continue
-            for j in range(i + 1 if left_kind == right_kind else lo, hi):
-                if kinds[picked[j]] != right_kind:
-                    continue
-                source[at] = picked[i]
-                target[at] = picked[j]
-                at += 1
-    return source, target
-
-
-@njit(cache=True)
 def within_pairs(members, offsets, kinds, nodes, max_pairs):
     chunks = len(offsets) - 1
     total = 0
