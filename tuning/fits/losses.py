@@ -130,9 +130,10 @@ def outcomes(bank, batch, device):
 
     started = time.perf_counter()
     rows, drawn = np.asarray(batch["rows"], np.int64), np.asarray(batch["drawn"], np.int64)
-    found = dict(target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)])
+    placed = np.asarray(batch["placed"], np.int64)
+    found = dict(target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)][placed])
     for name, values in bank.fields.items():
-        found[FIELD + name] = np.r_[values[rows], np.full(len(drawn), np.nan, values.dtype)]
+        found[FIELD + name] = np.r_[values[rows], np.full(len(drawn), np.nan, values.dtype)][placed]
     result = {key: torch.as_tensor(value, device=device) for key, value in found.items()}
     LOG.debug("outcomes exit points=%d seconds=%.4f", len(rows) + len(drawn), time.perf_counter() - started)
     return result

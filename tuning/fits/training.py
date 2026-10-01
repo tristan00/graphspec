@@ -309,10 +309,12 @@ class TrainingSession:
                             raise FloatingPointError("nonfinite holdout predictions")
                         series = batch["series"]
                         raw = predictions * predictions.new_tensor(self.bank.scale)[series]
-                        raw = (raw + predictions.new_tensor(self.bank.center)[series]).cpu()
-                        values.extend(raw[: len(batch["rows"])].tolist())
+                        raw = (raw + predictions.new_tensor(self.bank.center)[series]).cpu().numpy()
+                        ordered = np.empty(len(raw), raw.dtype)
+                        ordered[batch["placed"]] = raw
+                        values.extend(ordered[: len(batch["rows"])].tolist())
                         indices.extend(batch["rows"].tolist())
-                        drawn.extend(raw[len(batch["rows"]) :].tolist())
+                        drawn.extend(ordered[len(batch["rows"]) :].tolist())
                         owners.extend(batch["drawn"].tolist())
                 if (index + 1) % 256 == 0:
                     emit(

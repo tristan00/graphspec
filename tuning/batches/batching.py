@@ -287,19 +287,26 @@ def recipe_batch(bank, blocks, cfg):
             b[key] = joined([p[key] for p in parts])
     offsets = np.r_[0, np.cumsum([p["tasks"] for p in parts])]
     member_offsets = np.r_[0, np.cumsum([len(p["member_row"]) for p in parts])]
-    real = [len(p["rows"].value) for p in parts]
-
-    def points(values):
-        pairs = list(zip(values, real))
-        return np.concatenate([value[:count] for value, count in pairs] + [value[count:] for value, count in pairs])
-
+    real, drawn = (np.r_[0, np.cumsum([len(p[key].value) for p in parts])] for key in ("rows", "drawn"))
     for key in POINTS + tuple(key for key in parts[0] if key.startswith(FIELD)):
-        b[key] = points([p[key] for p in parts])
-    b["point_row"] = points([p["point_row"] + int(offset) for p, offset in zip(parts, offsets)])
-    b["point_node"] = points(
+        b[key] = np.concatenate([p[key] for p in parts])
+    b["point_row"] = np.concatenate([p["point_row"] + int(offset) for p, offset in zip(parts, offsets)])
+    b["point_node"] = np.concatenate(
         [np.where(p["point_node"] >= 0, p["point_node"] + int(shift), -1) for p, shift in zip(parts, member_offsets)]
     )
     b["drawn"] = Host(np.concatenate([p["drawn"].value for p in parts]))
+    b["placed"] = Host(
+        np.concatenate(
+            [
+                np.where(
+                    p["placed"].value < len(p["rows"].value),
+                    p["placed"].value + real[at],
+                    p["placed"].value - len(p["rows"].value) + real[-1] + drawn[at],
+                )
+                for at, p in enumerate(parts)
+            ]
+        )
+    )
     b["tasks"] = int(offsets[-1])
     if "end_steps" in parts[0]:
         b["end_steps"] = moved(parts, "end_steps", [i * t for i in range(size)])

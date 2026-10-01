@@ -425,18 +425,26 @@ def pointed(bank, window, b, rows, owner):
     placed = observing(held, moments, drawn, np.arange(len(held.numpy("entity_kind"))))
     if np.any(placed < 0):
         raise ValueError("a negative drawn for graph %d is not observed at the step of its task" % window.graph)
-    seen = observed >= 0
-    count = len(b["member_row"])
-    point_node = np.full(len(rows), -1, np.int64)
-    point_node[named[seen]] = count + np.arange(int(seen.sum()))
-    point_node = np.r_[point_node, count + int(seen.sum()) + np.arange(len(point))]
-    observed, row = np.r_[observed[seen], placed], np.r_[row[seen], owner[point]]
-    entity = held.numpy("entity")[observed]
+    noted = np.full(len(rows), -1, np.int64)
+    noted[named] = observed
+    noted, owners = np.r_[noted, placed], np.r_[owner, owner[point]]
     for key in tuple(key for key in b if key.startswith(FIELD)):
         b[key] = np.r_[b[key], np.full(len(point), np.nan, b[key].dtype)]
     for key in ("weight", "series", "aim", "point_row"):
         b[key] = np.r_[b[key], b[key][point]]
-    b["drawn"] = Host(rows[point])
+    linking = registry.linked[b["row_kind"][owners].astype(np.int64)]
+    marks = held.numpy("entity_token")
+    keyed = np.zeros(len(noted), marks.dtype)
+    keyed[linking] = marks[held.numpy("entity")[noted[linking]]]
+    order = np.lexsort((np.arange(len(noted)), keyed, b["point_row"]))
+    for key in ("weight", "series", "aim", "point_row") + tuple(key for key in b if key.startswith(FIELD)):
+        b[key] = b[key][order]
+    having = np.flatnonzero(noted[order] >= 0)
+    point_node = np.full(len(noted), -1, np.int64)
+    point_node[having] = len(b["member_row"]) + np.arange(len(having))
+    observed, row = noted[order][having], owners[order][having]
+    entity = held.numpy("entity")[observed]
+    b["drawn"], b["placed"] = Host(rows[point]), Host(order)
     b.update(
         member_row=np.concatenate((b["member_row"], row)),
         member_name=np.concatenate((b["member_name"], np.full(len(row), len(registry.references), np.int64))),

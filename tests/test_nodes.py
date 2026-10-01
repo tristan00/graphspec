@@ -396,20 +396,25 @@ def test_a_link_withholds_its_target_edge_from_its_split_and_is_scored_among_the
             b = pack_batch(held, [block], cfg, "cpu")
             target = outcomes(held, b, "cpu")["target"]
             variant = held.arrays(block[0], cfg)
-            tokens, rows = variant["entity_token"], b["rows"].tolist()
-            node = [NAMED[tokens[entity % len(tokens)]] for entity in b["member_entity"][b["point_node"]].tolist()]
-            for at in np.flatnonzero(b["aim"][: len(rows)].numpy() == link).tolist():
-                row = held.rows[rows[at]]
-                places = np.flatnonzero(b["drawn"] == rows[at])
-                drawn = [node[place + len(rows)] for place in places.tolist()]
+            tokens, rows, placed = variant["entity_token"], b["rows"], np.asarray(b["placed"])
+            named = b["member_entity"][b["point_node"]].numpy()
+            node = [NAMED[tokens[entity % len(tokens)]] for entity in named.tolist()]
+            owner, drawn = np.r_[rows, b["drawn"]][placed], placed >= len(rows)
+            for at in np.flatnonzero((b["aim"].numpy() == link) & ~drawn).tolist():
+                row = held.rows[owner[at]]
+                places = np.flatnonzero(drawn & (owner == owner[at]))
+                negatives = [node[place] for place in places.tolist()]
                 user = who("next", TIMES.index(row["time"]), int(row["graph"][1:]))
                 anchor = np.flatnonzero(tokens == token("user:" + user) & MASK)
                 chosen = (variant["candidate_code"] == code) & (variant["candidate_step"] == block[3])
                 chosen &= np.isin(variant["candidate_source"], anchor)
                 found = {NAMED[tokens[target]] for target in variant["candidate_target"][chosen].tolist()}
-                assert node[at] == row["node"] and len(drawn) == len(set(drawn)) and set(drawn) == found - {node[at]}
-                assert target[len(rows) + places].sum() == 0 and target[at] == 1 and "target" not in b
-                sizes.append(len(drawn) + 1)
+                assert node[at] == row["node"] and len(negatives) == len(set(negatives))
+                assert set(negatives) == found - {node[at]}
+                assert target[places].sum() == 0 and target[at] == 1 and "target" not in b
+                keys = tokens[named[np.sort(np.r_[at, places])] % len(tokens)]
+                assert np.all(keys[1:] > keys[:-1])
+                sizes.append(len(negatives) + 1)
     assert len(sizes) == len(TIMES) * 2 and max(sizes) == len(ITEMS) > min(sizes)
 
 
@@ -594,7 +599,7 @@ def predicted(banks, family, name):
                 tokens = held.arrays(graph, cfg)["entity_token"]
                 for group in batches(chosen, len(chosen), held.sizes(cfg), None, frame_budget=1024):
                     b = pack_batch(held, group, cfg, "cpu")
-                    owners = np.r_[b["rows"], b["drawn"]]
+                    owners = np.r_[b["rows"], b["drawn"]][b["placed"]]
                     named = b["member_entity"][b["point_node"]].tolist()
                     nodes = [NAMED[tokens[entity % len(tokens)]] for entity in named]
                     keys = [
@@ -613,6 +618,11 @@ def test_changing_only_a_target_of_a_kind_naming_nodes_leaves_what_every_family_
     links = sum(row["kind"] == "next" for row in opened(banks, "stated").rows)
     assert len(held) > len(opened(banks, "stated").rows) + links
     assert sorted(held) == sorted(changed) and held == pytest.approx(changed, rel=1e-6, abs=1e-6)
+    order = {}
+    for name, found in (("stated", held), ("changed", changed)):
+        for key in found:
+            order.setdefault(name, {}).setdefault(key.rsplit("/", 1)[0], []).append(key.rsplit("/", 1)[1])
+    assert order["stated"] == order["changed"]
     tasks = {}
     for key, value in held.items():
         tasks.setdefault(key.rsplit("/", 1)[0], set()).add(round(value, 6))
