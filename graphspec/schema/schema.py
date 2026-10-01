@@ -352,6 +352,7 @@ class Schema:
     def __init__(self, mapping):
         started = time.perf_counter()
         held = copy.deepcopy(fields(mapping, FIELDS, "the schema"))
+        self.grown = ()
         if type(held["version"]) is not int or held["version"] != VERSION:
             raise ValueError(
                 "the schema has version %r; this code reads version %d" % (held["version"], VERSION)
@@ -569,7 +570,24 @@ class Schema:
 
     @timed("schema.entities")
     def entities(self):
-        return dict(self.nodes, **{kind: entry["columns"] for kind, entry in self.sets.items()})
+        result = dict(self.nodes, **{kind: entry["columns"] for kind, entry in self.sets.items()})
+        for _, added in self.grown:
+            for kind, columns in added.placed.items():
+                result[kind] = tuple(result[kind]) + columns
+            result.update({kind: entry["columns"] for kind, entry in added.kinds.items()})
+        return result
+
+    @timed("schema.added_columns")
+    def added_columns(self):
+        return tuple(name for _, added in self.grown for name in added.columns)
+
+    def grew(self, entry, added):
+        started = time.perf_counter()
+        result = copy.copy(self)
+        result.columns = dict(self.columns, **added.columns)
+        result.grown = self.grown + ((entry, added),)
+        LOG.debug("schema grew exit entry=%s seconds=%.4f", entry, time.perf_counter() - started)
+        return result
 
     @timed("schema.member_columns")
     def member_columns(self):
@@ -843,7 +861,8 @@ class Schema:
         return held
 
     def layout(self):
-        groups = list(self.entities().values()) + [self.asked_columns()]
+        groups = list(self.nodes.values()) + [entry["columns"] for entry in self.sets.values()]
+        groups.append(self.asked_columns())
         return tuple(dict.fromkeys(name for columns in groups for name in columns))
 
     @timed("schema.asked_columns")
@@ -1139,6 +1158,9 @@ class Schema:
                     else "matures as %s of %s" % (entry["matures"]["column"], entry["matures"]["reference"]),
                 )
             )
+        if self.grown:
+            lines.append("added by the pipeline:")
+            lines += ["  " + added.described(entry) for entry, added in self.grown]
         if encoding is not None:
             lines.append("relations:")
             lines += [
@@ -1162,7 +1184,7 @@ class Encoding:
         if lacking:
             raise ValueError("the edge tables %s have no relations" % ", ".join(lacking))
         self.layout = schema.layout()
-        self.table = tuple(dict.fromkeys(self.layout + schema.graph))
+        self.table = tuple(dict.fromkeys(self.layout + schema.graph + schema.added_columns()))
         if states is not None:
             lacking = [name for name in schema.columns if name not in states]
             if lacking:
@@ -1202,6 +1224,36 @@ class Encoding:
 
     def width(self, columns):
         return sum(sum(self.sizes[name]) for name in columns)
+
+    def slots(self, name):
+        start, flagged = 0, self.values
+        for held in self.table:
+            width, flag = self.sizes[held]
+            if held == name:
+                return np.arange(start, start + width), np.arange(flagged, flagged + flag)
+            start, flagged = start + width, flagged + flag
+        raise KeyError("the encoding holds no column %s" % name)
+
+    def widened(self, rows):
+        added = self.schema.added_columns()
+        if not added:
+            return rows
+        started = time.perf_counter()
+        stem = [name for name in self.table if name not in added]
+        values, flags = (sum(self.sizes[name][part] for name in stem) for part in (0, 1))
+        kept = np.r_[
+            np.arange(values), self.values + np.arange(flags), self.features - self.inner + np.arange(self.inner)
+        ]
+        rows = np.asarray(rows)
+        if rows.ndim != 2 or rows.shape[1] != len(kept):
+            raise ValueError(
+                "rows of encoded values of the shape %s are widened from the encoding of %d values the pipeline "
+                "grew from" % (rows.shape, len(kept))
+            )
+        result = np.zeros((len(rows), self.features), rows.dtype)
+        result[:, kept] = rows
+        LOG.debug("encoding widened exit rows=%d seconds=%.4f", len(rows), time.perf_counter() - started)
+        return result
 
     def positions(self, columns):
         return [self.layout.index(name) for name in columns]

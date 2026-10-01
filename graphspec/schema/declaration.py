@@ -7,9 +7,11 @@ import numpy as np
 from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 
-from .schema import TARGETS, Encoding, Schema
+from .schema import ENCODERS, TARGETS, TYPES, Encoding, Schema, reserved
 
 LOG = logging.getLogger(__name__)
+EVERYTHING = ("hop", "diffusion", "rewire", "untyped", "coupling", "boundary")
+ADDED = "added"
 
 
 class EdgeType:
@@ -69,6 +71,7 @@ class Registry:
                 kind: encoding.width(columns) + (encoding.held[kind][1] if kind in encoding.held else 0)
                 for kind, columns in self.schema.entities().items()
             }
+        self.declared = tuple(dict(self.schema.nodes, **self.schema.sets))
         self.node_index = {node: i for i, node in enumerate(self.nodes)}
         self.relations = self._allocate()
         self.by_name = {edge.name: edge for edge in self.edges}
@@ -159,12 +162,14 @@ class Registry:
             if not edge.symmetric:
                 self.grouped[edge.reverse] = keys.setdefault((self.group(edge.name), True), len(keys))
         self.group_codes = len(keys)
-        self.valued = tuple(group for group in self.groups if self.named[group].attributes)
+        holding = dict(self.groups, **{edge.name: (edge.name,) for edge in self.edges if edge.origin[0] == ADDED})
+        self.valued = tuple(group for group in holding if self.named[group].attributes)
         self.value_group = np.full(self.relations, -1, np.int64)
         for place, group in enumerate(self.valued):
-            chosen = [self.by_name[name] for name in self.groups[group]]
+            chosen = [self.by_name[name] for name in holding[group]]
             self.value_group[[edge.code for edge in chosen]] = place
             self.value_group[[edge.reverse for edge in chosen if not edge.symmetric]] = place
+        self.attributed = max([len(self.attributes(group)) for group in self.valued] + [0])
 
     def group(self, name):
         if name in self.tables:
@@ -221,6 +226,105 @@ class Registry:
         edges = [EdgeType(e.name, e.origin, e.pairs, e.attributes, symmetric=e.symmetric) for e in self.edges]
         return Registry(self.name, encoding, edges, self.markers, self.extras)
 
+    def admits(self, entry, added):
+        started = time.perf_counter()
+        where = "the entry %s of the pipeline" % entry
+        taken = set(self.nodes) | set(self.by_name) | set(self.schema.columns)
+        for name, held in added.columns.items():
+            if name in taken or ":" in name:
+                raise ValueError("%s adds the column %s, a name without a colon the registry does not hold" % (where, name))
+            kind = TYPES.named(held["type"])
+            if kind.symbols:
+                raise ValueError(
+                    "%s adds the column %s of the type %s, whose values name a dictionary; an operation adds "
+                    "columns whose values are numbers" % (where, name, held["type"])
+                )
+            if held["type"] not in ENCODERS.named(held["encoder"]).types:
+                raise ValueError(
+                    "%s adds the column %s of the type %s, which the encoder %s does not read"
+                    % (where, name, held["type"], held["encoder"])
+                )
+        columns = set(self.schema.columns) | set(added.columns)
+        for kind, held in added.kinds.items():
+            reserved(kind, "a kind of node %s adds" % where)
+            if kind in taken or kind in added.columns:
+                raise ValueError("%s adds the kind of node %s, a name the registry holds" % (where, kind))
+            lacking = sorted(set(held["columns"]) - columns)
+            if lacking:
+                raise ValueError("%s adds the kind %s with columns no one states: %s" % (where, kind, ", ".join(lacking)))
+        kinds = set(self.nodes) | set(added.kinds)
+        for kind, held in added.placed.items():
+            if kind not in self.nodes or not set(held) <= set(added.columns):
+                raise ValueError(
+                    "%s places columns on %s; it places the columns it adds on kinds of node the registry holds"
+                    % (where, kind)
+                )
+        for name, held in added.relations.items():
+            if name in taken or name in added.kinds or name in added.columns or ":" in name or name in RESERVED:
+                raise ValueError("%s adds the relation %s, a name without a colon no one holds" % (where, name))
+            strangers = sorted({kind for pair in held["pairs"] for kind in pair} - kinds)
+            lacking = sorted(set(held["columns"]) - columns)
+            if strangers or lacking:
+                raise ValueError(
+                    "%s adds the relation %s between kinds of node no one states, %s, or with columns no one "
+                    "states, %s" % (where, name, ", ".join(strangers) or "none", ", ".join(lacking) or "none")
+                )
+        for name, pairs in added.joins.items():
+            if name not in self.by_name:
+                raise ValueError("%s joins pairs of kinds to %s, which is no relation of the registry" % (where, name))
+            strangers = sorted({kind for pair in pairs for kind in pair} - kinds)
+            held = sorted("%s to %s" % pair for pair in set(pairs) & set(self.by_name[name].pairs))
+            if strangers or held:
+                raise ValueError(
+                    "%s joins to the relation %s kinds of node no one states, %s, or pairs it joins, %s"
+                    % (where, name, ", ".join(strangers) or "none", ", ".join(held) or "none")
+                )
+        used = {column for held in added.kinds.values() for column in held["columns"]}
+        used |= {column for held in added.placed.values() for column in held}
+        used |= {column for held in added.relations.values() for column in held["columns"]}
+        unused = sorted(set(added.columns) - used)
+        if unused:
+            raise ValueError("%s adds the columns %s and places them nowhere" % (where, ", ".join(unused)))
+        LOG.debug("registry admits exit entry=%s seconds=%.4f", entry, time.perf_counter() - started)
+
+    def grown(self, entry, added, states):
+        started = time.perf_counter()
+        self.admits(entry, added)
+        if states is None:
+            given, added = {name: {} for name in added.columns}, added.provisional()
+        elif sorted(states) != sorted(added.columns):
+            raise ValueError(
+                "the entry %s of the pipeline adds the columns %s and is given the states of the encoders of %s"
+                % (entry, ", ".join(sorted(added.columns)), ", ".join(sorted(states)) or "none")
+            )
+        else:
+            given = states
+        schema, stated = self.schema.grew(entry, added), self.encoding
+        held = None if stated.states is None else dict(stated.states, **given)
+        encoding = Encoding(schema, stated.dictionaries, held, stated.relations)
+        kinds = tuple(schema.entities())
+        every = tuple((first, second) for first in kinds for second in kinds)
+        edges = []
+        for edge in self.edges:
+            pairs = edge.pairs + (added.joins[edge.name] if edge.name in added.joins else ())
+            if edge.origin[0] in EVERYTHING:
+                pairs = every
+            edges.append(EdgeType(edge.name, edge.origin, pairs, edge.attributes, symmetric=edge.symmetric))
+        edges += [
+            EdgeType(name, (ADDED, entry), held["pairs"], held["columns"], symmetric=not held["directed"])
+            for name, held in added.relations.items()
+        ]
+        result = Registry(self.name, encoding, edges, self.markers, self.extras)
+        LOG.info(
+            "registry grown exit entry=%s kinds=%d relations=%d columns=%d seconds=%.3f",
+            entry,
+            len(result.nodes),
+            len(result.edges),
+            len(schema.columns),
+            time.perf_counter() - started,
+        )
+        return result
+
     def code(self, name):
         return self.by_name[name].code
 
@@ -241,7 +345,7 @@ class Registry:
 
     @timed("registry.registry.declaration")
     def declaration(self):
-        return dict(
+        result = dict(
             name=self.name,
             schema=self.schema.mapping(),
             encoding=self.encoding.declaration(),
@@ -251,6 +355,9 @@ class Registry:
             edges=[edge.declaration() for edge in self.edges],
             extras=self.extras,
         )
+        if self.schema.grown:
+            result["added"] = [dict(entry=entry, **added.declaration()) for entry, added in self.schema.grown]
+        return result
 
     @timed("registry.registry.fingerprint")
     def fingerprint(self):

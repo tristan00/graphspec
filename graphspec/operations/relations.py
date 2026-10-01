@@ -50,7 +50,8 @@ RELATIONS = OPERATIONS.register(
         splits=(),
         requires=(),
         changes=("facts",),
-        version=3,
+        adds=None,
+        version=4,
         graphs=1,
     ),
 )

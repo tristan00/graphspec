@@ -6,6 +6,7 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from graphspec.registries import Names
+from graphspec.schema.added import Added
 from graphspec.views.graph import CHANGES as CHECKED
 
 LOG = logging.getLogger(__name__)
@@ -162,7 +163,7 @@ class Phase:
 
 
 class Operation:
-    def __init__(self, namespace, name, phases, parameters, reads, splits, requires, changes, version, graphs):
+    def __init__(self, namespace, name, phases, parameters, reads, splits, requires, changes, adds, version, graphs):
         started = time.perf_counter()
         for label, part in (("namespace", namespace), ("name", name)):
             if type(part) is not str or not part or "." in part:
@@ -182,6 +183,7 @@ class Operation:
             splits=type(splits) is tuple and all(split in SPLITS for split in splits),
             requires=type(requires) is tuple and all(isinstance(count, Count) for count in requires),
             changes=type(changes) is tuple and all(change in CHANGES for change in changes),
+            adds=adds is None or callable(adds),
             version=type(version) is int and version >= 1,
             graphs=graphs in (1, 2) and type(graphs) is int,
         )
@@ -192,13 +194,14 @@ class Operation:
                 "least one, of distinct names, the last not run in parts and none run in parts after one that "
                 "is; a function from a registry to its parameters; a tuple of the "
                 "names of the operations whose parameters it reads; a tuple of the splits it may read, among %s; "
-                "a tuple of counts; a tuple of what it changes, among %s; a whole version from 1; the number of "
+                "a tuple of counts; a tuple of what it changes, among %s; none, or a function from a registry, "
+                "settings and the name of its entry to what it adds; a whole version from 1; the number of "
                 "graphs it takes, 1, or 2 where it reads a second graph beside the one it changes"
                 % (self.name, ", ".join(wrong), ", ".join(SPLITS), ", ".join(CHANGES))
             )
         self.namespace, self.phases, self.parameters, self.reads = namespace, phases, parameters, reads
         self.splits, self.requires, self.changes, self.version = splits, requires, changes, version
-        self.graphs = graphs
+        self.adds, self.graphs = adds, graphs
         LOG.debug("operation exit name=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
     def stated(self, registry):
@@ -258,6 +261,18 @@ class Operation:
                         )
         LOG.debug("check exit operation=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
+    def added(self, registry, spec, entry):
+        if self.adds is None:
+            return None
+        started = time.perf_counter()
+        result = self.adds(registry, self.settings(registry, spec, None, None), entry)
+        if not isinstance(result, Added):
+            raise ValueError(
+                "the operation %s states what it adds as graphspec.schema.added.Added, found %r" % (self.name, result)
+            )
+        LOG.debug("added exit operation=%s entry=%s seconds=%.4f", self.name, entry, time.perf_counter() - started)
+        return result
+
     def initial(self, registry, spec):
         started = time.perf_counter()
         settings = self.settings(registry, spec, None, None)
@@ -310,6 +325,7 @@ class Operation:
             splits=list(self.splits),
             requires=[count.declaration() for count in self.requires],
             changes=list(self.changes),
+            adds=self.adds is not None,
             graphs=self.graphs,
             phases=[
                 dict(name=phase.name, carries=phase.carries is not None, parts=phase.parts is not None)

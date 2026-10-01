@@ -1,11 +1,15 @@
+import functools
+
 import numpy as np
 import pyarrow as pa
 
 from graphspec import Operation, Phase, Representation
-from graphspec.infra.hashing import unit
+from graphspec.infra.hashing import token, unit
 from graphspec.infra.timing import timed
+from graphspec.operations.rows import extend, made_rows, made_values, observed, written
 from graphspec.operations.sets import Form, node
 from graphspec.operations.state import EMPTY, Table
+from graphspec.schema.added import Added
 from graphspec.schema.references import Sort
 from graphspec.schema.time import NEVER
 from graphspec.views.view import Tasks
@@ -188,10 +192,62 @@ def checked_kept(arrays, name, registry, spec):
         raise ValueError("graph %s does not draw once for every observation" % name)
 
 
+@timed("registered.hubs")
+def hubs(entry, kinds, rows, registry):
+    return np.asarray([token(entry)], np.uint64)
+
+
+@timed("registered.adding")
+def adding(registry, settings, entry):
+    count = entry + ".count"
+    return Added(
+        {count: dict(type="number", encoder="standard")},
+        {entry: dict(columns=(count,), tokens=functools.partial(hubs, entry))},
+        {},
+        {entry + ".in": dict(pairs=(("place", entry),), directed=True, columns=(count,))},
+        {},
+    )
+
+
+@timed("registered.hubbed")
+def hubbed(graph, registry, settings, seed, limits, carry, held):
+    entry, kinds = carry.entry, np.asarray(graph.kinds)
+    (hub,) = np.flatnonzero(kinds == registry.kind(entry))
+    entity, step = np.asarray(graph.obs_entity, np.int64), np.asarray(graph.obs_step, np.int64)
+    places = np.flatnonzero(~np.asarray(graph.obs_anchor, bool) & (kinds[entity] == registry.kind("place")))
+    counts = np.bincount(step[places], minlength=graph.steps)
+    moments = np.flatnonzero(counts)
+    rows = written(
+        registry,
+        np.zeros((len(moments), registry.features), np.float32),
+        (entry + ".count",),
+        counts[moments],
+        graph.x_table.dtype,
+        lambda row: "the hub at the step %d" % moments[row],
+    )
+    graph, references = made_rows(graph, carry, rows)
+    graph = observed(graph, np.full(len(moments), hub), moments, references, np.zeros(len(moments), bool))
+    values = np.full((len(places), graph.value_table.shape[1]), np.nan, np.float32)
+    values[:, 0] = counts[step[places]]
+    graph, references = made_values(graph, carry, values)
+    return extend(
+        graph,
+        entity[places],
+        np.full(len(places), hub),
+        np.full(len(places), registry.code(entry + ".in")),
+        step[places],
+        np.ones(len(places), bool),
+        references,
+    )
+
+
 TRIPLE = Sort(True, False, 3, 3, True)
 STORED = Form(node, True, True)
 TALLY = Operation(
-    "test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), 1, 1
+    "test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), None, 1, 1
+)
+HUB = Operation(
+    "test", "hub", (Phase("hub", hubbed, None, None),), unstated, (), (), (), ("observations", "facts"), adding, 1, 1
 )
 RUNNING = Representation("test.running", "encode", uncounted, unlooking, running, None, None, unchecked)
 LINKED = Representation("test.linked", "structure", unlinked, unlooking, linked, None, None, checked_links)

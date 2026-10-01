@@ -13,6 +13,7 @@ from numba import njit
 from graphspec import Registry
 from graphspec.budgets import GraphLimits
 from graphspec.engine import join, schedule, segments, transform
+from graphspec.engine.edits import sliced
 from graphspec.engine.transform import SEED
 from graphspec.facts.stored import Facts, admitted, inputs
 from graphspec.infra.arrays import Residents, between
@@ -21,10 +22,10 @@ from graphspec.infra.runtime import cache_path, output_path
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.operations import parameters as specs
-from graphspec.operations import sets
+from graphspec.operations import pipeline, sets
 from graphspec.operations.pipeline import resolved
 from graphspec.representations import groups as representations
-from graphspec.schema.schema import Encoding, fitted
+from graphspec.schema.schema import ENCODERS, Encoding, fitted
 from graphspec.views.graph import Graph
 from graphspec.views.view import beside, finished, sampled, sequences, view
 from graphspec.views.visible import STATEMENT, Looking
@@ -35,7 +36,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 11
+VIEW = 12
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -362,10 +363,6 @@ class Bank:
             self._viewed[key] = Viewed(self, *key[:2], storage, self.looking(cfg)[0])
         return self._viewed[key]
 
-    @timed("bank.fitted")
-    def fitted(self, cfg):
-        return self.viewed(cfg).registry
-
     @timed("bank.several")
     def several(self, spec):
         return spec["time/several"] if self.registry.extras["several"] else None
@@ -416,9 +413,13 @@ class Bank:
 
     def tokens(self, held):
         if held not in self._tokens:
-            self._tokens[held] = np.where(
-                self.shared_kinds()[held.numpy("entity_kind")], held.numpy("entity_token"), -1
-            )
+            started = time.perf_counter()
+            stated, kinds = self.shared_kinds(), held.numpy("entity_kind")
+            shared = np.zeros(len(kinds), bool)
+            inside = kinds < len(stated)
+            shared[inside] = stated[kinds[inside]]
+            self._tokens[held] = np.where(shared, held.numpy("entity_token"), -1)
+            LOG.debug("bank tokens exit entities=%d seconds=%.4f", len(kinds), time.perf_counter() - started)
         return self._tokens[held]
 
     def joining(self, cfg):
@@ -532,10 +533,61 @@ class Deriver(Bank):
         self.device = device
         super().__init__(directory)
         self.roots, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES, resident)
+        self.grown = {}
         LOG.debug("deriver exit device=%s seconds=%.4f", device, time.perf_counter() - started)
 
     def limits(self):
         return self.held
+
+    @timed("deriver.fitted")
+    def fitted(self, cfg):
+        viewed, (key, steps, _, _) = self.viewed(cfg), self.stated(cfg)
+        if (viewed.folder, key) not in self.grown:
+            self.grown[viewed.folder, key] = self.growing(viewed, steps, cfg)
+        return self.grown[viewed.folder, key]
+
+    def growing(self, viewed, steps, cfg):
+        started = time.perf_counter()
+        provisional = pipeline.grown(viewed.registry, steps, None)
+        if not provisional.schema.added_columns():
+            return provisional
+        named = specs.digest(dict(pipeline=[step.keyed() for step in steps], device=self.device, seed=SEED))
+        path = viewed.folder / "added" / (named + ".json")
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(path, dict(states=self.trained(viewed, steps, provisional, cfg)))
+        result = pipeline.grown(viewed.registry, steps, read_json(path)["states"])
+        LOG.info("deriver growing exit columns=%d seconds=%.3f", len(result.schema.added_columns()), time.perf_counter() - started)
+        return result
+
+    def trained(self, viewed, steps, provisional, cfg):
+        started = time.perf_counter()
+        partitions = self.partitions(cfg)
+        stated = {
+            name: held for _, added in pipeline.additions(viewed.registry, steps) for name, held in added.columns.items()
+        }
+        samples = {name: [] for name in stated}
+        for graph in viewed.graphs:
+            index = graph["index"]
+            rows, places = viewed.labels[index]
+            moments = viewed.row_steps[index][places[partitions[rows] == 0]]
+            if not len(moments):
+                continue
+            bound = int(moments.max()) + 1
+            member = sliced(Graph.load(viewed.path(index)).dense(), 0, bound)
+            beside = {
+                name: sliced(held[0].dense(), 0, bound)
+                for name, held in self.seconds(steps, [index], cfg, False).items()
+            }
+            derived = segments.whole(member, beside, provisional, steps, SEED, self.limits(), partitions)
+            for name, codes in pipeline.sampled(derived, provisional).items():
+                samples[name].append(codes)
+        result = {
+            name: ENCODERS.named(held["encoder"]).fit(np.concatenate(samples[name] + [np.zeros(0, np.float32)]), None, name)
+            for name, held in stated.items()
+        }
+        LOG.info("deriver trained exit columns=%d seconds=%.3f", len(result), time.perf_counter() - started)
+        return result
 
     @timed("seconds")
     def seconds(self, steps, indices, cfg, mapped):
@@ -602,6 +654,7 @@ class Deriver(Bank):
             schema=self.registry.fingerprint(),
             source=self.source,
             pipeline=[step.keyed() for step in steps],
+            added=[dict(entry=name, **added.declaration()) for name, added in pipeline.additions(self.registry, steps)],
             settings=specs.materialized(spec),
             groups=list(chosen),
             splits=cfg["splits"],

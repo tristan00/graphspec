@@ -20,12 +20,13 @@ from graphspec.representations.registry import chosen as representing
 from graphspec.views.graph import Dense, Graph, verify_dense
 
 from . import transform
-from .segments import Plan, features, opened, paired, unified
+from .segments import Plan, opened, paired, placed, unified
 from .stitch import BUFFERED, Appender
 
 LOG = logging.getLogger(__name__)
 PIPE = {}
 RANK = dict(stitch=0, expand=1)
+MADE = "made.npy"
 
 
 class Stage:
@@ -66,7 +67,15 @@ def attach(jobs, registry, stated, spec, groups, seed, limits, partitions, threa
     PIPE.clear()
     PIPE.update(
         jobs=[
-            dict(plan=plan, paths=paths, spill=Path(spill), destination=destination, states={})
+            dict(
+                plan=plan,
+                paths=paths,
+                spill=Path(spill),
+                destination=destination,
+                states={},
+                placed=(0, 0),
+                made=[],
+            )
             for plan, paths, spill, destination in jobs
         ],
         registry=registry,
@@ -163,9 +172,7 @@ def open_task(job, index):
     plan, stage = PIPE["jobs"][job]["plan"], PIPE["stages"]["open"]
     name, steps, arrays = taken(job, index, "expand")
     graph = Dense(name, [], steps, **arrays)
-    carry, dense, seen, _, _ = opened(
-        plan, index, graph, 0, steps, None, plan.entities, (0, 0), state_of(job, stage, index)
-    )
+    carry, dense, seen, _ = opened(plan, index, graph, 0, steps, None, plan.entities, state_of(job, stage, index))
     park(job, index, "open", packed(dense, carry, None))
     keep(job, stage, index, seen)
 
@@ -208,6 +215,9 @@ def represent_task(job, index):
     if not PIPE["steps"]:
         with measure("verify"):
             verify_dense(graph, PIPE["registry"], carry.known)
+    fresh = placed(carry, graph, tuple(int(top) + count for top, count in zip(work["plan"].top, work["placed"])))
+    work["placed"] = (work["placed"][0] + len(fresh[0]), work["placed"][1] + len(fresh[1]))
+    work["made"].append(np.asarray(fresh[0]).astype(np.float16, copy=False))
     piece, state = representations.represented(
         carry,
         graph,
@@ -226,15 +236,15 @@ def represent_task(job, index):
         appender = work.pop("appender")
         appender.add(representations.ended(PIPE["chosen"], state))
         appender.close()
+        np.save(work["spill"] / MADE, np.concatenate(work.pop("made")), allow_pickle=False)
 
 
 @staged
 def stitch_task(job, index):
     work = PIPE["jobs"][job]
     plan, registry, spec, chosen = work["plan"], PIPE["registry"], PIPE["spec"], PIPE["chosen"]
-    tables = [held.astype(np.float16, copy=False) for held in plan.second_tables()[0]] + [
-        np.asarray(features(Graph.load(path, mapped=True))).astype(np.float16, copy=False) for path in work["paths"]
-    ]
+    tables = plan.tables([Graph.load(path, mapped=True) for path in work["paths"]])
+    tables.append(np.load(work["spill"] / MADE, allow_pickle=False))
     arrays = representations.stitched(
         Arrays(work["destination"]),
         np.concatenate(tables),
@@ -256,7 +266,7 @@ TASKS = dict(expand=expand_task, open=open_task, represent=represent_task, stitc
 def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
     started = time.perf_counter()
     plans = [
-        Plan(job["members"], paired(steps, job["beside"]), unified(job["members"], registry, spec, seed), 0)
+        Plan(job["members"], paired(steps, job["beside"]), unified(job["members"], registry, spec, seed), 0, registry)
         for job in jobs
     ]
     stages = staging(steps, registry)

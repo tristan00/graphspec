@@ -124,7 +124,8 @@ MERGE = OPERATIONS.register(
         splits=(),
         requires=(),
         changes=("observations", "facts"),
-        version=2,
+        adds=None,
+        version=3,
         graphs=2,
     ),
 )

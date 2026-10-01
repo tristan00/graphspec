@@ -18,7 +18,7 @@ def parameters(spec):
 
 def unify(graphs, registry, spec, seed):
     started = time.perf_counter()
-    connect = np.asarray([spec["graphs/connect/" + kind] for kind in registry.nodes], bool)
+    connect = np.asarray([spec["graphs/connect/" + kind] for kind in registry.declared], bool)
     kinds = np.concatenate([np.asarray(graph.kinds) for graph in graphs]).astype(np.int64)
     tokens = np.concatenate([np.asarray(graph.entity_token) for graph in graphs]).astype(np.uint64)
     connected = connect[kinds] & (unit(seed, CONNECT, tokens) < spec["graphs/connect_fraction"])

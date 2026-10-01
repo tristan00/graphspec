@@ -97,13 +97,14 @@ class Segment:
         self.glob, self.base, self.step0, self.task0 = glob, base, step0, task0
         self.known, self.x_global, self.value_global = known, x_global, value_global
         self.entities, self.state, self.part = entities, None, None
-        self.seconds, self.second = seconds, None
+        self.seconds, self.second, self.entry = seconds, None, None
 
     def __getstate__(self):
-        return dict(self.__dict__, entities=None, state=None, part=None, second=None)
+        return dict(self.__dict__, entities=None, state=None, part=None, second=None, entry=None)
 
-    def named(self, name, operation):
+    def named(self, name, operation, entry):
         started = time.perf_counter()
+        self.entry = entry
         if name is None:
             self.second = None
         elif name not in self.seconds:

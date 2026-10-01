@@ -115,6 +115,7 @@ def test_the_key_of_a_variant_holds_the_device(bank):
     left, right = central.identity(cfg), graphic.identity(cfg)
     assert {name for name in left if left[name] != right[name]} == {"device"}
     assert sorted(left) == [
+        "added",
         "device",
         "groups",
         "pipeline",

@@ -10,7 +10,7 @@ from graphspec.schema.references import ends
 from . import kernels
 from .operation import OPERATIONS, Count, Operation, Phase
 from .parameters import among, choice, equals, flag, holds, number, real
-from .rows import OBSERVATIONS, SAMPLE, prune, pruned, select
+from .rows import OBSERVATIONS, SAMPLE, first_kept, kept, prune, pruned, select
 from .state import EMPTY, Table
 
 LOG = logging.getLogger(__name__)
@@ -22,9 +22,9 @@ REMOVED = ("remove",)
 def stated(registry):
     started = time.perf_counter()
     referred = REFERRED if registry.stops.any() else REFERRED + REMOVED
-    result = [flag("nodes/%s/keep" % kind, True) for kind in registry.nodes]
+    result = [flag("nodes/%s/keep" % kind, True) for kind in registry.declared]
     result.append(choice("nodes/referenced", referred, "keep"))
-    for kind in registry.nodes:
+    for kind in registry.declared:
         prefix = "nodes/%s/" % kind
         result += [
             choice(prefix + "filter", FILTERS, "none", lambda spec, kind=kind: spec["nodes/%s/keep" % kind]),
@@ -39,7 +39,7 @@ def stated(registry):
 
 @timed("transform.filtered")
 def filtered(registry, spec, mode):
-    return any(holds(spec, "nodes/%s/filter" % kind, mode) for kind in registry.nodes)
+    return any(holds(spec, "nodes/%s/filter" % kind, mode) for kind in registry.declared)
 
 
 def counters(carry, name, graph):
@@ -56,18 +56,18 @@ def carried(registry, spec):
     return {
         "nodes/total_degree": Table(EMPTY, value=EMPTY),
         "nodes/activity": Table(EMPTY, value=EMPTY),
-        "nodes/structural": Table(EMPTY, value=EMPTY),
+        "nodes/structural": kept(),
         "prune/nodes": pruned(),
     }
 
 
 @timed("operators.nodes")
 def nodes(graph, registry, spec, seed, limits, carry, held):
-    steps, entities = graph.steps, len(graph.kinds)
-    retained = np.asarray([spec["nodes/%s/keep" % kind] for kind in registry.nodes])
+    entities, added = len(graph.kinds), len(registry.nodes) - len(registry.declared)
+    retained = np.asarray([spec["nodes/%s/keep" % kind] for kind in registry.declared] + [True] * added)
     filters = {
         kind: spec["nodes/%s/filter" % kind]
-        for kind in registry.nodes
+        for kind in registry.declared
         if "nodes/%s/filter" % kind in spec and spec["nodes/%s/filter" % kind] != "none"
     }
     if retained.all() and not filters and not graph.obs_anchor.any():
@@ -126,9 +126,7 @@ def nodes(graph, registry, spec, seed, limits, carry, held):
         member, entity = ends(graph.member_source, graph.member_target)
         moments = graph.task_step[graph.member_task[member]].astype(np.int64)
         needed = np.isin(obs_step.astype(np.int64) * entities + obs_entity, moments * entities + entity)
-    first, _ = kernels.first_observed(obs_entity, obs_step, structural, entities, steps)
-    first[counters(carry, "nodes/structural", graph) > 0] = -1
-    remember(carry, "nodes/structural", graph, (first < steps).astype(np.int64))
+    first = first_kept(carry, "nodes/structural", graph, obs_entity, obs_step, structural)
     present = kernels.observed_at(
         obs_entity, obs_step, structural, graph.fact_source, graph.fact_step, entities
     ) & kernels.observed_at(obs_entity, obs_step, structural, graph.fact_target, graph.fact_step, entities)
@@ -159,7 +157,8 @@ NODES = OPERATIONS.register(
             )
         ),
         changes=("observations", "facts", "references"),
-        version=4,
+        adds=None,
+        version=5,
         graphs=1,
     ),
 )

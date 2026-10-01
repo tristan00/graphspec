@@ -34,7 +34,7 @@ TINY = 2.0**-54
 
 def anchoring(registry):
     started = time.perf_counter()
-    nodes, pairs = registry.nodes, joined(registry)
+    nodes, pairs = registry.declared, joined(registry)
     result = {kind: tuple(other for other in nodes if frozenset((kind, other)) in pairs) for kind in nodes}
     LOG.debug("anchoring exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
@@ -42,7 +42,7 @@ def anchoring(registry):
 
 def stated(registry):
     started = time.perf_counter()
-    nodes, anchors = registry.nodes, anchoring(registry)
+    nodes, anchors = registry.declared, anchoring(registry)
     projected = [edge for edge in registry.edges if edge.origin[0] == "project"]
     result = [flag("derive/" + edge.name, False) for edge in projected]
     result.append(
@@ -167,8 +167,8 @@ def complete(graph, registry, selected, within, present, u, v, budget):
         [kernels.within_pairs(flat, offsets, graph.kinds, len(registry.nodes), budget.pair_limit)]
     )
     table = np.full((len(registry.nodes), len(registry.nodes)), -1, np.int64)
-    for i, left in enumerate(registry.nodes):
-        for right in registry.nodes[i:]:
+    for i, left in enumerate(registry.declared):
+        for right in registry.declared[i:]:
             table[i, registry.kind(right)] = registry.code(completion(left, right))
     return source, target, table[graph.kinds[source], graph.kinds[target]]
 
@@ -465,10 +465,10 @@ def derivation(registry, spec):
         if edge.origin[0] == "project" and enabled(spec, "derive/" + edge.name)
     ]
     selected = np.asarray(
-        [registry.kind(kind) for kind in registry.nodes if enabled(spec, "derive/complete/" + kind)], np.int64
+        [registry.kind(kind) for kind in registry.declared if enabled(spec, "derive/complete/" + kind)], np.int64
     )
     within = np.asarray(
-        [registry.kind(kind) for kind in registry.nodes if enabled(spec, "derive/complete_within/" + kind)],
+        [registry.kind(kind) for kind in registry.declared if enabled(spec, "derive/complete_within/" + kind)],
         np.int64,
     )
     wanted = projected or len(selected) or closing(spec) or diffusing(spec) or rewiring(spec)
@@ -713,7 +713,8 @@ DERIVE = OPERATIONS.register(
             ),
         ),
         changes=("facts",),
-        version=6,
+        adds=None,
+        version=7,
         graphs=1,
     ),
 )

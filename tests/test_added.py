@@ -4,10 +4,10 @@ import time
 import numpy as np
 import pytest
 import support
-from registered import KEPT, LINKED, RUNNING
+from registered import HUB, KEPT, LINKED, RUNNING
 
 from conftest import SPLITS
-from graphspec import REPRESENTATIONS, Representation
+from graphspec import OPERATIONS, REPRESENTATIONS, Representation
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments
 from graphspec.engine.edits import sliced
@@ -15,11 +15,14 @@ from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
+from graphspec.operations import operation
 from graphspec.operations.consecutive import CONSECUTIVE
 from graphspec.operations.nearby import NEARBY, fillable, measured, placed
 from graphspec.operations.pipeline import resolved
 from graphspec.operations.rows import keyed_relations
 from graphspec.representations.registry import FAMILIES, families
+from graphspec.schema.added import Added
+from graphspec.views.graph import Graph
 from tuning.bank.bank import Deriver
 from tuning.families.model_spec import DERIVES, derived
 from tuning.fits.training import fit
@@ -74,6 +77,72 @@ def represented():
     yield
     for entry in ADDED:
         del REPRESENTATIONS.held[entry.name]
+
+
+@pytest.fixture
+def hubbed():
+    OPERATIONS.register(HUB.name, HUB)
+    yield
+    del OPERATIONS.held[HUB.name]
+
+
+@timed("added.counted")
+def counted(view, place, bound):
+    structural = ~np.asarray(view.obs_anchor, bool)
+    kinds = np.asarray(view.kinds)[np.asarray(view.obs_entity)]
+    counts = np.bincount(np.asarray(view.obs_step)[structural & (kinds == place)], minlength=view.steps)[:bound]
+    return counts[counts > 0]
+
+
+def test_an_operation_adds_a_kind_a_relation_and_a_column_encoded_from_the_trained_views_alone(bank, hubbed):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", RESIDENT)
+    cfg = support.configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS, (HUB.name,))
+    registry, count, inward = opened.fitted(cfg), "hub.count", "hub.in"
+    assert {entry["name"]: entry["adds"] for entry in operation.listed(opened.registry)}[HUB.name] is True
+    assert registry.nodes == opened.registry.nodes + ("hub",) and registry.declared == opened.registry.nodes
+    edge = registry.by_name[inward]
+    assert (edge.pairs, edge.attributes, edge.origin, edge.code) == ((("place", "hub"),), (count,), ("added", "hub"), len(registry.edges) - 1)
+    assert registry.valued[-1] == inward and registry.schema.columns[count] == dict(type="number", encoder="standard")
+    assert "hub adds the column hub.count, number by standard; the kind of node hub" in registry.schema.text(registry.encoding)
+    declared = dict(
+        entry="hub",
+        columns={count: dict(type="number", encoder="standard")},
+        kinds=dict(hub=dict(columns=[count])),
+        placed={},
+        relations={inward: dict(pairs=[["place", "hub"]], directed=True, columns=[count])},
+        joins={},
+    )
+    assert opened.identity(cfg)["added"] == [declared] and registry.declaration()["added"] == [declared]
+    viewed, partitions, place = opened.viewed(cfg), opened.partitions(cfg), registry.kind("place")
+    found = {True: [], False: []}
+    for graph in viewed.graphs:
+        view = Graph.load(viewed.path(graph["index"])).dense()
+        rows, places = viewed.labels[graph["index"]]
+        moments = viewed.row_steps[graph["index"]][places[partitions[rows] == 0]]
+        for key, bound in ((True, int(moments.max(initial=-1)) + 1), (False, view.steps)):
+            counts = counted(view, place, bound)
+            found[key].append(np.repeat(counts, counts + 1))
+    trained, every = (np.concatenate(found[key]).astype(np.float64) for key in (True, False))
+    state = registry.encoding.states[count]
+    assert state == pytest.approx(dict(mean=trained.mean(), sd=trained.std(ddof=1)), rel=1e-6)
+    assert abs(state["mean"] - every.mean()) > 0.01
+    arrays = opened.arrays(0, cfg)
+    x, kinds = np.asarray(arrays["x_table"]), np.asarray(arrays["entity_kind"])
+    hubs = kinds[np.asarray(arrays["entity"])] == registry.kind("hub")
+    values, flags = registry.encoding.slots(count)
+    shown = x[np.asarray(arrays["x_ref"])[hubs]].astype(np.float64)
+    view = Graph.load(viewed.path(0)).dense()
+    counts = counted(view, place, view.steps)
+    assert x.shape[1] == registry.features and (shown[:, flags] == 1).all()
+    assert np.allclose(shown[:, values[0]] * state["sd"] + state["mean"], counts, atol=0.05)
+    attributes = np.asarray(arrays["attributes_" + inward], np.float64)
+    assert sorted(attributes[:, 0].tolist()) == sorted(np.repeat(counts, counts).astype(np.float64).tolist())
+    with pytest.raises(ValueError, match="adds the columns lost and places them nowhere"):
+        opened.registry.grown("bad", Added({"lost": dict(type="number", encoder="value")}, {}, {}, {}, {}), None)
+    with pytest.raises(ValueError, match="adds the kind of node place, a name the registry holds"):
+        opened.registry.grown("bad", Added({}, {"place": dict(columns=(), tokens=len)}, {}, {}, {}), None)
+    LOG.info("added kind relation column exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_representation_registered_in_each_family_completes_one_fit_on_cpu(
@@ -210,7 +279,7 @@ def test_nearby_joins_the_rows_whose_columns_lie_within_a_distance_or_are_neares
         new, before = added(found, graph, edge.code)
         assert new == sorted(expected - before) and new
     plain = support.registry("plain", ["thing"], [])
-    carry, dense = segments.opening(graph, {})
+    carry, dense = segments.opening(graph, {}, registry)
     assert NEARBY.stated(plain) == ()
     with pytest.raises(ValueError, match="fills a relation stated without columns between kinds of node that share"):
         NEARBY(dense, plain, {}, SEED, LIMITS, carry, NEARBY.initial(plain, {}), None)
@@ -265,7 +334,7 @@ def test_consecutive_rows_of_a_group_are_joined_unless_a_gap_in_time_cuts_them(o
     assert 0 < counts["near:visits:targets", 1.0] < counts["near:visits:targets", 1e9]
     assert counts["near", 1.0] <= counts["near", 1e9]
     plain = support.registry("plain", ["thing"], [])
-    carry, dense = segments.opening(graph, {})
+    carry, dense = segments.opening(graph, {}, registry)
     with pytest.raises(ValueError, match="fills a relation stated without columns from a kind of node to itself"):
         CONSECUTIVE(dense, plain, {}, SEED, LIMITS, carry, CONSECUTIVE.initial(plain, {}), None)
     LOG.info("consecutive exit counts=%s seconds=%.3f", counts, time.perf_counter() - started)

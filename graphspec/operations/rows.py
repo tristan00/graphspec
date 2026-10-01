@@ -4,6 +4,7 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 
+from graphspec.facts.stored import HALF
 from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import allocate, scatter, take
@@ -68,6 +69,46 @@ def fact_bytes(graph):
     return sum(graph.arrays[name].dtype.itemsize for name in FACTS)
 
 
+@timed("operators.made_rows")
+def made_rows(graph, carry, rows):
+    start = len(graph.x_table)
+    carry.x_global = np.r_[carry.x_global, np.full(len(rows), -1, np.int64)]
+    grown = graph.replace(x_table=np.concatenate((graph.x_table, np.asarray(rows, graph.x_table.dtype))))
+    return grown, start + np.arange(len(rows))
+
+
+@timed("operators.made_values")
+def made_values(graph, carry, values):
+    start = len(graph.value_table)
+    carry.value_global = np.r_[carry.value_global, np.full(len(values), -1, np.int64)]
+    grown = graph.replace(value_table=np.concatenate((graph.value_table, np.asarray(values, graph.value_table.dtype))))
+    return grown, start + np.arange(len(values))
+
+
+@timed("operators.written")
+def written(registry, rows, columns, codes, dtype, named):
+    encoding = registry.encoding
+    rows = np.array(rows, np.float32)
+    codes = np.asarray(codes, np.float32).reshape(len(rows), len(columns))
+    slots = {}
+    for place, name in enumerate(columns):
+        values, flags = encoding.slots(name)
+        found = encoding.vectors((name,), codes[:, place])
+        rows[:, values], rows[:, flags] = found[:, : len(values)], found[:, len(values) :]
+        slots.update({int(slot): name for slot in np.r_[values, flags]})
+    with np.errstate(over="ignore"):
+        result = rows.astype(dtype)
+    lost = ~np.isfinite(result)
+    if lost.any():
+        row, slot = (int(found[0]) for found in np.nonzero(lost))
+        raise ValueError(
+            "%s holds in the column %s the value %r, which gives %r; model inputs are stored at 16 bits, which hold "
+            "magnitudes up to %d"
+            % (named(row), slots[slot], float(codes[row, columns.index(slots[slot])]), float(rows[row, slot]), HALF)
+        )
+    return result
+
+
 def select(graph, names, mask):
     if mask.all():
         return graph
@@ -103,6 +144,26 @@ def extend(graph, source, target, code, step, present, references):
     return graph.replace(**merged)
 
 
+@timed("operators.observed")
+def observed(graph, entity, step, reference, anchor):
+    if not len(entity):
+        return graph
+    added = dict(obs_entity=entity, obs_step=step, obs_ref=reference, obs_anchor=anchor)
+    added = {name: np.asarray(value, graph.arrays[name].dtype) for name, value in added.items()}
+    order = np.argsort(added["obs_step"], kind="stable")
+    position = np.searchsorted(graph.obs_step, added["obs_step"][order], "right") + np.arange(len(order))
+    total = len(graph.obs_step) + len(order)
+    existing = np.ones(total, bool)
+    existing[position] = False
+    merged = {}
+    for name in OBSERVATIONS:
+        column = allocate((total,), graph.arrays[name].dtype)
+        scatter(column, existing, graph.arrays[name])
+        scatter(column, position, added[name], order)
+        merged[name] = column
+    return graph.replace(**merged)
+
+
 @timed("operators.prune")
 def prune(graph, kept, carry, name):
     return select(
@@ -123,6 +184,22 @@ def prune(graph, kept, carry, name):
 
 def pruned():
     return Table(EMPTY, state=np.zeros(0, np.int8))
+
+
+def kept():
+    return Table(EMPTY, value=EMPTY)
+
+
+@timed("operators.first_kept")
+def first_kept(carry, name, graph, entity, step, alive):
+    first, _ = kernels.first_observed(entity, step, alive, len(graph.kinds), graph.steps)
+    table = carry.state[name]
+    first[table.lookup("value", carry.glob, 0) > 0] = -1
+    lasting = np.flatnonzero((first < graph.steps) & np.asarray(graph.entity_connected, bool))
+    carry.state[name] = table.replaced(
+        carry.glob[lasting], carry.glob[lasting], value=np.ones(len(lasting), np.int64)
+    )
+    return first
 
 
 def runs():

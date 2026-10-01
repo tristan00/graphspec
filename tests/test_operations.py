@@ -77,7 +77,7 @@ def stated(registry):
 
 
 def made(name, function):
-    return Operation("test", name, (Phase("apply", function, None, None),), stated, (), (), (), ("time",), 2, 1)
+    return Operation("test", name, (Phase("apply", function, None, None),), stated, (), (), (), ("time",), None, 2, 1)
 
 
 @pytest.fixture
@@ -103,6 +103,7 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         splits=[],
         requires=[],
         changes=["time"],
+        adds=False,
         graphs=1,
         phases=[dict(name="apply", carries=False, parts=False)],
     )
@@ -128,7 +129,7 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
     steps = resolved(registry, [dict(operation="test.shift", parameters={"test/shift": 3})])
     moved = segments.whole(dense, {}, registry, steps, transform.SEED, GraphLimits("cpu"), None)
     assert np.array_equal(moved.period, dense.period + 3) and moved.obs_step is dense.obs_step
-    carry, opened = segments.opening(dense, {})
+    carry, opened = segments.opening(dense, {}, registry)
     with pytest.raises(KeyError, match="the operation test.stray reads time/window, which is none of the parameters"):
         OPERATIONS.named("test.stray")(
             opened, registry, {"test/shift": 3}, transform.SEED, GraphLimits("cpu"), carry, {}, None
@@ -176,7 +177,7 @@ def test_each_operation_called_alone_on_the_fixture_gives_the_arrays_of_its_stag
                 given = Dense(name, [], len(stored[index][name]["period"]), **stored[index][name])
             else:
                 given = carried[name]
-            carry, given = segments.opening(given, {})
+            carry, given = segments.opening(given, {}, registry)
             before = {key: np.array(value) for key, value in given.arrays.items()}
             result, _ = step(given, registry, transform.SEED, GraphLimits("cpu"), carry, step.initial(registry), None)
             assert all(identical(before[key], given.arrays[key]) for key in DENSE), (label, name)

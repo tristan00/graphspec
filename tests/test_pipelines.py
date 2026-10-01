@@ -108,7 +108,7 @@ def stated(registry):
 
 OPERATIONS.register(
     "probe.edited",
-    Operation("probe", "edited", (Phase("probe", probe, None, None),), stated, (), (), (), ("time",), VERSION, 1),
+    Operation("probe", "edited", (Phase("probe", probe, None, None),), stated, (), (), (), ("time",), None, VERSION, 1),
 )
 '''
 
@@ -216,11 +216,11 @@ def sighted():
 
     found = [
         Operation(
-            "test", "blind", (Phase("blind", blind, None, None),), lambda registry: (), (), (), (), ("time",), 1, 1
+            "test", "blind", (Phase("blind", blind, None, None),), lambda registry: (), (), (), (), ("time",), None, 1, 1
         ),
         Operation(
             "test", "looking", (Phase("looking", looking, None, None),), lambda registry: (), (), ("trained",), (),
-            ("time",), 1, 1,
+            ("time",), None, 1, 1,
         ),
     ]
     for operation in found:
@@ -254,9 +254,10 @@ def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leav
     cfg = support.configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS)
     key = opened.identity(cfg)
     assert sorted(key) == [
-        "device", "groups", "pipeline", "schema", "seeds", "settings", "source", "splits", "versions"
+        "added", "device", "groups", "pipeline", "schema", "seeds", "settings", "source", "splits", "versions"
     ]
     assert key["schema"] == opened.manifest["spec_sha256"] and key["seeds"] == dict(derivation=transform.SEED)
+    assert key["added"] == []
     before = opened.variant(cfg)[0]
     edges = OPERATIONS.named("graphspec.edges")
     monkeypatch.setattr(edges, "version", edges.version + 1)

@@ -36,7 +36,7 @@ def filters(name, condition, attributes):
 
 def stated(registry):
     started = time.perf_counter()
-    nodes, joins = registry.nodes, anchoring(registry)
+    nodes, joins = registry.declared, anchoring(registry)
 
     def anchored(spec, first, second):
         anchors = [kind for kind in nodes if enabled(spec, "derive/complete_within/" + kind)]
@@ -236,7 +236,8 @@ EDGES = OPERATIONS.register(
         splits=(),
         requires=(Count("edges/cap", "degree", capping, "stored", "stored"),),
         changes=("facts",),
-        version=6,
+        adds=None,
+        version=7,
         graphs=1,
     ),
 )

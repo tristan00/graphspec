@@ -139,7 +139,7 @@ def settings(registry, groups):
     unknown = sorted(set(groups) - set(GROUPS))
     if unknown:
         raise ValueError("unknown representation groups: " + ", ".join(unknown))
-    nodes, extras = registry.nodes, registry.extras
+    nodes, extras = registry.declared, registry.extras
     parameters = [number("time/history", 1, 32, 16), number("time/context", 0, 3, 0)]
     parameters += [choice("graphs/join", ("separate", "single"), "separate")]
     parameters += [number("graphs/join_size", 2, 4096, 8, equals("graphs/join", "single"))]

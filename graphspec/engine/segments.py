@@ -26,6 +26,49 @@ def features(member):
     return member.x_table if isinstance(member, Dense) else member.obs_x
 
 
+def observed_rows(member):
+    entity = np.asarray(member.obs_entity, np.int64)
+    if isinstance(member, Dense):
+        return entity, np.asarray(member.x_table)[np.asarray(member.obs_ref, np.int64)]
+    return entity, np.asarray(member.obs_x)
+
+
+def padded(values, width):
+    values = np.asarray(values)
+    if values.shape[1] == width:
+        return values
+    if values.shape[1] > width:
+        raise ValueError(
+            "rows of values of facts %d wide are read by a registry whose relations hold at most %d values"
+            % (values.shape[1], width)
+        )
+    return np.concatenate((values, np.full((len(values), width - values.shape[1]), np.nan, values.dtype)), 1)
+
+
+def place(table_global, table, top):
+    table_global = np.asarray(table_global, np.int64)
+    made = np.flatnonzero(table_global < 0)
+    if not len(made):
+        return table_global, np.asarray(table)[:0]
+    result = table_global.copy()
+    result[made] = top + np.arange(len(made))
+    return result, np.asarray(table)[made]
+
+
+def placed(carry, graph, tops):
+    started = time.perf_counter()
+    carry.x_global, rows = place(carry.x_global, graph.x_table, tops[0])
+    carry.value_global, values = place(carry.value_global, graph.value_table, tops[1])
+    LOG.debug(
+        "placed exit graph=%s rows=%d values=%d seconds=%.4f",
+        graph.name,
+        len(rows),
+        len(values),
+        time.perf_counter() - started,
+    )
+    return rows, values
+
+
 def alone(member):
     kinds = np.asarray(member.kinds).astype(np.int64)
     connected = np.asarray(member.entity_connected) if isinstance(member, Dense) else np.zeros(len(kinds), bool)
@@ -81,19 +124,31 @@ def matched(kinds, tokens, numbers, second):
 
 
 class Plan:
-    def __init__(self, members, beside, unify, room):
+    def __init__(self, members, beside, unify, room, registry):
         started = time.perf_counter()
         if type(room) is not int or room < 0:
             raise ValueError(
                 "the room a derivation leaves for the entities of its edits is a whole number, found %r" % (room,)
             )
         maps, kinds, tokens, connected = unify
+        self.registry = registry
         self.seconds = {
-            name: [second if isinstance(second, Dense) else second.dense() for second in beside[name]]
+            name: [self.widened(second if isinstance(second, Dense) else second.dense()) for second in beside[name]]
             for name in sorted(beside)
         }
-        self.second_maps, kinds, tokens = {}, [np.asarray(kinds)], [np.asarray(tokens).astype(np.uint64)]
-        total = len(kinds[0])
+        made, self.made, count = [], [], 0
+        for place, member in enumerate(members):
+            numbers = []
+            for code, found in self.added_entities(member, place):
+                made.append((np.full(len(found), code, np.int64), found))
+                numbers.append(count + np.arange(len(found)))
+                count += len(found)
+            self.made.append(np.concatenate(numbers + [EMPTY]))
+        maps = [np.asarray(own, np.int64) + count for own in maps]
+        kinds = [np.r_[np.concatenate([held[0] for held in made] + [EMPTY]), np.asarray(kinds, np.int64)]]
+        tokens = [np.concatenate([held[1] for held in made] + [np.asarray(tokens).astype(np.uint64)])]
+        connected = np.r_[np.zeros(count, bool), np.asarray(connected, bool)]
+        self.second_maps, total = {}, len(kinds[0])
         for name, seconds in self.seconds.items():
             if len(seconds) != len(members):
                 raise ValueError(
@@ -117,7 +172,7 @@ class Plan:
                 tokens.append(np.asarray(second.entity_token)[fresh].astype(np.uint64))
                 self.second_maps[name].append(numbers)
         kinds, tokens = np.concatenate(kinds), np.concatenate(tokens)
-        connected = np.r_[np.asarray(connected, bool), np.zeros(total - len(connected), bool)]
+        connected = np.r_[connected, np.zeros(total - len(connected), bool)]
         self.maps, self.entities, self.base = maps, Entities(kinds, tokens, connected), len(kinds) + room
         self.steps = np.r_[0, np.cumsum([member.steps for member in members])].astype(np.int64)
         self.tasks = np.r_[0, np.cumsum([len(member.task_key) for member in members])].astype(np.int64)
@@ -142,6 +197,46 @@ class Plan:
             int(self.steps[-1]),
             len(self.seconds),
         )
+
+    def added_entities(self, member, place):
+        started = time.perf_counter()
+        kinds = [(kind, held) for _, added in self.registry.schema.grown for kind, held in added.kinds.items()]
+        result = []
+        if kinds:
+            entity, rows = observed_rows(member)
+            found = [(np.asarray(member.kinds)[entity], self.registry.encoding.widened(rows))]
+            for held in self.seconds.values():
+                entity, rows = observed_rows(held[place])
+                found.append((np.asarray(held[place].kinds)[entity], rows))
+            for kind, held in kinds:
+                tokens = [np.asarray(held["tokens"](owners, rows, self.registry), np.uint64) for owners, rows in found]
+                result.append((self.registry.kind(kind), np.unique(np.concatenate(tokens + [np.zeros(0, np.uint64)]))))
+        LOG.debug(
+            "added entities exit graph=%s kinds=%d seconds=%.4f", member.name, len(result), time.perf_counter() - started
+        )
+        return result
+
+    def widened(self, graph):
+        started = time.perf_counter()
+        encoding = self.registry.encoding
+        grown = dict(
+            x_table=encoding.widened(graph.x_table),
+            task_x=encoding.widened(graph.task_x),
+            value_table=padded(graph.value_table, self.registry.attributed),
+        )
+        changed = {name: value for name, value in grown.items() if value is not graph.arrays[name]}
+        result = graph.replace(**changed) if changed else graph
+        LOG.debug("plan widened exit graph=%s changed=%d seconds=%.4f", graph.name, len(changed), time.perf_counter() - started)
+        return result
+
+    def tables(self, members):
+        started = time.perf_counter()
+        result = [held.astype(np.float16, copy=False) for held in self.second_tables()[0]] + [
+            self.registry.encoding.widened(np.asarray(features(member))).astype(np.float16, copy=False)
+            for member in members
+        ]
+        LOG.debug("plan tables exit tables=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
 
     def second_tables(self):
         started = time.perf_counter()
@@ -196,7 +291,7 @@ def second_piece(plan, name, member, low, high):
     return result
 
 
-def opened(plan, member, graph, low, high, edit, entities, added, seen):
+def opened(plan, member, graph, low, high, edit, entities, seen):
     started = time.perf_counter()
     if (low, high) == (0, graph.steps):
         piece, rows, values, first = graph, np.arange(table_sizes(graph)[0]), np.arange(table_sizes(graph)[1]), 0
@@ -204,7 +299,6 @@ def opened(plan, member, graph, low, high, edit, entities, added, seen):
         piece, rows, values, first = cut(graph, low, high)
     ids = plan.maps[member]
     x_global, value_global = plan.x[member] + rows, plan.values[member] + values
-    fresh = (piece.x_table[:0], piece.value_table[:0])
     if edit is not None:
         tables = len(piece.x_table), len(piece.value_table)
         piece = edited(piece, edit.moved(-low))
@@ -216,11 +310,11 @@ def opened(plan, member, graph, low, high, edit, entities, added, seen):
                 "the edits of a derivation add %d entities, and it was begun with room for %d"
                 % (len(entities) - len(plan.entities), plan.base - len(plan.entities))
             )
-        fresh = (piece.x_table[tables[0] :], piece.value_table[tables[1] :])
-        x_global = np.r_[x_global, plan.top[0] + added[0] + np.arange(len(fresh[0]))]
-        value_global = np.r_[value_global, plan.top[1] + added[1] + np.arange(len(fresh[1]))]
+        x_global = np.r_[x_global, np.full(len(piece.x_table) - tables[0], -1, np.int64)]
+        value_global = np.r_[value_global, np.full(len(piece.value_table) - tables[1], -1, np.int64)]
+    piece = plan.widened(piece)
     seconds = {name: second_piece(plan, name, member, low, high) for name in plan.seconds}
-    every = np.concatenate([ids] + [plan.second_maps[name][member] for name in plan.seconds])
+    every = np.concatenate([ids] + [plan.second_maps[name][member] for name in plan.seconds] + [plan.made[member]])
     glob = np.unique(every)
     local = np.searchsorted(glob, ids)
     arrays = dict(piece.arrays)
@@ -261,7 +355,7 @@ def opened(plan, member, graph, low, high, edit, entities, added, seen):
         len(glob),
         time.perf_counter() - started,
     )
-    return carry, dense, np.union1d(seen, glob[observed & lasting]), entities, fresh
+    return carry, dense, np.union1d(seen, glob[observed & lasting]), entities
 
 
 class Source:
@@ -276,7 +370,7 @@ class Source:
             steps=transform.initial(self.registry, self.steps),
             representations=representations.initial(self.registry, self.spec, self.chosen),
             entities=self.plan.entities,
-            added=(0, 0),
+            placed=(0, 0),
         )
         LOG.debug("source initial exit seconds=%.4f", time.perf_counter() - started)
         return result
@@ -291,8 +385,8 @@ class Derived:
 def advanced(source, member, graph, low, high, edit, state):
     started = time.perf_counter()
     with measure("segment"):
-        carry, dense, seen, entities, fresh = opened(
-            source.plan, member, graph, low, high, edit, state["entities"], state["added"], state["seen"]
+        carry, dense, seen, entities = opened(
+            source.plan, member, graph, low, high, edit, state["entities"], state["seen"]
         )
     derived, steps = transform.derive(
         dense,
@@ -305,6 +399,8 @@ def advanced(source, member, graph, low, high, edit, state):
         state["steps"],
         edit is not None,
     )
+    with measure("place"):
+        fresh = placed(carry, derived, tuple(int(top) + count for top, count in zip(source.plan.top, state["placed"])))
     with measure("represent"):
         piece, held = representations.represented(
             carry, derived, source.registry, source.spec, source.chosen, source.seed, source.limits,
@@ -315,7 +411,7 @@ def advanced(source, member, graph, low, high, edit, state):
         steps=steps,
         representations=held,
         entities=entities,
-        added=(state["added"][0] + len(fresh[0]), state["added"][1] + len(fresh[1])),
+        placed=(state["placed"][0] + len(fresh[0]), state["placed"][1] + len(fresh[1])),
     )
     LOG.info(
         "segment exit member=%d low=%d high=%d seconds=%.3f entities=%d facts=%d",
@@ -342,7 +438,7 @@ class Derivation:
                 "a derivation begins from graphs in the form the operations work on, Graph.dense(); found %s"
                 % ", ".join(strangers)
             )
-        plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), room)
+        plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), room, registry)
         source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
         result = cls(source, None, 0, source.initial(), ())
         LOG.info("derivation begun exit graphs=%d seconds=%.3f", len(members), time.perf_counter() - started)
@@ -394,8 +490,7 @@ class Derivation:
         for name, value in representations.ended(source.chosen, self.state["representations"]).items():
             arrays[name] = np.r_[arrays[name], value]
         table = np.concatenate(
-            [held.astype(np.float16, copy=False) for held in source.plan.second_tables()[0]]
-            + [np.asarray(features(member)).astype(np.float16, copy=False) for member in source.members]
+            source.plan.tables(source.members)
             + [np.asarray(segment.fresh[0]).astype(np.float16, copy=False) for segment in segments]
         )
         entities = self.state["entities"]
@@ -418,16 +513,19 @@ class Derivation:
     def derived(self):
         started = time.perf_counter()
         source, segments = self.source, self.derivations()
-        x, values = source.plan.second_tables()
+        plan = source.plan
+        x, values = plan.second_tables()
         result = stitched(
             [(segment.carry, segment.graph) for segment in segments],
             self.state["entities"],
             np.concatenate(
-                x + [np.asarray(member.x_table) for member in source.members] + [segment.fresh[0] for segment in segments]
+                x
+                + [plan.registry.encoding.widened(np.asarray(member.x_table)) for member in source.members]
+                + [segment.fresh[0] for segment in segments]
             ),
             np.concatenate(
                 values
-                + [np.asarray(member.value_table) for member in source.members]
+                + [padded(member.value_table, plan.registry.attributed) for member in source.members]
                 + [segment.fresh[1] for segment in segments]
             ),
             self.time,
@@ -448,34 +546,36 @@ def single(beside):
 
 def whole(graph, beside, registry, steps, seed, limits, partitions):
     started = time.perf_counter()
-    plan = Plan([graph], paired(steps, single(beside)), alone(graph), 0)
-    carry, dense, _, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, (0, 0), EMPTY)
+    plan = Plan([graph], paired(steps, single(beside)), alone(graph), 0, registry)
+    carry, dense, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, EMPTY)
     states = transform.initial(registry, steps)
     derived, _ = transform.derive(dense, registry, steps, seed, limits, partitions, carry, states, False)
     LOG.info("whole exit graph=%s seconds=%.3f", graph.name, time.perf_counter() - started)
     return derived
 
 
-def opening(graph, beside):
+def opening(graph, beside, registry):
     started = time.perf_counter()
-    plan = Plan([graph], single(beside), alone(graph), 0)
-    carry, dense, _, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, (0, 0), EMPTY)
+    plan = Plan([graph], single(beside), alone(graph), 0, registry)
+    carry, dense, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, EMPTY)
     LOG.debug("opening exit graph=%s seconds=%.4f", graph.name, time.perf_counter() - started)
     return carry, dense
 
 
 def variant(members, beside, registry, steps, spec, groups, seed, limits, partitions, destination):
     started = time.perf_counter()
-    plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), 0)
+    plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), 0, registry)
     source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
     state = source.initial()
     appender = Appender(destination, BUFFERED)
+    made = []
     try:
         for member, graph in enumerate(members):
             clock = time.perf_counter()
             with measure("dense"):
                 dense = graph.dense()
             segment, state = advanced(source, member, dense, 0, dense.steps, None, state)
+            made.append(np.asarray(segment.fresh[0]).astype(np.float16, copy=False))
             with measure("spill"):
                 appender.add(segment.piece)
             LOG.info("segment build exit index=%d seconds=%.3f", member, time.perf_counter() - clock)
@@ -487,10 +587,7 @@ def variant(members, beside, registry, steps, spec, groups, seed, limits, partit
     with measure("stitch"):
         arrays = representations.stitched(
             written,
-            np.concatenate(
-                [held.astype(np.float16, copy=False) for held in plan.second_tables()[0]]
-                + [np.asarray(features(member)).astype(np.float16, copy=False) for member in members]
-            ),
+            np.concatenate(plan.tables(members) + made),
             plan.entities.kinds,
             plan.entities.tokens,
             registry,

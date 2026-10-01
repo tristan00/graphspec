@@ -2,6 +2,8 @@ import logging
 import time
 from collections import ChainMap
 
+import numpy as np
+
 from .operation import OPERATIONS
 from .parameters import Parameter, flag
 
@@ -20,23 +22,23 @@ class Step:
         self.spec = dict(read, **parameters)
 
     def __call__(self, graph, registry, seed, limits, carry, state, partitions):
-        carry.named(self.graph, self.operation.name)
+        carry.named(self.graph, self.operation.name, called(self))
         try:
             return self.operation(graph, registry, self.spec, seed, limits, carry, state, partitions)
         finally:
-            carry.second = None
+            carry.second, carry.entry = None, None
 
     def initial(self, registry):
         return self.operation.initial(registry, self.spec)
 
     def phase(self, place, graph, registry, seed, limits, carry, held, state, part, partitions):
-        carry.named(self.graph, self.operation.name)
+        carry.named(self.graph, self.operation.name, called(self))
         try:
             return self.operation.phase(
                 place, graph, registry, self.spec, seed, limits, carry, held, state, part, partitions
             )
         finally:
-            carry.second = None
+            carry.second, carry.entry = None, None
 
     def parts(self, place, registry):
         phase = self.operation.phases[place]
@@ -205,6 +207,56 @@ def resolved(registry, entries):
         for name, operation, label, entry in found
     )
     LOG.debug("resolved exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def called(step):
+    return step.label if step.label is not None else step.operation.name.split(".", 1)[1]
+
+
+def additions(registry, steps):
+    started = time.perf_counter()
+    held, result = registry, []
+    for step in steps:
+        added = step.operation.added(held, step.spec, called(step))
+        if added is not None and added.holds():
+            held = held.grown(called(step), added, None)
+            result.append((called(step), added))
+    LOG.debug("additions exit steps=%d added=%d seconds=%.4f", len(steps), len(result), time.perf_counter() - started)
+    return result
+
+
+def grown(registry, steps, states):
+    started = time.perf_counter()
+    held = registry
+    for step in steps:
+        added = step.operation.added(held, step.spec, called(step))
+        if added is not None and added.holds():
+            given = None if states is None else {name: states[name] for name in added.columns}
+            held = held.grown(called(step), added, given)
+    LOG.debug("grown exit steps=%d seconds=%.4f", len(steps), time.perf_counter() - started)
+    return held
+
+
+def sampled(graph, registry):
+    started = time.perf_counter()
+    encoding, entities = registry.encoding, registry.schema.entities()
+    kinds = np.asarray(graph.kinds)[np.asarray(graph.obs_entity, np.int64)]
+    rows = np.asarray(graph.x_table)[np.asarray(graph.obs_ref, np.int64)]
+    stated = np.asarray(graph.fact_present, bool) & (np.asarray(graph.fact_ref) >= 0)
+    result = {}
+    for name in registry.schema.added_columns():
+        values, flags = encoding.slots(name)
+        holders = [registry.kind(kind) for kind, columns in entities.items() if name in columns]
+        chosen = np.isin(kinds, holders) & (rows[:, flags[0]] > 0)
+        found = [rows[chosen, values[0]].astype(np.float32)]
+        for group in registry.valued:
+            if name in registry.attributes(group):
+                facts = stated & np.isin(graph.fact_code, registry.coded[group])
+                column = np.asarray(graph.value_table)[graph.fact_ref[facts], registry.attributes(group).index(name)]
+                found.append(np.asarray(column[~np.isnan(column)], np.float32))
+        result[name] = np.concatenate(found)
+    LOG.debug("sampled exit columns=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
