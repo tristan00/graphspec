@@ -1,6 +1,8 @@
+import json
 import logging
 import time
 from collections import ChainMap
+from weakref import WeakKeyDictionary
 
 import numpy as np
 
@@ -13,6 +15,10 @@ TEMPLATE = ("operation", "label", "graph")
 OPTIONAL = ("label", "graph")
 PRESENT = "pipeline/%s"
 NAMED = "pipeline/%s/"
+HITS = ("names", "removes")
+NONE = frozenset()
+PROBED = WeakKeyDictionary()
+PLANNED = WeakKeyDictionary()
 
 
 class Step:
@@ -355,3 +361,218 @@ def flattened(template, stated):
             result.update({NAMED % name + key: value for key, value in named[name]["parameters"].items()})
     LOG.debug("flattened exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
+
+
+def settled(parameter):
+    return parameter.default if parameter.default is not None else parameter.options[0]
+
+
+def roled(found, roles):
+    return frozenset(kind for kind, role in found.items() if role in roles)
+
+
+def made(operation, registry, context, value):
+    result = {}
+    view = ChainMap(result, context)
+    for parameter in operation.stated(registry):
+        if parameter.active(view):
+            result[parameter.name] = value(parameter)
+    return result
+
+
+def probed(registry, operation, bounded, context):
+    key = (
+        operation.name,
+        tuple((name, held.default, held.low, held.high, held.options) for name, held in sorted(bounded.items())),
+        tuple(sorted(context.items())),
+    )
+    held = PROBED.setdefault(registry, {})
+    if key in held:
+        return held[key]
+    started = time.perf_counter()
+    choices = [parameter.name for parameter in operation.stated(registry) if bounded[parameter.name].options]
+
+    def spec(chosen):
+        return made(
+            operation, registry, context, lambda parameter: chosen.get(parameter.name, settled(bounded[parameter.name]))
+        )
+
+    def probe(chosen):
+        return operation.roles(registry, dict(context, **spec(chosen)))
+
+    origin, found = spec({}), probe({})
+    must = dict(hits=roled(found, HITS), removes=roled(found, ("removes",)), fills=roled(found, ("fills",)))
+    hits, removes = {name: {} for name in choices}, {name: {} for name in choices}
+    for name in choices:
+        options = bounded[name].options
+        starts = [{}] if name in origin else [
+            {other: option}
+            for other in choices
+            if other != name
+            for option in bounded[other].options
+            if name in spec({other: option})
+        ]
+        for start in starts:
+            found = [probe({**start, name: option}) for option in options]
+            for group, roles, target in (("hits", HITS, hits), ("removes", ("removes",), removes)):
+                sets = [roled(each, roles) for each in found]
+                common = frozenset.intersection(*sets)
+                for option, each in zip(options, sets):
+                    target[name][option] = target[name].get(option, NONE) | (each - common)
+                if not start:
+                    must[group] &= common
+            if not start:
+                must["fills"] &= frozenset.intersection(*[roled(each, ("fills",)) for each in found])
+    held[key] = hits, removes, must
+    LOG.debug(
+        "probed exit operation=%s parameters=%d seconds=%.4f", operation.name, len(choices), time.perf_counter() - started
+    )
+    return held[key]
+
+
+class Offered:
+    def __init__(self, registry, template, parameters):
+        started = time.perf_counter()
+        found = checked(template, TEMPLATE)
+        self.reads, self.names = readers(found), [name for name, _, _, _ in found]
+        self.place = {name: place for place, name in enumerate(self.names)}
+        self.operations = {name: operation for name, operation, _, _ in found}
+        self.flags, self.owned = {}, {name: [] for name in self.names}
+        for parameter in parameters:
+            parts = parameter.name.split("/", 2)
+            if len(parts) == 2:
+                self.flags[parts[1]] = parameter
+            else:
+                self.owned[parts[1]].append(parameter)
+        self.order = list(self.flags)
+        bounded = {
+            name: {parameter.name[len(NAMED % name) :]: parameter for parameter in self.owned[name]} for name in self.names
+        }
+        self.probes = {}
+        for name in self.names:
+            context = {}
+            for read in self.reads[name]:
+                context.update(
+                    made(self.operations[read], registry, {}, lambda parameter: settled(bounded[read][parameter.name]))
+                )
+            operation = self.operations[name]
+            self.probes[name] = None if operation.kinds is None else probed(registry, operation, bounded[name], context)
+        self.protected, ahead = {}, {}
+        for name in reversed(self.names):
+            self.protected[name] = dict(ahead)
+            if self.flags[name].options == (True,) and self.probes[name] is not None:
+                must = self.probes[name][2]
+                ahead = {kind: held for kind, held in ahead.items() if kind not in must["fills"]}
+                ahead.update(dict.fromkeys(must["hits"], name))
+        LOG.debug("offered exit entries=%d seconds=%.4f", len(self.names), time.perf_counter() - started)
+
+    def removed(self, name, roles):
+        result = {}
+        for earlier in self.names[: self.place[name]]:
+            if earlier not in roles:
+                if self.probes[earlier] is not None:
+                    raise ValueError(
+                        "the entry %s of the template is drawn before the entry %s, which comes before it and may "
+                        "remove kinds it names" % (name, earlier)
+                    )
+                continue
+            for kind, role in roles[earlier].items():
+                if role == "removes":
+                    result[kind] = earlier
+                elif role == "fills":
+                    result.pop(kind, None)
+        return result
+
+    def allowed(self, name, parameter, removed, guard):
+        probes, own = self.probes[name], parameter.name[len(NAMED % name) :]
+        if probes is None or not parameter.options or own not in probes[0]:
+            return parameter.options
+        hits, removes = probes[0][own], probes[1][own]
+        return tuple(
+            option
+            for option in parameter.options
+            if not hits.get(option, NONE) & removed.keys() and not removes.get(option, NONE) & guard.keys()
+        )
+
+    def blocked(self, name, flat, removed, guard):
+        must = self.probes[name][2]
+        lost = sorted(must["hits"] & removed.keys())
+        if lost:
+            return "names the kind %s, which the entry %s before it removed" % (lost[0], removed[lost[0]])
+        kept = sorted(must["removes"] & guard.keys())
+        if kept:
+            return "removes the kind %s, which the entry %s after it, held present, names" % (kept[0], guard[kept[0]])
+        trial = {**flat, self.flags[name].name: True}
+        for parameter in self.owned[name]:
+            if parameter.active(trial):
+                held = self.allowed(name, parameter, removed, guard)
+                if parameter.options and not held:
+                    return "is left no value of %s that names no kind an entry before it removed" % parameter.name
+                trial[parameter.name] = held[0] if parameter.options else parameter.default
+        return None
+
+    def verified(self, registry, name, flat, removed, guard):
+        context = {}
+        for read in self.reads[name] + (name,):
+            prefix = NAMED % read
+            context.update({held.name[len(prefix) :]: flat[held.name] for held in self.owned[read] if held.name in flat})
+        found = self.operations[name].roles(registry, context)
+        lost = sorted(roled(found, HITS) & removed.keys())
+        kept = sorted(roled(found, ("removes",)) & guard.keys())
+        if lost or kept:
+            raise ValueError(
+                "the entry %s of the template %s by values none of which does alone; its operation states what it "
+                "does with kinds one parameter at a time"
+                % (
+                    name,
+                    "names the kind %s, which the entry %s before it removed," % (lost[0], removed[lost[0]])
+                    if lost
+                    else "removes the kind %s, which the entry %s after it, held present, names," % (kept[0], guard[kept[0]]),
+                )
+            )
+        return found
+
+
+def offered(registry, template, parameters):
+    key = (json.dumps(template, sort_keys=True), parameters)
+    held = PLANNED.get(registry)
+    if held is None or held[0] != key:
+        held = PLANNED[registry] = key, Offered(registry, template, parameters)
+    return held[1]
+
+
+def narrowed(parameter, options):
+    if options == parameter.options:
+        return parameter
+    default = parameter.default if parameter.default in options else None
+    return Parameter(parameter.name, parameter.kind, default, options=options, condition=parameter.condition)
+
+
+def draw(registry, template, parameters, choose):
+    started = time.perf_counter()
+    plan, flat, roles = offered(registry, template, tuple(parameters)), {}, {}
+    for name in plan.order:
+        removed, guard, flag = plan.removed(name, roles), plan.protected[name], plan.flags[name]
+        options, roles[name] = flag.options, {}
+        if plan.probes[name] is not None and True in options:
+            reason = plan.blocked(name, flat, removed, guard)
+            if reason is not None:
+                options = tuple(option for option in options if not option)
+                if not options:
+                    raise ValueError("the bounds hold the entry %s of the template present, and it %s" % (name, reason))
+        flat[flag.name] = choose(narrowed(flag, options))
+        if not flat[flag.name]:
+            continue
+        for parameter in plan.owned[name]:
+            if parameter.active(flat):
+                held = plan.allowed(name, parameter, removed, guard)
+                if parameter.options and not held:
+                    raise ValueError(
+                        "the entry %s of the template is left no value of %s that names no kind an entry before it "
+                        "removed and removes none an entry after it, held present, names" % (name, parameter.name)
+                    )
+                flat[parameter.name] = choose(narrowed(parameter, held))
+        if plan.probes[name] is not None:
+            roles[name] = plan.verified(registry, name, flat, removed, guard)
+    LOG.debug("pipeline draw exit parameters=%d seconds=%.4f", len(flat), time.perf_counter() - started)
+    return flat

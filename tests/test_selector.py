@@ -1,4 +1,7 @@
 import argparse
+import logging
+import re
+import time
 from pathlib import Path
 
 import numpy as np
@@ -8,16 +11,27 @@ from optuna.distributions import IntDistribution
 
 from graphspec.infra.files import read_json, write_json
 from graphspec.operations import parameters as specs
+from graphspec.operations import pipeline
 from graphspec.representations.groups import lags
 from tuning.bank.bank import Bank
 from tuning.families.model_spec import space
 from tuning.searches import selector
 from tuning.searches.run import run
 from tuning.searches.selector import distribution
+from tuning.searches.space import Space
 from tuning.statement import state
 
+LOG = logging.getLogger(__name__)
 TEMPLATE = support.template()
 PIPELINE = str(Path(__file__).parent / "pipeline.json")
+LATER = ("contract", "derive", "nearby", "consecutive", "neighbourhood", "nodes")
+GROUPED = "pipeline/graphspec.contract"
+NEARBY = {"pipeline/graphspec.nearby": True, "pipeline/graphspec.nearby/nearby/kinds": "item:item"}
+CONTRACTED = {GROUPED: True, GROUPED + "/contract/grouping": "item:v0"}
+FORCED = (
+    "the bounds hold the entry graphspec.contract of the template present, and it removes the kind item, which "
+    "the entry graphspec.nearby after it, held present, names"
+)
 
 
 def random_suggest(*arguments):
@@ -189,6 +203,61 @@ def test_tpe_excludes_recorded_trials_that_lack_an_active_parameter(bank):
         dict(trial="trial_0", status="complete", parameters=["graphs/join_size"])
     ]
     assert selection["observations"] == 2
+
+
+def contracting(opened):
+    started = time.perf_counter()
+    second = opened.manifest["graphs"][1]["name"]
+    result = [dict(operation="graphspec." + name) for name in LATER] + [
+        dict(operation="graphspec.contract", label="again"),
+        dict(operation="graphspec.merge", graph=second),
+        dict(operation="graphspec.nearby", label="late"),
+    ]
+    LOG.debug("contracting exit entries=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def test_a_search_offers_no_pipeline_its_statement_refuses_and_bounds_that_leave_nothing_stop_naming_the_entry(
+    bank,
+):
+    started = time.perf_counter()
+    opened = Bank(bank)
+    registry, template = opened.registry, contracting(opened)
+    rng, offered = np.random.default_rng(3), Space(registry, {}, 600, [], template)
+    drawn = [offered.draw(rng, 1, {})["pipeline"] for _ in range(60)]
+    records = []
+    for seed in range(12):
+        config, _ = selector.random_suggest(registry, seed, seed, {}, 600, template)
+        records.append(dict(config=config, status="complete", trial="trial_%d" % seed, objective=float(seed)))
+    refused = dict(records[0], config=dict(records[0]["config"]), trial="refused")
+    refused["config"]["pipeline"] = support.pipelined(
+        registry,
+        {"contract/grouping": "item:v0", "nearby/kinds": "item:item", "nearby/encoder": "standard"},
+        ("graphspec.contract", "graphspec.nearby"),
+    )[0]
+    with pytest.raises(ValueError, match="which the entry graphspec.contract before it removed"):
+        pipeline.resolved(registry, refused["config"]["pipeline"])
+    config, selection = selector.suggest(registry, records + [refused], [], 7, 8, {}, 600, template)
+    assert selection["phase"] == "tpe" and selection["excluded"] == [
+        dict(trial="refused", status="complete", parameters=["pipeline"])
+    ]
+    drawn += [entry["config"]["pipeline"] for entry in records] + [config["pipeline"]]
+    named = [[step.name for step in pipeline.resolved(registry, stated)] for stated in drawn]
+    assert sum(held[0] == "graphspec.contract" and "graphspec.nearby" in held for held in named) > 3
+    bounded = Space(registry, NEARBY, 600, [], template)
+    groupings = set()
+    for _ in range(30):
+        stated = bounded.draw(rng, 1, {})["pipeline"]
+        assert [step.name for step in pipeline.resolved(registry, stated)].count("graphspec.nearby") == 1
+        groupings |= {
+            entry["parameters"]["contract/grouping"].split(":")[0]
+            for entry in stated
+            if entry["operation"] == "graphspec.contract" and "label" not in entry
+        }
+    assert "item" not in groupings and len(groupings) > 1
+    with pytest.raises(ValueError, match=re.escape(FORCED)):
+        selector.random_suggest(registry, 1, 1, dict(NEARBY, **CONTRACTED), 600, template)
+    LOG.info("offered pipelines exit drawn=%d seconds=%.3f", len(drawn), time.perf_counter() - started)
 
 
 def test_running_again_continues_and_may_change_selector_random_phase_and_bounds(bank, tmp_path):

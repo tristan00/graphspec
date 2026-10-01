@@ -1,5 +1,6 @@
 import atexit
 import fnmatch
+import json
 import math
 import os
 import time
@@ -88,6 +89,15 @@ class Space:
             self.runtime.name: self.runtime,
         }
         self.width = sum(len(p.options) if p.options else 2 for p in self.parameters.values())
+        self.named, self.fixings = {p.name for p in self.pipeline}, {}
+
+    @timed("space.fixing")
+    def fixing(self, fixed):
+        held = {name: value for name, value in fixed.items() if name in self.named}
+        key = json.dumps(held, sort_keys=True)
+        if key not in self.fixings:
+            self.fixings[key] = specs.narrow(self.pipeline, held)
+        return self.fixings[key]
 
     def importance(self, weights):
         column, totals = 0, {}
@@ -145,7 +155,10 @@ class Space:
             seed=training_seed,
             model=model,
             graph=specs.draw(self.graphs[key], lambda p: choose("graph/", p)),
-            pipeline=pipeline.entries(self.template, specs.draw(self.pipeline, lambda p: choose("", p))),
+            pipeline=pipeline.entries(
+                self.template,
+                pipeline.draw(self.registry, self.template, self.fixing(fixed), lambda p: choose("", p)),
+            ),
             **specs.draw(self.training, lambda p: choose("", p)),
             max_seconds=choose("", self.runtime),
         )

@@ -61,6 +61,34 @@ def pipeline_space(registry, template, bounds):
     return narrow_group(pipeline.space(registry, template), bounds)
 
 
+def keyed(prefix, parameter, static):
+    name = prefix + parameter.name
+    if name not in static or static[name] == parameter.options:
+        return name
+    return name + "|" + "|".join(map(str, parameter.options))
+
+
+@timed("selector.recorded")
+def recorded(registry, template, parameters, flat, record):
+    def read(parameter):
+        if parameter.name not in flat:
+            raise ValueError("spec lacks the active parameter " + parameter.name)
+        return record(parameter, parameter.check(flat[parameter.name]))
+
+    extra = sorted(set(flat) - set(pipeline.draw(registry, template, parameters, read)))
+    if extra:
+        raise ValueError("spec sets inactive or unknown parameters: " + ", ".join(extra))
+
+
+@timed("selector.refused")
+def refused(registry, config):
+    try:
+        pipeline.resolved(registry, config["pipeline"])
+    except ValueError:
+        return ["pipeline"]
+    return []
+
+
 def spaces(registry, bounds):
     return narrow_group(model_space(registry), bounds), narrow_group(TRAINING, bounds)
 
@@ -102,6 +130,7 @@ def check_bounds(registry, bounds, template):
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
     specs.narrow(parameters, bounds)
     stepped(registry, narrow_group(specs.settings(registry, ()), bounds))
+    pipeline.draw(registry, template, pipeline_space(registry, template, bounds), pipeline.settled)
 
 
 def training(config):
@@ -117,12 +146,17 @@ def observation(registry, config, value, bounds, template, **attrs):
         for name, setting in specs.canonical(parameters, spec).items():
             params[prefix + name], distributions[prefix + name] = setting, distribution(lookup[name])
 
+    def record(parameter, value):
+        name = keyed("", parameter, static)
+        params[name], distributions[name] = value, distribution(parameter)
+        return value
+
     enter("model/", models, config["model"])
     enter("", trainings, training(config))
     enter("graph/", graph_space(registry, config["model"], bounds), config["graph"])
-    enter(
-        "", pipeline_space(registry, template, bounds), pipeline.flattened(template, config["pipeline"])
-    )
+    held = pipeline_space(registry, template, bounds)
+    static = {parameter.name: parameter.options for parameter in held}
+    recorded(registry, template, held, pipeline.flattened(template, config["pipeline"]), record)
     if "max_seconds" in config:
         enter("", (runtime_parameter(config["max_seconds"]),), {"max_seconds": config["max_seconds"]})
     return tpe.record(value, params, distributions, config=config, **attrs)
@@ -153,6 +187,7 @@ def excluded(registry, config, bounds, template):
         + outside(trainings, training(config))
         + outside(graph_space(registry, config["model"], bounds), config["graph"])
         + outside(pipeline_space(registry, template, bounds), pipeline.flattened(template, config["pipeline"]))
+        + refused(registry, config)
         + (outside((runtime_parameter(config["max_seconds"]),), config) if "max_seconds" in config else [])
     )
 
@@ -188,7 +223,9 @@ def configuration(registry, choose, training_seed, bounds, seconds, template):
     )
     config["pipeline"] = pipeline.entries(
         template,
-        specs.draw(pipeline_space(registry, template, bounds), lambda parameter: choose("", parameter)),
+        pipeline.draw(
+            registry, template, pipeline_space(registry, template, bounds), lambda parameter: choose("", parameter)
+        ),
     )
     config["max_seconds"] = choose("", runtime_parameter(seconds))
     return config
@@ -217,9 +254,10 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
         )
     study = tpe.study(seed, SETTINGS, records)
     trial = study.ask()
+    static = {parameter.name: parameter.options for parameter in pipeline_space(registry, template, bounds)}
     config = configuration(
         registry,
-        lambda prefix, parameter: tpe.propose(trial, prefix + parameter.name, distribution(parameter)),
+        lambda prefix, parameter: tpe.propose(trial, keyed(prefix, parameter, static), distribution(parameter)),
         training_seed,
         bounds,
         seconds,
