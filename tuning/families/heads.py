@@ -3,6 +3,7 @@ import time
 
 from graphspec.infra.timing import timed
 from graphspec.registries import Names, ship
+from graphspec.schema.targets import TARGETS, Sequence
 
 LOG = logging.getLogger(__name__)
 HEADS = Names("head of a kind of target")
@@ -49,7 +50,7 @@ def sequence(hidden, spec, registry):
     longest = max(
         entry["target"]["length"]
         for entry in registry.schema.tasks["kinds"].values()
-        if entry["target"] is not None and entry["target"]["kind"] == "sequence"
+        if entry["target"] is not None and isinstance(TARGETS.named(entry["target"]["kind"]), Sequence)
     )
     return SequenceHead(hidden, longest)
 
