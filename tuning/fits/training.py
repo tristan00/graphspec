@@ -21,7 +21,7 @@ from tuning.bank.bank import PACKAGES
 from tuning.families.heads import FIELD
 from tuning.measures.measures import measured, scored
 
-from .losses import LOSSES, admitted
+from .losses import Summed, admitted
 
 if TYPE_CHECKING:
     from torch import Tensor, nn
@@ -57,7 +57,6 @@ class TrainingSession:
         self.entered = time.perf_counter()
         self.directory = output_path(directory)
         self.stated = stated
-        self.loss = LOSSES.named(stated.loss)
         self.device = stated.device
         self.cuda = compute.require(self.device).type == "cuda"
         self.budget: FitBudget = budget
@@ -79,6 +78,7 @@ class TrainingSession:
             self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
+        self.loss = Summed(stated.loss, self.bank.registry.schema.targets())
         self.timing = self.budget.timings
         self.timing.update(
             packer=0.0,
@@ -327,7 +327,7 @@ class TrainingSession:
                 self.bank.series_names,
                 self.bank.scale,
             )
-            metrics = measured(self.stated.measures, held)
+            metrics = measured(self.stated.measures, held, self.bank.registry.schema.measured())
         with measure("prediction_save"):
             np.savez_compressed(
                 self.directory / "predictions.npz",

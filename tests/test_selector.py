@@ -138,7 +138,7 @@ def arguments(bank, output, **overrides):
         trained=["train"],
         scored=["validation"],
         sees=["train=", "validation="],
-        loss="squared",
+        loss=["number=squared"],
         measures=["mse", "r2"],
     )
     values.update(overrides)

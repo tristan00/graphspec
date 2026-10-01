@@ -94,9 +94,34 @@ class Balanced:
         return dict(value=float(np.mean(list(series.values()))), series=series)
 
 
-def measured(names, held):
+def restricted(held, wanted):
     started = time.perf_counter()
-    result = {name: MEASURES.named(name)(held) for name in names}
+    chosen = np.isin(held.series, wanted)
+    place = np.full(len(held.names), -1, np.int64)
+    place[wanted] = np.arange(len(wanted))
+    result = Scored(
+        held.target[chosen],
+        held.prediction[chosen],
+        held.task[chosen],
+        place[held.series[chosen]],
+        tuple(held.names[code] for code in wanted),
+        held.scale[wanted],
+    )
+    LOG.debug("restricted exit points=%d seconds=%.4f", int(chosen.sum()), time.perf_counter() - started)
+    return result
+
+
+@timed("measures.read")
+def read(kinds, name):
+    return tuple(series for series, kind in kinds.items() if kind in MEASURES.named(name).reads)
+
+
+def measured(names, held, kinds):
+    started = time.perf_counter()
+    result = {}
+    for name in names:
+        wanted = [held.names.index(series) for series in read(kinds, name)]
+        result[name] = MEASURES.named(name)(restricted(held, wanted))
     LOG.debug("measured exit measures=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 

@@ -15,9 +15,9 @@ from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
 from tuning.families.model_spec import configuration, describe, groups, samples
 from tuning.families.models import build
-from tuning.statement import seen
+from tuning.statement import paired, seen
 
-from .losses import LOSSES, admitted
+from .losses import Summed
 
 
 def probe(bank, block, cfg, device, loss):
@@ -32,7 +32,7 @@ def probe(bank, block, cfg, device, loss):
     values = net(b)
     if values.shape != b["target"].shape or not torch.isfinite(values).all():
         raise ValueError("model output must be finite and match the target shape")
-    LOSSES.named(loss)(values, b, bank).backward()
+    loss(values, b, bank).backward()
     if torch.device(device).type == "cuda":
         torch.cuda.synchronize()
     gradients = [p.grad for p in net.parameters() if p.grad is not None]
@@ -76,7 +76,7 @@ def check(directory, output, device, seed, splits, loss, pipeline_path, settings
     output = output_path(output)
     compute.reserve(device)
     bank = Deriver(directory, device, RESIDENT)
-    admitted(bank.registry.schema.targets(), loss, ())
+    loss = Summed(loss, bank.registry.schema.targets())
     pipeline, given = read_json(pipeline_path), read_json(settings_path)
     models = samples(bank.registry)
     unknown = sorted(
@@ -122,14 +122,28 @@ def main():
     parser.add_argument("--scored", nargs="+", required=True)
     parser.add_argument("--sees", nargs="+", required=True)
     parser.add_argument("--graph", type=int)
-    parser.add_argument("--loss", required=True, help="the registered loss every model is checked with")
+    parser.add_argument(
+        "--loss",
+        nargs="+",
+        required=True,
+        help="the registered loss of every kind of target of the bank, as kind=loss pairs, whose sum every model is "
+        "checked with",
+    )
     parser.add_argument("--pipeline", required=True, help="the pipeline every model derives its variant by")
     parser.add_argument("--settings", required=True, help="every setting of the graph any model reads")
     args = parser.parse_args()
     configure()
     splits = dict(trained=args.trained, scored=args.scored, sees=seen(args.sees))
     check(
-        args.directory, args.output, args.device, args.seed, splits, args.loss, args.pipeline, args.settings, args.graph
+        args.directory,
+        args.output,
+        args.device,
+        args.seed,
+        splits,
+        paired(args.loss),
+        args.pipeline,
+        args.settings,
+        args.graph,
     )
 
 

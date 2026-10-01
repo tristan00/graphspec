@@ -26,6 +26,7 @@ from tuning.fits.budget import TIMEOUT_EXIT_CODE
 from tuning.fits.losses import admitted
 from tuning.fits.training import fit
 from tuning.measures import objective
+from tuning.measures.measures import read
 
 from .records import VERSION, Outcome, worker_alive
 from .report import report
@@ -195,6 +196,7 @@ def run(args):
     bank = Bank(args.bank)
     admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
     objective.ranking(stated.measures)
+    ranked = read(bank.registry.schema.measured(), stated.measures[0])
     mix = None
     if args.mix is not None:
         pairs = [item.split("=") for item in args.mix]
@@ -217,7 +219,7 @@ def run(args):
             mix=mix,
             random_params=args.random_params,
             bounds=read_json(args.bounds) if args.bounds else None,
-            objective=objective.weights(bank.series_names, args.objective) if args.objective else None,
+            objective=objective.weights(ranked, args.objective) if args.objective else None,
         )
         plan = continued(plan, stated, given)
         plan["bank"] = str(Path(args.bank).resolve())
@@ -230,7 +232,7 @@ def run(args):
             random_params=args.random_params,
             pipeline=read_json(args.pipeline) if args.pipeline else None,
             bounds=read_json(args.bounds) if args.bounds else {},
-            objective=objective.weights(bank.series_names, args.objective),
+            objective=objective.weights(ranked, args.objective),
         )
         plan = opened(stated, given, str(Path(args.bank).resolve()), bank.manifest, args.trials)
     check_bounds(bank.registry, plan["bounds"], plan["pipeline"])
@@ -271,7 +273,7 @@ def flags(args):
         trained=args.trained,
         scored=args.scored,
         sees=statements.seen(args.sees),
-        loss=args.loss,
+        loss=statements.paired(args.loss),
         measures=args.measures,
     )
     result = {name: value for name, value in given.items() if value is not None}
@@ -556,7 +558,13 @@ def main():
         help="series=weight pairs that blend the per-series values of the first measure into the trial score; "
         "its value over every series when omitted on a new run",
     )
-    run_parser.add_argument("--loss", required=True, help="the registered loss every trial trains with")
+    run_parser.add_argument(
+        "--loss",
+        nargs="+",
+        required=True,
+        help="the registered loss of every kind of target of the bank, as kind=loss pairs, whose sum every trial "
+        "trains with",
+    )
     run_parser.add_argument(
         "--measures",
         nargs="+",

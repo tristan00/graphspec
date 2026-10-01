@@ -43,7 +43,7 @@ def arguments(bank, output, statement):
         mix=["random=100"],
         objective=None,
         bounds=None,
-        loss=statement["loss"],
+        loss=["%s=%s" % pair for pair in statement["loss"].items()],
         measures=statement["measures"],
     )
 
@@ -194,6 +194,9 @@ def test_fit_with_a_field_absent_stops_naming_the_field(tmp_path, statement, nam
         ("sees", dict(train="without_targets", validation=[])),
         ("loss", ""),
         ("loss", None),
+        ("loss", "squared"),
+        ("loss", {}),
+        ("loss", dict(number="")),
         ("measures", []),
         ("measures", "mse"),
         ("measures", ["mse", "mse"]),

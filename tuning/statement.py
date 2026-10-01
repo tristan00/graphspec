@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from graphspec.infra.log import emit
 
 LOG = logging.getLogger(__name__)
-VERSION = 2
+VERSION = 3
 SEEDS = 2**32
 
 
@@ -58,6 +58,12 @@ def word(value):
     return type(value) is str and len(value) > 0
 
 
+def mapped(value):
+    return (
+        isinstance(value, dict) and len(value) > 0 and all(word(kind) and word(name) for kind, name in value.items())
+    )
+
+
 def seeing(value):
     from graphspec.views.visible import SEES
 
@@ -94,11 +100,15 @@ class Statement:
         "a mapping from every split trained on or scored on to the list of the registered rules "
         "of what its tasks may see",
     )
-    loss: str = held(word, "the name of a registered loss that reads every kind of target of the bank")
+    loss: dict = held(
+        mapped,
+        "a mapping from every kind of target of the bank to the name of a registered loss that reads it, whose "
+        "losses a fit sums",
+    )
     measures: list = held(
         splits,
-        "a list of the distinct names of the registered measures computed, at least one, each reading every kind "
-        "of target of the bank",
+        "a list of the distinct names of the registered measures computed, at least one, each reading a kind of "
+        "target of the bank, and every kind of target of the bank read by one of them",
     )
 
     def __init__(self, **mapping):
@@ -183,4 +193,20 @@ def seen(given):
                 )
             result[name] = [rule for rule in rules.split(",") if rule]
     emit("sees_parsed", seconds=time.perf_counter() - started)
+    return result
+
+
+def paired(given):
+    started = time.perf_counter()
+    result = None
+    if given is not None:
+        result = {}
+        for item in given:
+            kind, stated, name = item.partition("=")
+            if not stated or not kind or not name or kind in result:
+                raise ValueError(
+                    "the loss of each kind of target is stated once for each kind as kind=loss; found %r" % item
+                )
+            result[kind] = name
+    emit("losses_parsed", seconds=time.perf_counter() - started)
     return result

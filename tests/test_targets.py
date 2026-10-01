@@ -206,18 +206,33 @@ def test_the_utility_of_a_target_is_one_number_per_task():
     assert tasks.tolist() == [0, 1] and np.array_equal(values, [-1.0, 2.5])
 
 
-def test_a_statement_naming_what_cannot_read_a_kind_of_target_of_the_bank_stops_naming_both(
+def test_a_statement_names_a_loss_for_every_kind_of_target_of_the_bank_and_measures_that_read_each(
     numbered, tmp_path, statement
 ):
     bank, config = numbered[0], dict(seed=statement["seed"], splits=SPLITS, pipeline=[])
-    with pytest.raises(
-        ValueError,
-        match="names the measure r2, which reads targets of the kinds number and cannot read the kind of target path "
-        "of the bank; those that read every kind of target of the bank are mse, balanced$",
-    ):
-        fit(bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(statement))
-    with pytest.raises(KeyError, match="no loss is registered under the name 'absolute'"):
-        fit(bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(dict(statement, loss="absolute")))
+    both = dict(number="squared", path="balanced")
+    refused = (
+        (
+            ValueError,
+            dict(),
+            "names no loss for the kind of target path of the bank; the losses that read it are squared, balanced$",
+        ),
+        (
+            ValueError,
+            dict(loss=dict(both, course="squared")),
+            "names a loss for the kind of target course, which the bank does not hold; it holds number, path$",
+        ),
+        (KeyError, dict(loss=dict(both, path="absolute")), "no loss is registered under the name 'absolute'"),
+        (
+            ValueError,
+            dict(loss=both, measures=["r2"]),
+            "no measure the statement names reads the kind of target path of the bank; the measures that read it "
+            "are mse, balanced$",
+        ),
+    )
+    for error, changes, message in refused:
+        with pytest.raises(error, match=message):
+            fit(bank, tmp_path, config, [], 8, time.perf_counter() + 30, state(dict(statement, **changes)))
     assert not list(tmp_path.iterdir())
 
 
@@ -280,12 +295,13 @@ def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_t
     bank = numbered[0]
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
     held = Deriver(bank, "cpu", RESIDENT)
-    given = dict(statement, loss="balanced", measures=["balanced", "mse"])
+    given = dict(statement, loss=dict(number="balanced", path="balanced"), measures=["balanced", "mse"])
     started = time.perf_counter()
     fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
     LOG.info("fit of mixed targets exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
-    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20 and saved["loss"] == "balanced"
+    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
+    assert saved["loss"] == given["loss"]
     assert sorted(saved["measures"]["balanced"]["series"]) == ["far", "near", "size"]
     assert saved["holdout_rows"] == len(held.members(cfg, 1)) and saved["statement"] == given
     with np.load(tmp_path / "predictions.npz") as found:
@@ -320,14 +336,29 @@ def test_a_kind_of_target_registered_by_a_test_builds_reads_back_and_completes_o
             dict(task=[0], graph=["g0"], y=[1.5], trials=[2.0]), ("part",), "the target of the kind of task part"
         )
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
-    given = dict(statement, loss="crossed", measures=["absolute"])
-    with pytest.raises(ValueError, match="names the loss squared, which reads targets of the kinds number, path"):
-        fit(bank, tmp_path, cfg, [], 16, time.perf_counter() + 30, state(statement))
+    given = dict(statement, loss=dict(share="crossed"), measures=["absolute"])
+    refused = (
+        (dict(), "names no loss for the kind of target share of the bank; the losses that read it are crossed$"),
+        (
+            dict(loss=dict(share="squared")),
+            "names the loss squared for the kind of target share, which it does not read; the losses that read it are "
+            "crossed$",
+        ),
+        (
+            dict(loss=given["loss"], measures=["absolute", "mse"]),
+            "names the measure mse, which reads targets of the kinds number, path and no kind of target of the bank, "
+            "which holds share$",
+        ),
+    )
+    for changes, message in refused:
+        with pytest.raises(ValueError, match=message):
+            fit(bank, tmp_path, cfg, [], 16, time.perf_counter() + 30, state(dict(statement, **changes)))
     started = time.perf_counter()
     fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
     LOG.info("fit of a registered kind of target exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
-    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20 and saved["loss"] == "crossed"
+    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
+    assert saved["loss"] == dict(share="crossed")
     assert list(saved["measures"]) == ["absolute"] and list(saved["measures"]["absolute"]["series"]) == ["part"]
     with np.load(tmp_path / "predictions.npz") as found:
         assert ((found["prediction"] > 0) & (found["prediction"] < 1)).all()

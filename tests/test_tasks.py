@@ -629,7 +629,8 @@ def test_a_bank_of_four_splits_with_targets_on_nodes_and_on_graphs_completes_one
     assert {held.rows[row]["kind"] for row in scored} == {"total", "mark", "wide"}
     splits = {name for name, rows in held.split["indices"].items() if set(rows) & set(trained.tolist())}
     assert splits == {"north", "south"} and np.isfinite(saved["measures"]["mse"]["value"])
-    assert sorted(saved["measures"]["r2"]["series"]) == ["mark", "total", "wide"] and saved["loss"] == "squared"
+    assert sorted(saved["measures"]["r2"]["series"]) == ["mark", "total", "wide"]
+    assert saved["loss"] == dict(number="squared")
     with pytest.raises(ValueError, match="the splits of the configuration are"):
         fit(
             bank,
