@@ -16,7 +16,7 @@ from tuning import api
 from tuning.bank.bank import Bank, Deriver
 from tuning.fits.training import fit
 from tuning.searches.run import flags, run
-from tuning.statement import Statement, names, state
+from tuning.statement import Statement, names, paired, state
 
 LOG = logging.getLogger(__name__)
 
@@ -215,6 +215,13 @@ def test_a_statement_with_a_value_outside_its_meaning_stops_naming_it(monkeypatc
     with pytest.raises(ValueError) as raised:
         state(statement).replace(**{name: value})
     assert message in str(raised.value)
+
+
+def test_a_search_states_the_loss_of_every_kind_of_target_as_a_pair_of_kind_and_loss():
+    assert paired(["number=squared", "class=entropy"]) == {"number": "squared", "class": "entropy"}
+    for wrong in (["number"], ["number=squared", "number=balanced"], ["=squared"], ["number="]):
+        with pytest.raises(ValueError, match="stated once for each kind as kind=loss; found"):
+            paired(wrong)
 
 
 def test_a_statement_is_built_only_through_its_checks(monkeypatch, statement):

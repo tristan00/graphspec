@@ -59,9 +59,12 @@ def word(value):
 
 
 def mapped(value):
-    return (
+    started = time.perf_counter()
+    result = (
         isinstance(value, dict) and len(value) > 0 and all(word(kind) and word(name) for kind, name in value.items())
     )
+    LOG.debug("statement mapped exit seconds=%.4f", time.perf_counter() - started)
+    return result
 
 
 def seeing(value):
