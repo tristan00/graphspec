@@ -34,14 +34,6 @@ def listed(stated, where):
     return tuple(stated)
 
 
-@timed("targets.counted")
-def counted(stated, least, where):
-    names = listed(stated, where)
-    if len(names) < least:
-        raise ValueError("%s names at least %d classes, found %r" % (where, least, stated))
-    return names
-
-
 def classed(rows, series, where):
     started = time.perf_counter()
     owner = np.asarray(rows["task"], np.int64)
@@ -209,11 +201,26 @@ class Path:
         return values
 
 
-class Class:
+class Over:
     scaled = False
-    matures = "category"
     columns = dict(series="STRING")
     fields = ()
+
+    @timed("targets.over.series")
+    def series(self, stated, where):
+        names = listed(stated, where)
+        if len(names) < self.least:
+            raise ValueError("%s names at least %d classes, found %r" % (where, self.least, stated))
+        return names
+
+    @timed("targets.over.written")
+    def written(self, series):
+        return list(series)
+
+
+class Class(Over):
+    least = 2
+    matures = "category"
 
     @timed("targets.class.ripe")
     def ripe(self, column, series, where):
@@ -222,14 +229,6 @@ class Class:
     @timed("targets.class.ripened")
     def ripened(self, series, y):
         return [name if value == 1 else None for name, value in zip(series, y)]
-
-    @timed("targets.class.series")
-    def series(self, stated, where):
-        return counted(stated, 2, where)
-
-    @timed("targets.class.written")
-    def written(self, series):
-        return list(series)
 
     @timed("targets.class.points")
     def points(self, rows, series, where):
@@ -256,11 +255,9 @@ class Class:
         return normalised(values, task)
 
 
-class Classes:
-    scaled = False
+class Classes(Over):
+    least = 1
     matures = "flag"
-    columns = dict(series="STRING")
-    fields = ()
 
     @timed("targets.classes.ripe")
     def ripe(self, column, series, where):
@@ -269,14 +266,6 @@ class Classes:
     @timed("targets.classes.ripened")
     def ripened(self, series, y):
         return [bool(value == 1) for value in y]
-
-    @timed("targets.classes.series")
-    def series(self, stated, where):
-        return counted(stated, 1, where)
-
-    @timed("targets.classes.written")
-    def written(self, series):
-        return list(series)
 
     @timed("targets.classes.points")
     def points(self, rows, series, where):
@@ -309,11 +298,9 @@ class Classes:
         return np.exp(-np.logaddexp(0, -np.asarray(values, np.float64)))
 
 
-class Proportions:
-    scaled = False
+class Proportions(Over):
+    least = 2
     matures = "number"
-    columns = dict(series="STRING")
-    fields = ()
 
     @timed("targets.proportions.ripe")
     def ripe(self, column, series, where):
@@ -322,14 +309,6 @@ class Proportions:
     @timed("targets.proportions.ripened")
     def ripened(self, series, y):
         return [float(value) for value in y]
-
-    @timed("targets.proportions.series")
-    def series(self, stated, where):
-        return counted(stated, 2, where)
-
-    @timed("targets.proportions.written")
-    def written(self, series):
-        return list(series)
 
     @timed("targets.proportions.points")
     def points(self, rows, series, where):

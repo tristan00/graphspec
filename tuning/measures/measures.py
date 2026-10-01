@@ -95,9 +95,13 @@ class Balanced:
         return dict(value=float(np.mean(list(series.values()))), series=series)
 
 
-@timed("measures.grouped")
-def grouped(task):
-    return np.unique(task, return_inverse=True)[1].reshape(-1)
+@timed("measures.pertask")
+def pertask(held, part):
+    tasks = len(np.unique(held.task))
+    return dict(
+        value=float(part.sum() / tasks),
+        series={name: float(part[held.series == code].sum() / tasks) for code, name in enumerate(held.names)},
+    )
 
 
 class Accuracy:
@@ -107,7 +111,7 @@ class Accuracy:
 
     @timed("measures.accuracy")
     def __call__(self, held):
-        owner = grouped(held.task)
+        owner = np.unique(held.task, return_inverse=True)[1].reshape(-1)
         order = np.lexsort((-held.prediction, owner))
         first = np.unique(owner[order], return_index=True)[1]
         picked = np.zeros(len(owner), bool)
@@ -126,13 +130,9 @@ class Entropy:
 
     @timed("measures.entropy")
     def __call__(self, held):
-        tasks, part = len(np.unique(held.task)), np.zeros(len(held.target))
-        stated = held.target > 0
+        part, stated = np.zeros(len(held.target)), held.target > 0
         part[stated] = -held.target[stated] * np.log(held.prediction[stated])
-        return dict(
-            value=float(part.sum() / tasks),
-            series={name: float(part[held.series == code].sum() / tasks) for code, name in enumerate(held.names)},
-        )
+        return pertask(held, part)
 
 
 class Binary:
@@ -158,13 +158,9 @@ class Divergence:
 
     @timed("measures.divergence")
     def __call__(self, held):
-        tasks, part = len(np.unique(held.task)), np.zeros(len(held.target))
-        stated = held.target > 0
+        part, stated = np.zeros(len(held.target)), held.target > 0
         part[stated] = held.target[stated] * np.log(held.target[stated] / held.prediction[stated])
-        return dict(
-            value=float(part.sum() / tasks),
-            series={name: float(part[held.series == code].sum() / tasks) for code, name in enumerate(held.names)},
-        )
+        return pertask(held, part)
 
 
 def predicted(kinds, aims, task, values):

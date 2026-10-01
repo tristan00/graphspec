@@ -119,7 +119,7 @@ class Summed:
 
 def admitted(kinds, loss, measures):
     started = time.perf_counter()
-    result = Summed(loss, kinds)
+    Summed(loss, kinds)
     for name in measures:
         entry = MEASURES.named(name)
         if not set(entry.reads) & set(kinds):
@@ -136,7 +136,6 @@ def admitted(kinds, loss, measures):
     LOG.debug(
         "admitted exit kinds=%d measures=%d seconds=%.4f", len(kinds), len(measures), time.perf_counter() - started
     )
-    return result
 
 
 LOSSES.register("squared", Squared())
