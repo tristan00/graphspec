@@ -190,7 +190,9 @@ def checked_kept(arrays, name, registry, spec):
 
 TRIPLE = Sort(True, False, 3, 3, True)
 STORED = Form(node, True, True)
-TALLY = Operation("test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), 1)
+TALLY = Operation(
+    "test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), 1, 1
+)
 RUNNING = Representation("test.running", "encode", uncounted, unlooking, running, None, None, unchecked)
 LINKED = Representation("test.linked", "structure", unlinked, unlooking, linked, None, None, checked_links)
 KEPT = Representation("test.kept", "sample", unkept, unlooking, kept, None, None, checked_kept)

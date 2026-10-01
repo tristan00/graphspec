@@ -70,6 +70,7 @@ PERIODS = OPERATIONS.register(
         splits=(),
         requires=(),
         changes=("time",),
-        version=2,
+        version=3,
+        graphs=1,
     ),
 )

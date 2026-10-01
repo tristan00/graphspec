@@ -10,6 +10,17 @@ LOG = logging.getLogger(__name__)
 FOREVER = np.int64(1) << np.int64(62)
 EMPTY = np.zeros(0, np.int64)
 ENTITIES = ("obs_entity", "fact_source", "fact_target", "member_source", "member_target")
+SECOND = (
+    "obs_entity",
+    "obs_step",
+    "obs_ref",
+    "fact_source",
+    "fact_target",
+    "fact_code",
+    "fact_step",
+    "fact_present",
+    "fact_ref",
+)
 
 
 class Table:
@@ -64,14 +75,45 @@ class Entities:
         )
 
 
+class Second:
+    def __init__(self, name, arrays, x_table, x_global, value_table, value_global):
+        started = time.perf_counter()
+        lacking = [field for field in SECOND if field not in arrays]
+        if lacking:
+            raise ValueError("the second graph %s of a segment lacks %s" % (name, ", ".join(lacking)))
+        self.name, self.arrays = name, {field: np.asarray(arrays[field]) for field in SECOND}
+        self.x_table, self.x_global = np.asarray(x_table), np.asarray(x_global, np.int64)
+        self.value_table, self.value_global = np.asarray(value_table), np.asarray(value_global, np.int64)
+        LOG.debug("second exit graph=%s seconds=%.4f", name, time.perf_counter() - started)
+
+    def __getattr__(self, key):
+        if key in SECOND:
+            return self.__dict__["arrays"][key]
+        raise AttributeError(key)
+
+
 class Segment:
-    def __init__(self, glob, base, step0, task0, known, x_global, value_global, entities):
+    def __init__(self, glob, base, step0, task0, known, x_global, value_global, entities, seconds):
         self.glob, self.base, self.step0, self.task0 = glob, base, step0, task0
         self.known, self.x_global, self.value_global = known, x_global, value_global
         self.entities, self.state, self.part = entities, None, None
+        self.seconds, self.second = seconds, None
 
     def __getstate__(self):
-        return dict(self.__dict__, entities=None, state=None, part=None)
+        return dict(self.__dict__, entities=None, state=None, part=None, second=None)
+
+    def named(self, name, operation):
+        started = time.perf_counter()
+        if name is None:
+            self.second = None
+        elif name not in self.seconds:
+            raise ValueError(
+                "the operation %s takes the graph %s as its second graph, and the derivation was given %s"
+                % (operation, name, ", ".join(sorted(self.seconds)) or "no second graph")
+            )
+        else:
+            self.second = self.seconds[name]
+        LOG.debug("named exit operation=%s graph=%s seconds=%.4f", operation, name, time.perf_counter() - started)
 
     def keys(self, code, source, target):
         return encode(code, self.glob[source], self.glob[target], self.base)

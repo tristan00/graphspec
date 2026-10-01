@@ -6,28 +6,37 @@ from .operation import OPERATIONS
 from .parameters import Parameter, flag
 
 LOG = logging.getLogger(__name__)
-STATED = ("operation", "label", "parameters")
-TEMPLATE = ("operation", "label")
+STATED = ("operation", "label", "graph", "parameters")
+TEMPLATE = ("operation", "label", "graph")
+OPTIONAL = ("label", "graph")
 PRESENT = "pipeline/%s"
 NAMED = "pipeline/%s/"
 
 
 class Step:
-    def __init__(self, name, operation, label, parameters, read):
-        self.name, self.operation, self.label = name, operation, label
+    def __init__(self, name, operation, label, graph, parameters, read):
+        self.name, self.operation, self.label, self.graph = name, operation, label, graph
         self.parameters, self.read = parameters, read
         self.spec = dict(read, **parameters)
 
     def __call__(self, graph, registry, seed, limits, carry, state, partitions):
-        return self.operation(graph, registry, self.spec, seed, limits, carry, state, partitions)
+        carry.named(self.graph, self.operation.name)
+        try:
+            return self.operation(graph, registry, self.spec, seed, limits, carry, state, partitions)
+        finally:
+            carry.second = None
 
     def initial(self, registry):
         return self.operation.initial(registry, self.spec)
 
     def phase(self, place, graph, registry, seed, limits, carry, held, state, part, partitions):
-        return self.operation.phase(
-            place, graph, registry, self.spec, seed, limits, carry, held, state, part, partitions
-        )
+        carry.named(self.graph, self.operation.name)
+        try:
+            return self.operation.phase(
+                place, graph, registry, self.spec, seed, limits, carry, held, state, part, partitions
+            )
+        finally:
+            carry.second = None
 
     def parts(self, place, registry):
         phase = self.operation.phases[place]
@@ -40,6 +49,8 @@ class Step:
         result = dict(operation=self.operation.name, parameters=self.parameters)
         if self.label is not None:
             result["label"] = self.label
+        if self.graph is not None:
+            result["graph"] = self.graph
         LOG.debug("entry exit step=%s seconds=%.4f", self.name, time.perf_counter() - started)
         return result
 
@@ -48,6 +59,7 @@ class Step:
         result = dict(
             operation=self.operation.name,
             label=self.label,
+            graph=self.graph,
             version=self.operation.version,
             parameters=self.parameters,
         )
@@ -75,13 +87,13 @@ def checked(entries, fields):
     started = time.perf_counter()
     if type(entries) is not list:
         raise TypeError("a pipeline is a list of its operations in the order they apply, found %r" % (entries,))
-    required = tuple(field for field in fields if field != "label")
+    required = tuple(field for field in fields if field not in OPTIONAL)
     found, names = [], set()
     for place, entry in enumerate(entries):
         if type(entry) is not dict or not set(entry) <= set(fields):
             raise ValueError(
-                "the entry %d of the pipeline is a mapping of %s, with a label where it states one; found %r"
-                % (place, " and ".join(required), entry)
+                "the entry %d of the pipeline is a mapping of %s, with a label where it states one and the name "
+                "of its second graph where its operation takes two; found %r" % (place, " and ".join(required), entry)
             )
         lacking = [field for field in required if field not in entry]
         if lacking:
@@ -92,6 +104,17 @@ def checked(entries, fields):
             raise ValueError(
                 "the label of the entry %d of the pipeline is a word without a slash or a dot, found %r"
                 % (place, label)
+            )
+        second = entry["graph"] if "graph" in entry else None
+        if operation.graphs == 2 and (type(second) is not str or not second):
+            raise ValueError(
+                "the entry %d of the pipeline, of %s, which takes two graphs, names its second graph under graph, "
+                "found %r" % (place, operation.name, second)
+            )
+        if operation.graphs == 1 and second is not None:
+            raise ValueError(
+                "the entry %d of the pipeline, of %s, which takes one graph, names a second graph %r"
+                % (place, operation.name, second)
             )
         name = operation.name if label is None else label
         if name in names:
@@ -171,8 +194,15 @@ def resolved(registry, entries):
         context = ChainMap(*[stated[read] for read in reads[name]])
         stated[name] = given(name, operation.stated(registry), entry["parameters"], context)
     result = tuple(
-        Step(name, operation, label, stated[name], dict(ChainMap(*[stated[read] for read in reads[name]])))
-        for name, operation, label, _ in found
+        Step(
+            name,
+            operation,
+            label,
+            entry["graph"] if "graph" in entry else None,
+            stated[name],
+            dict(ChainMap(*[stated[read] for read in reads[name]])),
+        )
+        for name, operation, label, entry in found
     )
     LOG.debug("resolved exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
@@ -211,7 +241,7 @@ def space(registry, template):
 def entries(template, flat):
     started = time.perf_counter()
     result = []
-    for name, operation, label, _ in checked(template, TEMPLATE):
+    for name, operation, label, stated in checked(template, TEMPLATE):
         if not flat[PRESENT % name]:
             continue
         own = NAMED % name
@@ -221,6 +251,8 @@ def entries(template, flat):
         )
         if label is not None:
             entry["label"] = label
+        if "graph" in stated:
+            entry["graph"] = stated["graph"]
         result.append(entry)
     LOG.debug("entries exit entries=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
@@ -239,9 +271,14 @@ def flattened(template, stated):
             "the pipeline orders its entries %s and its template %s" % (", ".join(named), ", ".join(order))
         )
     result = {}
-    for name, _, _, _ in found:
+    for name, _, _, entry in found:
         result[PRESENT % name] = name in named
         if name in named:
+            if "graph" in entry and named[name]["graph"] != entry["graph"]:
+                raise ValueError(
+                    "the entry %s of the pipeline takes the graph %s as its second graph, and its template %s"
+                    % (name, named[name]["graph"], entry["graph"])
+                )
             result.update({NAMED % name + key: value for key, value in named[name]["parameters"].items()})
     LOG.debug("flattened exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result

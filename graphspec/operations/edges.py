@@ -236,6 +236,7 @@ EDGES = OPERATIONS.register(
         splits=(),
         requires=(Count("edges/cap", "degree", capping, "stored", "stored"),),
         changes=("facts",),
-        version=5,
+        version=6,
+        graphs=1,
     ),
 )

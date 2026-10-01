@@ -129,7 +129,7 @@ def permuted(graph, seed):
 
 def variant(members, registry, steps, spec, cuts, limits):
     started = time.perf_counter()
-    derivation = Derivation.begun(members, registry, steps, spec, GROUPS, transform.SEED, limits, None, 0)
+    derivation = Derivation.begun(members, {}, registry, steps, spec, GROUPS, transform.SEED, limits, None, 0)
     for high in cuts + [sum(member.steps for member in members)]:
         derivation = derivation.continued(high, None)
     result = derivation.derived(), derivation.arrays()

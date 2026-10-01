@@ -77,7 +77,7 @@ def stated(registry):
 
 
 def made(name, function):
-    return Operation("test", name, (Phase("apply", function, None, None),), stated, (), (), (), ("time",), 2)
+    return Operation("test", name, (Phase("apply", function, None, None),), stated, (), (), (), ("time",), 2, 1)
 
 
 @pytest.fixture
@@ -103,6 +103,7 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         splits=[],
         requires=[],
         changes=["time"],
+        graphs=1,
         phases=[dict(name="apply", carries=False, parts=False)],
     )
     assert [phase["name"] for phase in found["graphspec.derive"]["phases"]] == ["begin", "each", "finish", "assemble"]
@@ -116,7 +117,7 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         "time/period_length",
     ]
     assert found["graphspec.derive"]["reads"] == [] and found["graphspec.edges"]["reads"] == ["graphspec.derive"]
-    assert {name for name in found if name.startswith("graphspec.")} == set(support.SEVEN)
+    assert {name for name in found if name.startswith("graphspec.")} == set(support.SEVEN + support.ADDED)
     with pytest.raises(ValueError, match="the operation test.shift is registered twice"):
         OPERATIONS.register("test.shift", made("shift", shifted))
     with pytest.raises(ValueError, match="'test.shift' is registered as test.moved"):
@@ -125,9 +126,9 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         made("a.b", shifted)
     dense = support.shown(held, 0).dense()
     steps = resolved(registry, [dict(operation="test.shift", parameters={"test/shift": 3})])
-    moved = segments.whole(dense, registry, steps, transform.SEED, GraphLimits("cpu"), None)
+    moved = segments.whole(dense, {}, registry, steps, transform.SEED, GraphLimits("cpu"), None)
     assert np.array_equal(moved.period, dense.period + 3) and moved.obs_step is dense.obs_step
-    carry, opened = segments.opening(dense)
+    carry, opened = segments.opening(dense, {})
     with pytest.raises(KeyError, match="the operation test.stray reads time/window, which is none of the parameters"):
         OPERATIONS.named("test.stray")(
             opened, registry, {"test/shift": 3}, transform.SEED, GraphLimits("cpu"), carry, {}, None
@@ -175,7 +176,7 @@ def test_each_operation_called_alone_on_the_fixture_gives_the_arrays_of_its_stag
                 given = Dense(name, [], len(stored[index][name]["period"]), **stored[index][name])
             else:
                 given = carried[name]
-            carry, given = segments.opening(given)
+            carry, given = segments.opening(given, {})
             before = {key: np.array(value) for key, value in given.arrays.items()}
             result, _ = step(given, registry, transform.SEED, GraphLimits("cpu"), carry, step.initial(registry), None)
             assert all(identical(before[key], given.arrays[key]) for key in DENSE), (label, name)

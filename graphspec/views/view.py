@@ -355,6 +355,29 @@ def referred(facts, held):
 
 
 def view(facts, registry, held, several):
+    steps = len(held["moments"])
+    if steps < 1:
+        raise ValueError("the view of graph %s shows no step" % facts.name)
+    if registry.schema.tasks["grouping"] is not None:
+        return showing(facts, registry, held, several, grouped(facts, held, steps))
+    return showing(facts, registry, held, several, np.arange(steps, dtype=np.int32))
+
+
+def beside(facts, registry, held, several):
+    started = time.perf_counter()
+    if held["rules"]:
+        raise ValueError(
+            "a second graph is shown to a split without rules of what it may see; graph %s would be shown beside "
+            "a split whose rules are %s" % (facts.name, ", ".join(held["rules"]))
+        )
+    none = np.zeros(0, np.int64)
+    stripped = dict(held, tasks=none, task_step=none.astype(np.int32), labels=none, rules=(), matures=())
+    result = showing(facts, registry, stripped, several, np.arange(len(held["moments"]), dtype=np.int32))
+    LOG.info("beside exit graph=%s steps=%d seconds=%.3f", facts.name, result.steps, time.perf_counter() - started)
+    return result
+
+
+def showing(facts, registry, held, several, period):
     started = time.perf_counter()
     schema, observer, steps = registry.schema, held["observer"], len(held["moments"])
     if steps < 1:
@@ -435,9 +458,7 @@ def view(facts, registry, held, several):
         steps,
         kinds=np.asarray(facts.kinds),
         entity_token=np.asarray(facts.entity_token),
-        period=grouped(facts, held, steps)
-        if schema.tasks["grouping"] is not None
-        else np.arange(steps, dtype=np.int32),
+        period=period,
         step_time=np.asarray(held["moments"], np.int64),
         step_token=np.full(steps, token(facts.name), np.uint64),
         **observed,

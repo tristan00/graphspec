@@ -159,6 +159,7 @@ NODES = OPERATIONS.register(
             )
         ),
         changes=("observations", "facts", "references"),
-        version=3,
+        version=4,
+        graphs=1,
     ),
 )

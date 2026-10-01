@@ -42,6 +42,7 @@ SEVEN = (
     "graphspec.edges",
     "graphspec.merging",
 )
+ADDED = ("graphspec.merge",)
 KEYS = ("id", "from", "to", "since", "seq", "present")
 VALUES = dict(value=dict(type="number", encoder="value"))
 STAMPS = ("since", "until", "known", "replaced", "observers")
@@ -423,6 +424,17 @@ def shown(opened, index):
     return result
 
 
+def beside(opened, index, name):
+    from conftest import SPLITS
+    from graphspec.views.graph import Graph
+
+    started = time.perf_counter()
+    cfg = configuration(opened.registry, dict(view="snapshot"), several(opened.registry), 5, SPLITS)
+    result = Graph.load(opened.viewed(cfg).second(opened, index, name)).dense()
+    LOG.debug("beside exit graph=%s index=%d seconds=%.4f", name, index, time.perf_counter() - started)
+    return result
+
+
 def fitted(opened):
     from conftest import SPLITS
 
@@ -433,10 +445,14 @@ def fitted(opened):
     return result
 
 
-def pipelined(registry, values, names=SEVEN, labels=None):
+def pipelined(registry, values, names=SEVEN, labels=None, graphs=None):
     started = time.perf_counter()
     stated = [
-        dict(operation=name, **({} if labels is None or labels[place] is None else dict(label=labels[place])))
+        dict(
+            operation=name,
+            **({} if labels is None or labels[place] is None else dict(label=labels[place])),
+            **({} if graphs is None or name not in graphs else dict(graph=graphs[name])),
+        )
         for place, name in enumerate(names)
     ]
     found = pipeline.checked(stated, pipeline.TEMPLATE)

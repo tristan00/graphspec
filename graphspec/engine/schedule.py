@@ -20,7 +20,7 @@ from graphspec.representations.registry import chosen as representing
 from graphspec.views.graph import Dense, Graph, verify_dense
 
 from . import transform
-from .segments import Plan, features, opened, unified
+from .segments import Plan, features, opened, paired, unified
 from .stitch import BUFFERED, Appender
 
 LOG = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ def represent_task(job, index):
 def stitch_task(job, index):
     work = PIPE["jobs"][job]
     plan, registry, spec, chosen = work["plan"], PIPE["registry"], PIPE["spec"], PIPE["chosen"]
-    tables = [
+    tables = [held.astype(np.float16, copy=False) for held in plan.second_tables()[0]] + [
         np.asarray(features(Graph.load(path, mapped=True))).astype(np.float16, copy=False) for path in work["paths"]
     ]
     arrays = representations.stitched(
@@ -255,7 +255,10 @@ TASKS = dict(expand=expand_task, open=open_task, represent=represent_task, stitc
 
 def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
     started = time.perf_counter()
-    plans = [Plan(job["members"], unified(job["members"], registry, spec, seed), 0) for job in jobs]
+    plans = [
+        Plan(job["members"], paired(steps, job["beside"]), unified(job["members"], registry, spec, seed), 0)
+        for job in jobs
+    ]
     stages = staging(steps, registry)
     named = {stage.name: stage for stage in stages}
     sizes = [len(job["members"]) for job in jobs]

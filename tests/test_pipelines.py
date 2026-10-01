@@ -108,7 +108,7 @@ def stated(registry):
 
 OPERATIONS.register(
     "probe.edited",
-    Operation("probe", "edited", (Phase("probe", probe, None, None),), stated, (), (), (), ("time",), VERSION),
+    Operation("probe", "edited", (Phase("probe", probe, None, None),), stated, (), (), (), ("time",), VERSION, 1),
 )
 '''
 
@@ -215,10 +215,12 @@ def sighted():
         return graph
 
     found = [
-        Operation("test", "blind", (Phase("blind", blind, None, None),), lambda registry: (), (), (), (), ("time",), 1),
+        Operation(
+            "test", "blind", (Phase("blind", blind, None, None),), lambda registry: (), (), (), (), ("time",), 1, 1
+        ),
         Operation(
             "test", "looking", (Phase("looking", looking, None, None),), lambda registry: (), (), ("trained",), (),
-            ("time",), 1,
+            ("time",), 1, 1,
         ),
     ]
     for operation in found:
@@ -238,10 +240,10 @@ def test_an_operation_receives_only_the_splits_it_states_it_may_read(bank, sight
         KeyError, match="the operation test.blind reads the split trained, which it does not state it may read; "
         "it states none"
     ):
-        segments.whole(dense, registry, blind, transform.SEED, GraphLimits("cpu"), partitions)
+        segments.whole(dense, {}, registry, blind, transform.SEED, GraphLimits("cpu"), partitions)
     looking = pipeline.resolved(registry, [dict(operation="test.looking", parameters={})])
     with pytest.raises(KeyError, match="the operation test.looking reads the split scored, which it does not"):
-        segments.whole(dense, registry, looking, transform.SEED, GraphLimits("cpu"), partitions)
+        segments.whole(dense, {}, registry, looking, transform.SEED, GraphLimits("cpu"), partitions)
     rows = np.asarray(dense.label_row, np.int64)
     wanted = np.unique(np.asarray(dense.label_task)[partitions[rows] == 0])
     assert len(wanted) and np.array_equal(sighted["trained"], wanted)
@@ -307,7 +309,7 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
         for name in entry["graphs"]:
             graph = Dense(name, [], len(stored[0][name]["period"]), **stored[0][name])
             for index, step in enumerate(steps):
-                graph = segments.whole(graph, registry, (step,), transform.SEED, GraphLimits("cpu"), None)
+                graph = segments.whole(graph, {}, registry, (step,), transform.SEED, GraphLimits("cpu"), None)
                 if fixture.holds(names, index + 1):
                     stage = Path(entry["files"]["stages"][index]).stem
                     replaced = fixture.drawn(entry, stage)
@@ -318,7 +320,7 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
                     if replaced:
                         found.setdefault(stage, []).append(keyed.pinned(graph, registry, replaced))
             derivation = Derivation.begun(
-                [graph], registry, (), spec, chosen, transform.SEED, GraphLimits("cpu"), None, 0
+                [graph], {}, registry, (), spec, chosen, transform.SEED, GraphLimits("cpu"), None, 0
             )
             arrays = derivation.continued(graph.steps, None).arrays()
             now, then = listed(fixture.content(arrays)), listed(fixture.content(represented[name]))

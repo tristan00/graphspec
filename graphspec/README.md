@@ -7,7 +7,7 @@
 | `views/` | What a task sees at a step: the one guard of visibility and the rules of what a split sees (`visible.py`), steps and the view (`view.py`), the view as spans and its checks (`graph.py`), spans (`spans.py`) |
 | `build/` | Stating a graph (`GraphTables` in `calls.py`, `forms.py`), writing it (`Stage` in `output.py`), reading it back (`staged.py`) and parsing it into facts (`parse.py`) |
 | `sources/` | Reading sources: LadybugDB (`ladybug.py`), the synthetic source (`synthetic.py`) |
-| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the seven shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
+| `operations/` | Functions from graphs to a graph: the registry of operations and their phases (`operation.py`), the stated pipeline, its steps and its search space (`pipeline.py`), the shipped operations one per module (`periods.py`, `window.py`, `nodes.py`, `derive.py`, `relations.py`, `edges.py`, `merging.py`, `merge.py`) and the rows they share (`rows.py`), forms of storage of set edges (`sets.py`), parameters and settings (`parameters.py`), the segment an operation works on and its carried state (`state.py`), and their kernels (`kernels.py`) |
 | `representations/` | The arrays a family of models reads: the registry of representations and their families, structure, sample and encode (`registry.py`), the arrays every variant holds, their carried state and the arrays over a whole variant (`base.py`), one module per shipped representation (`coupling.py`, `events.py`, `neighbors.py`, `walks.py`, `mixed.py`), what they share (`groups.py`) and their kernels (`kernels.py`) |
 | `engine/` | Derivation of variants, one engine in segments: derivations, continuations and forks, and the build of a variant in the calling process (`segments.py`), the steps of a pipeline on one segment (`transform.py`), the same on worker processes (`schedule.py`), slices and edits (`edits.py`), writing and stitching segments (`stitch.py`), the physical join tests compare against (`join.py`) |
 | `descriptions/` | What the library writes about graphs: `inspect` |
@@ -98,7 +98,7 @@ The markers `non_relation` and `period_context` take codes above every relation.
 - Every draw of the operations and representations is keyed by the seed the derivation is given, `transform.SEED` for the variants of a bank, with a salt per draw, so changing one parameter never reshuffles the random choices of another.
 - `materialized` drops the settings read only when packing: `time/history`, `time/context`, `neighbors/order` and `neighbors/decay`. A cached variant is named by the key the contract states: the schema, the source, the pipeline with the version of every operation, the settings, the groups, what the splits may see, the device, the seed and the versions of the code of views, derivation and representations; no file is hashed.
 
-**Operations.** `transform.derive` applies the steps of a pipeline to a segment in the order it states; each operation reads its parameters through the settings of [the contract](../docs/contract.md) and the graph the step before it produced. A step that changes nothing returns its input, whose schema is not checked again, and every array a step leaves unchanged is shared with its input; the segment is verified once after the last step; a relation whose edge filters sit at their identity values is left untouched. The seven shipped operations follow, numbered in the order the fixture of 1.2 applied them; a pipeline may state any of them, in any order, and one more than once. Rows marked as settings belong to the settings, not to an operation.
+**Operations.** `transform.derive` applies the steps of a pipeline to a segment in the order it states; each operation reads its parameters through the settings of [the contract](../docs/contract.md), the graph the step before it produced and, where it takes two graphs, the rows of its second graph at the steps of the segment (`state.Second`, which `segments.opened` cuts with the segment). A step that changes nothing returns its input, whose schema is not checked again, and every array a step leaves unchanged is shared with its input; the segment is verified once after the last step; a relation whose edge filters sit at their identity values is left untouched. The seven shipped operations follow, numbered in the order the fixture of 1.2 applied them; a pipeline may state any of them, in any order, and one more than once. Rows marked as settings belong to the settings, not to an operation.
 
 1. Periods
 
@@ -192,6 +192,16 @@ Whenever a stage removes present facts, it also removes absent rows left without
 |---|---|---|
 | `relations/types` | typed, untyped | untyped replaces every base relation with `untyped` and drops attributes. Its absent row stays only when no underlying relation between the pair is still present. Offered where the bank states a relation. |
 | `relations/parallel` | keep, merge | merge keeps the last of identical facts stated at one step, last in the order the rule for ties, then the time they hold from, give facts about one edge; facts of relations made untyped carry no values, so which of them is kept changes nothing. Offered where the bank states a relation. |
+
+The operations added after the seven follow. Each states what it requires of the schema and stops naming what is missing.
+
+8. Merge of graphs on keys, `graphspec.merge`, which takes two graphs
+
+The entry names its second graph, a graph of the bank shown at the steps of the graph it changes (see the contract, Second graphs). At every step the merge holds the observations and the facts of both graphs, their entities met by kind and key. Where both hold an observation of one entity, or rows about one edge (the same relation between the same two entities, in either order for a relation without direction), the step keeps those of one graph. Facts whose ends are not both observed, other than as anchors, are dropped, and absent rows left without an earlier present row are removed, as every stage that removes facts does. It carries the state of that removal and nothing else. It draws nothing.
+
+| Parameter | Range | Effect |
+|---|---|---|
+| `merge/prefer` | first, second | Which graph keeps its rows where both hold an observation of an entity or rows about an edge at one step: the graph changed, or the second. |
 
 **Representations.** `groups.build` always produces the base arrays and adds the groups a model reads.
 

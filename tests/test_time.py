@@ -846,10 +846,10 @@ def test_periods_are_a_view_and_need_not_increase(banks):
     from graphspec.engine.transform import SEED
 
     every = support.steps(held.registry, {"time/periods": "every", "time/period_length": 4})[0]
-    derived = segments.whole(dense, support.fitted(held), every, SEED, GraphLimits("cpu"), None)
+    derived = segments.whole(dense, {}, support.fitted(held), every, SEED, GraphLimits("cpu"), None)
     assert derived.period.tolist() == [0, 0, 0, 0, 1, 1]
     kept = support.steps(held.registry, {})[0]
-    assert segments.whole(dense, support.fitted(held), kept, SEED, GraphLimits("cpu"), None).period.tolist() == [
+    assert segments.whole(dense, {}, support.fitted(held), kept, SEED, GraphLimits("cpu"), None).period.tolist() == [
         3,
         3,
         1,

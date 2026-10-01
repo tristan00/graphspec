@@ -157,7 +157,7 @@ def test_persistence_eight_requires_eight_consecutive_observations(monkeypatch):
     monkeypatch.setattr(kernels, "runs", kernels.runs.py_func)
     settings = {"edges/rel/drop": 0.0, "edges/rel/persistence": 8, "edges/rel/cap": 0}
     empty = np.zeros(0, np.int64)
-    carry = Segment(np.arange(2), 2, 0, 0, np.zeros(2, bool), empty, empty, None)
+    carry = Segment(np.arange(2), 2, 0, 0, np.zeros(2, bool), empty, empty, None, {})
     carry.state = edges.filtering_runs(registry, settings)
     pieces = {"edges/persistence": [], "edges/cap": []}
     retained = edges.filtered(graph, registry, settings, 1, "rel", np.arange(len(steps)), carry, pieces)

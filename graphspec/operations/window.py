@@ -243,6 +243,7 @@ WINDOW = OPERATIONS.register(
         splits=(),
         requires=(),
         changes=("observations", "facts"),
-        version=2,
+        version=3,
+        graphs=1,
     ),
 )

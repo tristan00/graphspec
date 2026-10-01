@@ -162,7 +162,7 @@ class Phase:
 
 
 class Operation:
-    def __init__(self, namespace, name, phases, parameters, reads, splits, requires, changes, version):
+    def __init__(self, namespace, name, phases, parameters, reads, splits, requires, changes, version, graphs):
         started = time.perf_counter()
         for label, part in (("namespace", namespace), ("name", name)):
             if type(part) is not str or not part or "." in part:
@@ -183,6 +183,7 @@ class Operation:
             requires=type(requires) is tuple and all(isinstance(count, Count) for count in requires),
             changes=type(changes) is tuple and all(change in CHANGES for change in changes),
             version=type(version) is int and version >= 1,
+            graphs=graphs in (1, 2) and type(graphs) is int,
         )
         wrong = [label for label, held in stated.items() if not held]
         if wrong:
@@ -191,11 +192,13 @@ class Operation:
                 "least one, of distinct names, the last not run in parts and none run in parts after one that "
                 "is; a function from a registry to its parameters; a tuple of the "
                 "names of the operations whose parameters it reads; a tuple of the splits it may read, among %s; "
-                "a tuple of counts; a tuple of what it changes, among %s; a whole version from 1"
+                "a tuple of counts; a tuple of what it changes, among %s; a whole version from 1; the number of "
+                "graphs it takes, 1, or 2 where it reads a second graph beside the one it changes"
                 % (self.name, ", ".join(wrong), ", ".join(SPLITS), ", ".join(CHANGES))
             )
         self.namespace, self.phases, self.parameters, self.reads = namespace, phases, parameters, reads
         self.splits, self.requires, self.changes, self.version = splits, requires, changes, version
+        self.graphs = graphs
         LOG.debug("operation exit name=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
     def stated(self, registry):
@@ -307,6 +310,7 @@ class Operation:
             splits=list(self.splits),
             requires=[count.declaration() for count in self.requires],
             changes=list(self.changes),
+            graphs=self.graphs,
             phases=[
                 dict(name=phase.name, carries=phase.carries is not None, parts=phase.parts is not None)
                 for phase in self.phases

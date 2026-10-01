@@ -26,7 +26,7 @@ from graphspec.operations.pipeline import resolved
 from graphspec.representations import groups as representations
 from graphspec.schema.schema import Encoding, fitted
 from graphspec.views.graph import Graph
-from graphspec.views.view import finished, sampled, sequences, view
+from graphspec.views.view import beside, finished, sampled, sequences, view
 from graphspec.views.visible import STATEMENT, Looking
 
 LOG = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 10
+VIEW = 11
 
 
 def layout(index, rows, steps, labels, partitions, partition, history, windowed):
@@ -156,6 +156,7 @@ def written(folder, build):
 class Viewed:
     def __init__(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
+        self.steps, self.several, self.storage, self.looking = steps, several, storage, looking
         self.folder = (
             bank.cache
             / "views"
@@ -195,6 +196,34 @@ class Viewed:
     @timed("viewed.path")
     def path(self, index):
         return self.folder / ("graph_%04d" % index)
+
+    def second(self, bank, index, name):
+        started = time.perf_counter()
+        entry, graphs = self.graphs[index], {graph["name"]: graph for graph in bank.manifest["graphs"]}
+        if name not in graphs:
+            raise KeyError("the bank holds no graph named %s to show beside graph %s" % (name, entry["name"]))
+        named, source = graphs[name], bank.manifest["graphs"][entry["source"]]
+        if named["unit"] != source["unit"]:
+            raise ValueError(
+                "the graph %s counts time in %s and the graph %s it would be shown beside in %s"
+                % (name, named["unit"], source["name"], source["unit"])
+            )
+        path = self.folder / "beside" / ("graph_%04d" % named["index"]) / ("graph_%04d" % index)
+        if not path.exists():
+            registry = bank.registry
+            facts = sets.stored(Facts.load(bank.truth(entry["source"])), registry, self.storage)
+            (held,) = [
+                held
+                for held in sequences(facts, registry, self.steps, self.looking)
+                if (held["observer"], held["split"]) == (entry["observer"], entry["split"])
+            ]
+            other = sets.stored(Facts.load(bank.truth(named["index"])), registry, self.storage)
+            shown = finished(
+                beside(other, registry, held, self.several), self.registry, inputs(self.registry, other.kinds, other.arrays)
+            )
+            written(path, shown.save)
+        LOG.debug("viewed second exit graph=%s beside=%d seconds=%.4f", name, index, time.perf_counter() - started)
+        return path
 
     def build(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
@@ -508,6 +537,14 @@ class Deriver(Bank):
     def limits(self):
         return self.held
 
+    @timed("seconds")
+    def seconds(self, steps, indices, cfg, mapped):
+        viewed = self.viewed(cfg)
+        return {
+            name: [Graph.load(viewed.second(self, index, name), mapped=mapped) for index in indices]
+            for name in sorted({step.graph for step in steps if step.graph is not None})
+        }
+
     @timed("segmented")
     def segmented(self, indices, cfg, workers):
         started = time.perf_counter()
@@ -523,7 +560,8 @@ class Deriver(Bank):
                 spill.mkdir()
                 paths = [self.view(member, cfg) for member in self.groups(cfg)[index]]
                 members = [Graph.load(path, mapped=True) for path in paths]
-                jobs.append(dict(members=members, paths=paths, spill=spill, destination=temporary))
+                beside = self.seconds(steps, self.groups(cfg)[index], cfg, True)
+                jobs.append(dict(members=members, beside=beside, paths=paths, spill=spill, destination=temporary))
             schedule.variants(
                 jobs, self.fitted(cfg), steps, spec, chosen, SEED, workers, self.limits(), self.partitions(cfg)
             )
@@ -601,6 +639,7 @@ class Deriver(Bank):
                     members = [Graph.load(self.view(member, cfg), mapped=joining) for member in indices]
                     segments.variant(
                         members,
+                        self.seconds(steps, indices, cfg, joining),
                         self.fitted(cfg),
                         steps,
                         spec,

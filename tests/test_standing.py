@@ -63,6 +63,7 @@ VERSIONED = {
     "graphspec.relations": ("graphspec/operations/relations.py",),
     "graphspec.edges": ("graphspec/operations/edges.py",),
     "graphspec.merging": ("graphspec/operations/merging.py",),
+    "graphspec.merge": ("graphspec/operations/merge.py",),
     "derivation": (
         "graphspec/engine",
         "graphspec/operations/__init__.py",
@@ -110,15 +111,16 @@ UNVERSIONED = (
     "graphspec/infra/windows_files.py",
 )
 RECORDED = {
-    "graphspec.periods": (2, "75c06165ecf386d8ef23765f2f54d1d83b7144f234b3f4bd2600b17a429f2e04"),
-    "graphspec.window": (2, "5df2d7255ba6a2a3d4b53205ebfff639fffcb70d08bb3adb28bf428b55e20130"),
-    "graphspec.nodes": (3, "1e9a117b30eb8bc3d0bd81007234a3157f7aecff9206039a32afd6d6a4e97f04"),
-    "graphspec.derive": (5, "3cd55e6676bb7d71d960afd70d6c6c130bbeb0d7f4ca77c19ac2b347d8d5ca11"),
-    "graphspec.relations": (2, "6d8f67db2181d1900d9355a757273e4f374d0cdb5926eaf03f56619681618c4e"),
-    "graphspec.edges": (5, "04f1f8fa3cc638f162900d4467091490580451728754ae346b82b60aa396734e"),
-    "graphspec.merging": (2, "77c55f00419d3b722fa8cc38df2dcb8d03074d3a6adc9958219349aab7765252"),
-    "derivation": (9, "11c74bdd5afdabd2142c449a07577281e1f2d6cda1d905193a0c7f618205ef02"),
-    "views": (10, "3699027d627d829999a2843c2ea2b940681e97a982ba21e33b6b63cb896007d7"),
+    "graphspec.periods": (3, "a5872926ee3024b592ac2a25af30874de7f07c8b208863cc1f36f284f1e32514"),
+    "graphspec.window": (3, "331a1589674b98daaf539484731ca1687f1eadfb5c0469b99d399c7a734f6fbf"),
+    "graphspec.nodes": (4, "aca611bf0014bdfe5c6d76452aa7ead8dae757022ecd126056e47a94996e87a2"),
+    "graphspec.derive": (6, "a35de799901b57649bbb9b83430932183552e4016f0ab97e66218f921839439f"),
+    "graphspec.relations": (3, "e2c4e2f766cf3ed82f843e1eba0842c08aecb2fda800100820778a04ac222d40"),
+    "graphspec.edges": (6, "14f264fe87bb6ed285bab41efce1814e4e36f62184da90d227486c1235056ffc"),
+    "graphspec.merging": (3, "00b8563466374c4503b11fad815d6dab7f545aab425d8aaa43d9e3987dbc4e8d"),
+    "graphspec.merge": (1, "6157ed83362cccd5eec2299a162f41a5dcf63af9d03a93a6fed8d91bc9a5c8f0"),
+    "derivation": (10, "c6a8a53f016bc43280b21c67db7bfe99162f243e1c20ebbb82169d9eb03a7b8f"),
+    "views": (11, "d0c0a6138e1b187c28cba776d9ccca40ebd9b3fc9e50c4698c17dbadab4ac454"),
     "representations": (7, "73b6b108220c0b31b983ed46c838accc87119970a2ec9fe07e912ae73808253a"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
 }

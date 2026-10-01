@@ -333,7 +333,7 @@ def sizes(banks, name):
     steps, spec = support.steps(registry, {"time/history": 2}, specs.GROUPS)
     dense = Graph.load(held.view(0, cfg)).dense()
     arrays = (
-        Derivation.begun([dense], registry, steps, spec, specs.GROUPS, SEED, held.limits(), None, 0)
+        Derivation.begun([dense], {}, registry, steps, spec, specs.GROUPS, SEED, held.limits(), None, 0)
         .continued(dense.steps, None)
         .arrays()
     )
