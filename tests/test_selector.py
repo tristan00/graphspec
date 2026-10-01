@@ -2,6 +2,7 @@ import argparse
 import logging
 import re
 import time
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,7 @@ import support
 from optuna.distributions import IntDistribution
 
 from graphspec.infra.files import read_json, write_json
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.representations.groups import lags
@@ -258,6 +260,25 @@ def test_a_search_offers_no_pipeline_its_statement_refuses_and_bounds_that_leave
     with pytest.raises(ValueError, match=re.escape(FORCED)):
         selector.random_suggest(registry, 1, 1, dict(NEARBY, **CONTRACTED), 600, template)
     LOG.info("offered pipelines exit drawn=%d seconds=%.3f", len(drawn), time.perf_counter() - started)
+
+
+@timed("selector.present")
+def present(rng, parameter):
+    return parameter.options[-1] if parameter.name.count("/") == 1 else parameter.uniform(rng)
+
+
+def test_a_search_draws_a_reader_before_what_it_reads_with_entries_that_name_kinds_between_them(bank):
+    started = time.perf_counter()
+    registry, rng, named = Bank(bank).registry, np.random.default_rng(11), []
+    for between in ("graphspec.nodes", "graphspec.contract"):
+        template = support.template(("graphspec.edges", between, "graphspec.derive"))
+        space = pipeline.space(registry, template)
+        for _ in range(12):
+            flat = pipeline.draw(registry, template, space, partial(present, rng))
+            named.append([step.name for step in pipeline.resolved(registry, pipeline.entries(template, flat))])
+    assert named.count(["graphspec.edges", "graphspec.contract", "graphspec.derive"]) == 12
+    assert named.count(["graphspec.edges", "graphspec.nodes", "graphspec.derive"]) == 12
+    LOG.info("reader before its read exit drawn=%d seconds=%.3f", len(named), time.perf_counter() - started)
 
 
 def test_running_again_continues_and_may_change_selector_random_phase_and_bounds(bank, tmp_path):

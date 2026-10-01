@@ -147,7 +147,7 @@ def readers(found):
     return result
 
 
-def drawn(found, reads):
+def walked(found, before, looped):
     started = time.perf_counter()
     order, done, entered = [], set(), set()
     for first, _, _, _ in found:
@@ -161,12 +161,32 @@ def drawn(found, reads):
                 order.append(name)
                 continue
             if name in entered:
-                raise ValueError("the entry %s of the pipeline reads, through the entries it reads, itself" % name)
+                raise ValueError(looped % name)
             entered.add(name)
             waiting.append((name, True))
-            waiting.extend((read, False) for read in reversed(reads[name]))
-    LOG.debug("drawn exit entries=%d seconds=%.4f", len(order), time.perf_counter() - started)
+            waiting.extend((read, False) for read in reversed(before[name]))
+    LOG.debug("walked exit entries=%d seconds=%.4f", len(order), time.perf_counter() - started)
     return order
+
+
+def drawn(found, reads):
+    return walked(found, reads, "the entry %s of the pipeline reads, through the entries it reads, itself")
+
+
+def ordered(found, reads):
+    started = time.perf_counter()
+    before = {
+        name: tuple(earlier for earlier, other, _, _ in found[:place] if other.kinds is not None) + reads[name]
+        for place, (name, _, _, _) in enumerate(found)
+    }
+    result = walked(
+        found,
+        before,
+        "the entry %s of the template is drawn after itself, through the entries it reads and the entries before "
+        "them that name kinds",
+    )
+    LOG.debug("ordered exit entries=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 def given(name, parameters, values, context):
@@ -444,7 +464,7 @@ class Offered:
                 self.flags[parts[1]] = parameter
             else:
                 self.owned[parts[1]].append(parameter)
-        self.order = list(self.flags)
+        self.order = ordered(found, self.reads)
         bounded = {
             name: {parameter.name[len(NAMED % name) :]: parameter for parameter in self.owned[name]} for name in self.names
         }

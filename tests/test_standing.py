@@ -136,7 +136,7 @@ RECORDED = {
     "graphspec.contract": (6, "97d57415b043a2ad41cb76be27a881711be5f01cba9a280f576a511f2da8fcef"),
     "graphspec.product": (2, "370633caf9d75f6c20a823a9e076d48763c17297ae6f33ef2eef9dd1a87314e4"),
     "graphspec.negatives": (3, "27ae207a9310625b9cfcbc7e037e863284f012b0a4d62d8792a49ed47f1ba6f1"),
-    "derivation": (29, "76c319a27c1d4c789467779cbceec20b976c694b863ae99c34891fc42438168e"),
+    "derivation": (30, "4a7be4b92438ff6da5fd71a5cf89840b805b6bae67fa96b6b4b0ceed8fbaa84a"),
     "views": (20, "7138816f3195530afede1dad865030df4f7981a797369cbb2116caff578f2489"),
     "representations": (13, "e9a2d9d4a4c60705428dc00697f9bf428e8c4fd327a35b9d7622c0e474e17e3e"),
     "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
