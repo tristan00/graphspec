@@ -469,26 +469,71 @@ def test_a_link_from_or_to_a_node_not_observed_at_its_task_is_refused_when_the_b
     LOG.info("links refused exit seconds=%.3f", time.perf_counter() - started)
 
 
-def test_no_operation_removes_the_node_a_link_names_at_the_step_of_its_task(banks):
+@timed("nodes.passed")
+def passed(held, cfg):
+    from graphspec.engine import segments
+    from graphspec.engine.transform import SEED
+    from graphspec.operations.rows import select
+    from graphspec.schema.references import MEMBERS
+
+    steps, registry, result = held.stated(cfg)[1], held.fitted(cfg), {}
+    for entry in held.viewed(cfg).graphs:
+        dense = Graph.load(held.view(entry["index"], cfg)).dense()
+        dense = select(dense, MEMBERS, np.asarray(dense.member_name) < len(registry.references))
+        derived = segments.whole(dense, {}, registry, steps, SEED, held.limits(), held.partitions(cfg))
+        structural = ~np.asarray(derived.obs_anchor, bool)
+        tokens = (np.asarray(derived.entity_token, np.uint64) & np.uint64(MASK)).astype(np.int64)
+        result[entry["index"]] = set(
+            zip(derived.obs_step[structural].tolist(), tokens[derived.obs_entity[structural]].tolist())
+        )
+    return result
+
+
+def test_a_link_whose_nodes_the_pipeline_does_not_keep_is_left_out_and_its_kept_candidates_passed_alike(banks):
+    from tuning.fits.training import shortened
+
     started, held = time.perf_counter(), opened(banks, "stated")
-    link, item = held.registry.schema.targets().index("link"), held.registry.kind("item")
-    sampled = {"nodes/item/filter": "sample", "nodes/item/sample": 0.5}
-    observed = {}
-    for name, values in (("whole", {}), ("sampled", sampled)):
-        graph_values = dict(DRAWN, **{"time/history": 2}, **values)
+    link = held.registry.schema.targets().index("link")
+    filters = (
+        {"nodes/item/filter": "degree", "nodes/item/min_degree": 1},
+        {"nodes/item/filter": "sample", "nodes/item/sample": 0.5},
+    )
+    for values in filters:
+        graph_values = dict(DRAWN, **{"time/history": 2, "negatives/count": 1}, **values)
         cfg = support.configuration(
             held.registry, dict(view="snapshot"), graph_values, 5, copy.deepcopy(SEEING), NEGATIVES
         )
-        observed[name] = sum(
-            int((held.arrays(index, cfg)["entity_kind"][held.arrays(index, cfg)["entity"]] == item).sum())
-            for index in held.graphs(cfg)
-        )
+        kept, counts, every, held_out = passed(held, cfg), dict(kept=0, left=0), [], []
         for partition in (0, 1):
             for block in held.blocks(partition, 2, cfg):
                 b = pack_batch(held, [block], cfg, "cpu")
-                assert (np.asarray(b["point_node"])[np.asarray(b["aim"]) == link] >= 0).all()
-    assert observed["sampled"] < observed["whole"]
-    LOG.info("links kept exit seconds=%.3f", time.perf_counter() - started)
+                tokens, rows, placed = held.arrays(block[0], cfg)["entity_token"], b["rows"], np.asarray(b["placed"])
+                owner, drawn = np.r_[rows, b["drawn"]][placed], placed >= len(rows)
+                node, lefts = np.asarray(b["point_node"]), np.zeros(len(owner), bool)
+                named = np.where(node >= 0, tokens[b["member_entity"].numpy()[np.maximum(node, 0)]], -1)
+                every.append(owner)
+                for at in np.flatnonzero((b["aim"].numpy() == link) & ~drawn).tolist():
+                    row = held.rows[owner[at]]
+                    step = int(b["row_steps"][b["point_row"][at]]) + block[1]
+                    start = token("user:" + who("next", TIMES.index(row["time"]), int(row["graph"][1:]))) & MASK
+                    negatives = named[drawn & (owner == owner[at])].tolist()
+                    candidates = [(step, start), (step, int(held.nodes[owner[at]]))]
+                    if named[at] < 0 and not negatives:
+                        counts["left"] += 1
+                        lefts |= owner == owner[at]
+                        assert not all(candidate in kept[block[0]] for candidate in candidates)
+                        continue
+                    counts["kept"] += 1
+                    assert named[at] == held.nodes[owner[at]]
+                    assert all((step, node) in kept[block[0]] for node in negatives + [start])
+                    assert candidates[1] in kept[block[0]]
+                held_out.append((b, lefts, np.isin(rows, owner[lefts])))
+        assert counts["kept"] > 0 and counts["left"] > 0, values
+        for b, lefts, rows in held_out:
+            assert np.array_equal(outcomes(held, b, "cpu")["counted"].numpy(), ~lefts)
+            assert np.array_equal(np.asarray(b["left"]), rows)
+        assert shortened(held, cfg["pipeline"], np.concatenate(every))[1]["next"] >= counts["left"]
+    LOG.info("links left out exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_fit_whose_pipeline_draws_no_negatives_for_a_link_stops_naming_its_kind(banks, tmp_path, statement):
@@ -534,7 +579,8 @@ def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, stateme
     bank = banks["stated"]
     inline(bank, (), monkeypatch)
     held = opened(banks, "stated")
-    graph_values = dict(DRAWN, **{"time/history": 4, "negatives/count": 1})
+    filtered = {"nodes/item/filter": "degree", "nodes/item/min_degree": 1}
+    graph_values = dict(DRAWN, **{"time/history": 4, "negatives/count": 1}, **filtered)
     cfg = dict(
         support.configuration(held.registry, dict(view="snapshot"), graph_values, 5, copy.deepcopy(SEEING), NEGATIVES),
         epochs=1,

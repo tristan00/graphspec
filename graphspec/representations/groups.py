@@ -16,7 +16,7 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 14
+VERSION = 15
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"
@@ -168,6 +168,20 @@ def referred(graph, registry, rows, found):
     return result
 
 
+@timed("representations.left")
+def left(graph, registry, rows):
+    count, kinds = len(graph.kinds), np.asarray(graph.task_kind, np.int64)
+    structural = ~np.asarray(graph.obs_anchor, bool)
+    step, entity = np.asarray(graph.obs_step, np.int64), np.asarray(graph.obs_entity, np.int64)
+    shown = step[structural] * count + entity[structural]
+    task = np.asarray(graph.member_task, np.int64)
+    chosen = np.flatnonzero(registry.anchored[kinds[task], np.asarray(graph.member_name, np.int64)])
+    moments = np.asarray(graph.task_step, np.int64)[task[chosen]]
+    present = np.isin(moments * count + np.asarray(graph.member_source, np.int64)[chosen], shown)
+    kept = np.bincount(task[chosen][present], minlength=len(kinds))
+    return registry.linked[kinds[rows]] & (kept[rows] < 2)
+
+
 def carried_rows(link, entity, x_table):
     last = link.table("last")
     found = last.find(link.glob[entity])
@@ -294,6 +308,7 @@ def base(graph, registry, spec, link):
         row_step=np.asarray(row_step, np.int32),
         row_task=rows.astype(np.int32),
         row_kind=np.asarray(graph.task_kind, np.int32)[rows],
+        row_left=left(graph, registry, rows),
         events=events,
         signals=np.asarray(graph.task_signals, np.float32)[rows],
         row_index=row_index,

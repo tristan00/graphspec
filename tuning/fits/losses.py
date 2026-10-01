@@ -131,7 +131,10 @@ def outcomes(bank, batch, device):
     started = time.perf_counter()
     rows, drawn = np.asarray(batch["rows"], np.int64), np.asarray(batch["drawn"], np.int64)
     placed = np.asarray(batch["placed"], np.int64)
-    found = dict(target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)][placed])
+    found = dict(
+        target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)][placed],
+        counted=~np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)][placed],
+    )
     for name, values in bank.fields.items():
         found[FIELD + name] = np.r_[values[rows], np.full(len(drawn), np.nan, values.dtype)][placed]
     result = {key: torch.as_tensor(value, device=device) for key, value in found.items()}
@@ -168,7 +171,7 @@ class Summed:
 
         known, values = dict(batch, **outcomes(bank, batch, predictions.device)), []
         for code, loss in enumerate(self.losses):
-            points = (known["aim"] == code).nonzero().flatten()
+            points = ((known["aim"] == code) & known["counted"]).nonzero().flatten()
             if len(points):
                 values.append(loss(predictions[points], chosen(known, points), bank))
         return torch.stack(values).sum()

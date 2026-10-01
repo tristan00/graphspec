@@ -42,6 +42,7 @@ GONE = dict(
 )
 ADDED = dict(
     row_kind="c390954",
+    row_left="follow-up of links and splits",
     member_place="c390954",
     affinity_keys="c390954",
     affinity_counts="c390954",

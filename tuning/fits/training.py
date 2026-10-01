@@ -219,8 +219,9 @@ class TrainingSession:
                 raise ValueError("holdout row reached the optimizer")
             self.trained_rows.extend(batch["rows"].tolist())
             epoch_rows.extend(batch["rows"].tolist())
-            self.losses.append(self.optimize(batch))
-            epoch_sum += self.losses[-1] * len(batch["rows"])
+            if not np.asarray(batch["left"]).all():
+                self.losses.append(self.optimize(batch))
+                epoch_sum += self.losses[-1] * len(batch["rows"])
             self.budget.check()
             if update + 1 in schedule.ends:
                 epoch_started = self.complete_epoch(epoch, epoch_rows, epoch_sum, epoch_started)

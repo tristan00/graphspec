@@ -200,6 +200,7 @@ def own_arrays(arrays, carry, before, graph):
         row_step=(arrays["row_step"] + step0).astype(np.int32),
         row_task=(arrays["row_task"] + tasks0).astype(np.int32),
         row_kind=arrays["row_kind"],
+        row_left=arrays["row_left"],
         events=events.astype(np.int32),
         signals=arrays["signals"],
         row_index=arrays["row_index"],

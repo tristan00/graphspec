@@ -224,6 +224,7 @@ def recipe_batch(bank, blocks, cfg):
             for time in range(t)
         ],
         rows=Host(np.concatenate([p["rows"].value for p in parts])),
+        left=Host(np.concatenate([p["left"].value for p in parts])),
     )
     direct = (
         "selected",

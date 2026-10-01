@@ -11,14 +11,14 @@ from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
 SEED = 0x6772617068
-VERSION = 33
+VERSION = 34
 REMOVES = "references"
 
 
 def resolving(graph, registry):
     started = time.perf_counter()
-    member, entity, moments, _ = referring(graph, registry)
-    result = ~unobserved(len(graph.kinds), graph.obs_entity, graph.obs_step, entity, moments)
+    member, entity, moments, named = referring(graph, registry, registry.referenced)
+    result = named & ~unobserved(len(graph.kinds), graph.obs_entity, graph.obs_step, entity, moments)
     LOG.debug(
         "resolving exit graph=%s ends=%d seconds=%.4f", graph.name, len(member), time.perf_counter() - started
     )

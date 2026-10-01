@@ -167,12 +167,12 @@ def unobserved(entities, obs_entity, obs_step, who, moments):
     return ~np.isin(np.asarray(moments, np.int64) * entities + np.asarray(who, np.int64), held)
 
 
-def referring(graph, registry):
+def referring(graph, registry, stopping):
     started = time.perf_counter()
     member, entity = ends(graph.member_source, graph.member_target)
     task = np.asarray(graph.member_task, np.int64)[member]
     kinds, names = np.asarray(graph.task_kind, np.int64)[task], np.asarray(graph.member_name, np.int64)[member]
-    stops = registry.required[kinds, names]
+    stops = stopping[kinds, names]
     result = (
         member,
         entity,
@@ -319,7 +319,7 @@ def verify_dense(graph, registry, known=None):
     ):
         if flags[index]:
             raise ValueError("a %s of graph %s names an entity with no observation %s" % (label, name, when))
-    member, entity, moments, stops = referring(graph, registry)
+    member, entity, moments, stops = referring(graph, registry, registry.stopping)
     lost = stops & unobserved(entities, graph.obs_entity, graph.obs_step, entity, moments)
     if lost.any():
         raise ValueError(unreached(graph, registry, member[np.flatnonzero(lost)[0]], "a node"))
@@ -468,7 +468,7 @@ def verify(graph, registry):
         raise ValueError(
             "an absent fact of graph %s names an entity with no observation at or before its step" % name
         )
-    member, entity, moments, stops = referring(graph, registry)
+    member, entity, moments, stops = referring(graph, registry, registry.required)
     chosen = np.flatnonzero(stops)
     lost = spans.all_covered(
         offsets,

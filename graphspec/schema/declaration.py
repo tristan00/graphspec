@@ -135,7 +135,10 @@ class Registry:
         for code, entry in enumerate(kinds.values()):
             if self.linked[code]:
                 self.anchored[code, [self.references.index(entry["target"]["about"]), len(self.references)]] = True
-        self.required = self.anchored | self.stops[:, None]
+        self.referenced = np.zeros((len(kinds), len(self.references) + 1), bool)
+        self.referenced[:, : len(self.references)] = True
+        self.stopping = self.referenced & self.stops[:, None]
+        self.required = self.anchored | self.stopping
         if not set(self.extras["base"]) <= set(self.by_name):
             raise ValueError("base relation types must be declared")
         self.tables, self.stored, self.about = {}, {}, {}

@@ -399,28 +399,23 @@ def negatives(window, b, owner, node):
 def pointed(bank, window, b, rows, owner):
     started = time.perf_counter()
     held, registry, start = window.held, window.registry, window.start
-    tokens = bank.nodes[rows]
-    named = np.flatnonzero(tokens >= 0)
+    tokens, kinds = bank.nodes[rows], b["row_kind"][owner].astype(np.int64)
+    left = registry.linked[kinds] & held.numpy("row_left")[window.first + owner]
+    named = np.flatnonzero((tokens >= 0) & ~left)
     row = owner[named]
     observed = observing(held, b["row_steps"][row] + start, tokens[named], held.numpy("entity_token"))
-    kinds = b["row_kind"][row].astype(np.int64)
-    lost = np.flatnonzero((observed < 0) & registry.required[kinds, len(registry.references)])
+    lost = np.flatnonzero((observed < 0) & registry.stops[kinds[named]])
     if len(lost):
         found = bank.rows[rows[named[lost[0]]]]
         raise ValueError(
             "the node %s that a point of the task %s of the kind %s of graph %s names is not observed at the time "
-            "of its task, and %s"
-            % (
-                found["node"],
-                found[registry.schema.tasks["key"]],
-                found["kind"],
-                found["graph"],
-                "a link names an observed node" if registry.linked[kinds[lost[0]]] else "the kind states absent as stop",
-            )
+            "of its task, and the kind states absent as stop"
+            % (found["node"], found[registry.schema.tasks["key"]], found["kind"], found["graph"])
         )
     node = np.full(len(rows), -1, np.int64)
     node[named[observed >= 0]] = held.numpy("entity")[observed[observed >= 0]]
     point, drawn = negatives(window, b, owner, node)
+    point, drawn = point[~left[point]], drawn[~left[point]]
     moments = b["row_steps"][owner[point]] + start
     placed = observing(held, moments, drawn, np.arange(len(held.numpy("entity_kind"))))
     if np.any(placed < 0):
@@ -434,7 +429,7 @@ def pointed(bank, window, b, rows, owner):
         b[key] = np.r_[b[key], b[key][point]]
     linking = registry.linked[b["row_kind"][owners].astype(np.int64)]
     marks = held.numpy("entity_token")
-    keyed = np.zeros(len(noted), marks.dtype)
+    keyed, linking = np.zeros(len(noted), marks.dtype), linking & (noted >= 0)
     keyed[linking] = marks[held.numpy("entity")[noted[linking]]]
     order = np.lexsort((np.arange(len(noted)), keyed, b["point_row"]))
     for key in ("weight", "series", "aim", "point_row") + tuple(key for key in b if key.startswith(FIELD)):
@@ -444,7 +439,7 @@ def pointed(bank, window, b, rows, owner):
     point_node[having] = len(b["member_row"]) + np.arange(len(having))
     observed, row = noted[order][having], owners[order][having]
     entity = held.numpy("entity")[observed]
-    b["drawn"], b["placed"] = Host(rows[point]), Host(order)
+    b["drawn"], b["placed"], b["left"] = Host(rows[point]), Host(order), Host(left)
     b.update(
         member_row=np.concatenate((b["member_row"], row)),
         member_name=np.concatenate((b["member_name"], np.full(len(row), len(registry.references), np.int64))),
