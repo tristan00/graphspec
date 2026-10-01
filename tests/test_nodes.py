@@ -30,7 +30,7 @@ pytestmark = pytest.mark.xdist_group("nodes")
 USERS, ITEMS = ("u0", "u1", "u2", "u3"), ("i0", "i1", "i2", "i3", "i4")
 TIMES = (1, 2, 3, 4, 5, 6)
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
-KINDS = dict(rank=("ranking", "relevance", "items", {}))
+KINDS = dict(rank=("ranking", "relevance", "items", {}), pick=("nodes", "chosen", "items", {}))
 CHANGED = ("g0", 4)
 OPENED, HELD, NETS = {}, {}, {}
 
@@ -95,6 +95,9 @@ def stated(kind, at, place, changed):
     if kind == "rank":
         relevance = {item: float((at + position) % 3) for position, item in enumerate(items)}
         return dict(relevance, **({items[0]: 5.0} if changed else {}))
+    if kind == "pick":
+        chosen = {item: (at + position + place) % 2 == 0 for position, item in enumerate(items)}
+        return dict(chosen, **({items[0]: not chosen[items[0]]} if changed else {}))
     raise KeyError(kind)
 
 
@@ -272,21 +275,52 @@ def test_a_ranking_is_scored_listwise_and_measured_by_gain_and_reciprocal_rank()
     assert found["reciprocal"]["series"] == pytest.approx(dict(relevance=(1 / 2 + 1 / 2.5) / 2))
 
 
+def test_a_set_of_nodes_is_one_decision_per_node_its_task_lists():
+    from tuning.fits.losses import LOSSES
+    from tuning.measures.measures import measured, predicted, scored
+
+    where, kind = "the target of the kind of task pick", TARGETS.named("nodes")
+    for wrong in ({}, dict(i0=1), dict(i0=True, i1="no"), ["i0"]):
+        with pytest.raises(ValueError, match="mapping from the key of every node its task lists to whether it belongs"):
+            kind.staged(wrong, ("chosen",), where)
+    rows = dict(task=[0, 0], graph=["g1"] * 2, y=[1.0, 0.5], node=["i0", "i1"])
+    with pytest.raises(ValueError, match="state 1 for a node that belongs and 0 for one that does not"):
+        kind.points(rows, ("chosen",), where)
+    assert kind.read([dict(node="i2", y=1.0), dict(node="i0", y=0.0)]) == dict(i2=True, i0=False)
+    scores, row = torch.tensor([2.0, -1.0, 0.5, -3.0, -2.0]), torch.tensor([0, 0, 0, 1, 1])
+    target = torch.tensor([1.0, 1.0, 0.0, 0.0, 0.0])
+    batch = dict(target=target, weight=torch.tensor([1.0, 1.0, 1.0, 2.0, 2.0]), point_row=row, tasks=2)
+    error = torch.nn.functional.binary_cross_entropy_with_logits(scores, target, reduction="none")
+    expected = float((batch["weight"] * error).sum() / batch["weight"].sum())
+    assert float(LOSSES.named("binary")(scores, batch, None)) == pytest.approx(expected)
+    probability = predicted(("nodes",), np.zeros(5, np.int64), row.numpy(), scores.numpy())
+    assert np.allclose(probability, torch.sigmoid(scores).numpy())
+    held = scored(target.numpy(), probability, row.numpy(), np.zeros(5, np.int64), ["chosen"], np.ones(1))
+    found = measured(["f1", "jaccard", "binary"], held, dict(chosen="nodes"))
+    assert found["f1"]["value"] == pytest.approx((2 * 1 / (2 + 2) + 1.0) / 2)
+    assert found["jaccard"]["value"] == pytest.approx((1 / 3 + 1.0) / 2) == found["jaccard"]["series"]["chosen"]
+    assert found["binary"]["value"] == pytest.approx(float(error.mean()))
+
+
 def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, statement, monkeypatch):
     bank = banks["stated"]
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
     held = opened(banks, "stated")
-    given = dict(statement, loss=dict(ranking="listwise"), measures=["gain", "reciprocal"])
+    losses = dict(ranking="listwise", nodes="binary")
+    given = dict(statement, loss=losses, measures=["gain", "reciprocal", "f1", "jaccard"])
     started = time.perf_counter()
     fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
     LOG.info("fit of kinds naming nodes exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
     measures = saved["measures"]
-    assert 0 < measures["gain"]["value"] <= 1 and 0 < measures["reciprocal"]["value"] <= 1
+    assert all(0 < measures[name]["value"] <= 1 for name in ("gain", "reciprocal"))
+    assert all(0 <= measures[name]["value"] <= 1 for name in ("f1", "jaccard"))
     with np.load(tmp_path / "predictions.npz") as found:
-        task, prediction = held.task_of[found["row_index"]], found["prediction"]
-        assert np.allclose(np.bincount(task, prediction)[np.unique(task)], 1.0)
+        task, prediction, aim = held.task_of[found["row_index"]], found["prediction"], found["aim"]
+        ranked = aim == held.registry.schema.targets().index("ranking")
+        assert np.allclose(np.bincount(task[ranked], prediction[ranked])[np.unique(task[ranked])], 1.0)
+        assert ((prediction[~ranked] > 0) & (prediction[~ranked] < 1)).all() and (~ranked).any()
 
 
 @timed("nodes.predicted")

@@ -76,7 +76,7 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 | `squared` | `number`, `path` | the mean over the points of the batch of the squared error, weighted by the weight of their task |
 | `balanced` | `number`, `path` | the squared error averaged within each task and series, then over the tasks of each series by their weights, then over the series |
 | `entropy` | `class`, `proportions` | the cross-entropy of the stated `y` of the points of a task, one class or the shares of every class, with the exponentials of their values normalised over the task, averaged over the tasks by their weights |
-| `binary` | `classes` | the binary cross-entropy of each point's `y` with one over one plus the exponential of minus its value, one decision per class, averaged over the points by the weights of their tasks |
+| `binary` | `classes`, `nodes` | the binary cross-entropy of each point's `y` with one over one plus the exponential of minus its value, one decision per class or per node listed, averaged over the points by the weights of their tasks |
 | `listwise` | `ranking` | the cross-entropy of the relevances of the items of a task, each over their sum, with the exponentials of their values normalised over the task, averaged over the tasks by their weights |
 
 | Measure | Reads | Better | Value, and per series the same over its points |
@@ -86,10 +86,12 @@ References: [TGAT](https://arxiv.org/abs/2002.07962), [TGN](https://arxiv.org/ab
 | `balanced` | `number`, `path` | lower | per series, the squared error averaged within each task, then over its tasks, over the variance the series was scaled by; the value is their mean |
 | `accuracy` | `class` | higher | the share of tasks whose most probable class, the first in order of the classes where several tie, is their class; per class, the share of tasks where that class is chosen exactly when it is theirs |
 | `entropy` | `class`, `proportions` | lower | the mean over tasks of minus the sum over their points of `y` times the logarithm of the predicted probability or share; per class, its part of that sum, so the values per class add up to the value |
-| `binary` | `classes` | lower | the mean over the points of minus the logarithm of the probability predicted for what the point states, `y` 1 or 0; per class, the same over its points |
+| `binary` | `classes`, `nodes` | lower | the mean over the points of minus the logarithm of the probability predicted for what the point states, `y` 1 or 0; per class or series, the same over its points |
 | `divergence` | `proportions` | lower | the mean over tasks of the divergence of the predicted shares from the stated ones, the sum over the classes of a stated share above 0 of that share times the logarithm of its ratio to the predicted share; per class, its part of that sum |
 | `gain` | `ranking` | higher | the mean over tasks of the normalised discounted gain of the order of their items by prediction, the sum of each relevance over the base-two logarithm of its position plus one, over that of the order by relevance; items of equal prediction share the mean of the discounts of their positions; per series, the same over its tasks |
 | `reciprocal` | `ranking` | higher | the mean over tasks of one over the rank, by prediction, of their first item of a relevance above 0, items of equal prediction taking the mean of their ranks; per series, the same over its tasks |
+| `f1` | `nodes` | higher | the mean over tasks of twice the number of nodes predicted to belong, at a probability of at least 0.5, that do belong, over the number predicted plus the number that belong; 1 for a task where both are none; per series, the same over its tasks |
+| `jaccard` | `nodes` | higher | the mean over tasks of the number of nodes predicted to belong and belonging over the number predicted or belonging; 1 for a task where both are none; per series, the same over its tasks |
 - The saved checkpoint is reloaded and must reproduce the first validation batch.
 - The configured `--seconds` budget covers selection, layout, source capture, variant building, packing, training, and evaluation. At the deadline the runner records a timeout and waits for every owned worker to exit before continuing. Pruning runs after cleanup, outside the trial budget. Late outputs are retained with `late_` names; incomplete trials receive no prediction score. `trial.json` records phase timings.
 

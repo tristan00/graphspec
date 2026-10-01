@@ -136,7 +136,7 @@ class Entropy:
 
 
 class Binary:
-    reads = ("classes",)
+    reads = ("classes", "nodes")
     better = "lower"
     label, short = "Validation binary log loss", "Binary log loss"
 
@@ -221,6 +221,37 @@ class Reciprocal:
         return tasked(held, owner, 1 / best)
 
 
+@timed("measures.decided")
+def decided(held):
+    owner = np.unique(held.task, return_inverse=True)[1].reshape(-1)
+    tasks, chosen, stated = owner.max() + 1, held.prediction >= 0.5, held.target == 1
+    return owner, *(np.bincount(owner, values, tasks) for values in (chosen & stated, chosen, stated))
+
+
+class Agreement:
+    reads = ("nodes",)
+    better = "higher"
+    label, short = "Validation F1", "F1"
+
+    @timed("measures.agreement")
+    def __call__(self, held):
+        owner, both, chosen, stated = decided(held)
+        total = chosen + stated
+        return tasked(held, owner, np.where(total > 0, 2 * both / np.maximum(total, 1), 1.0))
+
+
+class Jaccard:
+    reads = ("nodes",)
+    better = "higher"
+    label, short = "Validation Jaccard index", "Jaccard"
+
+    @timed("measures.jaccard")
+    def __call__(self, held):
+        owner, both, chosen, stated = decided(held)
+        union = chosen + stated - both
+        return tasked(held, owner, np.where(union > 0, both / np.maximum(union, 1), 1.0))
+
+
 def predicted(kinds, aims, task, values):
     started = time.perf_counter()
     result = np.asarray(values, np.float64).copy()
@@ -273,4 +304,6 @@ MEASURES.register("binary", Binary())
 MEASURES.register("divergence", Divergence())
 MEASURES.register("gain", Gain())
 MEASURES.register("reciprocal", Reciprocal())
+MEASURES.register("f1", Agreement())
+MEASURES.register("jaccard", Jaccard())
 ship([MEASURES])

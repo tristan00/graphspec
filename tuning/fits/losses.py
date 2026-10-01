@@ -74,7 +74,7 @@ class Listwise:
 
 
 class Binary:
-    reads = ("classes",)
+    reads = ("classes", "nodes")
 
     def __call__(self, predictions, batch, bank):
         from torch.nn import functional as F

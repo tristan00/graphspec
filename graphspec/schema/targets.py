@@ -100,6 +100,11 @@ def located(rows, where):
     return owner, np.asarray(rows["y"], np.float64)
 
 
+@timed("targets.logistic")
+def logistic(values):
+    return np.exp(-np.logaddexp(0, -np.asarray(values, np.float64)))
+
+
 @timed("targets.normalised")
 def normalised(values, task):
     owner = np.unique(np.asarray(task, np.int64), return_inverse=True)[1].reshape(-1)
@@ -342,7 +347,7 @@ class Classes(Over):
 
     @timed("targets.classes.predicted")
     def predicted(self, values, task):
-        return np.exp(-np.logaddexp(0, -np.asarray(values, np.float64)))
+        return logistic(values)
 
 
 class Proportions(Over):
@@ -390,27 +395,32 @@ class Proportions(Over):
         return normalised(values, task)
 
 
-class Ranking:
+class Pointed:
     scaled = False
     matures = None
-    names = "members"
-    parameters = ()
     columns = dict(node="STRING")
     fields = ()
 
-    @timed("targets.ranking.checked")
+    @timed("targets.pointed.series")
+    def series(self, stated, where):
+        return one(stated, where)
+
+    @timed("targets.pointed.written")
+    def written(self, series):
+        return series[0]
+
+
+class Members(Pointed):
+    names = "members"
+    parameters = ()
+
+    @timed("targets.members.checked")
     def checked(self, stated, schema, references, where):
         listing(stated["about"], references, where)
         return {}
 
-    @timed("targets.ranking.series")
-    def series(self, stated, where):
-        return one(stated, where)
 
-    @timed("targets.ranking.written")
-    def written(self, series):
-        return series[0]
-
+class Ranking(Members):
     @timed("targets.ranking.points")
     def points(self, rows, series, where):
         owner, y = located(rows, where)
@@ -444,8 +454,39 @@ class Ranking:
         return normalised(values, task)
 
 
+class Nodes(Members):
+    @timed("targets.nodes.points")
+    def points(self, rows, series, where):
+        owner, y = located(rows, where)
+        if np.any((y != 0) & (y != 1)):
+            raise ValueError("the points of %s state 1 for a node that belongs and 0 for one that does not" % where)
+        return dict(series=[series[0]] * len(owner), node=list(rows["node"]))
+
+    @timed("targets.nodes.staged")
+    def staged(self, stated, series, where):
+        if (
+            not isinstance(stated, dict)
+            or not stated
+            or any(type(key) is not str for key in stated)
+            or any(type(value) is not bool for value in stated.values())
+        ):
+            raise ValueError(
+                "%s states its target as a mapping from the key of every node its task lists to whether it "
+                "belongs, true or false, found %r" % (where, stated)
+            )
+        return [dict(node=key, y=float(value)) for key, value in stated.items()]
+
+    @timed("targets.nodes.read")
+    def read(self, rows):
+        return {row["node"]: row["y"] == 1 for row in rows}
+
+    @timed("targets.nodes.predicted")
+    def predicted(self, values, task):
+        return logistic(values)
+
+
 class Weighted:
-    reads = ("number", "path", "class", "classes", "proportions", "ranking")
+    reads = ("number", "path", "class", "classes", "proportions", "ranking", "nodes")
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")
@@ -483,4 +524,5 @@ TARGETS.register("class", Class())
 TARGETS.register("classes", Classes())
 TARGETS.register("proportions", Proportions())
 TARGETS.register("ranking", Ranking())
+TARGETS.register("nodes", Nodes())
 UTILITIES.register("weighted", Weighted())
