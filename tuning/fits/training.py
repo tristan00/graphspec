@@ -43,6 +43,22 @@ class Schedule:
     batch_size: int
 
 
+@timed("training.shortened")
+def shortened(bank, pipeline, every):
+    from tuning.batches.inputs import drawing
+
+    schema, kinds = bank.registry.schema, list(bank.registry.schema.tasks["kinds"])
+    entries = {step.get("label", step["operation"].split(".", 1)[1]): step for step in pipeline}
+    kind = np.asarray([kinds.index(bank.rows[row]["kind"]) for row in every.tolist()], np.int64)
+    task, kept, unmeasured = bank.task_of[every], np.ones(len(every), bool), {}
+    for code, entry in drawing(schema, pipeline).items():
+        tasks, candidates = np.unique(task[kind == code], return_counts=True)
+        short = tasks[candidates < entries[entry]["parameters"]["negatives/count"] + 1]
+        kept &= ~np.isin(task, short)
+        unmeasured[kinds[code]] = len(short)
+    return kept, unmeasured
+
+
 class TrainingSession:
     def __init__(self, bank_directory, directory, config: dict, budget, stated):
         import torch
@@ -333,14 +349,15 @@ class TrainingSession:
                 schema.targets(), self.bank.aims[every], self.bank.task_of[every], np.r_[values, drawn], fields
             )
             values, drawn = both[: len(indices)], both[len(indices) :]
+            kept, unmeasured = shortened(self.bank, self.config["pipeline"], every)
             held = scored(
-                np.r_[self.bank.targets[indices], np.zeros(len(owners))],
-                both,
-                self.bank.task_of[every],
-                self.bank.series[every],
+                np.r_[self.bank.targets[indices], np.zeros(len(owners))][kept],
+                both[kept],
+                self.bank.task_of[every][kept],
+                self.bank.series[every][kept],
                 self.bank.series_names,
                 self.bank.scale,
-                fields,
+                {name: found[kept] for name, found in fields.items()},
             )
             metrics = measured(self.stated.measures, held, schema.measured())
         with measure("prediction_save"):
@@ -364,6 +381,7 @@ class TrainingSession:
             config=self.config,
             loss=self.stated.loss,
             measures=metrics,
+            unmeasured=unmeasured,
             seconds=time.perf_counter() - self.entered,
             timings=self.timing,
             parameters=sum(p.numel() for p in self.net.parameters()),

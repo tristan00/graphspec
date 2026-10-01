@@ -505,7 +505,11 @@ def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, stateme
     bank = banks["stated"]
     inline(bank, (), monkeypatch)
     held = opened(banks, "stated")
-    cfg = dict(configured(held.registry, "snapshot", SEEING, NEGATIVES, 4), epochs=1)
+    graph_values = dict(DRAWN, **{"time/history": 4, "negatives/count": 1})
+    cfg = dict(
+        support.configuration(held.registry, dict(view="snapshot"), graph_values, 5, copy.deepcopy(SEEING), NEGATIVES),
+        epochs=1,
+    )
     losses = dict(ranking="listwise", nodes="binary", link="entropy")
     measures = ["gain", "reciprocal", "f1", "jaccard", "hits1", "entropy"]
     given = dict(statement, sees=WITHHELD, loss=losses, measures=measures)
@@ -519,6 +523,14 @@ def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, stateme
     assert all(0 <= found[name]["value"] <= 1 for name in ("f1", "jaccard", "hits1"))
     assert list(found["reciprocal"]["series"]) == ["relevance", "bought"] and np.isfinite(found["entropy"]["value"])
     with np.load(tmp_path / "predictions.npz") as stored:
+        linking = stored["aim"] == held.registry.schema.targets().index("link")
+        rows, positive = stored["row_index"][linking], stored["prediction"][linking]
+        alone = ~np.isin(rows, stored["drawn_row"])
+        assert saved["unmeasured"] == dict(next=int(alone.sum())) and 0 < alone.sum() < len(rows)
+        negative = np.asarray([stored["drawn_prediction"][stored["drawn_row"] == row][0] for row in rows[~alone]])
+        ranks = np.where(positive[~alone] > negative, 1.0, np.where(positive[~alone] < negative, 2.0, 1.5))
+        assert found["reciprocal"]["series"]["bought"] == pytest.approx(float(np.mean(1 / ranks)))
+    with np.load(tmp_path / "predictions.npz") as stored:
         task, prediction, aim = held.task_of[stored["row_index"]], stored["prediction"], stored["aim"]
         drawn, owner = stored["drawn_prediction"], held.task_of[stored["drawn_row"]]
         targets = held.registry.schema.targets()
@@ -530,7 +542,7 @@ def test_a_bank_of_kinds_naming_nodes_completes_one_fit(banks, tmp_path, stateme
                 np.r_[prediction[chosen], drawn if linking else []],
             )
             assert np.allclose(total[np.unique(task[chosen])], 1.0)
-        assert len(drawn) >= int((aim == targets.index("link")).sum())
+        assert len(drawn) <= int((aim == targets.index("link")).sum()) == len(set(task[aim == targets.index("link")]))
         assert ((prediction[aim == targets.index("nodes")] > 0) & (prediction[aim == targets.index("nodes")] < 1)).all()
 
 
