@@ -144,11 +144,14 @@ def read_pack(path, mapped):
 
 
 def packed_names(path):
+    started = time.perf_counter()
     with open(path, "rb") as stream:
         head = stream.read(len(PACK) + 8)
         if head[: len(PACK)] != PACK:
             raise ValueError("%s is not a pack of arrays" % path)
-        return [entry[0] for entry in json.loads(stream.read(int.from_bytes(head[len(PACK) :], "little")))]
+        result = [entry[0] for entry in json.loads(stream.read(int.from_bytes(head[len(PACK) :], "little")))]
+    LOG.debug("packed names exit arrays=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 def aligned(size):
