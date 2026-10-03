@@ -5,13 +5,11 @@ import torch
 from torch import nn
 
 from graphspec.infra.timing import timed
-from graphspec.registries import Names, ship
 
-from .heads import NONE, REALISATION
+from .heads import NONE, REALISATION, REALISATIONS
 from .layers import padded
 
 LOG = logging.getLogger(__name__)
-REALISATIONS = Names("realisation of options", True)
 FIELDS = ("kind", "targets", "parameters")
 STRUCTURE = ("sequence", "decision", "action_option", "action_place", "role_action", "role_code")
 
@@ -132,6 +130,3 @@ class Options(nn.Module):
         action = held["point_action"]
         index = torch.where(action >= 0, action + len(options), held["point_option"])
         return padded(torch.cat((options, actions)), index)
-
-
-ship([REALISATIONS])

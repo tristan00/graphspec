@@ -1,6 +1,5 @@
 from .api import build_bank, configuration, fit, open_bank
-from .families.heads import HEADS
-from .families.options import REALISATIONS
+from .families.heads import HEADS, REALISATIONS
 from .fits.losses import LOSSES
 from .measures.measures import MEASURES
 

@@ -8,8 +8,7 @@ from graphspec.operations.parameters import GROUPS, among, choice, draw, equals,
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
-from .heads import NONE, REALISATION, reading
-from .options import REALISATIONS
+from .heads import NONE, REALISATION, REALISATIONS, reading
 
 LOG = logging.getLogger(__name__)
 SPACES = {}

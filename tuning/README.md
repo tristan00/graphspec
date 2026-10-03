@@ -3,7 +3,7 @@
 | Where | What is there |
 |---|---|
 | `statement.py` | The record of every choice of a fit and a search, and the parser of what a split may see |
-| `families/` | Kinds of model: what each reads and offers (`model_spec.py`), how each is built (`models.py`), the registry of heads by kind of target, `HEADS` (`heads.py`), the registry of realisations of options, `REALISATIONS`, the encodings of the fields of options and the module that reads them (`options.py`), the layers they share (`layers.py`, `periods.py`), and one module per family: `snapshot.py`, `mixed.py`, `event_graph.py`, `memory.py`, `projection.py`, `sequence.py`, `tree.py`, `walks.py`, `affinity.py`, `signal.py` |
+| `families/` | Kinds of model: what each reads and offers (`model_spec.py`), how each is built (`models.py`), the registries of heads by kind of target, `HEADS`, and of realisations of options, `REALISATIONS` (`heads.py`), the encodings of the fields of options and the module that reads them through a realisation (`options.py`), the layers they share (`layers.py`, `periods.py`), and one module per family: `snapshot.py`, `mixed.py`, `event_graph.py`, `memory.py`, `projection.py`, `sequence.py`, `tree.py`, `walks.py`, `affinity.py`, `signal.py` |
 | `bank/` | Building a bank (`build.py`), opening it (`bank.py`), the options of its decisions read from its truth (`options.py`), deriving and caching its variants (`variants.py`) |
 | `batches/` | Windows, inputs, gathers and packing of batches to the device |
 | `measures/` | The registry of measures, `MEASURES` (`measures.py`), and the score by which a search ranks trials (`objective.py`) |

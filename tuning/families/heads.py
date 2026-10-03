@@ -7,6 +7,7 @@ from graphspec.schema.targets import TARGETS, Sequence
 
 LOG = logging.getLogger(__name__)
 HEADS = Names("head of a kind of target", False)
+REALISATIONS = Names("realisation of options", True)
 FIELD = "field/"
 REALISATION = "options/realisation"
 NONE = "none"
@@ -90,4 +91,4 @@ HEADS.register("ranking", Attached((), nodes))
 HEADS.register("nodes", Attached((), nodes))
 HEADS.register("link", Attached((), nodes))
 HEADS.register("decision", Attached((REALISATION,), decision))
-ship([HEADS])
+ship([HEADS, REALISATIONS])
