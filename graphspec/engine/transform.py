@@ -10,7 +10,7 @@ from graphspec.views.graph import conforms, referring, unobserved, unresolved, v
 from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
-VERSION = 55
+VERSION = 56
 REMOVES = "references"
 
 
@@ -83,14 +83,14 @@ def derive(graph, registry, steps, seed, limits, partitions, carry, states, edit
 VALIDATED = "first"
 
 
-def shown(facts, registry, splits):
+def shown(facts, registry, looking):
     started = time.perf_counter()
     facts = sets.stored(facts, registry, {kind: sets.NODE for kind in registry.schema.sets})
     several = VALIDATED if registry.extras["several"] else None
     steps = views.TASKS if len(facts.task_key) else views.CHANGES
     result = [
         (held, views.view(facts, registry, held, several))
-        for held in views.sequences(facts, registry, steps, unstated(splits))
+        for held in views.sequences(facts, registry, steps, looking)
     ]
     LOG.debug(
         "shown exit graph=%s steps=%s views=%d seconds=%.4f",
@@ -104,7 +104,7 @@ def shown(facts, registry, splits):
 
 def validate(facts, registry, splits):
     started = time.perf_counter()
-    stored, result = shown(facts, registry, splits)
+    stored, result = shown(facts, registry, unstated(splits))
     for held, view in result:
         views.targeted(stored, registry, held, view)
     LOG.debug("validate exit graph=%s views=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started)

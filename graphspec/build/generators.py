@@ -14,6 +14,7 @@ from graphspec.schema.decisions import GENERATORS, RECORDED, RULES, TOGETHER, de
 from graphspec.schema.fields import fields
 from graphspec.schema.schema import VALUE
 from graphspec.schema.targets import real
+from graphspec.views.visible import Looking
 
 LOG = logging.getLogger(__name__)
 DISTANCES = Names("distance between states", True)
@@ -303,7 +304,7 @@ class Seen:
         option = fields(option, names, where)
         if option["together"] not in TOGETHER or not isinstance(option["actions"], list):
             raise ValueError("%s states its actions as a list, and as one of %s" % (where, ", ".join(TOGETHER)))
-        columns = self.world.schema.columns
+        columns, dictionaries = self.world.schema.columns, self.world.registry.encoding.dictionaries
         for place, action in enumerate(option["actions"]):
             inner = "the action %d of %s" % (place, where)
             action = fields(action, ACTED, inner)
@@ -319,9 +320,11 @@ class Seen:
                 if value is not None and not (
                     (kind == "number" and real(value))
                     or (kind == "flag" and type(value) is bool)
-                    or (kind == "category" and type(value) is str)
+                    or (kind == "category" and type(value) is str and value in dictionaries[name])
                 ):
-                    raise ValueError("%s states the parameter %s as %r, not in the type of its column" % (inner, name, value))
+                    raise ValueError(
+                        "%s states the parameter %s as %r, not a value of its column the bank holds" % (inner, name, value)
+                    )
         LOG.debug("seen formed exit actions=%d seconds=%.6f", len(option["actions"]), time.perf_counter() - started)
 
     @timed("generators.Seen.closed")
@@ -343,10 +346,6 @@ class Seen:
             return "the actor %s, not an actor of its decision" % action["actor"]
         if set(action["targets"]) != set(declared["roles"]) or set(action["parameters"]) != set(declared["parameters"]):
             return "other roles or parameters than its kind %s states" % action["kind"]
-        dictionaries = self.world.registry.encoding.dictionaries
-        for column, value in action["parameters"].items():
-            if value is not None and column in dictionaries and value not in dictionaries[column]:
-                return "the value %r of %s, which the bank does not hold" % (value, column)
         for role, aim in action["targets"].items():
             reason = self.aimless(declared["roles"][role], aim)
             if reason is not None:
@@ -422,6 +421,11 @@ class Seen:
             result.append(dict(self.world.canonical(option), drawn=None if probability is None else float(probability)))
         LOG.debug("seen taken exit generator=%s drawn=%d seconds=%.4f", name, len(result), time.perf_counter() - started)
         return result
+
+
+@timed("generators.looking")
+def looking(splits, trained):
+    return Looking(splits, trained, (), {name: [] for name in trained})
 
 
 def regenerated(truth, registry, shown):

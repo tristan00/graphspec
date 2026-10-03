@@ -13,7 +13,7 @@ import numpy as np
 
 from graphspec import Registry
 from graphspec.build import staged
-from graphspec.build.generators import appended, recorded, regenerated
+from graphspec.build.generators import appended, looking, recorded, regenerated
 from graphspec.build.parse import distinct, parse
 from graphspec.engine.transform import shown as viewed
 from graphspec.engine.transform import validate
@@ -371,7 +371,7 @@ def release():
 
 
 def graph(context, job):
-    declared, splits, observers = context
+    declared, splits, observers, trained = context
     index, name, ids, rows, series = job
     started = time.perf_counter()
     if WORKER.get("declared") != declared:
@@ -384,7 +384,7 @@ def graph(context, job):
         raise ValueError("graph %s reads different targets than its supervision" % name)
     truth = parse(registry, splits, observers, tables, rows[position], series[position], name)
     if generating(registry.schema):
-        drawn = regenerated(truth, registry, viewed(truth, registry, splits)[1])
+        drawn = regenerated(truth, registry, viewed(truth, registry, looking(splits, trained))[1])
         tables = dict(tables, decisions=appended(registry, tables, drawn))
         truth = parse(registry, splits, observers, tables, rows[position], series[position], name)
     shown = validate(truth, registry, splits)
@@ -484,7 +484,7 @@ def build(task_path, output, workers, trained):
             code = {name: place for place, name in enumerate(stated.series())}
             series = np.asarray([code[row["series"]] for row in rows["rows"]], np.int32)
             metrics = mapped(
-                partial(graph, (registry.declaration(), splits, observers)),
+                partial(graph, (registry.declaration(), splits, observers, trained)),
                 [(index, names[index], ids, members, series[members]) for index, ids, members, _ in groups],
             )
     finally:

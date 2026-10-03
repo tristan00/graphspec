@@ -11,7 +11,7 @@ from keyed import Keys, Spaces, dense_keyed, differing, labelled, rows, through,
 
 from conftest import SPLITS, shared
 from graphspec.budgets import GraphLimits
-from graphspec.build.generators import regenerated
+from graphspec.build.generators import looking, regenerated
 from graphspec.engine.segments import Derivation
 from graphspec.engine.transform import shown
 from graphspec.facts.stored import Facts
@@ -414,7 +414,8 @@ def test_generated_options_are_drawn_by_keys_equal_when_entities_are_renumbered_
     held = generations["base"]
     for entry in held.manifest["graphs"]:
         truth = generated.undrawn(Facts.load(held.truth(entry["index"])))
-        found = regenerated(truth, held.registry, shown(truth, held.registry, held.splits)[1])
+        seen = looking(held.splits, held.manifest["trained"])
+        found = regenerated(truth, held.registry, shown(truth, held.registry, seen)[1])
         again = {}
         for drawn in found:
             again.setdefault((truth.name, drawn["task"]), []).append(dict(drawn["option"], outcome=None))

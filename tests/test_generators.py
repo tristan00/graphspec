@@ -8,13 +8,14 @@ import support
 
 from conftest import shared
 from graphspec import GENERATORS, Registry
-from graphspec.build.generators import regenerated
+from graphspec.build.generators import looking, regenerated
 from graphspec.engine.transform import shown, validate
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.timing import timed
 from graphspec.schema import decisions
 from graphspec.schema.schema import Schema
+from graphspec.views.view import TASKS, sequences
 from tuning.bank.bank import Deriver
 
 LOG = logging.getLogger(__name__)
@@ -211,6 +212,10 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
         ("probability", "states the probability of its draw as 0.5, and faulty states none, having none"),
         ("repeated", "the option 0 the generator of options faulty drew for the decision 10 of the kind turn of graph g0 equals an option already present"),
     )
+    trained = tuple(held.splits.index(name) for name in held.manifest["trained"])
+    assert held.manifest["trained"] == ["train"] and set(held.splits) == {"train", "validation"}
+    for steps in sequences(truth, held.registry, TASKS, looking(held.splits, held.manifest["trained"])):
+        assert steps["matures"] == trained and steps["rules"] == ()
     for fault, message in faults:
         declared = copy.deepcopy(held.manifest["spec"])
         declared["schema"]["tasks"]["kinds"][generated.KIND]["target"]["generators"] = [
@@ -218,7 +223,7 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
         ]
         registry = Registry.from_declaration(declared)
         with pytest.raises(ValueError, match=message):
-            regenerated(truth, registry, shown(truth, registry, held.splits)[1])
+            regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1])
     LOG.info("faulty generators exit seconds=%.3f", time.perf_counter() - started)
 
 
