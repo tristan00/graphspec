@@ -43,7 +43,7 @@ PACKED, BUILT, SHOWN = {}, {}, {}
 SHARED = (banks, registered)
 SHIPPED = dict(node=("picked", []), vector=("stated", UNSEEN))
 LAST = dict(node=1, vector=2)
-ALONE = 1e-6
+ALONE = 1e-5
 REACHED = dict(
     node={"fields.role.weight", "fields.node.0.weight", "fields.node.0.bias"},
     vector={"fields.kind.weight", "fields.role.weight", "fields.relation.weight", "fields.node.0.weight"}
