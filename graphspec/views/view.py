@@ -477,33 +477,37 @@ def targeted(facts, registry, held, shown):
     source, other, code = (np.asarray(facts.arrays["role_" + part], np.int64) for part in ("source", "target", "code"))
     lost = []
     nodes = np.flatnonzero((moment >= 0) & (sort == ROLES.index("node")))
-    offsets, lows, highs = spans.coverage(
-        np.asarray(shown.obs_entity), np.asarray(shown.obs_start), np.asarray(shown.obs_stop), entities
-    )
-    found = spans.all_covered(offsets, lows, highs, source[nodes], moment[nodes], moment[nodes] + 1)
-    if found >= 0:
-        lost.append(nodes[found])
+    if len(nodes):
+        offsets, lows, highs = spans.coverage(
+            np.asarray(shown.obs_entity), np.asarray(shown.obs_start), np.asarray(shown.obs_stop), entities
+        )
+        found = spans.all_covered(offsets, lows, highs, source[nodes], moment[nodes], moment[nodes] + 1)
+        if found >= 0:
+            lost.append(nodes[found])
     edges = np.flatnonzero((moment >= 0) & (sort == ROLES.index("edge")))
-    relation, first, second = (np.asarray(shown.arrays["fact_" + part], np.int64) for part in ("code", "source", "target"))
-    either = registry.flipped[relation] == relation
-    known, ids = np.unique(
-        np.r_[
-            spans.encode(relation, first, second, entities),
-            spans.encode(relation[either], second[either], first[either], entities),
-        ],
-        return_inverse=True,
-    )
-    begun, ended = (np.r_[shown.arrays[name], shown.arrays[name][either]] for name in ("fact_start", "fact_stop"))
-    offsets, lows, highs = spans.coverage(ids.astype(np.int32), begun, ended, len(known))
-    wanted = spans.encode(code[edges], source[edges], other[edges], entities)
-    place = np.searchsorted(known, wanted)
-    named = place < len(known)
-    named[named] = known[place[named]] == wanted[named]
-    if not named.all():
-        lost.append(edges[np.flatnonzero(~named)[0]])
-    found = spans.all_covered(offsets, lows, highs, place[named], moment[edges][named], moment[edges][named] + 1)
-    if found >= 0:
-        lost.append(edges[np.flatnonzero(named)[found]])
+    if len(edges):
+        relation, first, second = (
+            np.asarray(shown.arrays["fact_" + part], np.int64) for part in ("code", "source", "target")
+        )
+        either = registry.flipped[relation] == relation
+        known, ids = np.unique(
+            np.r_[
+                spans.encode(relation, first, second, entities),
+                spans.encode(relation[either], second[either], first[either], entities),
+            ],
+            return_inverse=True,
+        )
+        begun, ended = (np.r_[shown.arrays[name], shown.arrays[name][either]] for name in ("fact_start", "fact_stop"))
+        offsets, lows, highs = spans.coverage(ids.astype(np.int32), begun, ended, len(known))
+        wanted = spans.encode(code[edges], source[edges], other[edges], entities)
+        place = np.searchsorted(known, wanted)
+        named = place < len(known)
+        named[named] = known[place[named]] == wanted[named]
+        if not named.all():
+            lost.append(edges[np.flatnonzero(~named)[0]])
+        found = spans.all_covered(offsets, lows, highs, place[named], moment[edges][named], moment[edges][named] + 1)
+        if found >= 0:
+            lost.append(edges[np.flatnonzero(named)[found]])
     if lost:
         raise ValueError(untargeted(facts, registry, held, int(min(lost))))
     LOG.debug(
