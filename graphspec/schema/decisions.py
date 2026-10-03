@@ -25,6 +25,9 @@ OPTION = ("key", "actions", "together", "available", "chosen", "order", "shown",
 ACTED = ("kind", "actor", "targets", "parameters")
 DRAWN = ("generator", "seed", "drawn")
 ACTING = ("id", "graph", "kind", "actor")
+PARTS = ("state", "decisions", "chosen", "rule")
+GENERATED = ("name", "seed", "repeats", "parameters")
+SEEDED = 2**63 - 1
 
 
 @timed("decisions.ruled")
@@ -35,6 +38,58 @@ def ruled(stated, schema, where):
     stated = fields(stated, RULE, where)
     entry = RULES.named(stated["name"])
     return dict(name=stated["name"], parameters=entry.checked(stated["parameters"], schema, where))
+
+
+def generator(name):
+    started = time.perf_counter()
+    entry = GENERATORS.named(name)
+    if (
+        not all(hasattr(entry, part) for part in ("reads", "probable", "checked"))
+        or not isinstance(entry.reads, tuple)
+        or any(part not in PARTS for part in entry.reads)
+        or type(entry.probable) is not bool
+        or not callable(entry)
+        or not callable(entry.checked)
+    ):
+        raise ValueError(
+            "the generator of options %s states reads, a tuple of what it reads among %s; probable, whether it "
+            "states the probability of each draw, true or false; checked, which checks its parameters; and draws "
+            "when called" % (name, ", ".join(PARTS))
+        )
+    LOG.debug("decisions generator exit name=%s seconds=%.6f", name, time.perf_counter() - started)
+    return entry
+
+
+def generators(stated, schema, target, references, where):
+    started = time.perf_counter()
+    if not isinstance(stated, list):
+        raise ValueError("the target of %s states its generators of options as a list, found %r" % (where, stated))
+    result = []
+    for place, held in enumerate(stated):
+        inner = "the generator %d of the options of the target of %s" % (place, where)
+        held = fields(held, GENERATED, inner)
+        entry = generator(held["name"])
+        if type(held["seed"]) is not int or not 0 <= held["seed"] <= SEEDED:
+            raise ValueError("%s states its seed as a whole number from 0 to %d, found %r" % (inner, SEEDED, held["seed"]))
+        if type(held["repeats"]) is not bool:
+            raise ValueError(
+                "%s states whether an option it draws may equal an option already present, true or false, found %r"
+                % (inner, held["repeats"])
+            )
+        if "rule" in entry.reads and target["rule"] is None:
+            raise ValueError("%s, %s, draws from the rule of its kind, which states none" % (inner, held["name"]))
+        parameters = entry.checked(held["parameters"], schema, target, references, inner)
+        result.append(dict(name=held["name"], seed=held["seed"], repeats=held["repeats"], parameters=parameters))
+    about = target["about"]
+    if result and about is not None and (
+        SORTS.named(references[about]["sort"]).edges or set(references[about]["kinds"]) & set(schema.sets)
+    ):
+        raise ValueError(
+            "the target of %s states generators of options and is about %s, whose facts a split's rule keeps from "
+            "its tasks; a generator reads, when the bank is built, what the clock shows" % (where, about)
+        )
+    LOG.debug("decisions generators exit generators=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
 
 
 def acted(name, entry, schema, where):
@@ -185,11 +240,11 @@ def decision(stated, target, where):
 
 
 class Decision:
-    version = 2
+    version = 3
     scaled = True
     matures = None
     names = None
-    parameters = ("actors", "actions", "nothing", "rule")
+    parameters = ("actors", "actions", "nothing", "rule", "generators")
     columns = dict(series="STRING", option="INT32", part="INT32", chosen="BOOL")
     inputs = ()
     outcomes = ("option", "part", "chosen")
@@ -214,7 +269,11 @@ class Decision:
         nothing = stated["nothing"]
         if nothing is not None:
             named(nothing, "the option that does nothing of the target of " + where)
-        return dict(actors=actors, actions=found, nothing=nothing, rule=ruled(stated["rule"], schema, where))
+        result = dict(actors=actors, actions=found, nothing=nothing, rule=ruled(stated["rule"], schema, where))
+        result["generators"] = generators(
+            stated["generators"], schema, dict(result, about=stated["about"]), references, where
+        )
+        return result
 
     @timed("decisions.decision.series")
     def series(self, stated, where):
@@ -330,7 +389,9 @@ def drawn(schema):
     ruled = [
         (kind, entry["target"]["rule"]["name"])
         for kind, entry in schema.tasks["kinds"].items()
-        if deciding(entry["target"]) and entry["target"]["rule"] is not None
+        if deciding(entry["target"])
+        and entry["target"]["rule"] is not None
+        and not any("rule" in GENERATORS.named(held["name"]).reads for held in entry["target"]["generators"])
     ]
     if ruled:
         raise ValueError(
@@ -338,6 +399,11 @@ def drawn(schema):
             "of options before a fit reads them, and no generator has drawn them" % ruled[0]
         )
     LOG.debug("drawn exit kinds=%d seconds=%.4f", len(schema.tasks["kinds"]), time.perf_counter() - started)
+
+
+@timed("decisions.generating")
+def generating(schema):
+    return any(schema.tasks["kinds"][kind]["target"]["generators"] for kind in schema.decided())
 
 
 TARGETS.register("decision", Decision())

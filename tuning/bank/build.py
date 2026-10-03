@@ -13,7 +13,9 @@ import numpy as np
 
 from graphspec import Registry
 from graphspec.build import staged
+from graphspec.build.generators import appended, recorded, regenerated
 from graphspec.build.parse import distinct, parse
+from graphspec.engine.transform import shown as viewed
 from graphspec.engine.transform import validate
 from graphspec.facts.stored import VERSION
 from graphspec.infra.files import read_json, sha256_file, sha256_json, write_json
@@ -24,7 +26,7 @@ from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.registries import carried, restored
 from graphspec.schema import declaration
-from graphspec.schema.decisions import counted
+from graphspec.schema.decisions import counted, generating
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import VALUE, Encoding, Schema
 from graphspec.schema.targets import TARGETS
@@ -381,6 +383,10 @@ def graph(context, job):
     if len(found) != len(ids) or np.any(position >= len(ids)) or not np.array_equal(ids[position], found):
         raise ValueError("graph %s reads different targets than its supervision" % name)
     truth = parse(registry, splits, observers, tables, rows[position], series[position], name)
+    if generating(registry.schema):
+        drawn = regenerated(truth, registry, viewed(truth, registry, splits)[1])
+        tables = dict(tables, decisions=appended(registry, tables, drawn))
+        truth = parse(registry, splits, observers, tables, rows[position], series[position], name)
     shown = validate(truth, registry, splits)
     truth.save(WORKER["output"] / "truth" / ("graph_%04d" % index))
     metrics = dict(
@@ -493,6 +499,7 @@ def build(task_path, output, workers, trained):
         splits=splits,
         observers=observers,
         signals=registry.extras["signals"],
+        generators=recorded(registry.schema),
         graphs=metrics,
         distinct_entities=catalogue(output, metrics),
         rows=len(rows["rows"]),

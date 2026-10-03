@@ -1224,6 +1224,7 @@ def chooser(nothing):
         actions=actions,
         nothing=nothing,
         rule=None,
+        generators=[],
     )
     return dict(references=["agents"], columns=[], target=target, weight=False, absent="stop", event=None, matures=None)
 
