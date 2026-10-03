@@ -13,6 +13,7 @@ REALISATION = "options/realisation"
 NONE = "none"
 ONE = "the realisation reads options of one action whose one target is a node"
 FIELDS = ("kind", "targets", "parameters")
+ELEMENTS = ("action", "target")
 
 
 class Attached:
@@ -79,21 +80,23 @@ def realisation(name):
     started = time.perf_counter()
     entry = REALISATIONS.named(name)
     if (
-        not all(hasattr(entry, part) for part in ("reads", "together", "back", "refusal", "module"))
+        not all(hasattr(entry, part) for part in ("reads", "together", "back", "structure", "actor", "refusal", "module"))
         or not isinstance(entry.reads, tuple)
         or not entry.reads
         or any(field not in FIELDS for field in entry.reads)
         or len(set(entry.reads)) != len(entry.reads)
-        or type(entry.together) is not bool
-        or type(entry.back) is not bool
+        or any(type(value) is not bool for value in (entry.together, entry.back, entry.structure, entry.actor))
+        or (entry.actor and "targets" not in entry.reads)
         or not callable(entry.refusal)
         or not callable(entry.module)
     ):
         raise ValueError(
             "the realisation of options %s states reads, a tuple of the fields of an option it reads among %s; "
             "together, whether the score of an option reads the other options of its decision, true or false; "
-            "back, whether messages pass from options back to the state, true or false; refusal, which gives why "
-            "it cannot read the options a schema states, or none; and module, which builds it"
+            "back, whether messages pass from options back to the state, true or false; structure, whether it puts "
+            "options into the graph of the family as structure, true or false; actor, whether it reads the actor "
+            "of each action beside its targets, true or false, and true only where it reads targets; refusal, which "
+            "gives why it cannot read the options a schema states, or none; and module, which builds it"
             % (name, ", ".join(FIELDS))
         )
     LOG.debug("options realisation exit name=%s seconds=%.4f", name, time.perf_counter() - started)
@@ -152,10 +155,12 @@ def refused(name, schema):
 
 
 class Existing:
-    version = 2
+    version = 3
     reads = ("targets",)
     together = False
     back = False
+    structure = False
+    actor = False
 
     @timed("heads.Existing.refusal")
     def refusal(self, schema):
@@ -185,10 +190,12 @@ class Existing:
 
 
 class Built:
-    version = 2
+    version = 3
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
+    structure = False
+    actor = False
 
     @timed("heads.Built.refusal")
     def refusal(self, schema):
@@ -199,6 +206,43 @@ class Built:
         from .options import Vector
 
         return Vector(hidden, width)
+
+
+class Structural:
+    version = 1
+    reads = ("kind", "targets", "parameters")
+    together = False
+    back = False
+    structure = True
+
+    @timed("heads.Structural.__init__")
+    def __init__(self, element, actor):
+        if element not in ELEMENTS or type(actor) is not bool or (element == "target" and not actor):
+            raise ValueError(
+                "a structural realisation puts one element into the graph per %s, found %r, and states whether "
+                "the actor of each action joins it, found %r, which an element per target, an edge between the "
+                "actor and the target, needs" % (" or per ".join(ELEMENTS), element, actor)
+            )
+        self.element, self.actor = element, actor
+
+    @timed("heads.Structural.refusal")
+    def refusal(self, schema):
+        if self.element != "target":
+            return None
+        for task in schema.decided():
+            for action, entry in schema.tasks["kinds"][task]["target"]["actions"].items():
+                if not entry["roles"]:
+                    return (
+                        "the kind of action %s of the kind of task %s states no role, and the realisation joins the "
+                        "actor of an action to each of its targets by an edge" % (action, task)
+                    )
+        return None
+
+    @timed("heads.Structural.module")
+    def module(self, hidden, width, spec, registry):
+        from .options import Structured
+
+        return Structured(hidden, width, spec, registry, self.element, self.actor)
 
 
 def reading(registry, name):
@@ -221,4 +265,7 @@ HEADS.register("link", Attached((), nodes))
 HEADS.register("decision", Attached((REALISATION,), decision))
 REALISATIONS.register("node", Existing())
 REALISATIONS.register("vector", Built())
+REALISATIONS.register("action_nodes", Structural("action", False))
+REALISATIONS.register("actor_edge", Structural("target", True))
+REALISATIONS.register("set_edge", Structural("action", True))
 ship([HEADS, REALISATIONS])

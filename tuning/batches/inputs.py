@@ -17,7 +17,7 @@ from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.decisions import ROLES
 from graphspec.schema.references import SORTS
 from tuning.bank.options import offered
-from tuning.families.heads import FIELD
+from tuning.families.heads import FIELD, realisation
 from tuning.families.model_spec import realised
 
 from . import gather
@@ -490,10 +490,16 @@ def optioned(bank, window, b, rows, owner, place):
     action = np.repeat(found.actions[0][option], found.actions[1][option]) + counted(found.actions[1][option])
     acting = np.repeat(np.arange(len(option)), found.actions[1][option])
     role = np.repeat(found.roles[0][action], found.roles[1][action]) + counted(found.roles[1][action])
-    roling = np.repeat(np.arange(len(action)), found.roles[1][action])
-    sort = found.sorts[found.role["code"][role]]
+    actor = np.arange(len(action)) if realisation(realised(window.cfg["model"], registry.schema)).actor else action[:0]
+    absent = np.full(len(actor), -1)
+    roling = np.r_[np.repeat(np.arange(len(action)), found.roles[1][action]), actor]
+    by = np.argsort(roling, kind="stable")
+    roling, code = roling[by], np.r_[found.role["code"][role], np.full(len(actor), len(found.sorts))][by]
+    sort = np.r_[found.sorts[found.role["code"][role]], np.full(len(actor), ROLES.index("node"))][by]
+    relation = np.r_[found.role["relation"][role], absent][by]
     moments = b["row_steps"][task[decided[acting[roling]]]].astype(np.int64) + window.start
-    ends = np.stack((found.role["source"][role], found.role["target"][role]), 1)
+    sources = np.r_[found.role["source"][role], found.action["actor"][action[actor]]]
+    ends = np.stack((sources, np.r_[found.role["target"][role], absent]), 1)[by]
     observed = np.full(ends.shape, -1, np.int64)
     for column, sorts in enumerate(((ROLES.index("node"), ROLES.index("edge")), (ROLES.index("edge"),))):
         wanted = np.flatnonzero(np.isin(sort, sorts))
@@ -502,7 +508,7 @@ def optioned(bank, window, b, rows, owner, place):
     unheld = (observed[:, 0] < 0) & (sort != ROLES.index("new"))
     whole = edge[(observed[edge] >= 0).all(1)]
     unheld[edge] |= observed[edge, 1] < 0
-    unheld[whole] |= ~edged(window, moments[whole], observed[whole], found.role["relation"][role[whole]])
+    unheld[whole] |= ~edged(window, moments[whole], observed[whole], relation[whole])
     left = np.zeros(len(option), bool)
     np.logical_or.at(left, acting[roling], unheld)
     kept = np.flatnonzero(~left)
@@ -548,9 +554,9 @@ def optioned(bank, window, b, rows, owner, place):
         action_place=found.action["place"][action[acts]],
         action_values=registry.encoding.vectors(columns, found.action["values"][action[acts]]),
         role_action=taken[roling[roles]],
-        role_code=found.role["code"][role[roles]],
+        role_code=code[roles],
         role_member=member,
-        role_relation=np.where(sort[roles] == ROLES.index("edge"), found.role["relation"][role[roles]], -1),
+        role_relation=np.where(sort[roles] == ROLES.index("edge"), relation[roles], -1),
         point_option=np.where(pointing >= 0, point_option, -1),
         point_action=np.where((acted >= 0) & (pointing >= 0) & (point_option >= 0), point_action, -1),
         content=Host(found.option["content"][option[kept]]),

@@ -542,7 +542,7 @@ class TemporalEdges(nn.Module):
     def __init__(self, hidden, attention, relation_slots, dropout, encoding):
         super().__init__()
         self.attention, self.dropout = attention, dropout
-        self.time = TimeEncoding(hidden, encoding)
+        self.time = None if encoding is None else TimeEncoding(hidden, encoding)
         self.relation = nn.Embedding(relation_slots, hidden)
         self.value = nn.Linear(hidden, hidden)
         if attention:
@@ -553,7 +553,7 @@ class TemporalEdges(nn.Module):
 
     def forward(self, x, edges, relation, gap):
         source, destination = edges
-        temporal = self.time(gap) + self.relation(relation)
+        temporal = self.relation(relation) if self.time is None else self.time(gap) + self.relation(relation)
         message = self.value(x)[source] + temporal
         if self.attention:
             score = self.score(torch.cat((x[source], x[destination], temporal), -1)).squeeze(-1)

@@ -9,7 +9,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations.pipeline import emptied
 from tuning.batches.batching import batches, pack_batch
 from tuning.families.heads import NONE, REALISATION, coded, fielded, realisation, refused
-from tuning.families.model_spec import realised
+from tuning.families.model_spec import realised, unstructured
 from tuning.families.options import slots
 from tuning.families.periods import blocks as windows
 
@@ -24,10 +24,17 @@ def routed(bank, cfg):
     if name is None:
         LOG.debug("guards routed exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return
-    if realisation(name).back:
+    entry = realisation(name)
+    if entry.back:
         raise ValueError(
             "the realisation of options %s states that messages pass from options back to the state; no family "
             "gives options a route back to the state, so a fit stating it stops" % name
+        )
+    reason = unstructured(cfg["model"])
+    if entry.structure and reason is not None:
+        raise ValueError(
+            "the realisation of options %s puts options into the graph of the family of its model, and the family "
+            "%s reads no option put there: %s" % (name, cfg["model"]["view"], reason)
         )
     schema = bank.registry.schema
     reason = refused(name, schema)

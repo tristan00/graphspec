@@ -8,7 +8,7 @@ from graphspec.operations.parameters import GROUPS, among, choice, draw, equals,
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
-from .heads import NONE, REALISATION, REALISATIONS, reading, refused
+from .heads import NONE, REALISATION, REALISATIONS, reading, realisation, refused
 
 LOG = logging.getLogger(__name__)
 SPACES = {}
@@ -26,6 +26,22 @@ VIEWS = (
     "signal",
 )
 OPTIONED = VIEWS
+PASSING = "it passes no message over a graph"
+STRUCTURE = dict(
+    snapshot=None,
+    mixed=None,
+    event_graph=None,
+    tree=None,
+    memory=(
+        "its rules update both ends of every event alike, so an option put into its graph would change the state "
+        "of its actor and targets, which only a realisation stating that messages pass back may do"
+    ),
+    projection="it propagates fixed random projections along events, and " + PASSING,
+    sequence="it reads the sampled partners of a node as a sequence of tokens, and " + PASSING,
+    walks="it reads sampled walks from a node, and " + PASSING,
+    affinity="it reads counts of tasks per node and reads no edge",
+    signal="it reads the signals of tasks and the features of members and reads no edge",
+)
 SPATIAL = ("none", "mean", "normalised", "relational", "attention", "chebyshev", "relational_attention")
 ENCODINGS = ("log_cosine", "cosine", "log_linear")
 EMBEDDING = ("snapshot", "mixed", "event_graph", "memory", "projection", "sequence", "tree", "walks")
@@ -137,6 +153,37 @@ def realised(spec, schema):
             "that decides: %s or a realisation registered in tuning.REALISATIONS" % (spec["view"], REALISATION, NONE)
         )
     return None if spec[REALISATION] == NONE else spec[REALISATION]
+
+
+@timed("model_spec.unstructured")
+def unstructured(spec):
+    if spec["view"] == "snapshot" and spec["snapshot/spatial"] == "none":
+        return "its spatial layer is none, and it reads options put into its graph through its spatial layers"
+    return STRUCTURE[spec["view"]]
+
+
+def fitting(parameter, spec):
+    started = time.perf_counter()
+    reason = unstructured(spec)
+    kept = tuple(name for name in parameter.options if reason is None or name == NONE or not realisation(name).structure)
+    if not kept:
+        raise ValueError(
+            "the realisations of options left to the model of the family %s, %s, each put options into its graph, "
+            "and it reads none put there: %s" % (spec["view"], ", ".join(parameter.options), reason)
+        )
+    result = parameter if kept == parameter.options else narrow((parameter,), {REALISATION: list(kept)})[0]
+    LOG.debug("model fitting exit kept=%d seconds=%.6f", len(kept), time.perf_counter() - started)
+    return result
+
+
+def drawn(parameters, choose):
+    started = time.perf_counter()
+    spec = {}
+    for parameter in parameters:
+        if parameter.active(spec):
+            spec[parameter.name] = choose(fitting(parameter, spec) if parameter.name == REALISATION else parameter)
+    LOG.debug("model drawn exit parameters=%d seconds=%.6f", len(spec), time.perf_counter() - started)
+    return spec
 
 
 def realisable(registry, parameters):
@@ -359,11 +406,15 @@ def samples(registry):
         and isinstance(parameter.options[0], (str, bool))
         and parameter.name != "view"
     ]
-    result = []
+    result, placing = [], {NONE: False}
+    for parameter in parameters:
+        if parameter.name == REALISATION:
+            placing.update({name: realisation(name).structure for name in parameter.options if name != NONE})
 
-    @timed("model_spec.samples.add")
     def add(values):
         spec = specs.canonical(parameters, draw(parameters, lambda parameter: parameter.given(values)))
+        if REALISATION in spec and placing[spec[REALISATION]] and unstructured(spec) is not None:
+            return None
         if spec not in result:
             result.append(spec)
         return spec
@@ -374,21 +425,20 @@ def samples(registry):
         for parameter in parameters:
             if parameter.active(spec):
                 if parameter.default is None and parameter.name not in values:
-                    return [
-                        found for option in parameter.options for found in starts(dict(values, **{parameter.name: option}))
-                    ]
+                    options = (fitting(parameter, spec) if parameter.name == REALISATION else parameter).options
+                    return [found for option in options for found in starts(dict(values, **{parameter.name: option}))]
                 spec[parameter.name] = parameter.given(values)
         return [values]
 
     for name in views(registry):
-        for base in [add(values) for values in starts(dict(view=name))]:
+        for base in filter(None, [add(values) for values in starts(dict(view=name))]):
             first = [
                 add(dict(base, **{parameter.name: option}))
                 for parameter in switches
                 if parameter.active(base)
                 for option in parameter.options
             ]
-            for spec in first:
+            for spec in filter(None, first):
                 for parameter in switches:
                     if parameter.name in spec:
                         for option in parameter.options:

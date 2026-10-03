@@ -16,9 +16,9 @@ from graphspec.operations import parameters as specs
 from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
 from tuning.batches.packing import Packer
-from tuning.families.heads import NONE, REALISATION, REALISATIONS
+from tuning.families.heads import NONE, REALISATION, REALISATIONS, realisation
 from tuning.families.layers import CausalAttention, TimeEncoding
-from tuning.families.model_spec import configured, samples, space, views
+from tuning.families.model_spec import configured, samples, space, unstructured, views
 from tuning.families.models import build
 from tuning.families.periods import blocks as period_blocks
 
@@ -31,6 +31,8 @@ class Stated:
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
+    structure = False
+    actor = False
 
     @timed("model_config.Stated.refusal")
     def refusal(self, schema):
@@ -111,7 +113,9 @@ def test_the_check_states_every_value_of_a_choice_without_a_default_and_starts_i
         rest = tuple(sorted((name, value) for name, value in model.items() if name != REALISATION))
         starts.setdefault(model[REALISATION], set()).add(rest)
     assert sorted(starts) == sorted([NONE, "stated", *REALISATIONS.shipped])
-    assert all(found == starts[NONE] for found in starts.values())
+    read = {rest for rest in starts[NONE] if unstructured(dict(rest)) is None}
+    assert read and read != starts[NONE] and {dict(rest)["view"] for rest in read} == {"snapshot", "mixed", "event_graph", "tree"}
+    assert all(found == (read if name in REALISATIONS.shipped and realisation(name).structure else starts[NONE]) for name, found in starts.items())
     LOG.info("samples of a choice without a default exit seconds=%.3f", time.perf_counter() - started)
 
 

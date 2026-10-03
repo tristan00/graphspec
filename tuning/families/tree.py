@@ -5,8 +5,41 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 
-from .layers import Asked, Head, References, TimeEncoding, keys_of, masked_weights, normalization
+from .layers import (
+    Asked,
+    Head,
+    References,
+    TimeEncoding,
+    keys_of,
+    masked_weights,
+    normalization,
+    segment_softmax,
+)
 from .periods import EndContext, enabled, lookback
+
+
+class Received(nn.Module):
+    @timed("neighbors.received")
+    def __init__(self, spec, hidden, labels):
+        super().__init__()
+        depth = spec["tree/depth"]
+        self.relation = nn.Embedding(labels, hidden)
+        self.q = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(depth))
+        self.k = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(depth))
+        self.v = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(depth))
+        self.merge = nn.ModuleList(
+            nn.Sequential(nn.Linear(2 * hidden, hidden), nn.SiLU(), normalization(hidden)) for _ in range(depth)
+        )
+
+    def forward(self, sinks, sources, edges, label):
+        source, sink = edges
+        tokens = sources[source] + self.relation(label)
+        for query, key, value, merge in zip(self.q, self.k, self.v, self.merge):
+            score = (query(sinks)[sink] * key(tokens)).sum(-1) / math.sqrt(sinks.shape[-1])
+            weight = segment_softmax(score, sink, len(sinks))
+            neighbor = sinks.new_zeros(sinks.shape).index_add(0, sink, value(tokens) * weight[:, None])
+            sinks = merge(torch.cat((sinks, neighbor), -1))
+        return sinks
 
 
 class TreeNet(nn.Module):

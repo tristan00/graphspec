@@ -21,6 +21,29 @@ from .layers import (
 from .periods import EndContext, enabled, gather_end
 
 
+class Received(nn.Module):
+    @timed("snapshot.received")
+    def __init__(self, spec, hidden, labels):
+        super().__init__()
+        self.mode = spec["snapshot/spatial"]
+        self.layers = nn.ModuleList(
+            Spatial(hidden, self.mode, labels, {}, spec["dropout"], 1, labels) for _ in range(spec["snapshot/layers"])
+        )
+        self.register_buffer("grouped", torch.arange(labels), persistent=False)
+
+    def forward(self, sinks, sources, edges, label):
+        count = len(sources)
+        joined = torch.stack((edges[0], edges[1] + count))
+        groups = None
+        if self.mode == "relational":
+            groups = Groups(joined, label, self.grouped, count + len(sinks))
+        elif self.mode == "relational_attention":
+            groups = label
+        for layer in self.layers:
+            sinks = layer(torch.cat((sources, sinks)), joined, groups)[count:]
+        return sinks
+
+
 class SnapshotNet(nn.Module):
     @timed("snapshot.snapshotnet")
     def __init__(self, cfg, registry):

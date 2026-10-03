@@ -12,7 +12,7 @@ from graphspec.operations import pipeline
 from graphspec.operations.negatives import needed
 from graphspec.operations.operation import Refused
 from graphspec.views.view import STEPS
-from tuning.families.model_spec import TRAINING, describe, groups, realisable
+from tuning.families.model_spec import TRAINING, describe, drawn, groups, realisable
 from tuning.families.model_spec import space as model_space
 from tuning.measures import objective
 
@@ -193,36 +193,51 @@ def training(config):
     return {parameter.name: config[parameter.name] for parameter in TRAINING}
 
 
+@timed("selector.statics")
+def statics(models, held):
+    return {
+        **{"model/" + parameter.name: parameter.options for parameter in models},
+        **{parameter.name: parameter.options for parameter in held},
+    }
+
+
 @timed("selector.observation")
 def observation(registry, config, value, bounds, template, **attrs):
     params, distributions = {}, {}
     models, trainings = spaces(registry, bounds)
+    held = pipeline_space(registry, template, bounds)
+    static = statics(models, held)
 
     @timed("selector.observation.enter")
-    def enter(prefix, parameters, spec):
-        lookup = {parameter.name: parameter for parameter in parameters}
-        for name, setting in specs.canonical(parameters, spec).items():
-            params[prefix + name], distributions[prefix + name] = setting, distribution(lookup[name])
+    def enter(prefix, parameters, spec, drawing):
+        @timed("selector.observation.enter.read")
+        def read(parameter):
+            if parameter.name not in spec:
+                raise ValueError("spec lacks the active parameter " + parameter.name)
+            return record(prefix, parameter, parameter.check(spec[parameter.name]))
+
+        extra = sorted(set(spec) - set(drawing(parameters, read)))
+        if extra:
+            raise ValueError("spec sets inactive or unknown parameters: " + ", ".join(extra))
 
     @timed("selector.observation.record")
-    def record(parameter, value):
-        name = keyed("", parameter, static)
+    def record(prefix, parameter, value):
+        name = keyed(prefix, parameter, static)
         params[name], distributions[name] = value, distribution(parameter)
         return value
 
-    enter("model/", models, config["model"])
-    enter("", trainings, training(config))
-    enter("graph/", graph_space(registry, config["model"], bounds), config["graph"])
-    held = pipeline_space(registry, template, bounds)
-    static = {parameter.name: parameter.options for parameter in held}
-    recorded(registry, template, held, pipeline.flattened(template, config["pipeline"]), record, config["graph"])
+    enter("model/", models, config["model"], drawn)
+    enter("", trainings, training(config), specs.draw)
+    enter("graph/", graph_space(registry, config["model"], bounds), config["graph"], specs.draw)
+    flat = pipeline.flattened(template, config["pipeline"])
+    recorded(registry, template, held, flat, lambda parameter, value: record("", parameter, value), config["graph"])
     if "max_seconds" in config:
-        enter("", (runtime_parameter(config["max_seconds"]),), {"max_seconds": config["max_seconds"]})
+        enter("", (runtime_parameter(config["max_seconds"]),), {"max_seconds": config["max_seconds"]}, specs.draw)
     return tpe.record(value, params, distributions, config=config, **attrs)
 
 
 @timed("selector.outside")
-def outside(parameters, spec):
+def outside(parameters, spec, drawing):
     names = []
 
     @timed("selector.outside.read")
@@ -237,20 +252,21 @@ def outside(parameters, spec):
             names.append(parameter.name)
         return value
 
-    specs.draw(parameters, read)
+    drawing(parameters, read)
     return names
 
 
 @timed("selector.excluded")
 def excluded(registry, config, bounds, template):
     models, trainings = spaces(registry, bounds)
+    flat = pipeline.flattened(template, config["pipeline"])
     return (
-        outside(models, config["model"])
-        + outside(trainings, training(config))
-        + outside(graph_space(registry, config["model"], bounds), config["graph"])
-        + outside(pipeline_space(registry, template, bounds), pipeline.flattened(template, config["pipeline"]))
+        outside(models, config["model"], drawn)
+        + outside(trainings, training(config), specs.draw)
+        + outside(graph_space(registry, config["model"], bounds), config["graph"], specs.draw)
+        + outside(pipeline_space(registry, template, bounds), flat, specs.draw)
         + refused(registry, config)
-        + (outside((runtime_parameter(config["max_seconds"]),), config) if "max_seconds" in config else [])
+        + (outside((runtime_parameter(config["max_seconds"]),), config, specs.draw) if "max_seconds" in config else [])
     )
 
 
@@ -278,7 +294,7 @@ def metadata(registry, config, seed, training_seed, bounds, template, **extra):
 @timed("selector.configuration")
 def configuration(registry, choose, training_seed, bounds, seconds, template):
     models, trainings = spaces(registry, bounds)
-    model = specs.draw(models, lambda parameter: choose("model/", parameter))
+    model = drawn(models, lambda parameter: choose("model/", parameter))
     config = dict(
         seed=training_seed, model=model, **specs.draw(trainings, lambda parameter: choose("", parameter))
     )
@@ -323,7 +339,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
         )
     study = tpe.study(seed, SETTINGS, records)
     trial = study.ask()
-    static = {parameter.name: parameter.options for parameter in pipeline_space(registry, template, bounds)}
+    static = statics(spaces(registry, bounds)[0], pipeline_space(registry, template, bounds))
     config = configuration(
         registry,
         lambda prefix, parameter: tpe.propose(trial, keyed(prefix, parameter, static), distribution(parameter)),

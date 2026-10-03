@@ -20,6 +20,7 @@ READ = (
     "option_sequence",
     "action_option",
     "action_kind",
+    "action_actor",
     "action_values",
     "role_action",
     "role_name",
@@ -88,7 +89,12 @@ class Offered:
                 )
             )
             found["action"].append(
-                dict(option=owner + options, kind=kind, values=np.asarray(held["action_values"], np.float32).reshape(len(owner), columns))
+                dict(
+                    option=owner + options,
+                    kind=kind,
+                    actor=tokens[np.asarray(held["action_actor"], np.int64)].astype(np.int64),
+                    values=np.asarray(held["action_values"], np.float32).reshape(len(owner), columns),
+                )
             )
             found["role"].append(
                 dict(

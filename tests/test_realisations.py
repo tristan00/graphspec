@@ -1,5 +1,6 @@
 import copy
 import logging
+import re
 import time
 
 import numpy as np
@@ -21,12 +22,13 @@ from tuning.bank.bank import Bank
 from tuning.batches import inputs
 from tuning.batches.batching import batches, pack_batch
 from tuning.families import model_spec
-from tuning.families.heads import FIELDS, NONE, REALISATION, coded, refused
+from tuning.families import options as channel
+from tuning.families.heads import FIELDS, NONE, REALISATION, coded, realisation, refused
 from tuning.families.model_spec import VIEWS, realisable, space, views
 from tuning.families.models import build as network
 from tuning.families.options import Node
 from tuning.families.periods import blocks as windows
-from tuning.fits.guards import Guard, routed
+from tuning.fits.guards import STATE, Guard, captured, routed
 from tuning.fits.losses import Summed, counting, outcomes
 from tuning.fits.training import fit
 from tuning.statement import state
@@ -41,8 +43,9 @@ UNSEEN += ["target at of put of show", "target made of put of show"]
 UNREAD = ("available", "chosen", "order", "shown", "logged", "generator", "seed", "drawn")
 PACKED, BUILT, SHOWN = {}, {}, {}
 SHARED = (banks, registered)
-SHIPPED = dict(node=("picked", []), vector=("stated", UNSEEN))
-LAST = dict(node=1, vector=2)
+STRUCTURAL = ("action_nodes", "actor_edge", "set_edge")
+SHIPPED = dict(node=("picked", []), vector=("stated", UNSEEN), **{name: ("stated", UNSEEN) for name in STRUCTURAL})
+LAST = dict(node=1, vector=2, **{name: 2 for name in STRUCTURAL})
 ALONE = 1e-5
 REACHED = dict(
     node={"fields.role.weight", "fields.node.0.weight", "fields.node.0.bias"},
@@ -104,6 +107,8 @@ class Realised:
     reads = FIELDS
     together = False
     back = False
+    structure = False
+    actor = False
 
     def __init__(self, built, **settings):
         self.built, self.settings = built, settings
@@ -522,15 +527,21 @@ def slotted(held, b):
 def test_each_option_scores_as_it_does_packed_alone_and_one_step_trains_every_family_under_each_shipped_realisation(
     banks, family, monkeypatch
 ):
-    started, largest = time.perf_counter(), {}
+    started, largest, plain = time.perf_counter(), {}, {}
     for name, (bank, _) in sorted(SHIPPED.items()):
         held = opened(banks, bank)
         cfg = configured(held, name, modelled(family), PLAIN)
+        if name in STRUCTURAL and model_spec.unstructured(cfg["model"]) is not None:
+            continue
         torch.manual_seed(5)
         net = network(cfg, held.fitted(cfg))
         blocks = sorted(held.blocks(1, 2, cfg))
         chosen = windows(held, [block for block in blocks if block[0] == blocks[-1][0]][-LAST[name] :], cfg)
         b = pack_batch(held, chosen, cfg, "cpu")
+        if (bank, LAST[name]) not in plain:
+            unrealised = dict(cfg, model=dict(cfg["model"], **{REALISATION: NONE}))
+            plain[bank, LAST[name]] = captured(net, pack_batch(held, chosen, unrealised, "cpu"))[0]
+        assert torch.allclose(captured(net, b)[0], plain[bank, LAST[name]], rtol=STATE, atol=STATE), name
         a, slots = alone(held, cfg, chosen, monkeypatch)
         assert len(a["options"]["sequence"]) == len(b["options"]["sequence"]) > len(chosen)
         assert np.bincount(np.asarray(a["options"]["decision"])).max() == 1
@@ -546,7 +557,10 @@ def test_each_option_scores_as_it_does_packed_alone_and_one_step_trains_every_fa
         loss.backward()
         torch.optim.SGD(net.parameters(), lr=0.01).step()
         reached = {key for key, value in net.head.options.named_parameters() if value.grad is not None and value.grad.abs().sum() > 0}
-        assert torch.isfinite(loss) and reached == REACHED[name], (name, sorted(reached))
+        wanted = REACHED[name] if name in REACHED else {key for key, _ in net.head.options.named_parameters()}
+        assert torch.isfinite(loss) and reached == wanted, (name, sorted(reached ^ wanted))
+    reading = model_spec.STRUCTURE[family] is None
+    assert sorted(largest) == sorted(name for name in SHIPPED if reading or name not in STRUCTURAL)
     LOG.info("options alone family=%s largest=%s exit seconds=%.3f", family, largest, time.perf_counter() - started)
 
 
@@ -606,4 +620,126 @@ def test_the_node_realisation_reads_options_of_one_action_whose_one_target_is_a_
     assert {"node", "deaf"}.isdisjoint(offering(stated).options) and "vector" in offering(stated).options
     assert {"node", "vector", "deaf"} <= set(offering(chosen).options) and offering(chosen).options[0] == NONE
     LOG.info("node realisation refusals exit seconds=%.3f", time.perf_counter() - started)
+
+
+class Recording(nn.Module):
+    @timed("realisations.Recording.__init__")
+    def __init__(self):
+        super().__init__()
+        self.held = []
+
+    def forward(self, sinks, sources, edges, label):
+        self.held.append((len(sinks), edges[0].tolist(), edges[1].tolist(), label.tolist()))
+        return sinks
+
+
+@timed("realisations.acted")
+def acted(owner, options, codes, sequence, places):
+    return dict(
+        sequence=torch.tensor([sequence] * options),
+        decision=torch.zeros(options, dtype=torch.long),
+        action_option=torch.tensor(owner),
+        action_place=torch.tensor(places),
+        role_action=torch.tensor([action for action, _ in codes]),
+        role_code=torch.tensor([code for _, code in codes]),
+    )
+
+
+def test_each_structural_realisation_puts_through_one_channel_the_elements_its_row_of_the_plan_states(banks, monkeypatch):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    slot, found = len(coded(held.registry.schema)[1]), {}
+
+    @timed("realisations.recording")
+    def recording(spec, hidden, labels):
+        found.update(labels=labels, module=Recording())
+        return found["module"]
+
+    monkeypatch.setattr(channel, "received", recording)
+    targets, actors = [(0, 0), (0, 3), (1, 1)], [(0, 0), (0, 3), (0, slot), (1, 1), (1, slot)]
+    wanted = dict(
+        action_nodes=(targets, slot, (2, [0, 1, 2], [0, 0, 1], [0, 3, 1])),
+        actor_edge=(actors, slot + 1, (3, [0, 1, 3, 2, 2, 4], [0, 1, 2, 0, 1, 2], [0, 3, 1, slot, slot, slot])),
+        set_edge=(actors, slot + 1, (2, [0, 1, 2, 3, 4], [0, 0, 0, 1, 1], [0, 3, slot, 1, slot])),
+    )
+    for name, (codes, labels, joined) in wanted.items():
+        module = REALISATIONS.named(name).module(4, 3, dict(view="snapshot"), held.registry)
+        fields = dict(kind=torch.ones(2, 4), targets=torch.ones(len(codes), 4), parameters=torch.ones(2, 3))
+        options, actions = module(fields, acted([0, 0], 2, codes, False, [0, 1]))
+        assert (found["labels"], found["module"].held) == (labels, [joined]), name
+        assert options.shape == actions.shape == (2, 4) and torch.equal(options[1], module.empty.detach())
+    base = held.registry.schema.mapping()
+    bare = varied(base, "stay", dict(roles={}, parameters=[]), {})
+    assert refused("actor_edge", bare).startswith(
+        "the realisation of options actor_edge cannot read the options of this bank: the kind of action stay of the "
+        "kind of task turn states no role, and the realisation joins the actor of an action to each of its targets"
+    )
+    assert refused("action_nodes", bare) is None and refused("set_edge", bare) is None
+    LOG.info("structure of realisations exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_through_each_family_that_reads_them_a_set_of_actions_encodes_alike_in_any_order_and_a_sequence_keeps_its_order(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    slot, generator = len(coded(held.registry.schema)[1]), torch.Generator().manual_seed(5)
+    kind, parameters = torch.randn(2, 8, generator=generator), torch.randn(2, 3, generator=generator)
+    own = {0: (torch.randn(1, 8, generator=generator), [0]), 1: (torch.randn(2, 8, generator=generator), [3, 1])}
+    actor, picked = torch.randn(1, 8, generator=generator), [0, 1, 1, 0]
+    readers = [family for family in VIEWS if model_spec.STRUCTURE[family] is None]
+    for family in readers:
+        for name in STRUCTURAL:
+            spec = configured(held, name, modelled(family), PLAIN)["model"]
+            torch.manual_seed(5)
+            module = REALISATIONS.named(name).module(8, 3, spec, held.registry).eval()
+            codes, parts = [], []
+            for at, action in enumerate(picked):
+                rows, labels = own[action]
+                parts += [rows] + ([actor] if realisation(name).actor else [])
+                codes += [(at, code) for code in labels] + ([(at, slot)] if realisation(name).actor else [])
+            fields = dict(kind=kind[picked], targets=torch.cat(parts), parameters=parameters[picked])
+            encoded = []
+            for sequence in (False, True):
+                with torch.no_grad():
+                    options = module(fields, acted([0, 0, 1, 1], 2, codes, sequence, [0, 1, 0, 1]))[0]
+                encoded.append(torch.allclose(options[0], options[1], rtol=1e-6, atol=1e-6))
+            assert encoded == [True, False], (family, name)
+    LOG.info("order through families exit families=%d seconds=%.3f", len(readers), time.perf_counter() - started)
+
+
+def test_a_family_that_passes_no_message_over_a_graph_reads_no_structural_realisation_and_a_search_never_offers_it(banks):
+    from importlib import import_module
+
+    from tuning.searches.selector import excluded, keyed, statics
+
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    readers = [family for family in VIEWS if model_spec.STRUCTURE[family] is None]
+    assert sorted(model_spec.STRUCTURE) == sorted(VIEWS) and readers == ["snapshot", "mixed", "event_graph", "tree"]
+    assert all(hasattr(import_module("tuning.families." + family), "Received") == (family in readers) for family in VIEWS)
+    assert [name for name in REALISATIONS.shipped if realisation(name).structure] == list(STRUCTURAL)
+    for family, name in (("walks", "actor_edge"), ("memory", "set_edge"), ("signal", "action_nodes")):
+        cfg = configured(held, name, modelled(family), PLAIN)
+        reason = model_spec.STRUCTURE[family]
+        stops = "the realisation of options %s puts options into the graph of the family of its model, and the family %s reads no option put there: %s"
+        with pytest.raises(ValueError, match="^" + re.escape(stops % (name, family, reason)) + "$"):
+            routed(held, cfg)
+        with pytest.raises(ValueError, match="^" + re.escape("the family %s reads no option put into its graph: %s" % (family, reason))):
+            network(cfg, held.fitted(cfg))
+    spatial = dict(modelled("snapshot"), **{"snapshot/spatial": "none"})
+    with pytest.raises(ValueError, match="the family snapshot reads no option put there: its spatial layer is none"):
+        routed(held, configured(held, "set_edge", spatial, PLAIN))
+    rng, parameters = np.random.default_rng(5), realisable(held.registry, space(held.registry))
+    drawn = [model_spec.drawn(parameters, lambda parameter: parameter.uniform(rng)) for _ in range(300)]
+    assert all(spec[REALISATION] not in STRUCTURAL or model_spec.unstructured(spec) is None for spec in drawn)
+    assert {spec["view"] for spec in drawn} == set(VIEWS)
+    assert {spec[REALISATION] for spec in drawn if spec["view"] in readers} >= set(STRUCTURAL)
+    template = support.template()
+    assert excluded(held.registry, configured(held, "actor_edge", modelled("walks"), PLAIN), {}, template) == [REALISATION]
+    assert excluded(held.registry, configured(held, "actor_edge", modelled("tree"), PLAIN), {}, template) == []
+    static, (choosing,) = statics(parameters, ()), [parameter for parameter in parameters if parameter.name == REALISATION]
+    for family, reads in (("walks", False), ("tree", True)):
+        fitted = model_spec.fitting(choosing, dict(view=family))
+        assert (set(STRUCTURAL) <= set(fitted.options)) == reads and set(STRUCTURAL).isdisjoint(fitted.options) != reads
+        assert keyed("model/", fitted, static) == "model/" + REALISATION + ("" if reads else "|" + "|".join(fitted.options))
+    LOG.info("structure read by families exit seconds=%.3f", time.perf_counter() - started)
 

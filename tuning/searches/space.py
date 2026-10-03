@@ -16,7 +16,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.registries import carried, restored
-from tuning.families.model_spec import TRAINING, groups
+from tuning.families.model_spec import TRAINING, drawn, groups
 from tuning.families.model_spec import space as model_space
 
 from .selector import (
@@ -153,7 +153,7 @@ class Space:
                 return parameter.check(base[name])
             return parameter.uniform(rng)
 
-        model = specs.draw(self.models, lambda p: choose("model/", p))
+        model = drawn(self.models, lambda p: choose("model/", p))
         key = groups(model)
         if key not in self.graphs:
             self.graphs[key] = graph_space(self.registry, model, self.bounds)

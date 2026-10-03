@@ -9,6 +9,23 @@ from .periods import enabled
 KINDS = 4
 
 
+class Received(nn.Module):
+    @timed("events.received")
+    def __init__(self, spec, hidden, labels):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            TemporalEdges(hidden, spec["event_graph/message"] == "attention", labels, spec["dropout"], None)
+            for _ in range(spec["event_graph/layers"])
+        )
+
+    def forward(self, sinks, sources, edges, label):
+        count = len(sources)
+        joined = torch.stack((edges[0], edges[1] + count))
+        for layer in self.layers:
+            sinks = layer(torch.cat((sources, sinks)), joined, label, None)[count:]
+        return sinks
+
+
 class EventGraphNet(nn.Module):
     @timed("events.eventgraphnet")
     def __init__(self, cfg, registry):

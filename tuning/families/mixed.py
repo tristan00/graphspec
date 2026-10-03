@@ -44,6 +44,25 @@ class MessageLayer(nn.Module):
         return self.norm(h + self.dropout(update - h))
 
 
+class Received(nn.Module):
+    @timed("message_net.received")
+    def __init__(self, spec, hidden, labels):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            MessageLayer(hidden, spec["mixed/aggregation"], spec["mixed/update"], spec["dropout"])
+            for _ in range(spec["mixed/layers"])
+        )
+        self.register_buffer("shifts", torch.arange(CODE_BITS), persistent=False)
+
+    def forward(self, sinks, sources, edges, label):
+        count = len(sources)
+        joined = torch.stack((edges[0], edges[1] + count))
+        edge = torch.cat((((label[:, None] >> self.shifts) & 1).float(), sinks.new_zeros((len(label), 2))), 1)
+        for layer in self.layers:
+            sinks = layer(torch.cat((sources, sinks)), joined, edge)[count:]
+        return sinks
+
+
 class MixedNet(nn.Module):
     @timed("message_net.mixednet")
     def __init__(self, cfg, registry):

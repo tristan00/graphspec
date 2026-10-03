@@ -7,7 +7,7 @@ from torch import nn
 from graphspec.infra.timing import timed
 
 from .heads import ONE, coded, realisation
-from .layers import padded
+from .layers import mean, padded
 
 LOG = logging.getLogger(__name__)
 STRUCTURE = ("sequence", "decision", "action_option", "action_place", "role_action", "role_code")
@@ -26,14 +26,14 @@ def slots(encoding, columns, name):
 
 class Fields(nn.Module):
     @timed("options.Fields.__init__")
-    def __init__(self, registry, hidden, nodes, reads):
+    def __init__(self, registry, hidden, nodes, reads, actor):
         super().__init__()
         actions, roles = coded(registry.schema)
         self.reads = reads
         if "kind" in reads:
             self.kind = nn.Embedding(len(actions), hidden)
         if "targets" in reads:
-            self.role = nn.Embedding(len(roles), hidden)
+            self.role = nn.Embedding(len(roles) + actor, hidden)
             self.relation = nn.Embedding(registry.relation_slots, hidden)
             self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU())
 
@@ -92,13 +92,56 @@ class Vector(nn.Module):
         return options, actions
 
 
+@timed("options.received")
+def received(spec, hidden, labels):
+    from . import event_graph, mixed, snapshot, tree
+    from .model_spec import unstructured
+
+    reason = unstructured(spec)
+    if reason is not None:
+        raise ValueError("the family %s reads no option put into its graph: %s" % (spec["view"], reason))
+    families = dict(snapshot=snapshot, mixed=mixed, event_graph=event_graph, tree=tree)
+    return families[spec["view"]].Received(spec, hidden, labels)
+
+
+class Structured(nn.Module):
+    @timed("options.Structured.__init__")
+    def __init__(self, hidden, width, spec, registry, element, actor):
+        super().__init__()
+        self.slot, self.element = len(coded(registry.schema)[1]), element
+        self.place = nn.Linear(1, hidden, bias=False)
+        self.action = nn.Sequential(nn.Linear(hidden + width, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
+        self.empty = nn.Parameter(torch.zeros(hidden))
+        self.received = received(spec, hidden, self.slot + actor)
+
+    def forward(self, fields, structure):
+        kind, owner = fields["kind"], structure["action_option"]
+        code, acting = structure["role_code"], structure["role_action"]
+        place = self.place(torch.log1p(structure["action_place"].float())[:, None])
+        actions = self.action(torch.cat((kind + place * structure["sequence"][owner][:, None], fields["parameters"]), -1))
+        if self.element == "action":
+            source, sink, sinks = torch.arange(len(code), device=code.device), acting, actions
+        else:
+            target = torch.nonzero(code != self.slot).flatten()
+            actor = torch.nonzero(code == self.slot).flatten()
+            held = torch.full((len(actions),), -1, dtype=torch.long, device=code.device).index_put((acting[actor],), actor)
+            each = torch.arange(len(target), device=code.device)
+            source, sink, sinks = torch.cat((target, held[acting[target]])), torch.cat((each, each)), actions[acting[target]]
+        found = self.received(sinks, fields["targets"], (source, sink), code[source])
+        acted = found if self.element == "action" else mean(found, acting[target], len(actions))
+        count = acted.new_zeros(len(structure["sequence"])).index_add(0, owner, acted.new_ones(len(owner)))
+        total = acted.new_zeros((len(count), acted.shape[1])).index_add(0, owner, acted)
+        options = total / count.clamp_min(1)[:, None] + self.empty * (count == 0)[:, None]
+        return options, acted
+
+
 class Options(nn.Module):
     @timed("options.Options.__init__")
     def __init__(self, name, registry, hidden, nodes, spec):
         super().__init__()
         entry = realisation(name)
         self.name, self.hidden = name, hidden
-        self.fields = Fields(registry, hidden, nodes, entry.reads)
+        self.fields = Fields(registry, hidden, nodes, entry.reads, entry.actor)
         width = registry.encoding.width(registry.schema.parameters())
         self.realised = entry.module(hidden, width, spec, registry)
 

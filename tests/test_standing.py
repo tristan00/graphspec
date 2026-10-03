@@ -193,8 +193,11 @@ RECORDED = {
     "generator of options nearest": (2, "ac55ff2fd6f8de611381d1618a83bea64b649a404889cda22c899087737ad269"),
     "generator of options others": (2, "342ba7758ee0a0a18c9abfc2fb3eb75b5489b19fadb4de5df1c94b2b742d28da"),
     "generator of options ruled": (2, "95629735c8ae581c5f82505575bd1bef3a0156cfc330502f680c7e3f7e96ad93"),
-    "realisation of options node": (2, "aa054145d5062dbbaba6f7452bc82be0052c200cdf2f3702adedf8229b41978e"),
-    "realisation of options vector": (2, "f25d2ec81fbce4df8a0e75a64a854ce4e507a449553afc31965233a9130a00ec"),
+    "realisation of options action_nodes": (1, "e7a7f5a65d7e4333ce8e7447ecf7e48818a7a415aafafc04917ddf150dc55756"),
+    "realisation of options actor_edge": (1, "14379ca1d0423efb0400718099d28d0bce7275f156fdcb8c2efed92520c2c84f"),
+    "realisation of options node": (3, "9e2f7529564586a05df7cab8dd80b860b99e39bddd6e10ca4adee255fa94c4ab"),
+    "realisation of options set_edge": (1, "9d3a9776cfcead15b0c966c129d525807fa9a9bb7aa7015e09851d3752a40cd5"),
+    "realisation of options vector": (3, "f4215998cf0174ac8dc07e6c7bdcc8dc44c08d0222870ab0fa2e15259d95f395"),
     "distance between states euclidean":(1, "e4e4459504ad3075425ece6c3027f370c629d6294b28762ae56fa38fe4c60211"),
     "column type category": (1,"e242885fbfd05f259fab475426d315185cfb3e691ebe8ddf2361297af9b53221"),
     "column type flag": (1, "35fcdebca490f610d7cfdc1a9aaf9b36e23519328df31803f32bb770a46c3f80"),
@@ -370,6 +373,7 @@ CALLED = {
     "tuning/batches/tensors.py:prepare": 71178,
     "tuning/families/affinity.py:AffinityNet.forward": 59,
     "tuning/families/event_graph.py:EventGraphNet.forward": 84,
+    "tuning/families/event_graph.py:Received.forward": 12,
     "tuning/families/layers.py:Asked.forward": 1046,
     "tuning/families/layers.py:CausalAttention.forward": 682,
     "tuning/families/layers.py:EvolvingLayer.forward": 4,
@@ -422,12 +426,15 @@ CALLED = {
     "tuning/families/memory.py:Rule.state": 223,
     "tuning/families/mixed.py:MessageLayer.forward": 138,
     "tuning/families/mixed.py:MixedNet.forward": 69,
+    "tuning/families/mixed.py:Received.forward": 12,
     "tuning/families/model_spec.py:blocks": 6251,
     "tuning/families/model_spec.py:memory_state": 9258,
+    "tuning/families/model_spec.py:samples.<locals>.add": 12343,
     "tuning/families/options.py:Fields.forward": 60,
     "tuning/families/options.py:Node.forward": 40,
     "tuning/families/options.py:Options.encoded": 160,
     "tuning/families/options.py:Options.forward": 60,
+    "tuning/families/options.py:Structured.forward": 84,
     "tuning/families/options.py:Vector.forward": 60,
     "tuning/families/periods.py:EndContext.forward": 135,
     "tuning/families/periods.py:gather_end": 11,
@@ -440,6 +447,7 @@ CALLED = {
     "tuning/families/sequence.py:SequenceNet.transformer": 80,
     "tuning/families/signal.py:SignalNet.adjacency": 62,
     "tuning/families/signal.py:SignalNet.forward": 62,
+    "tuning/families/snapshot.py:Received.forward": 45,
     "tuning/families/snapshot.py:SnapshotNet.coupling": 28,
     "tuning/families/snapshot.py:SnapshotNet.entity_sequence": 201,
     "tuning/families/snapshot.py:SnapshotNet.forward": 244,
@@ -449,6 +457,7 @@ CALLED = {
     "tuning/families/snapshot.py:SnapshotNet.previous": 18,
     "tuning/families/snapshot.py:SnapshotNet.referred": 244,
     "tuning/families/snapshot.py:SnapshotNet.values": 244,
+    "tuning/families/tree.py:Received.forward": 12,
     "tuning/families/tree.py:TreeNet.encode": 266,
     "tuning/families/tree.py:TreeNet.forward": 75,
     "tuning/families/walks.py:WalkNet.forward": 202,
@@ -1154,7 +1163,7 @@ def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_
     assert unrecorded(edited, RECORDED, dict(held, **{"graphspec.window": version + 1}))[0].startswith(
         "record graphspec.window at version %d with the digest " % (version + 1)
     )
-    for (prefix, place), count in zip(HELD.items(), (4, 2)):
+    for (prefix, place), count in zip(HELD.items(), (4, 5)):
         write(tmp_path, place, (ROOT / place).read_text(encoding="utf-8") + "\nEDITED = 1\n")
         drawing = sorted(name for name in entries if name.startswith(prefix))
         assert len(drawing) == count
