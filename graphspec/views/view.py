@@ -8,6 +8,7 @@ from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema import time as clock
+from graphspec.schema.decisions import ROLES, roled
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ABOUT, ALWAYS, NEVER, SEVERAL
 
@@ -403,6 +404,111 @@ def referred(facts, registry, held):
         time.perf_counter() - started,
     )
     return result
+
+
+def sighted(facts, group, rows, observer):
+    started = time.perf_counter()
+    stamps = facts.stamps(group)
+    allowed = visible.allowed(
+        len(stamps["since"]), facts.arrays[group + "_seen_row"], facts.arrays[group + "_seen_observer"], observer
+    )
+    rows = rows[allowed[rows]]
+    result = int(np.maximum(stamps["since"], stamps["known"])[rows].min()) if len(rows) else None
+    LOG.debug("sighted exit graph=%s group=%s rows=%d seconds=%.4f", facts.name, group, len(rows), time.perf_counter() - started)
+    return result
+
+
+def untargeted(facts, registry, held, row):
+    started = time.perf_counter()
+    action = int(facts.role_action[row])
+    option = int(facts.action_option[action])
+    task = int(facts.option_task[option])
+    kinds = registry.schema.tasks["kinds"]
+    kind = list(kinds)[int(facts.task_kind[task])]
+    name = list(kinds[kind]["target"]["actions"])[int(facts.action_kind[action])]
+    declared = kinds[kind]["target"]["actions"][name]
+    source, other, code = (int(facts.arrays["role_" + part][row]) for part in ("source", "target", "code"))
+    if other < 0:
+        named = "the node %s" % facts.keys[source]
+        rows = np.flatnonzero(np.asarray(facts.obs_entity) == source)
+    else:
+        named = "the edge of %s from %s to %s" % (registry.by_code[code].name, facts.keys[source], facts.keys[other])
+        first, second = np.asarray(facts.fact_source), np.asarray(facts.fact_target)
+        either = registry.flipped[code] == code
+        rows = np.flatnonzero(
+            np.asarray(facts.fact_present)
+            & (np.asarray(facts.fact_code) == code)
+            & (((first == source) & (second == other)) | (either & (first == other) & (second == source)))
+        )
+    seen = sighted(facts, "obs" if other < 0 else "fact", rows, held["observer"])
+    result = (
+        "the target %s of the action %d, of the kind %s, of the option %s of the decision %d of the kind %s of graph %s "
+        "names %s, which is not observed at the step of its decision, at %s; %s"
+        % (
+            list(declared["roles"])[int(facts.role_name[row])],
+            action - int(np.searchsorted(facts.action_option, option)),
+            name,
+            facts.options[option],
+            int(facts.task_key[task]),
+            kind,
+            facts.name,
+            named,
+            clock.shown(facts.task_time[task]),
+            "it is never observed" if seen is None else "it is first observed at " + clock.shown(seen),
+        )
+    )
+    LOG.debug("untargeted exit graph=%s row=%d seconds=%.4f", facts.name, row, time.perf_counter() - started)
+    return result
+
+
+def targeted(facts, registry, held, shown):
+    started = time.perf_counter()
+    action = np.asarray(facts.role_action, np.int64)
+    option = np.asarray(facts.action_option, np.int64)[action]
+    task = np.asarray(facts.option_task, np.int64)[option]
+    placed = np.full(len(facts.task_key), -1, np.int64)
+    placed[held["tasks"]] = held["task_step"]
+    moment, entities = placed[task], len(facts.kinds)
+    sort = roled(registry.schema)[
+        np.asarray(facts.task_kind, np.int64)[task],
+        np.asarray(facts.action_kind, np.int64)[action],
+        np.asarray(facts.role_name, np.int64),
+    ]
+    source, other, code = (np.asarray(facts.arrays["role_" + part], np.int64) for part in ("source", "target", "code"))
+    lost = []
+    nodes = np.flatnonzero((moment >= 0) & (sort == ROLES.index("node")))
+    offsets, lows, highs = spans.coverage(
+        np.asarray(shown.obs_entity), np.asarray(shown.obs_start), np.asarray(shown.obs_stop), entities
+    )
+    found = spans.all_covered(offsets, lows, highs, source[nodes], moment[nodes], moment[nodes] + 1)
+    if found >= 0:
+        lost.append(nodes[found])
+    edges = np.flatnonzero((moment >= 0) & (sort == ROLES.index("edge")))
+    relation, first, second = (np.asarray(shown.arrays["fact_" + part], np.int64) for part in ("code", "source", "target"))
+    either = registry.flipped[relation] == relation
+    known, ids = np.unique(
+        np.r_[
+            spans.encode(relation, first, second, entities),
+            spans.encode(relation[either], second[either], first[either], entities),
+        ],
+        return_inverse=True,
+    )
+    begun, ended = (np.r_[shown.arrays[name], shown.arrays[name][either]] for name in ("fact_start", "fact_stop"))
+    offsets, lows, highs = spans.coverage(ids.astype(np.int32), begun, ended, len(known))
+    wanted = spans.encode(code[edges], source[edges], other[edges], entities)
+    place = np.searchsorted(known, wanted)
+    named = place < len(known)
+    named[named] = known[place[named]] == wanted[named]
+    if not named.all():
+        lost.append(edges[np.flatnonzero(~named)[0]])
+    found = spans.all_covered(offsets, lows, highs, place[named], moment[edges][named], moment[edges][named] + 1)
+    if found >= 0:
+        lost.append(edges[np.flatnonzero(named)[found]])
+    if lost:
+        raise ValueError(untargeted(facts, registry, held, int(min(lost))))
+    LOG.debug(
+        "targeted exit graph=%s targets=%d seconds=%.4f", facts.name, len(nodes) + len(edges), time.perf_counter() - started
+    )
 
 
 @timed("view.view")

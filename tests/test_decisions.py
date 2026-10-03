@@ -277,6 +277,41 @@ def test_a_target_or_a_generator_that_does_not_resolve_stops_the_build_naming_th
     LOG.info("unresolved decisions exit seconds=%.3f", time.perf_counter() - started)
 
 
+def test_a_node_or_an_edge_an_action_targets_unobserved_at_the_step_of_its_decision_stops_the_build(tmp_path):
+    started = time.perf_counter()
+
+    @timed("decisions.later")
+    def later(case):
+        graph = case["graphs"][0]
+        graph["nodes"]["spot"].append("s5")
+        rows = graph["values"][1]["rows"]
+        for name, value in (("key", "s5"), ("since", 4), ("until", None), ("load", 1.0)):
+            rows[name].append(value)
+        graph["tasks"]["target"][0]["options"][1]["actions"][0]["targets"]["to"] = "s5"
+
+    @timed("decisions.unheld")
+    def unheld(case):
+        case["graphs"][0]["tasks"]["target"][0]["options"][2]["actions"][0]["targets"]["along"] = ["s0", "near", "s4"]
+
+    @timed("decisions.joined")
+    def joined(case):
+        unheld(case)
+        rows = case["graphs"][0]["edges"][0]["rows"]
+        for name, value in (("source", "s0"), ("target", "s4"), ("present", True), ("since", 4), ("until", None)):
+            rows[name].append(value)
+
+    where = "the target %s of the action 0, of the kind %s, of the option %s of the decision 10 of the kind turn of graph g0 "
+    edge = where % ("along", "cut", "cut") + "names the edge of near from s0 to s4, which is not observed at the step of its "
+    for name, change, message in (
+        ("later", later, where % ("to", "go", "go") + "names the node s5, which is not observed at the step of its "),
+        ("unheld", unheld, edge),
+        ("joined", joined, edge),
+    ):
+        seen = "never observed" if name == "unheld" else "first observed at the time 4"
+        refused(change, message + "decision, at the time 1; it is %s$" % seen, tmp_path / name)
+    LOG.info("unobserved targets exit seconds=%.3f", time.perf_counter() - started)
+
+
 @timed("decisions.equal")
 def equal(left, right):
     return left.dtype == right.dtype and np.array_equal(left, right, equal_nan=left.dtype.kind == "f")

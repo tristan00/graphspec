@@ -10,7 +10,7 @@ from graphspec.views.graph import conforms, referring, unobserved, unresolved, v
 from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
-VERSION = 53
+VERSION = 54
 REMOVES = "references"
 
 
@@ -88,10 +88,10 @@ def validate(facts, registry, splits):
     facts = sets.stored(facts, registry, {kind: sets.NODE for kind in registry.schema.sets})
     several = VALIDATED if registry.extras["several"] else None
     steps = views.TASKS if len(facts.task_key) else views.CHANGES
-    result = [
-        views.view(facts, registry, held, several)
-        for held in views.sequences(facts, registry, steps, unstated(splits))
-    ]
+    result = []
+    for held in views.sequences(facts, registry, steps, unstated(splits)):
+        result.append(views.view(facts, registry, held, several))
+        views.targeted(facts, registry, held, result[-1])
     LOG.debug(
         "validate exit graph=%s steps=%s views=%d seconds=%.4f",
         facts.name,

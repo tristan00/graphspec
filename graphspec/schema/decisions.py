@@ -319,6 +319,23 @@ def deciding(target):
     return target is not None and isinstance(TARGETS.named(target["kind"]), Decision)
 
 
+def roled(schema):
+    started = time.perf_counter()
+    actions = [
+        list(entry["target"]["actions"].values()) if deciding(entry["target"]) else []
+        for entry in schema.tasks["kinds"].values()
+    ]
+    width = max([len(found) for found in actions] + [1])
+    depth = max([len(action["roles"]) for found in actions for action in found] + [1])
+    result = np.full((len(actions), width, depth), -1, np.int8)
+    for kind, found in enumerate(actions):
+        for place, action in enumerate(found):
+            for role, entry in enumerate(action["roles"].values()):
+                result[kind, place, role] = ROLES.index(entry["sort"])
+    LOG.debug("roled exit kinds=%d seconds=%.4f", len(actions), time.perf_counter() - started)
+    return result
+
+
 def counted(schema, rows):
     started = time.perf_counter()
     kinds = schema.decided()
