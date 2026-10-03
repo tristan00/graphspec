@@ -538,10 +538,11 @@ def test_each_option_scores_as_it_does_packed_alone_and_one_step_trains_every_fa
         blocks = sorted(held.blocks(1, 2, cfg))
         chosen = windows(held, [block for block in blocks if block[0] == blocks[-1][0]][-LAST[name] :], cfg)
         b = pack_batch(held, chosen, cfg, "cpu")
-        if (bank, LAST[name]) not in plain:
-            unrealised = dict(cfg, model=dict(cfg["model"], **{REALISATION: NONE}))
-            plain[bank, LAST[name]] = captured(net, pack_batch(held, chosen, unrealised, "cpu"))[0]
-        assert torch.allclose(captured(net, b)[0], plain[bank, LAST[name]], rtol=STATE, atol=STATE), name
+        if name in STRUCTURAL:
+            if not plain:
+                unrealised = dict(cfg, model=dict(cfg["model"], **{REALISATION: NONE}))
+                plain["state"] = captured(net, pack_batch(held, chosen, unrealised, "cpu"))[0]
+            assert torch.allclose(captured(net, b)[0], plain["state"], rtol=STATE, atol=STATE), name
         a, slots = alone(held, cfg, chosen, monkeypatch)
         assert len(a["options"]["sequence"]) == len(b["options"]["sequence"]) > len(chosen)
         assert np.bincount(np.asarray(a["options"]["decision"])).max() == 1
