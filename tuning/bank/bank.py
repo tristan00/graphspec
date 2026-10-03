@@ -12,7 +12,7 @@ import pyarrow as pa
 import torch
 from numba import njit
 
-from graphspec import Registry, registries
+from graphspec import OPERATIONS, Registry, registries
 from graphspec.budgets import GraphLimits
 from graphspec.engine import join, schedule, segments, transform
 from graphspec.engine.edits import sliced
@@ -49,7 +49,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 53
+VIEW = 54
 TOKEN = (1 << 62) - 1
 
 
@@ -198,6 +198,13 @@ def written(folder, build):
 @timed("bank.coded")
 def coded():
     return dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION)
+
+
+@timed("bank.holding")
+def holding(entries, steps):
+    return frozenset((label, name) for label, name, _ in entries) | {
+        (OPERATIONS.label, step.operation.name) for step in steps
+    }
 
 
 def readings(registry, steps, several, storage, sees):
@@ -683,19 +690,22 @@ class Deriver(Bank):
         if not provisional.schema.added_columns():
             LOG.debug("deriver growing exit columns=0 seconds=%.4f", time.perf_counter() - started)
             return provisional
+        entries = registries.versions(self.reads(steps, spec, cfg))
         named = specs.digest(
             dict(
                 pipeline=[step.keyed() for step in steps],
                 device=self.device,
                 seed=self.seed,
                 versions=coded(),
-                entries=registries.versions(self.reads(steps, spec, cfg)),
+                entries=entries,
             )
         )
         path = viewed.folder / "added" / (named + ".json")
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            write_json(path, dict(states=self.trained(viewed, steps, provisional, cfg)))
+            with registries.keyed(holding(entries, steps)):
+                states = self.trained(viewed, steps, provisional, cfg)
+            write_json(path, dict(states=states))
         result = pipeline.grown(viewed.registry, steps, read_json(path)["states"])
         LOG.info("deriver growing exit columns=%d seconds=%.3f", len(result.schema.added_columns()), time.perf_counter() - started)
         return result
@@ -754,9 +764,10 @@ class Deriver(Bank):
                 members = [Graph.load(path, mapped=True) for path in paths]
                 beside = self.seconds(steps, self.groups(cfg)[index], cfg, True)
                 jobs.append(dict(members=members, beside=beside, paths=paths, spill=spill, destination=temporary))
-            schedule.variants(
-                jobs, self.fitted(cfg), steps, spec, chosen, self.seed, workers, self.limits(), self.partitions(cfg)
-            )
+            with registries.keyed(self.holds(cfg)):
+                schedule.variants(
+                    jobs, self.fitted(cfg), steps, spec, chosen, self.seed, workers, self.limits(), self.partitions(cfg)
+                )
             for (temporary, final), job in zip(folders, jobs):
                 shutil.rmtree(job["spill"])
                 temporary.replace(final)
@@ -810,8 +821,14 @@ class Deriver(Bank):
     def variant(self, cfg):
         key, steps, spec, chosen = self.stated(cfg)
         if key not in self.roots:
-            self.roots[key] = self.cache / "variants" / specs.digest(self.identity(cfg))
-        return self.roots[key], steps, spec, chosen
+            identity = self.identity(cfg)
+            self.roots[key] = self.cache / "variants" / specs.digest(identity), holding(identity["entries"], steps)
+        return self.roots[key][0], steps, spec, chosen
+
+    @timed("bank.Deriver.holds")
+    def holds(self, cfg):
+        self.variant(cfg)
+        return self.roots[self.stated(cfg)[0]][1]
 
     @timed("bank.Deriver.stamp")
     def stamp(self, cfg):
@@ -833,18 +850,19 @@ class Deriver(Bank):
             with Workspace(destination):
                 try:
                     members = [Graph.load(self.view(member, cfg), mapped=joining) for member in indices]
-                    segments.variant(
-                        members,
-                        self.seconds(steps, indices, cfg, joining),
-                        self.fitted(cfg),
-                        steps,
-                        spec,
-                        chosen,
-                        self.seed,
-                        self.limits(),
-                        self.partitions(cfg),
-                        destination,
-                    )
+                    with registries.keyed(self.holds(cfg)):
+                        segments.variant(
+                            members,
+                            self.seconds(steps, indices, cfg, joining),
+                            self.fitted(cfg),
+                            steps,
+                            spec,
+                            chosen,
+                            self.seed,
+                            self.limits(),
+                            self.partitions(cfg),
+                            destination,
+                        )
                 except BaseException as error:
                     traceback.clear_frames(error.__traceback__)
                     raise

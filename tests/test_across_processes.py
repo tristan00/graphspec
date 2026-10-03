@@ -22,6 +22,7 @@ from graphspec import (
     STORAGE,
     TIES,
     TYPES,
+    registries,
 )
 from graphspec.build.forms import Form
 from graphspec.infra.arrays import RESIDENT
@@ -232,7 +233,11 @@ def test_a_worker_holds_exactly_the_entries_its_caller_holds_or_stops_naming_one
     from graphspec.registries import REGISTRIES
 
     assert all(any(held is names for held in vars(import_module(names.module)).values()) for names in REGISTRIES)
-    started = spawned(registered.ready, (), carried, restored)
+    keyed = {(NEGATIVES.label, "parity")}
+    with registries.keyed(keyed):
+        started = spawned(registered.ready, (), carried, restored)
+    assert registries.READ["held"] is None
+    monkeypatch.setitem(registries.READ, "held", None)
     for names in REGISTRIES:
         monkeypatch.setattr(names, "held", dict(names.held))
     monkeypatch.setattr(processes, "FAILED", [])
@@ -240,7 +245,7 @@ def test_a_worker_holds_exactly_the_entries_its_caller_holds_or_stops_naming_one
     SEVERAL.held["stale"] = registered.middle
     del STEPS.held["changes"]
     started["initializer"](*started["initargs"])
-    assert guarded(abs, -1) == 1
+    assert guarded(abs, -1) == 1 and registries.READ["held"] == keyed
     assert NEGATIVES.named("parity").version == 1 and "stale" not in SEVERAL.names() and "changes" in STEPS.names()
     assert all(names.held[name] is names.shipped[name] for names in REGISTRIES for name in names.shipped)
     monkeypatch.setattr(registered.Kept, "version", 2)
@@ -276,7 +281,7 @@ def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(
         del registered.Vanished
     assert {
         (label, name)
-        for label, _, held in started["initargs"][0]
+        for label, _, held in started["initargs"][0][0]
         if held is not None
         for name, pickled, _ in held
         if pickled is not None

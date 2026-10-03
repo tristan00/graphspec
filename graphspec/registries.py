@@ -4,6 +4,7 @@ import pickle
 import sys
 import time
 from collections.abc import MutableMapping
+from contextlib import contextmanager
 from importlib import import_module
 
 from graphspec.infra.timing import timed
@@ -12,6 +13,7 @@ LOG = logging.getLogger(__name__)
 REGISTRIES = []
 CHANGES = itertools.count(1)
 GENERATION = 0
+READ = dict(held=None, by=None)
 
 
 def changed():
@@ -97,6 +99,13 @@ class Names:
     def named(self, name):
         if type(name) is not str or name not in self.held:
             raise KeyError("no %s is registered under the name %r" % (self.label, name))
+        if self.versioned and READ["by"] is not None and READ["held"] is not None and (self.label, name) not in READ["held"]:
+            raise ValueError(
+                "the operation %s reads the %s %s, which the key of the variant it derives does not hold; an "
+                "operation reads an entry it chooses by a parameter stated with "
+                "graphspec.operations.parameters.registered, and an entry the statement names from its place in the "
+                "statement, never by a name of its own" % (READ["by"], self.label, name)
+            )
         return self.held[name]
 
     def names(self):
@@ -108,6 +117,17 @@ def versions(read):
     found = sorted({(registry.label, name, version(registry.named(name))) for registry, names in read for name in names})
     LOG.debug("versions exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return [list(entry) for entry in found]
+
+
+@contextmanager
+def keyed(held):
+    started = time.perf_counter()
+    before, READ["held"] = READ["held"], frozenset(held)
+    try:
+        yield
+    finally:
+        READ["held"] = before
+        LOG.debug("keyed exit entries=%d seconds=%.4f", len(held), time.perf_counter() - started)
 
 
 def ship(registries):
@@ -140,11 +160,12 @@ def carried():
                 ) from error
         found.append((registry.label, registry.module, tuple(held)))
     LOG.debug("carried exit registries=%d seconds=%.4f", len(found), time.perf_counter() - started)
-    return tuple(found)
+    return tuple(found), READ["held"]
 
 
-def restored(entries):
+def restored(given):
     started = time.perf_counter()
+    entries, READ["held"] = given
     for module in sorted({module for _, module, held in entries if held is not None}):
         import_module(module)
     loaded = [

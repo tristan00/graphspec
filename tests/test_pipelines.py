@@ -324,6 +324,40 @@ def unseeing(facts, registry, held):
 unseeing.version = 2
 
 
+@timed("pipelines.ruled")
+def ruled(registry):
+    return (specs.choice("ruled/rule", NEGATIVES.names(), "degree"),)
+
+
+@timed("pipelines.ruling")
+def ruling(registry):
+    return (specs.registered("ruled/rule", NEGATIVES, "degree"),)
+
+
+@timed("pipelines.unruled")
+def unruled(registry):
+    return ()
+
+
+@timed("pipelines.chosen")
+def chosen(graph, registry, settings, seed, limits, carry, held):
+    NEGATIVES.named(settings["ruled/rule"])
+    return graph
+
+
+@timed("pipelines.fixed")
+def fixed(graph, registry, settings, seed, limits, carry, held):
+    NEGATIVES.named("hops")
+    return graph
+
+
+READERS = dict(
+    chosen=(chosen, ruled, "degree"),
+    fixed=(fixed, unruled, "hops"),
+    stated=(chosen, ruling, None),
+)
+
+
 def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_variant_and_its_views_hold_it(bank):
     started = time.perf_counter()
     unversioned = Representation("test.probe", "encode", uncounted, unlooking, running, None, None, unchecked, None)
@@ -362,6 +396,26 @@ def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_varian
             ("kind of target", "number", 1),
         } <= entries
     assert found[1][1] != found[2][1] and found[1][2] != found[2][2]
+    for name, (function, parameters, read) in READERS.items():
+        operation = Operation("test", name, (Phase(name, function, None, None),), parameters, (), (), (), (), None, None, 1, 1)
+        OPERATIONS.register(operation.name, operation)
+        try:
+            opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
+            cfg = support.configuration(
+                opened.registry, dict(view="snapshot"), support.several(opened.registry), 5, SPLITS, (operation.name,)
+            )
+            if read is None:
+                assert ["rule of negative sampling", "degree", 1] in opened.identity(cfg)["entries"]
+                assert len(opened.arrays(opened.graphs(cfg)[0], cfg))
+                continue
+            with pytest.raises(
+                ValueError,
+                match="the operation %s reads the rule of negative sampling %s, which the key of the variant it "
+                "derives does not hold" % (operation.name, read),
+            ):
+                opened.arrays(opened.graphs(cfg)[0], cfg)
+        finally:
+            del OPERATIONS.held[operation.name]
     LOG.info("versioned entries exit seconds=%.3f", time.perf_counter() - started)
 
 

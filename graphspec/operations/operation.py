@@ -116,7 +116,11 @@ class Phase:
 
     def named(self, registry, settings):
         started = time.perf_counter()
-        found = self.parts(registry, settings)
+        before, registries.READ["by"] = registries.READ["by"], settings.operation
+        try:
+            found = self.parts(registry, settings)
+        finally:
+            registries.READ["by"] = before
         if type(found) is not tuple or len(set(found)) != len(found) or not all(type(part) is str for part in found):
             raise ValueError(
                 "the phase %s names its parts as a tuple of distinct words, found %r" % (self.name, found)
@@ -126,10 +130,14 @@ class Phase:
 
     def initial(self, registry, settings):
         started = time.perf_counter()
-        if self.parts is None:
-            result = self.carries(registry, settings)
-        else:
-            result = {part: self.carries(registry, settings) for part in self.named(registry, settings)}
+        before, registries.READ["by"] = registries.READ["by"], settings.operation
+        try:
+            if self.parts is None:
+                result = self.carries(registry, settings)
+            else:
+                result = {part: self.carries(registry, settings) for part in self.named(registry, settings)}
+        finally:
+            registries.READ["by"] = before
         LOG.debug("phase initial exit phase=%s seconds=%.4f", self.name, time.perf_counter() - started)
         return result
 
@@ -139,11 +147,13 @@ class Phase:
                 "the phase %s %s carried state" % (self.name, "is given no" if state is None else "carries no")
             )
         carry.state, carry.part = None if state is None else dict(state), part
+        before, registries.READ["by"] = registries.READ["by"], settings.operation
         try:
             result = self.function(graph, registry, settings, seed, limits, carry, held)
             found = carry.state
         finally:
             carry.state, carry.part = None, None
+            registries.READ["by"] = before
         return result, found
 
     def run(self, graph, registry, settings, seed, limits, carry, held, state):
@@ -251,9 +261,12 @@ class Operation:
     def check(self, registry, settings):
         met = dict(sets=tuple(registry.schema.sets), about=tuple(registry.schema.about()))
         if any(met.values()):
-            for count in self.requires:
-                if not count.active(registry, settings):
-                    continue
+            before, registries.READ["by"] = registries.READ["by"], self.name
+            try:
+                active = [count for count in self.requires if count.active(registry, settings)]
+            finally:
+                registries.READ["by"] = before
+            for count in active:
                 for part, found in met.items():
                     if found and getattr(count, part) == "refuses":
                         raise ValueError(
