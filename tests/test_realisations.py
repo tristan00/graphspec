@@ -1,3 +1,4 @@
+import copy
 import logging
 import time
 
@@ -12,16 +13,18 @@ from conftest import SPLITS, inline
 from graphspec.infra.files import read_json
 from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
+from graphspec.schema.schema import Schema
 from graphspec.sources import synthetic
 from tuning import REALISATIONS
 from tuning.bank import options as offered
 from tuning.bank.bank import Bank
+from tuning.batches import inputs
 from tuning.batches.batching import batches, pack_batch
 from tuning.families import model_spec
 from tuning.families.heads import NONE, REALISATION
-from tuning.families.model_spec import VIEWS, space, views
+from tuning.families.model_spec import VIEWS, realisable, space, views
 from tuning.families.models import build as network
-from tuning.families.options import FIELDS, coded
+from tuning.families.options import FIELDS, Node, coded, refused
 from tuning.families.periods import blocks as windows
 from tuning.fits.guards import Guard, routed
 from tuning.fits.losses import Summed, counting, outcomes
@@ -38,6 +41,16 @@ UNSEEN += ["target at of put of show", "target made of put of show"]
 UNREAD = ("available", "chosen", "order", "shown", "logged", "generator", "seed", "drawn")
 PACKED, BUILT, SHOWN = {}, {}, {}
 SHARED = (banks, registered)
+SHIPPED = dict(node=("picked", []), vector=("stated", UNSEEN))
+LAST = dict(node=1, vector=2)
+ALONE = 1e-6
+REACHED = dict(
+    node={"fields.role.weight", "fields.node.0.weight", "fields.node.0.bias"},
+    vector={"fields.kind.weight", "fields.role.weight", "fields.relation.weight", "fields.node.0.weight"}
+    | {"fields.node.0.bias", "realised.bound.0.weight", "realised.bound.0.bias", "realised.place.weight"}
+    | {"realised.action.0.weight", "realised.action.0.bias", "realised.action.2.weight", "realised.action.2.bias"}
+    | {"realised.empty"},
+)
 
 
 class Pooled(nn.Module):
@@ -94,6 +107,10 @@ class Realised:
 
     def __init__(self, built, **settings):
         self.built, self.settings = built, settings
+
+    @timed("realisations.Realised.refusal")
+    def refusal(self, schema):
+        return None
 
     @timed("realisations.Realised.module")
     def module(self, hidden, width, spec, registry):
@@ -453,4 +470,140 @@ def test_a_fit_stops_before_it_trains_where_a_guard_refuses_or_equal_pairs_pass_
             fit(banks["stated"], tmp_path / name, cfg, held.blocks(0, 2, cfg), 16, time.perf_counter() + 30, given)
         assert not (tmp_path / name / "result.json").exists() and not (tmp_path / name / "checkpoint.pt").exists()
     LOG.info("fits refused by guards exit seconds=%.3f", time.perf_counter() - started)
+
+
+class Turns:
+    @timed("realisations.Turns.__init__")
+    def __init__(self, views):
+        self.views = iter(views)
+
+    @timed("realisations.Turns.__call__")
+    def __call__(self, bank):
+        return next(self.views)
+
+
+def single(found, slot):
+    started = time.perf_counter()
+    view = copy.copy(found)
+    held = found.count > slot
+    view.first, view.count = np.where(held, found.first + slot, -1), held.astype(np.int64)
+    decided = (found.decision >= 0) & held[np.maximum(found.decision, 0)]
+    view.decision = np.where(decided, found.decision, -1)
+    own = np.where(decided, view.first[np.maximum(found.decision, 0)], -1)
+    view.row_option = np.where(decided & (found.row_option == own), found.row_option, -1)
+    view.row_action = np.where(view.row_option >= 0, found.row_action, -1)
+    LOG.debug("realisations single exit slot=%d decisions=%d seconds=%.4f", slot, int(held.sum()), time.perf_counter() - started)
+    return view
+
+
+def alone(held, cfg, chosen, monkeypatch):
+    started = time.perf_counter()
+    found = offered.offered(held)
+    views = [single(found, slot) for slot in range(int(found.count.max()))]
+    with monkeypatch.context() as patched:
+        patched.setattr(inputs, "offered", Turns([view for view in views for _ in chosen]))
+        result = pack_batch(held, [window for _ in views for window in chosen], cfg, "cpu")
+    LOG.debug("realisations alone exit slots=%d windows=%d seconds=%.4f", len(views), len(chosen), time.perf_counter() - started)
+    return result, len(views)
+
+
+def slotted(held, b):
+    started = time.perf_counter()
+    found, placed = offered.offered(held), np.asarray(b["placed"])
+    rows = np.r_[np.asarray(b["rows"]), np.asarray(b["drawn"])][placed]
+    left = np.r_[np.asarray(b["left"], bool), np.zeros(len(b["drawn"]), bool)][placed]
+    option = np.where(left, -1, found.row_option[rows])
+    result = np.where(option >= 0, option - found.first[np.maximum(found.decision[rows], 0)], -1)
+    LOG.debug("realisations slotted exit points=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+@pytest.mark.parametrize("family", VIEWS)
+def test_each_option_scores_as_it_does_packed_alone_and_one_step_trains_every_family_under_each_shipped_realisation(
+    banks, family, monkeypatch
+):
+    started, largest = time.perf_counter(), {}
+    for name, (bank, _) in sorted(SHIPPED.items()):
+        held = opened(banks, bank)
+        cfg = configured(held, name, modelled(family), PLAIN)
+        torch.manual_seed(5)
+        net = network(cfg, held.fitted(cfg))
+        blocks = sorted(held.blocks(1, 2, cfg))
+        chosen = windows(held, [block for block in blocks if block[0] == blocks[-1][0]][-LAST[name] :], cfg)
+        b = pack_batch(held, chosen, cfg, "cpu")
+        a, slots = alone(held, cfg, chosen, monkeypatch)
+        assert len(a["options"]["sequence"]) == len(b["options"]["sequence"]) > len(chosen)
+        assert np.bincount(np.asarray(a["options"]["decision"])).max() == 1
+        values = net(b)
+        with torch.no_grad():
+            each = net(a).numpy().reshape(slots, -1)
+        slot = slotted(held, b)
+        scored = np.flatnonzero(slot >= 0)
+        batched, lone = values.detach().numpy()[scored], each[slot[scored], scored]
+        largest[name] = float(np.abs(lone - batched).max())
+        assert len(set(slot[scored].tolist())) > 1 and np.allclose(lone, batched, rtol=ALONE, atol=ALONE), name
+        loss = Summed(dict(decision="squared"), held.registry.schema.targets(), name)(values, b, held)
+        loss.backward()
+        torch.optim.SGD(net.parameters(), lr=0.01).step()
+        reached = {key for key, value in net.head.options.named_parameters() if value.grad is not None and value.grad.abs().sum() > 0}
+        assert torch.isfinite(loss) and reached == REACHED[name], (name, sorted(reached))
+    LOG.info("options alone family=%s largest=%s exit seconds=%.3f", family, largest, time.perf_counter() - started)
+
+
+@pytest.mark.parametrize("name", sorted(SHIPPED))
+def test_each_shipped_realisation_passes_every_guard_on_its_shared_bank_and_completes_one_fit(
+    banks, name, tmp_path, statement, monkeypatch
+):
+    started = time.perf_counter()
+    bank, unseen = SHIPPED[name]
+    held = opened(banks, bank)
+    inline(banks[bank], (), monkeypatch)
+    cfg = dict(configured(held, name, modelled("snapshot"), PLAIN), epochs=1)
+    given = state(dict(statement, loss=dict(decision="squared"), measures=["mse"], alike=0.0))
+    fit(banks[bank], tmp_path, cfg, held.blocks(0, 2, cfg), 16, time.perf_counter() + statement["seconds"], given)
+    saved = read_json(tmp_path / "result.json")
+    found = saved["options"]
+    assert saved["status"] == "complete" and saved["optimizer_updates"] > 0 and found["realisation"] == name
+    assert found["options"] > 0 and found["pairs"] > 0 and found["share"] == 0.0 and found["unseen"] == unseen
+    LOG.info("fit of shipped realisation %s exit seconds=%.3f", name, time.perf_counter() - started)
+
+
+@timed("realisations.varied")
+def varied(base, action, entry, columns):
+    stated = copy.deepcopy(base)
+    stated["tasks"]["kinds"]["turn"]["target"]["actions"][action] = entry
+    stated["columns"].update(columns)
+    return Schema(stated)
+
+
+@timed("realisations.offering")
+def offering(held):
+    return [parameter for parameter in realisable(held.registry, space(held.registry)) if parameter.name == REALISATION][0]
+
+
+def test_the_node_realisation_reads_options_of_one_action_whose_one_target_is_a_node_and_refuses_any_other(banks):
+    started = time.perf_counter()
+    stated, chosen = opened(banks, "stated"), opened(banks, "picked")
+    where = "the realisation of options node cannot read the options of this bank: the kind "
+    with pytest.raises(ValueError, match=where + "of task turn states the option wait, which does nothing and holds no action"):
+        routed(stated, configured(stated, "node", graph=PLAIN))
+    routed(chosen, configured(chosen, "node", graph=PLAIN))
+    spot, number = dict(sort="node", kinds=["spot"]), dict(type="number", encoder="value")
+    base = chosen.registry.schema.mapping()
+    routes = "of the kind of task turn has no route to the prediction under the realisation of options node: the realisation"
+    for action, entry, columns, message in (
+        ("cut", dict(roles=dict(along=dict(spot, sort="edge")), parameters=[]), {}, where + "of action cut of the kind of task turn states the roles along of the sort edge, and the realisation reads options of one action whose one target is a node"),
+        ("put", dict(roles=dict(at=spot, made=dict(sort="new", kinds=["mark"])), parameters=[]), {}, where + "of action put of the kind of task turn states the roles at of the sort node, made of the sort new"),
+        ("stay", dict(roles=dict(at=spot), parameters=[]), {}, "the field kind " + routes + " reads no kind"),
+        ("go", dict(roles=dict(to=spot), parameters=["speed"]), dict(speed=number), "the field parameter speed of go " + routes + " reads no parameters"),
+    ):
+        assert refused("node", varied(base, action, entry, columns)).startswith(message)
+    assert refused("node", chosen.registry.schema) is None and refused("vector", stated.registry.schema) is None
+    structure = dict(sequence=torch.zeros(1, dtype=torch.bool), action_option=torch.zeros(2, dtype=torch.long))
+    structure.update(role_action=torch.arange(2), role_code=torch.zeros(2, dtype=torch.long))
+    with pytest.raises(ValueError, match="an option of the kind of task turn holds 2 actions, of the kinds go, go, and the realisation reads"):
+        Node(chosen.registry)(dict(targets=torch.zeros(2, 4)), structure)
+    assert {"node", "deaf"}.isdisjoint(offering(stated).options) and "vector" in offering(stated).options
+    assert {"node", "vector", "deaf"} <= set(offering(chosen).options) and offering(chosen).options[0] == NONE
+    LOG.info("node realisation refusals exit seconds=%.3f", time.perf_counter() - started)
 

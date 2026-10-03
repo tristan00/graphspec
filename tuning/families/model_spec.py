@@ -4,7 +4,7 @@ import time
 from graphspec import registries
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
-from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, number, real
+from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, narrow, number, real
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
@@ -137,6 +137,19 @@ def realised(spec, schema):
             "that decides: %s or a realisation registered in tuning.REALISATIONS" % (spec["view"], REALISATION, NONE)
         )
     return None if spec[REALISATION] == NONE else spec[REALISATION]
+
+
+def realisable(registry, parameters):
+    started = time.perf_counter()
+    held = [parameter for parameter in parameters if parameter.name == REALISATION]
+    result = parameters
+    if held:
+        from .options import refused
+
+        offered = [name for name in held[0].options if name == NONE or refused(name, registry.schema) is None]
+        result = narrow(parameters, {REALISATION: offered})
+    LOG.debug("model realisable exit realisations=%d seconds=%.4f", len(held), time.perf_counter() - started)
+    return result
 
 
 def built(offered, events, encoded, decides, families):
@@ -340,7 +353,7 @@ def configuration(registry, values, pipeline, graph, seed, splits):
 
 def samples(registry):
     started = time.perf_counter()
-    parameters = space(registry)
+    parameters = realisable(registry, space(registry))
     switches = [
         parameter
         for parameter in parameters

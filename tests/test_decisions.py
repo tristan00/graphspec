@@ -32,6 +32,7 @@ LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("decisions")
 GENERATOR = "nearby"
 UNREALISED = {REALISATION: NONE}
+DECIDING = ("turn", "show")
 OPENED, READ = {}, []
 
 
@@ -88,11 +89,28 @@ def flipped(case):
     return result
 
 
+@timed("decisions.picked")
+def picked(case):
+    result = copy.deepcopy(case)
+    kinds = result["schema"]["tasks"]["kinds"]
+    for column in {name for kind in DECIDING for entry in kinds[kind]["target"]["actions"].values() for name in entry["parameters"]}:
+        del result["schema"]["columns"][column]
+    for kind in DECIDING:
+        kinds[kind]["target"].update(actions=dict(go=dict(roles=dict(to=dict(sort="node", kinds=["spot"])), parameters=[])), nothing=None)
+    result["graphs"] = result["graphs"][1:]
+    for target in filter(None, result["graphs"][0]["tasks"]["target"]):
+        target["options"] = [option for option in target["options"] if [action["kind"] for action in option["actions"]] == ["go"]]
+        for option in target["options"]:
+            option["actions"][0]["parameters"] = {}
+        target["options"][0]["chosen"] |= not any(option["chosen"] for option in target["options"])
+    return result
+
+
 @timed("decisions.made")
 def made(root):
     started = time.perf_counter()
     case = synthetic.decisions(GENERATOR)
-    for name, given in (("stated", case), ("flipped", flipped(case))):
+    for name, given in (("stated", case), ("flipped", flipped(case)), ("picked", picked(case))):
         build(synthetic.stage(root, name, given), root / name, 1, ("train",))
     LOG.info("banks of decisions exit seconds=%.3f", time.perf_counter() - started)
 
@@ -100,7 +118,7 @@ def made(root):
 @pytest.fixture(scope="module")
 def banks(registered):
     root = shared("decisions", made)
-    return {name: root / name for name in ("stated", "flipped")}
+    return {name: root / name for name in ("stated", "flipped", "picked")}
 
 
 @timed("decisions.opened")

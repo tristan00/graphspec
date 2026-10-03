@@ -11,6 +11,7 @@ REALISATIONS = Names("realisation of options", True)
 FIELD = "field/"
 REALISATION = "options/realisation"
 NONE = "none"
+ONE = "the realisation reads options of one action whose one target is a node"
 
 
 class Attached:
@@ -73,6 +74,56 @@ def decision(hidden, spec, registry):
     return NumberHead(hidden) if realised(spec, registry.schema) is None else NodeHead(hidden)
 
 
+class Existing:
+    version = 1
+    reads = ("targets",)
+    together = False
+    back = False
+
+    @timed("heads.Existing.refusal")
+    def refusal(self, schema):
+        for task in schema.decided():
+            target = schema.tasks["kinds"][task]["target"]
+            if target["nothing"] is not None:
+                return "the kind of task %s states the option %s, which does nothing and holds no action, and %s" % (
+                    task,
+                    target["nothing"],
+                    ONE,
+                )
+            for action, entry in target["actions"].items():
+                if [held["sort"] for held in entry["roles"].values()] != ["node"]:
+                    return "the kind of action %s of the kind of task %s states the roles %s, and %s" % (
+                        action,
+                        task,
+                        ", ".join("%s of the sort %s" % (role, held["sort"]) for role, held in entry["roles"].items()),
+                        ONE,
+                    )
+        return None
+
+    @timed("heads.Existing.module")
+    def module(self, hidden, width, spec, registry):
+        from .options import Node
+
+        return Node(registry)
+
+
+class Built:
+    version = 1
+    reads = ("kind", "targets", "parameters")
+    together = False
+    back = False
+
+    @timed("heads.Built.refusal")
+    def refusal(self, schema):
+        return None
+
+    @timed("heads.Built.module")
+    def module(self, hidden, width, spec, registry):
+        from .options import Vector
+
+        return Vector(hidden, width)
+
+
 def reading(registry, name):
     started = time.perf_counter()
     result = any(name in HEADS.named(kind).reads for kind in registry.schema.targets())
@@ -91,4 +142,6 @@ HEADS.register("ranking", Attached((), nodes))
 HEADS.register("nodes", Attached((), nodes))
 HEADS.register("link", Attached((), nodes))
 HEADS.register("decision", Attached((REALISATION,), decision))
+REALISATIONS.register("node", Existing())
+REALISATIONS.register("vector", Built())
 ship([HEADS, REALISATIONS])

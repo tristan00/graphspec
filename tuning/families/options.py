@@ -6,7 +6,7 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 
-from .heads import REALISATIONS
+from .heads import ONE, REALISATIONS
 from .layers import padded
 
 LOG = logging.getLogger(__name__)
@@ -18,23 +18,47 @@ def realisation(name):
     started = time.perf_counter()
     entry = REALISATIONS.named(name)
     if (
-        not all(hasattr(entry, part) for part in ("reads", "together", "back", "module"))
+        not all(hasattr(entry, part) for part in ("reads", "together", "back", "refusal", "module"))
         or not isinstance(entry.reads, tuple)
         or not entry.reads
         or any(field not in FIELDS for field in entry.reads)
         or len(set(entry.reads)) != len(entry.reads)
         or type(entry.together) is not bool
         or type(entry.back) is not bool
+        or not callable(entry.refusal)
         or not callable(entry.module)
     ):
         raise ValueError(
             "the realisation of options %s states reads, a tuple of the fields of an option it reads among %s; "
             "together, whether the score of an option reads the other options of its decision, true or false; "
-            "back, whether messages pass from options back to the state, true or false; and module, which builds "
-            "it" % (name, ", ".join(FIELDS))
+            "back, whether messages pass from options back to the state, true or false; refusal, which gives why "
+            "it cannot read the options a schema states, or none; and module, which builds it"
+            % (name, ", ".join(FIELDS))
         )
     LOG.debug("options realisation exit name=%s seconds=%.4f", name, time.perf_counter() - started)
     return entry
+
+
+def refused(name, schema):
+    started = time.perf_counter()
+    entry = realisation(name)
+    found, result = entry.refusal(schema), None
+    unread = [
+        (task, field)
+        for task in schema.decided()
+        for field in fielded(schema, task)
+        if field["sort"] not in entry.reads
+    ]
+    if found is not None:
+        result = "the realisation of options %s cannot read the options of this bank: %s" % (name, found)
+    elif unread:
+        task, field = unread[0]
+        result = (
+            "the field %s of the kind of task %s has no route to the prediction under the realisation of options %s: "
+            "the realisation reads no %s" % (field["name"], task, name, field["sort"])
+        )
+    LOG.debug("options refused exit name=%s refused=%s seconds=%.4f", name, result is not None, time.perf_counter() - started)
+    return result
 
 
 def coded(schema):
@@ -62,7 +86,8 @@ def slots(encoding, columns, name):
 def fielded(schema, task):
     started = time.perf_counter()
     actions, roles = coded(schema)
-    result = [dict(name="kind", sort="kind", code=None)]
+    several = len(schema.tasks["kinds"][task]["target"]["actions"]) > 1
+    result = [dict(name="kind", sort="kind", code=None)] if several else []
     for code, (owner, action, role, sort, kinds) in enumerate(roles):
         if owner == task:
             result.append(
@@ -78,21 +103,70 @@ def fielded(schema, task):
 
 class Fields(nn.Module):
     @timed("options.Fields.__init__")
-    def __init__(self, registry, hidden, nodes):
+    def __init__(self, registry, hidden, nodes, reads):
         super().__init__()
         actions, roles = coded(registry.schema)
-        self.kind = nn.Embedding(len(actions), hidden)
-        self.role = nn.Embedding(len(roles), hidden)
-        self.relation = nn.Embedding(registry.relation_slots, hidden)
-        self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU())
+        self.reads = reads
+        if "kind" in reads:
+            self.kind = nn.Embedding(len(actions), hidden)
+        if "targets" in reads:
+            self.role = nn.Embedding(len(roles), hidden)
+            self.relation = nn.Embedding(registry.relation_slots, hidden)
+            self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU())
 
     def forward(self, b, members):
-        held = b["options"]
-        ends = held["role_member"]
-        node = padded(self.node(members), ends).sum(1) / (ends >= 0).sum(1, keepdim=True).clamp_min(1)
-        relation = held["role_relation"]
-        targets = node + self.role(held["role_code"]) + self.relation(relation.clamp_min(0)) * (relation >= 0)[:, None]
-        return dict(kind=self.kind(held["action_kind"]), targets=targets, parameters=held["action_values"])
+        held, found = b["options"], {}
+        if "kind" in self.reads:
+            found["kind"] = self.kind(held["action_kind"])
+        if "targets" in self.reads:
+            ends, relation = held["role_member"], held["role_relation"]
+            node = padded(self.node(members), ends).sum(1) / (ends >= 0).sum(1, keepdim=True).clamp_min(1)
+            related = self.relation(relation.clamp_min(0)) * (relation >= 0)[:, None]
+            found["targets"] = node + self.role(held["role_code"]) + related
+        if "parameters" in self.reads:
+            found["parameters"] = held["action_values"]
+        return found
+
+
+class Node(nn.Module):
+    @timed("options.Node.__init__")
+    def __init__(self, registry):
+        super().__init__()
+        self.roles = coded(registry.schema)[1]
+
+    def forward(self, fields, structure):
+        owner, options = structure["action_option"], len(structure["sequence"])
+        if len(owner) != options:
+            count = torch.bincount(owner, minlength=options)
+            place = int(torch.nonzero(count != 1)[0])
+            codes = structure["role_code"][torch.isin(structure["role_action"], torch.nonzero(owner == place).flatten())]
+            named = [self.roles[code] for code in codes.tolist()]
+            raise ValueError(
+                "an option of the kind of task %s holds %d actions, of the kinds %s, and %s"
+                % (named[0][0], int(count[place]), ", ".join(role[1] for role in named), ONE)
+            )
+        return fields["targets"], fields["targets"]
+
+
+class Vector(nn.Module):
+    @timed("options.Vector.__init__")
+    def __init__(self, hidden, width):
+        super().__init__()
+        self.bound = nn.Sequential(nn.Linear(hidden, hidden), nn.SiLU())
+        self.place = nn.Linear(1, hidden, bias=False)
+        self.action = nn.Sequential(nn.Linear(hidden + width, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
+        self.empty = nn.Parameter(torch.zeros(hidden))
+
+    def forward(self, fields, structure):
+        kind, owner = fields["kind"], structure["action_option"]
+        targets = kind.new_zeros(kind.shape).index_add(0, structure["role_action"], self.bound(fields["targets"]))
+        place = self.place(torch.log1p(structure["action_place"].float())[:, None])
+        placed = place * structure["sequence"][owner][:, None]
+        actions = self.action(torch.cat((kind + targets + placed, fields["parameters"]), -1))
+        count = actions.new_zeros(len(structure["sequence"])).index_add(0, owner, actions.new_ones(len(owner)))
+        total = actions.new_zeros((len(count), actions.shape[1])).index_add(0, owner, actions)
+        options = total / count.clamp_min(1)[:, None] + self.empty * (count == 0)[:, None]
+        return options, actions
 
 
 class Options(nn.Module):
@@ -101,7 +175,7 @@ class Options(nn.Module):
         super().__init__()
         entry = realisation(name)
         self.name, self.hidden = name, hidden
-        self.fields = Fields(registry, hidden, nodes)
+        self.fields = Fields(registry, hidden, nodes, entry.reads)
         width = registry.encoding.width(registry.schema.parameters())
         self.realised = entry.module(hidden, width, spec, registry)
 

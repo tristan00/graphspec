@@ -88,7 +88,7 @@ class Offered:
                 )
             )
             found["action"].append(
-                dict(option=owner + options, kind=kind, values=np.asarray(held["action_values"], np.float32).reshape(-1, columns))
+                dict(option=owner + options, kind=kind, values=np.asarray(held["action_values"], np.float32).reshape(len(owner), columns))
             )
             found["role"].append(
                 dict(

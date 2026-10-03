@@ -177,7 +177,7 @@ class Decided:
             action_option=np.asarray(result["action_option"], np.int32).reshape(-1),
             action_kind=np.asarray(result["action_kind"], np.int16).reshape(-1),
             action_actor=np.asarray(result["action_actor"], np.int32).reshape(-1),
-            action_values=values[order].reshape(-1, len(columns)),
+            action_values=values[order].reshape(len(order), len(columns)),
         )
         LOG.debug("decided actions exit graph=%s actions=%d seconds=%.4f", self.name, len(order), time.perf_counter() - started)
         return arrays, declared, order

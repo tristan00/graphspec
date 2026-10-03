@@ -534,8 +534,8 @@ def optioned(bank, window, b, rows, owner, place):
     pointing = np.where(source >= 0, found.row_option[np.maximum(source, 0)], -1)
     acted = np.where(source >= 0, found.row_action[np.maximum(source, 0)], -1)
     globally, places = np.argsort(option, kind="stable"), np.argsort(action, kind="stable")
-    point_option = local[globally[np.minimum(np.searchsorted(option[globally], pointing), len(option) - 1)]]
-    point_action = taken[places[np.minimum(np.searchsorted(action[places], acted), len(action) - 1)]]
+    point_option = np.r_[local[globally], -1][np.searchsorted(option[globally], pointing)]
+    point_action = np.r_[taken[places], -1][np.searchsorted(action[places], acted)]
     lost = np.isin(found.row_option[rows], option[left])
     b["left"] = Host(np.asarray(b["left"].value, bool) | lost)
     columns = registry.schema.parameters()

@@ -1534,7 +1534,8 @@ class Encoding:
 
     @timed("schema.encoding.vectors")
     def vectors(self, columns, codes):
-        codes = np.asarray(codes, np.float32).reshape(-1, len(columns))
+        codes = np.asarray(codes, np.float32)
+        codes = codes.reshape(len(codes), len(columns))
         values, flags = self.encoded(columns, codes)
         return np.concatenate(values + flags + [np.zeros((len(codes), 0), np.float32)], 1)
 

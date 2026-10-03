@@ -11,6 +11,7 @@ from support import SEED, configuration
 
 from conftest import SPLITS
 from graphspec.infra.arrays import RESIDENT
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
@@ -27,10 +28,23 @@ pytestmark = pytest.mark.xdist_group("model_config")
 
 class Stated:
     version = 1
+    reads = ("kind", "targets", "parameters")
+    together = False
+    back = False
+
+    @timed("model_config.Stated.refusal")
+    def refusal(self, schema):
+        return None
+
+    @timed("model_config.Stated.module")
+    def module(self, hidden, width, spec, registry):
+        return torch.nn.Identity()
 
 
 def registry(events=True, signals=2, decided=()):
-    kinds = dict(ask=dict(target=dict(kind="number"), references=("unit",), absent="stop"))
+    picking = dict(pick=dict(roles=dict(at=dict(sort="node", kinds=["unit"])), parameters=[]))
+    target = dict(kind="number", actions=picking, nothing=None)
+    kinds = dict(ask=dict(target=target, references=("unit",), absent="stop"))
     return SimpleNamespace(
         name="stated",
         extras=dict(events=events, signals=signals),
@@ -96,7 +110,8 @@ def test_the_check_states_every_value_of_a_choice_without_a_default_and_starts_i
     for model in offered:
         rest = tuple(sorted((name, value) for name, value in model.items() if name != REALISATION))
         starts.setdefault(model[REALISATION], set()).add(rest)
-    assert sorted(starts) == [NONE, "stated"] and starts[NONE] == starts["stated"]
+    assert sorted(starts) == sorted([NONE, "stated", *REALISATIONS.shipped])
+    assert all(found == starts[NONE] for found in starts.values())
     LOG.info("samples of a choice without a default exit seconds=%.3f", time.perf_counter() - started)
 
 

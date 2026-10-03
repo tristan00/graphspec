@@ -12,7 +12,7 @@ from graphspec.operations import pipeline
 from graphspec.operations.negatives import needed
 from graphspec.operations.operation import Refused
 from graphspec.views.view import STEPS
-from tuning.families.model_spec import TRAINING, describe, groups
+from tuning.families.model_spec import TRAINING, describe, groups, realisable
 from tuning.families.model_spec import space as model_space
 from tuning.measures import objective
 
@@ -141,7 +141,7 @@ def refused(registry, config):
 
 @timed("selector.spaces")
 def spaces(registry, bounds):
-    return narrow_group(model_space(registry), bounds), narrow_group(TRAINING, bounds)
+    return narrow_group(realisable(registry, model_space(registry)), bounds), narrow_group(TRAINING, bounds)
 
 
 @timed("selector.runtime_parameter")

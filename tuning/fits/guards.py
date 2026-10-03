@@ -10,27 +10,12 @@ from graphspec.operations.pipeline import emptied
 from tuning.batches.batching import batches, pack_batch
 from tuning.families.heads import NONE, REALISATION
 from tuning.families.model_spec import realised
-from tuning.families.options import FIELDS, coded, fielded, realisation, slots
+from tuning.families.options import coded, fielded, realisation, refused, slots
 from tuning.families.periods import blocks as windows
 
 LOG = logging.getLogger(__name__)
 CLOSE = 1e-6
 STATE = 1e-5
-
-
-def unrouted(field, entry, removed):
-    started = time.perf_counter()
-    result = None
-    if field["sort"] not in entry.reads:
-        result = "the realisation reads no %s" % field["sort"]
-    elif field["sort"] == "targets" and field["role"] != "new" and all(kind in removed for kind in field["kinds"]):
-        result = "the pipeline removes every kind of node it may name, %s, the entry %s removing %s" % (
-            ", ".join(field["kinds"]),
-            removed[field["kinds"][0]],
-            field["kinds"][0],
-        )
-    LOG.debug("guards unrouted exit field=%s seconds=%.6f", field["name"], time.perf_counter() - started)
-    return result
 
 
 def routed(bank, cfg):
@@ -39,20 +24,23 @@ def routed(bank, cfg):
     if name is None:
         LOG.debug("guards routed exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return
-    entry = realisation(name)
-    if entry.back:
+    if realisation(name).back:
         raise ValueError(
             "the realisation of options %s states that messages pass from options back to the state; no family "
             "gives options a route back to the state, so a fit stating it stops" % name
         )
-    schema, removed = bank.registry.schema, emptied(bank.registry, bank.stated(cfg)[1])
+    schema = bank.registry.schema
+    reason = refused(name, schema)
+    if reason is not None:
+        raise ValueError(reason)
+    removed = emptied(bank.registry, bank.stated(cfg)[1])
     for task in schema.decided():
         for field in fielded(schema, task):
-            reason = unrouted(field, entry, removed)
-            if reason is not None:
+            if field["sort"] == "targets" and field["role"] != "new" and all(kind in removed for kind in field["kinds"]):
                 raise ValueError(
                     "the field %s of the kind of task %s has no route to the prediction under the realisation of "
-                    "options %s: %s" % (field["name"], task, name, reason)
+                    "options %s: the pipeline removes every kind of node it may name, %s, the entry %s removing %s"
+                    % (field["name"], task, name, ", ".join(field["kinds"]), removed[field["kinds"][0]], field["kinds"][0])
                 )
     LOG.info("guards routed exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
 
@@ -155,10 +143,10 @@ class Guard:
         values = self.scored(features, b, fields)[0]
         weights = torch.randn(values.shape, generator=self.generator).to(values.device)
         weights = weights * torch.as_tensor(mask, device=values.device)
-        found = torch.autograd.grad((values * weights).sum(), [fields[name] for name in FIELDS], allow_unused=True)
+        found = torch.autograd.grad((values * weights).sum(), list(fields.values()), allow_unused=True)
         grads = {
             name: (torch.zeros_like(fields[name]) if grad is None else grad).abs().cpu().numpy()
-            for name, grad in zip(FIELDS, found)
+            for name, grad in zip(fields, found)
         }
         owner = np.asarray(held["kind"], np.int64)
         acting = owner[np.asarray(held["action_option"].cpu(), np.int64)]
@@ -209,7 +197,7 @@ class Guard:
         others = ~moved & (chosen[decision] >= 0)
         roles = moved[owner][np.asarray(held["role_action"].cpu(), np.int64)]
         rows = dict(kind=moved[owner], parameters=moved[owner], targets=roles)
-        for name in FIELDS:
+        for name in fields:
             changed = dict(fields)
             changed[name] = fields[name] + torch.as_tensor(rows[name], device=fields[name].device)[:, None]
             self.kept(features, b, changed, values, mask, others, name)
@@ -236,9 +224,9 @@ class Guard:
         inverse = np.argsort(turned)
         role = inverse[np.asarray(held["role_action"].cpu(), np.int64)]
         order = np.argsort(role, kind="stable")
-        device = fields["kind"].device
+        device = held["action_option"].device
         index, by = torch.as_tensor(turned, device=device), torch.as_tensor(order, device=device)
-        changed = dict(kind=fields["kind"][index], parameters=fields["parameters"][index], targets=fields["targets"][by])
+        changed = {name: value[by if name == "targets" else index] for name, value in fields.items()}
         turning = dict(held, role_action=torch.as_tensor(role[order], device=device), role_code=held["role_code"][by])
         with torch.no_grad():
             again, acting = self.head.options.encoded(changed, dict(b, options=turning))

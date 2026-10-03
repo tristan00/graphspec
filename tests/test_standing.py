@@ -49,6 +49,8 @@ REGISTRY = "Names"
 REGISTERED = "REGISTRIES"
 LOOKUP = "graphspec/registries.py"
 GENERATED = "graphspec/build/generators.py"
+REALISED = "tuning/families/options.py"
+HELD = {"generator of options ": GENERATED, "realisation of options ": REALISED}
 WRITTEN = re.compile(r"^[ \t]*del .*$|\.held\.pop\(|\.held\[[^\]\n]*\][ \t]*=(?!=)", re.M)
 LAYERS = {
     INFRA: (),
@@ -161,7 +163,7 @@ RECORDED = {
     "graphspec.product": (5, "414e880458bb8727533225adab00a3c93108ef33291a5ce8f93c57d20b57b610"),
     "graphspec.negatives": (10, "b59a00bd88e9ee16c57d8d3b9a9067727aeef3e3e55c731dba7b79d6ba7f9277"),
     "derivation": (56, "2441515fae0fd54e9ddf6562632f5d2c08f6d31fd3a90db02e931fe376144d2b"),
-    "views": (68, "6d66e3eee5334950059fd326ee627f817a98c84fa1543a8e14117d96f844c81a"),
+    "views": (69, "32a4336f98500d9fd8bdc0868be7bc3c899080f15cde12a635819c8ce4d40de8"),
     "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
     "index": (6, "a6ad6b5034763801ebfb30ec58db4be41f482f0ff61717a64e76250e55ce4ec0"),
     "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
@@ -191,7 +193,9 @@ RECORDED = {
     "generator of options nearest": (2, "ac55ff2fd6f8de611381d1618a83bea64b649a404889cda22c899087737ad269"),
     "generator of options others": (2, "342ba7758ee0a0a18c9abfc2fb3eb75b5489b19fadb4de5df1c94b2b742d28da"),
     "generator of options ruled": (2, "95629735c8ae581c5f82505575bd1bef3a0156cfc330502f680c7e3f7e96ad93"),
-    "distance between states euclidean": (1, "e4e4459504ad3075425ece6c3027f370c629d6294b28762ae56fa38fe4c60211"),
+    "realisation of options node": (1, "3c76ac4a0f3138e4bf97af12f6c611640cc92d6cc2d1547d2c398b2fe107b6b6"),
+    "realisation of options vector": (1, "3eb5f2121f7eeb8a33dfa18567e5437f47534795e9898f4153e60ca8234dbc99"),
+    "distance between states euclidean":(1, "e4e4459504ad3075425ece6c3027f370c629d6294b28762ae56fa38fe4c60211"),
     "column type category": (1,"e242885fbfd05f259fab475426d315185cfb3e691ebe8ddf2361297af9b53221"),
     "column type flag": (1, "35fcdebca490f610d7cfdc1a9aaf9b36e23519328df31803f32bb770a46c3f80"),
     "column type number": (1, "5cda0b56ca50b2e33d213c1a503ca6f7480e3e220ea4ed62f46b306058f5561b"),
@@ -421,8 +425,10 @@ CALLED = {
     "tuning/families/model_spec.py:blocks": 6251,
     "tuning/families/model_spec.py:memory_state": 9258,
     "tuning/families/options.py:Fields.forward": 60,
+    "tuning/families/options.py:Node.forward": 40,
     "tuning/families/options.py:Options.encoded": 160,
     "tuning/families/options.py:Options.forward": 60,
+    "tuning/families/options.py:Vector.forward": 60,
     "tuning/families/periods.py:EndContext.forward": 135,
     "tuning/families/periods.py:gather_end": 11,
     "tuning/families/projection.py:ProjectionNet.forward": 80,
@@ -1042,8 +1048,9 @@ def code(entry):
 def digest(name, entry, root):
     started = time.perf_counter()
     found = code(entry)
-    if name.startswith("generator of options "):
-        found += "\n" + (root / GENERATED).read_text(encoding="utf-8").replace("\r\n", "\n")
+    for prefix, place in HELD.items():
+        if name.startswith(prefix):
+            found += "\n" + (root / place).read_text(encoding="utf-8").replace("\r\n", "\n")
     result = hashlib.sha256(found.encode()).hexdigest()
     LOG.debug("digest exit name=%s seconds=%.4f", name, time.perf_counter() - started)
     return result
@@ -1147,9 +1154,10 @@ def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_
     assert unrecorded(edited, RECORDED, dict(held, **{"graphspec.window": version + 1}))[0].startswith(
         "record graphspec.window at version %d with the digest " % (version + 1)
     )
-    write(tmp_path, GENERATED, (ROOT / GENERATED).read_text(encoding="utf-8") + "\nEDITED = 1\n")
-    drawing = sorted(name for name in entries if name.startswith("generator of options "))
-    assert len(drawing) == 4
-    assert unrecorded({name: digest(name, entries[name], tmp_path) for name in drawing}, RECORDED, held) == [
-        "the code of %s changed and its version %d did not; raise it" % (name, held[name]) for name in drawing
-    ]
+    for (prefix, place), count in zip(HELD.items(), (4, 2)):
+        write(tmp_path, place, (ROOT / place).read_text(encoding="utf-8") + "\nEDITED = 1\n")
+        drawing = sorted(name for name in entries if name.startswith(prefix))
+        assert len(drawing) == count
+        assert unrecorded({name: digest(name, entries[name], tmp_path) for name in drawing}, RECORDED, held) == [
+            "the code of %s changed and its version %d did not; raise it" % (name, held[name]) for name in drawing
+        ]
