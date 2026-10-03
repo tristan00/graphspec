@@ -12,12 +12,13 @@ from conftest import SPLITS
 from graphspec.budgets import GraphLimits
 from graphspec.engine import transform
 from graphspec.engine.segments import Derivation
+from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
+from graphspec.operations import derive, pipeline
 from graphspec.operations import parameters as specs
-from graphspec.operations import pipeline
 from graphspec.operations.rows import FACTS
 from graphspec.operations.state import ENTITIES
-from graphspec.views.graph import Dense
+from graphspec.views.graph import LABELS, TASKS, Dense, verify_dense
 from tuning.bank.bank import Deriver, grouped
 from tuning.batches import inputs
 
@@ -62,6 +63,12 @@ TIED = {
 WALKS = {"walks/bias": 0.5, "walks/fanout": 3, "walks/window": 6}
 CAPS = {"coupling/scheme": "window", "coupling/window": 4, "coupling/cap": 1, "events/cap": 1}
 JOINED = {"graphs/join": "single", "graphs/join_size": 2}
+COPIES = 40
+CROSSING = (
+    {"derive/rewiring": "fosr", "derive/rewiring_budget": 3},
+    {"derive/diffusion": "ppr", "derive/diffusion_top_k": 1},
+    {"derive/diffusion": "heat", "derive/diffusion_top_k": 1},
+)
 GENERATORS = (
     (np.random, ("default_rng", "Generator", "RandomState", "seed", "random", "rand", "choice", "permutation")),
     (torch, ("Generator", "manual_seed", "rand", "randn", "randint", "randperm", "multinomial", "bernoulli")),
@@ -129,6 +136,86 @@ def permuted(graph, seed):
     result = Dense(graph.name, keys, graph.steps, **arrays)
     LOG.debug("permuted exit graph=%s seconds=%.4f", graph.name, time.perf_counter() - started)
     return result
+
+
+def crossing(graph, registry, copies):
+    started = time.perf_counter()
+    entities = len(graph.kinds)
+    shift = np.arange(copies, dtype=np.int64)[:, None] * entities
+    arrays = {name: np.asarray(value) for name, value in graph.arrays.items()}
+    bridge = (arrays["kinds"][arrays["obs_entity"]] == registry.kind("place")) & ~arrays["obs_anchor"]
+    linked = (arrays["obs_entity"][bridge][None, :] + shift[:-1]).reshape(-1)
+    bridges = len(linked)
+    joined = dict(
+        source=np.r_[(arrays["fact_source"][None, :] + shift).reshape(-1), linked],
+        target=np.r_[(arrays["fact_target"][None, :] + shift).reshape(-1), linked + entities],
+        code=np.r_[np.tile(arrays["fact_code"], copies), np.full(bridges, registry.code("near"))],
+        step=np.r_[np.tile(arrays["fact_step"], copies), np.tile(arrays["obs_step"][bridge], copies - 1)],
+        present=np.r_[np.tile(arrays["fact_present"], copies), np.ones(bridges, bool)],
+        ref=np.r_[np.tile(arrays["fact_ref"], copies), np.full(bridges, -1)],
+    )
+    facts = np.lexsort((~joined["present"], joined["step"]))
+    entity, step = (arrays["obs_entity"][None, :] + shift).reshape(-1), np.tile(arrays["obs_step"], copies)
+    observations = np.lexsort((entity, step))
+    count = len(arrays["task_key"])
+    tasks = np.argsort(np.tile(arrays["task_step"], copies), kind="stable")
+    placed = np.argsort(tasks)
+    owner = placed[(arrays["member_task"][None, :] + np.arange(copies)[:, None] * count).reshape(-1)]
+    members = np.argsort(owner, kind="stable")
+    ends = {}
+    for name in ("member_source", "member_target"):
+        values = np.tile(arrays[name], copies)
+        ends[name] = np.where(values >= 0, values + np.repeat(shift[:, 0], len(arrays[name])), -1)
+    keys = arrays["task_key"][None, :] + np.arange(copies)[:, None] * (int(arrays["task_key"].max(initial=-1)) + 1)
+    copied = dict(
+        kinds=np.tile(arrays["kinds"], copies),
+        entity_token=np.tile(arrays["entity_token"], copies)
+        + np.repeat(np.arange(copies, dtype=np.uint64), entities) * np.uint64(0x9E3779B97F4A7C15),
+        entity_connected=np.tile(arrays["entity_connected"], copies),
+        obs_entity=entity[observations],
+        obs_step=step[observations],
+        obs_ref=np.tile(arrays["obs_ref"], copies)[observations],
+        obs_anchor=np.tile(arrays["obs_anchor"], copies)[observations],
+        **{"fact_" + name: values[facts] for name, values in joined.items()},
+        **{name: np.concatenate([arrays[name]] * copies)[tasks] for name in TASKS if name != "task_key"},
+        task_key=keys.reshape(-1)[tasks],
+        member_task=owner[members],
+        **{name: np.tile(arrays[name], copies)[members] for name in ("member_name", "member_place", "member_code")},
+        **{name: values[members] for name, values in ends.items()},
+        **{name: arrays[name][:0] for name in LABELS},
+    )
+    arrays.update({name: value.astype(arrays[name].dtype) for name, value in copied.items()})
+    result = Dense(graph.name, [], graph.steps, **arrays)
+    verify_dense(result, registry)
+    LOG.debug("crossing exit entities=%d seconds=%.4f", len(result.kinds), time.perf_counter() - started)
+    return result
+
+
+def crossed(registry, values):
+    started = time.perf_counter()
+    entries, rest = support.pipelined(registry, values, ("graphspec.derive",))
+    assert rest == {}
+    steps = pipeline.resolved(registry, entries)
+    result = steps, specs.configured(specs.settings(registry, GROUPS), dict(WALKS, **CAPS))
+    LOG.debug("crossed exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
+def components(graph, registry):
+    started = time.perf_counter()
+    held = derive.derivable(graph, registry)
+    facts = np.searchsorted(graph.fact_step, np.arange(graph.steps + 1))
+    observed = np.searchsorted(graph.obs_step, np.arange(graph.steps + 1))
+    sizes = []
+    for step in range(graph.steps):
+        span = np.arange(facts[step], facts[step + 1])
+        rows = span[held[span]]
+        u, v = derive.undirected(graph.fact_source[rows], graph.fact_target[rows], len(graph.kinds))
+        low, high = observed[step], observed[step + 1]
+        present = np.sort(graph.obs_entity[low:high][~graph.obs_anchor[low:high]])
+        sizes += [len(members) for members, _, _ in derive.component_edges(present, u, v)]
+    LOG.debug("components exit components=%d seconds=%.4f", len(sizes), time.perf_counter() - started)
+    return sizes
 
 
 def variant(members, registry, steps, spec, cuts, limits):
@@ -298,11 +385,31 @@ def test_no_draw_reads_a_random_generator_or_a_device(drawn, monkeypatch):
     assert differing(derived(views[:1], registry, steps, spec, [6], Unread()), reference) == []
 
 
+def test_the_case_of_the_gpu_check_gives_dense_algebra_the_rows_from_which_it_runs_on_the_gpu(drawn):
+    started = time.perf_counter()
+    views, fitted = drawn[1], drawn[4]
+    graph = crossing(views[0], fitted, COPIES)
+    for values in CROSSING:
+        steps, _ = crossed(fitted, values)
+        assert [step.name for step in steps] == ["graphspec.derive"]
+    sizes = components(graph, fitted)
+    assert max(sizes) >= compute.GPU_FROM > max(components(views[0], fitted))
+    LOG.info("crossing exit largest=%d seconds=%.3f", max(sizes), time.perf_counter() - started)
+
+
 @pytest.mark.gpu
-def test_the_arrays_of_every_draw_are_equal_on_cpu_and_on_gpu(drawn):
+def test_the_arrays_of_every_draw_are_equal_on_cpu_and_on_gpu(drawn, monkeypatch):
     registry, views, reference, _, fitted = drawn
     steps, spec = stated(fitted, DRAWN, {})
     assert differing(derived(views[:1], registry, steps, spec, [], GraphLimits("cuda")), reference) == []
     steps, spec = stated(fitted, dict(DRAWN, **{"derive/rewiring": "fosr"}), {})
     on = [derived(views[1:2], registry, steps, spec, [], GraphLimits(device)) for device in ("cpu", "cuda")]
     assert differing(on[1], on[0]) == []
+    graph, used, chosen = crossing(views[0], fitted, COPIES), [], compute.device_for
+    monkeypatch.setattr(compute, "device_for", lambda size, device: used.append(chosen(size, device)) or used[-1])
+    for values in CROSSING:
+        steps, spec = crossed(fitted, values)
+        grown = pipeline.grown(fitted, steps, None)
+        on = [derived([graph], grown, steps, spec, [], GraphLimits(device)) for device in ("cpu", "cuda")]
+        assert differing(on[1], on[0]) == []
+    assert "cuda" in used
