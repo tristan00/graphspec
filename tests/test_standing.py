@@ -1,9 +1,12 @@
 import ast
 import hashlib
 import logging
+import platform
 import re
 import time
+import tomllib
 from functools import lru_cache
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -13,6 +16,14 @@ pytestmark = pytest.mark.xdist_group("standing")
 ROOT = Path(__file__).parent.parent
 CODE = ("graphspec", "tuning")
 NAMED = ("graphspec", "tuning")
+PRIVATE = {
+    "numba": ("_data_name", "_index_key", "_index_path", "_load_index", "_py_func", "_save_data", "_save_index", "_unique_ids"),
+    "numpy": ("_mmap",),
+    "optuna": ("_gamma",),
+    "python": ("_getfinalpathname", "_getframe", "_handle", "_winapi"),
+}
+PUBLIC = ("_exit",)
+PROJECT = ("graphspec", "tuning", "tests", "conftest.py")
 MARKS = ("timed", "staged")
 LOGGERS = ("debug", "info", "warning", "error", "exception", "critical")
 NESTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
@@ -808,6 +819,42 @@ def unrecorded(root, units, recorded, held):
             found.append("record %s at version %d with the digest %s" % (name, version, digest))
     LOG.debug("unrecorded exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return found
+
+
+def privates(root, places):
+    started = time.perf_counter()
+    found = set()
+    for place in listed(root, places):
+        for node in ast.walk(parsed((root / place).read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Attribute) and not (isinstance(node.value, ast.Name) and node.value.id in ("self", "cls")):
+                found.add(node.attr)
+            elif isinstance(node, ast.Import):
+                found.update(part for alias in node.names for part in alias.name.split("."))
+            elif isinstance(node, ast.ImportFrom):
+                found.update((node.module or "").split(".") + [alias.name for alias in node.names])
+    found = sorted(name for name in found if name[:1] == "_" and name[:2] != "__")
+    LOG.debug("privates exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def pinned(root):
+    started = time.perf_counter()
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    found = {"python": project["requires-python"]}
+    for line in project["dependencies"]:
+        name = re.match(r"[A-Za-z0-9_.-]+", line).group(0)
+        found[name] = line[len(name) :]
+    LOG.debug("pinned exit dependencies=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def test_every_package_whose_private_names_the_code_reads_or_replaces_is_pinned_to_its_installed_version(tmp_path):
+    assert privates(ROOT, PROJECT) == sorted({name for names in PRIVATE.values() for name in names} | set(PUBLIC))
+    installed = {name: platform.python_version() if name == "python" else version(name) for name in PRIVATE}
+    assert {name: pinned(ROOT)[name] for name in PRIVATE} == {name: "==" + held for name, held in installed.items()}
+    write(tmp_path, "graphspec/reads.py", "import numba\n\n\ndef work(self, held):\n    return held._hidden, self._own, numba\n")
+    write(tmp_path, "tuning/loads.py", "from numba.core import _internal\nimport numba._helper\n")
+    assert privates(tmp_path, ("graphspec", "tuning")) == ["_helper", "_hidden", "_internal"]
 
 
 def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_with_its_version(tmp_path):
