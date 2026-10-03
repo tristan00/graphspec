@@ -1,5 +1,4 @@
 import copy
-import gc
 import logging
 import time
 
@@ -207,7 +206,6 @@ def banks():
     root = shared("references", made(CASES))
     yield {name: root / name for name in CASES}
     OPENED.clear()
-    gc.collect()
 
 
 @timed("references.opened")

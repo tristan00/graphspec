@@ -1,4 +1,3 @@
-import gc
 import logging
 import time
 
@@ -139,7 +138,6 @@ def banks():
     root = shared("outcomes", made)
     yield {name: root / name for name in ("stated", "changed")}
     OPENED.clear()
-    gc.collect()
 
 
 @timed("outcomes.opened")

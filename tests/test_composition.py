@@ -1,5 +1,4 @@
 import copy
-import gc
 import logging
 import time
 
@@ -134,7 +133,6 @@ def banks():
     LOG.info("composition banks exit seconds=%.3f", time.perf_counter() - started)
     yield {name: root / name for name in ("stated", "changed")}
     OPENED.clear()
-    gc.collect()
 
 
 @timed("composition.opened")
