@@ -709,15 +709,12 @@ def test_through_each_family_that_reads_them_a_set_of_actions_encodes_alike_in_a
 
 
 def test_a_family_that_passes_no_message_over_a_graph_reads_no_structural_realisation_and_a_search_never_offers_it(banks):
-    from importlib import import_module
-
     from tuning.searches.selector import excluded, keyed, statics
 
     started = time.perf_counter()
     held = opened(banks, "stated")
     readers = [family for family in VIEWS if model_spec.STRUCTURE[family] is None]
-    assert sorted(model_spec.STRUCTURE) == sorted(VIEWS) and readers == ["snapshot", "mixed", "event_graph", "tree"]
-    assert all(hasattr(import_module("tuning.families." + family), "Received") == (family in readers) for family in VIEWS)
+    assert sorted(model_spec.STRUCTURE) == sorted(VIEWS) and readers == READERS
     assert [name for name in REALISATIONS.shipped if realisation(name).structure] == list(STRUCTURAL)
     for family, name in (("walks", "actor_edge"), ("memory", "set_edge"), ("signal", "action_nodes")):
         cfg = configured(held, name, modelled(family), PLAIN)

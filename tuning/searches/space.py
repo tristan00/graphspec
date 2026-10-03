@@ -146,15 +146,11 @@ class Space:
         return encoded
 
     @timed("space.Space.draw")
-    def draw(self, rng, training_seed, fixed, base=None, probability=1.0):
-        base = {} if base is None else base
-
+    def draw(self, rng, training_seed, fixed):
         def choose(prefix, parameter):
             name = prefix + parameter.name
             if name in fixed:
                 return parameter.check(fixed[name])
-            if name in base and rng.random() >= probability:
-                return parameter.check(base[name])
             return parameter.uniform(rng)
 
         model = drawn(self.models, lambda p: choose("model/", p))

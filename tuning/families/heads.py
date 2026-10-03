@@ -155,7 +155,7 @@ def refused(name, schema):
 
 
 class Existing:
-    version = 3
+    version = 4
     reads = ("targets",)
     together = False
     back = False
@@ -190,7 +190,7 @@ class Existing:
 
 
 class Built:
-    version = 3
+    version = 4
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
@@ -209,7 +209,7 @@ class Built:
 
 
 class Structural:
-    version = 1
+    version = 2
     reads = ("kind", "targets", "parameters")
     together = False
     back = False

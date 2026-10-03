@@ -1,5 +1,6 @@
 import logging
 import time
+from importlib import import_module
 
 import torch
 from torch import nn
@@ -94,14 +95,12 @@ class Vector(nn.Module):
 
 @timed("options.received")
 def received(spec, hidden, labels):
-    from . import event_graph, mixed, snapshot, tree
     from .model_spec import unstructured
 
     reason = unstructured(spec)
     if reason is not None:
         raise ValueError("the family %s reads no option put into its graph: %s" % (spec["view"], reason))
-    families = dict(snapshot=snapshot, mixed=mixed, event_graph=event_graph, tree=tree)
-    return families[spec["view"]].Received(spec, hidden, labels)
+    return import_module("." + spec["view"], __package__).Received(spec, hidden, labels)
 
 
 class Structured(nn.Module):
