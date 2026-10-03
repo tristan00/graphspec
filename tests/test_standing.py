@@ -23,10 +23,12 @@ PRIVATE = {
     "python": ("_getfinalpathname", "_getframe", "_handle", "_winapi"),
 }
 PUBLIC = ("_exit",)
+UNDERSCORED = re.compile(r"(?<!\w)_[^\W_]")
 PROJECT = ("graphspec", "tuning", "tests", "conftest.py")
 MARKS = ("timed", "staged")
 LOGGERS = ("debug", "info", "warning", "error", "exception", "critical")
 NESTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+BODIES = ("body", "orelse", "finalbody", "handlers", "cases")
 NUMERAL = ("3", "iii", "three")
 BETWEEN = r"[\W_]*"
 PIECES = (
@@ -432,7 +434,7 @@ def functions(tree):
     found, waiting = [], [(tree, "")]
     while waiting:
         node, prefix = waiting.pop()
-        for child in ast.iter_child_nodes(node):
+        for child in (child for name in BODIES for child in getattr(node, name, ())):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 found.append((prefix + child.name, child))
                 waiting.append((child, prefix + child.name + ".<locals>."))
@@ -825,7 +827,10 @@ def privates(root, places):
     started = time.perf_counter()
     found = set()
     for place in listed(root, places):
-        for node in ast.walk(parsed((root / place).read_text(encoding="utf-8"))):
+        source = (root / place).read_text(encoding="utf-8")
+        if not UNDERSCORED.search(source):
+            continue
+        for node in ast.walk(parsed(source)):
             if isinstance(node, ast.Attribute) and not (isinstance(node.value, ast.Name) and node.value.id in ("self", "cls")):
                 found.add(node.attr)
             elif isinstance(node, ast.Import):
