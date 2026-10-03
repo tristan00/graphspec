@@ -542,7 +542,7 @@ def measurable(names, bank, scored):
         )
     rows = np.sort(np.concatenate([np.asarray(bank.split["indices"][name], np.int64) for name in scored]))
     held = Scored(
-        np.asarray(bank.targets[rows], np.float64),
+        bank.targets[rows],
         np.full(len(rows), np.nan),
         bank.task_of[rows],
         bank.series[rows],

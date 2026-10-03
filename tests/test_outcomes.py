@@ -430,15 +430,16 @@ def test_times_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_measures
     rounded = np.asarray(tau, np.float32).tolist()
     assert inputs["tau"].dtype == np.float32 and inputs["tau"][:15].tolist() == rounded != tau
     assert np.isnan(inputs["tau"][15]) and fields["place"].tolist() == [0] * 15 + [1] and np.isnan(inputs["place"][:15]).all()
-    held = SimpleNamespace(targets=np.asarray([row["y"] for row in rows], np.float32), fields=fields)
+    held = SimpleNamespace(targets=np.asarray([row["y"] for row in rows], np.float64), fields=fields)
     batch = dict(rows=np.arange(15), drawn=np.zeros(2, np.int64), placed=np.arange(17), left=np.zeros(15, bool))
     found = outcomes(held, batch, "cpu")
     assert found["field/duration"].dtype == torch.int64 and found["field/duration"].tolist() == lasted + lasted[:1] * 2
     assert found["field/happened"].dtype == torch.bool and found["field/happened"][:15].tolist() == happened
     assert found["field/tau"].dtype == torch.int64 and found["field/tau"][:15].tolist() == tau
+    assert found["target"].dtype == torch.float64
     scores = torch.tensor([0.5, -1.0, 2.0, -0.5, 0.0, 1.0, -2.0, -1.5, -1.0, 1.5, 0.0, 0.0, 0.0, 0.3, 0.1])
     batch = dict(
-        target=found["target"][:15],
+        target=found["target"][:15].to(scores.dtype),
         weight=torch.ones(15),
         point_row=torch.arange(5).repeat_interleave(3),
         tasks=5,

@@ -170,6 +170,7 @@ class Summed:
         import torch
 
         known, values = dict(batch, **outcomes(bank, batch, predictions.device)), []
+        known["target"] = known["target"].to(predictions.dtype)
         for code, loss in enumerate(self.losses):
             points = ((known["aim"] == code) & known["counted"]).nonzero().flatten()
             if len(points):

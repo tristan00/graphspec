@@ -46,7 +46,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 44
+VIEW = 45
 TOKEN = (1 << 62) - 1
 
 
@@ -318,7 +318,7 @@ class Bank:
         self.splits = self.manifest["splits"]
         supervision = read_json(self.directory / "supervision.json")
         self.rows, self.split = supervision["rows"], supervision["split"]
-        self.targets = np.asarray([row["y"] for row in self.rows], np.float32)
+        self.targets = np.asarray([row["y"] for row in self.rows], np.float64)
         self.weights = np.asarray(
             [row["weight"] if "weight" in row else 1.0 for row in self.rows], np.float32
         )

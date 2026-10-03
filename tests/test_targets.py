@@ -97,7 +97,7 @@ def graph(place, stated):
 
 @timed("targets.number")
 def number(at, place):
-    return 0.5 * at + place
+    return 0.5 * at + place + 0.1
 
 
 @timed("targets.course")
@@ -108,6 +108,20 @@ def course(at, place):
 @timed("targets.case")
 def case(kinds, targets):
     return dict(schema=mixed(kinds), graphs=[graph(place, targets) for place in range(2)])
+
+
+@timed("targets.pointwise")
+def pointwise(held, stated):
+    given, seen, result = {}, {}, []
+    for graph in stated["graphs"]:
+        tasks = graph["tasks"]
+        for kind, key, target in zip(tasks["kind"], tasks["key"], tasks["target"]):
+            given[graph["name"], key] = [(0, target)] if kind == "level" else [(tau, y) for tau, _, y in target]
+    for row in held.rows:
+        key = (row["graph"], row["ticket"])
+        seen[key] = seen.get(key, -1) + 1
+        result.append(given[key][seen[key]])
+    return result
 
 
 @timed("targets.read")
@@ -283,16 +297,9 @@ def test_a_number_and_a_path_in_one_bank_read_back_as_stated_and_are_scaled_per_
         assert entry["mean"] == pytest.approx(np.mean(values)) and entry["sd"] == pytest.approx(np.std(values, ddof=1))
     path, tau = np.asarray([row["kind"] == "course" for row in held.rows]), held.fields["tau"]
     assert np.array_equal(held.aims, path.astype(np.int64)) and tau.dtype == np.int64 and (tau[~path] == 0).all()
-    placed = {}
-    for row, value in zip(held.rows, tau.tolist()):
-        if row["kind"] == "course":
-            placed.setdefault((row["graph"], row["ticket"]), []).append(value)
-    assert LATE in tau.tolist() and placed == {
-        (graph["name"], key): [point[0] for point in target]
-        for graph in stated["graphs"]
-        for kind, key, target in zip(graph["tasks"]["kind"], graph["tasks"]["key"], graph["tasks"]["target"])
-        if kind == "course"
-    }
+    assert held.targets.dtype == np.float64 and LATE in tau.tolist()
+    assert list(zip(tau.tolist(), held.targets.tolist())) == pointwise(held, stated)
+    assert any(float(np.float32(y)) != y for _, y in pointwise(held, stated))
 
 
 def test_a_head_gives_every_point_the_prediction_of_the_head_of_its_kind_of_target():
@@ -323,7 +330,7 @@ def test_a_head_gives_every_point_the_prediction_of_the_head_of_its_kind_of_targ
 def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_target(
     numbered, tmp_path, statement, monkeypatch
 ):
-    bank = numbered[0]
+    bank, stated = numbered
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
     held = Deriver(bank, "cpu", RESIDENT)
     given = dict(statement, loss=dict(number="balanced", path="balanced"), measures=["balanced", "mse"])
@@ -340,6 +347,10 @@ def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_t
         assert set(aim.tolist()) == {0, 1} and tau.dtype == np.int64 and (tau[aim == 0] == 0).all()
         assert set(tau[aim == 1].tolist()) == {1, LATE}
         assert np.isfinite(found["prediction"]).all() and len(aim) == saved["holdout_rows"]
+        rows, prediction, size = pointwise(held, stated), found["prediction"], found["series"] == 0
+        aims = np.asarray([rows[row][1] for row in found["row_index"].tolist()])
+        assert found["target"].dtype == np.float64 and np.array_equal(found["target"], aims) and size.any()
+        assert saved["measures"]["mse"]["series"]["size"] == float(((prediction - aims)[size] ** 2).mean())
 
 
 def test_the_batch_a_model_reads_holds_the_inputs_of_a_path_and_of_a_registered_kind_and_no_outcome(
