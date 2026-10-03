@@ -14,7 +14,7 @@ from tuning.families.model_spec import realised
 from tuning.families.periods import enabled
 
 from .inputs import chosen_points, frame_inputs, recipe
-from .tensors import Frames, Host, joined, length, materialise
+from .tensors import Frames, Host, joined, length, materialise, settled
 
 LOG = logging.getLogger(__name__)
 ENTITY_FRAMES = 1 << 20
@@ -277,7 +277,8 @@ def recipe_batch(bank, blocks, cfg):
 @timed("recipe_parts")
 def recipe_parts(bank, blocks, cfg):
     with Forks(bank):
-        return combined(bank, blocks, cfg)
+        b = combined(bank, blocks, cfg)
+        return settled(bank, cfg, b) if any(isinstance(block[0], Part) and block[0].option >= 0 for block in blocks) else b
 
 
 def combined(bank, blocks, cfg):
@@ -520,11 +521,9 @@ def combined(bank, blocks, cfg):
 
 @timed("batching.pack_batch")
 def pack_batch(bank, blocks, cfg, device):
-    with Forks(bank):
-        return materialise(bank, cfg, recipe_batch(bank, blocks, cfg), device)
+    return materialise(bank, cfg, recipe_batch(bank, blocks, cfg), device)
 
 
 @timed("batching.pack_parts")
 def pack_parts(bank, blocks, cfg, device):
-    with Forks(bank):
-        return materialise(bank, cfg, recipe_parts(bank, blocks, cfg), device)
+    return materialise(bank, cfg, recipe_parts(bank, blocks, cfg), device)

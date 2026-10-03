@@ -6,7 +6,6 @@ import torch
 
 from graphspec.infra.arrays import NUMPY, Bundle, Pending, join_tensors, views
 from graphspec.infra.timing import timed
-from tuning.bank.forks import Forks
 
 LOG = logging.getLogger(__name__)
 
@@ -362,8 +361,40 @@ def keys(value, found):
 
 @timed("resolve")
 def resolve(value, bank, cfg, tensors, device):
-    with Forks(bank):
-        return Resolver(bank, cfg, tensors, device, list(dict.fromkeys(value["graphs"]))).run(value)
+    return Resolver(bank, cfg, tensors, device, list(dict.fromkeys(value["graphs"]))).run(value)
+
+
+def marked(value, path, bundle, found):
+    started = time.perf_counter()
+    for key, item in value.items():
+        if isinstance(item, (Gather, Features)):
+            found[path + (key,)] = prepare(item, bundle)
+        elif isinstance(item, dict):
+            marked(item, path + (key,), bundle, found)
+    LOG.debug("marked exit gathers=%d seconds=%.4f", len(found), time.perf_counter() - started)
+
+
+def replaced(value, path, values):
+    started = time.perf_counter()
+    result = {}
+    for key, item in value.items():
+        if path + (key,) in values:
+            result[key] = values[path + (key,)]
+        else:
+            result[key] = replaced(item, path + (key,), values) if isinstance(item, dict) else item
+    LOG.debug("replaced exit keys=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def settled(bank, cfg, tree):
+    started = time.perf_counter()
+    bundle, found = Bundle("cpu"), {}
+    marked(tree, (), bundle, found)
+    buffer, spans = bundle.pack()
+    resolver = Resolver(bank, cfg, views(torch.as_tensor(buffer), spans), "cpu", list(dict.fromkeys(tree["graphs"])))
+    result = replaced(tree, (), {path: resolver.run(value).numpy() for path, value in found.items()})
+    LOG.debug("settled exit gathers=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return result
 
 
 def materialise(bank, cfg, tree, device):

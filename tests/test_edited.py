@@ -18,7 +18,8 @@ from graphspec.infra.timing import timed
 from tuning import REALISATIONS, Edited
 from tuning.bank import forks
 from tuning.bank.options import READ as OFFERED
-from tuning.batches.batching import pack_batch, pack_parts, parted
+from tuning.batches.batching import pack_batch, pack_parts, parted, recipe_batch
+from tuning.batches.tensors import keys, materialise
 from tuning.families import model_spec
 from tuning.families.heads import REALISATION, realisation, refused
 from tuning.families.model_spec import EDITS, VIEWS, realisable, space
@@ -238,6 +239,25 @@ def test_the_chains_and_forks_a_batch_reads_are_released_once_it_is_packed(banks
     assert len(b["options"]["row"]) > 2 and counts.count("fork") >= len(b["options"]["row"]) and "chain" in counts
     assert not [sort for sort, held in alive if held() is not None]
     LOG.info("forks released exit made=%d seconds=%.3f", len(counts), time.perf_counter() - started)
+
+
+def test_a_batch_of_forks_carries_what_its_reader_needs_so_only_its_packer_derives_them(banks, monkeypatch):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    cfg = configured(held, "edited", "snapshot")
+    chosen = last(held, cfg, 2)
+    packed, tree = pack_batch(held, chosen, cfg, "cpu"), recipe_batch(held, chosen, cfg)
+    calls, derived = [], forks.derived
+
+    @timed("edited.read")
+    def read(*arguments):
+        calls.append(arguments[2])
+        return derived(*arguments)
+
+    monkeypatch.setattr(forks, "derived", read)
+    assert len(packed["options"]["row"]) > 2 and keys(tree, set()) == set()
+    assert support.same(materialise(held, cfg, tree, "cpu"), packed) and calls == []
+    LOG.info("forks carried exit seconds=%.3f", time.perf_counter() - started)
 
 
 @pytest.mark.parametrize("family", READING)
