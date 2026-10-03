@@ -7,7 +7,7 @@ import pytest
 import support
 
 from conftest import shared
-from graphspec import Registry
+from graphspec import GENERATORS, Registry
 from graphspec.build.generators import regenerated
 from graphspec.engine.transform import shown, validate
 from graphspec.facts.stored import Facts
@@ -23,13 +23,26 @@ OPENED = {}
 NAMES = [held["name"] for held in generated.STATED]
 
 
+class Bare:
+    version = 1
+
+    @timed("generators.Bare.__call__")
+    def __call__(self, seen, parameters):
+        return []
+
+
 @pytest.fixture(scope="module")
-def banks():
+def entries():
     generated.register()
-    root = shared("generated", generated.made)
-    yield {name: root / name for name in generated.CASES}
+    yield
     generated.unregister()
     OPENED.clear()
+
+
+@pytest.fixture(scope="module")
+def banks(entries):
+    root = shared("generated", generated.made)
+    return {name: root / name for name in generated.CASES}
 
 
 @timed("generators.opened")
@@ -209,7 +222,9 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
     LOG.info("faulty generators exit seconds=%.3f", time.perf_counter() - started)
 
 
-def test_a_statement_of_generators_is_checked_with_the_schema_and_a_rule_is_drawn_only_by_a_generator_that_reads_it():
+def test_a_statement_of_generators_is_checked_with_the_schema_and_a_rule_is_drawn_only_by_a_generator_that_reads_it(
+    entries,
+):
     stated = generated.case("base")["schema"]
     target = ("tasks", "kinds", generated.KIND, "target")
     wrong = (
@@ -235,6 +250,22 @@ def test_a_statement_of_generators_is_checked_with_the_schema_and_a_rule_is_draw
     held["tasks"]["kinds"][generated.KIND]["target"]["rule"] = None
     with pytest.raises(ValueError, match="the generator 3 of the options of the target of the kind of task turn, ruled, draws from"):
         Schema(held)
+    held = copy.deepcopy(stated)
+    held["tasks"]["references"]["road"] = dict(sort="edge", kinds=["spot"])
+    held["tasks"]["kinds"][generated.KIND]["references"].append("road")
+    held["tasks"]["kinds"][generated.KIND]["target"]["about"] = "road"
+    with pytest.raises(ValueError, match="states generators of options and is about road, whose facts a split's rule keeps"):
+        Schema(held)
+    held["tasks"]["kinds"][generated.KIND]["target"].update(generators=[], rule=None)
+    Schema(held)
+    GENERATORS.register("bare", Bare())
+    try:
+        held = copy.deepcopy(stated)
+        held["tasks"]["kinds"][generated.KIND]["target"]["generators"][0]["name"] = "bare"
+        with pytest.raises(ValueError, match="the generator of options bare states reads, a tuple of what it reads"):
+            Schema(held)
+    finally:
+        del GENERATORS.held["bare"]
     held["tasks"]["kinds"][generated.KIND]["target"].update(rule=copy.deepcopy(generated.RULE), generators=generated.STATED[:3])
     with pytest.raises(ValueError, match="the kind of task turn states its options by the rule spots; the options"):
         decisions.drawn(Schema(held))
