@@ -6,6 +6,7 @@ import numpy as np
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
+from .fields import fields, named
 from .references import SORTS
 from .targets import TARGETS, listed, real
 
@@ -26,47 +27,27 @@ DRAWN = ("generator", "seed", "drawn")
 ACTING = ("id", "graph", "kind", "actor")
 
 
-@timed("decisions.exactly")
-def exactly(mapping, names, where):
-    if not isinstance(mapping, dict):
-        raise ValueError("%s is stated as a mapping, found %r" % (where, mapping))
-    lacking = [name for name in names if name not in mapping]
-    if lacking:
-        raise ValueError("%s lacks %s" % (where, ", ".join(lacking)))
-    unknown = sorted(map(str, set(mapping) - set(names)))
-    if unknown:
-        raise ValueError("%s holds fields it does not know: %s" % (where, ", ".join(unknown)))
-    return mapping
-
-
-@timed("decisions.word")
-def word(name, where):
-    if type(name) is not str or not name or ":" in name:
-        raise ValueError("%s needs a name without colons, found %r" % (where, name))
-    return name
-
-
 @timed("decisions.ruled")
 def ruled(stated, schema, where):
     if stated is None:
         return None
     where = "the rule of the options of the target of " + where
-    stated = exactly(stated, RULE, where)
+    stated = fields(stated, RULE, where)
     entry = RULES.named(stated["name"])
     return dict(name=stated["name"], parameters=entry.checked(stated["parameters"], schema, where))
 
 
 def acted(name, entry, schema, where):
     started = time.perf_counter()
-    where = "the kind of action %s of %s" % (word(name, "a kind of action of " + where), where)
-    entry = exactly(entry, ACTION, where)
+    where = "the kind of action %s of %s" % (named(name, "a kind of action of " + where), where)
+    entry = fields(entry, ACTION, where)
     roles = entry["roles"]
     if not isinstance(roles, dict):
         raise ValueError("%s states its roles as a mapping from name to sort and kinds, found %r" % (where, roles))
     held = {}
     for role, statement in roles.items():
-        inner = "the role %s of %s" % (word(role, "a role of " + where), where)
-        statement = exactly(statement, ROLE, inner)
+        inner = "the role %s of %s" % (named(role, "a role of " + where), where)
+        statement = fields(statement, ROLE, inner)
         sort, kinds = statement["sort"], statement["kinds"]
         if sort not in ROLES:
             raise ValueError("%s is of one of the sorts %s, found %r" % (inner, ", ".join(ROLES), sort))
@@ -122,13 +103,13 @@ def outcome(stated, series, where):
 
 def option(stated, series, where):
     started = time.perf_counter()
-    stated = exactly(stated, OPTION, where)
-    word(stated["key"], "the key of " + where)
+    stated = fields(stated, OPTION, where)
+    named(stated["key"], "the key of " + where)
     if not isinstance(stated["actions"], list):
         raise ValueError("%s states its actions as a list, found %r" % (where, stated["actions"]))
     for place, action in enumerate(stated["actions"]):
         inner = "the action %d of %s" % (place, where)
-        action = exactly(action, ACTED, inner)
+        action = fields(action, ACTED, inner)
         if type(action["kind"]) is not str or type(action["actor"]) is not str:
             raise ValueError("%s names its kind and the key of its actor" % inner)
         targets, parameters = action["targets"], action["parameters"]
@@ -157,7 +138,7 @@ def option(stated, series, where):
         raise ValueError("%s states the probabilities under which it was shown and chosen as numbers or none" % where)
     origin = stated["origin"]
     if origin != RECORDED:
-        origin = exactly(origin, DRAWN, "the origin of " + where)
+        origin = fields(origin, DRAWN, "the origin of " + where)
         if type(origin["generator"]) is not str or type(origin["seed"]) is not int or not probable(origin["drawn"]):
             raise ValueError(
                 "%s states its origin as %s, or as the name of the generator that drew it, its seed, a whole number, "
@@ -177,7 +158,7 @@ def option(stated, series, where):
 
 def decision(stated, target, where):
     started = time.perf_counter()
-    stated = exactly(stated, STATED, where)
+    stated = fields(stated, STATED, where)
     if not isinstance(stated["options"], list):
         raise ValueError("%s states its options as a list, found %r" % (where, stated["options"]))
     for place, found in enumerate(stated["options"]):
@@ -204,7 +185,7 @@ def decision(stated, target, where):
 
 
 class Decision:
-    version = 1
+    version = 2
     scaled = True
     matures = None
     names = None
@@ -232,7 +213,7 @@ class Decision:
         found = {name: acted(name, entry, schema, "the target of " + where) for name, entry in actions.items()}
         nothing = stated["nothing"]
         if nothing is not None:
-            word(nothing, "the option that does nothing of the target of " + where)
+            named(nothing, "the option that does nothing of the target of " + where)
         return dict(actors=actors, actions=found, nothing=nothing, rule=ruled(stated["rule"], schema, where))
 
     @timed("decisions.decision.series")

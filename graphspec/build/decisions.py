@@ -5,7 +5,7 @@ from collections import Counter
 
 import numpy as np
 
-from graphspec.facts.stored import codes
+from graphspec.facts.stored import DECIDED, codes
 from graphspec.infra.timing import timed
 from graphspec.schema.decisions import GENERATORS, WHOLE, deciding
 from graphspec.schema.time import NEVER
@@ -413,31 +413,9 @@ def decided(registry, found, tasks, place, members, keys, kinds, seen, aims, nam
 def undecided(tasks, aims):
     started = time.perf_counter()
     count = len(aims["task"])
-    result = dict(
-        option_task=np.zeros(0, np.int32),
-        option_sequence=np.zeros(0, bool),
-        option_available=np.zeros(0, bool),
-        option_chosen=np.zeros(0, bool),
-        option_order=np.zeros(0, np.int32),
-        option_generator=np.zeros(0, np.int32),
-        option_seed=np.zeros(0, np.int64),
-        option_shown=np.zeros(0, np.float64),
-        option_logged=np.zeros(0, np.float64),
-        option_drawn=np.zeros(0, np.float64),
-        action_option=np.zeros(0, np.int32),
-        action_kind=np.zeros(0, np.int16),
-        action_actor=np.zeros(0, np.int32),
-        action_values=np.zeros((0, 0), np.float32),
-        role_action=np.zeros(0, np.int32),
-        role_name=np.zeros(0, np.int16),
-        role_source=np.zeros(0, np.int32),
-        role_target=np.zeros(0, np.int32),
-        role_code=np.zeros(0, np.int16),
-        next_task=np.zeros(0, np.int32),
-        next_actor=np.zeros(0, np.int32),
-        next_other=np.zeros(0, np.int32),
-        concurrent_task=np.zeros(0, np.int32),
-        concurrent_other=np.zeros(0, np.int32),
+    result = {name: np.zeros(0, kind) for name, kind in DECIDED.items()}
+    result.update(
+        action_values=result["action_values"].reshape(0, 0),
         target_option=np.full(count, -1, np.int32),
         target_part=np.full(count, -1, np.int32),
     )

@@ -23,12 +23,31 @@ WITHIN = ("within_source", "within_target", "within_code", "within_values")
 HALF = int(np.finfo(np.float16).max)
 GROUPS = ("obs", "fact")
 SPARSE = ("known_row", "known_time", "replaced_row", "replaced_time", "seen_row", "seen_observer")
-DECIDED = (
-    ("next_task", "next_actor", "next_other", "concurrent_task", "concurrent_other")
-    + ("option_task", "option_sequence", "option_available", "option_chosen", "option_order")
-    + ("option_shown", "option_logged", "option_generator", "option_seed", "option_drawn")
-    + ("action_option", "action_kind", "action_actor", "action_values")
-    + ("role_action", "role_name", "role_source", "role_target", "role_code")
+DECIDED = dict(
+    next_task=np.int32,
+    next_actor=np.int32,
+    next_other=np.int32,
+    concurrent_task=np.int32,
+    concurrent_other=np.int32,
+    option_task=np.int32,
+    option_sequence=np.bool_,
+    option_available=np.bool_,
+    option_chosen=np.bool_,
+    option_order=np.int32,
+    option_shown=np.float64,
+    option_logged=np.float64,
+    option_generator=np.int32,
+    option_seed=np.int64,
+    option_drawn=np.float64,
+    action_option=np.int32,
+    action_kind=np.int16,
+    action_actor=np.int32,
+    action_values=np.float32,
+    role_action=np.int32,
+    role_name=np.int16,
+    role_source=np.int32,
+    role_target=np.int32,
+    role_code=np.int16,
 )
 STORED = (
     ("kinds", "entity_token")
@@ -45,7 +64,7 @@ STORED = (
     + JOINED
     + HELD
     + WITHIN
-    + DECIDED
+    + tuple(DECIDED)
 )
 
 
