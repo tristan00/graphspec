@@ -1,4 +1,5 @@
 import logging
+import pickle
 import shutil
 import tempfile
 import time
@@ -46,7 +47,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 46
+VIEW = 47
 TOKEN = (1 << 62) - 1
 
 
@@ -348,6 +349,7 @@ class Bank:
         )
         self.scale = np.asarray([scaled[name]["sd"] if name in scaled else 1.0 for name in self.series_names], np.float32)
         self.variants = {}
+        self.digests = {}
         self._groups = {}
         self._viewed = {}
         self._looking = {}
@@ -373,11 +375,19 @@ class Bank:
         LOG.debug("bank named exit named=%d seconds=%.4f", int((result >= 0).sum()), time.perf_counter() - started)
         return result
 
+    def digested(self, kind, value, *owners):
+        pickled = pickle.dumps(value, pickle.HIGHEST_PROTOCOL)
+        key = (kind, *map(id, owners))
+        held = self.digests.get(key)
+        if held is None or held[1] != pickled:
+            held = self.digests[key] = (owners, pickled, specs.digest(value))
+        return held[2]
+
     def looking(self, cfg):
         if "splits" not in cfg:
             raise KeyError("the configuration states no splits to train on and to score on")
         stated = cfg["splits"]
-        key = specs.digest(stated)
+        key = self.digested("splits", stated, stated)
         if key not in self._looking:
             started = time.perf_counter()
             lacking = [name for name in STATEMENT if name not in stated]
@@ -412,7 +422,12 @@ class Bank:
     def viewed(self, cfg):
         spec = self.stated(cfg)[2]
         storage = sets.chosen(self.registry, spec)
-        key = (spec["time/steps"], self.several(spec), specs.digest(storage), specs.digest(cfg["splits"]))
+        key = (
+            spec["time/steps"],
+            self.several(spec),
+            self.digested("storage", storage, spec),
+            self.digested("splits", cfg["splits"], cfg["splits"]),
+        )
         if key not in self._viewed:
             self._viewed[key] = Viewed(self, *key[:2], storage, self.looking(cfg)[0])
         return self._viewed[key]
@@ -483,8 +498,8 @@ class Bank:
         size = (
             spec["time/steps"],
             self.several(spec),
-            specs.digest(sets.chosen(self.registry, spec)),
-            specs.digest(cfg["splits"]),
+            self.digested("storage", sets.chosen(self.registry, spec), spec),
+            self.digested("splits", cfg["splits"], cfg["splits"]),
             spec["graphs/join_size"],
         )
         if size not in self._groups:
@@ -539,7 +554,8 @@ class Bank:
         if "pipeline" not in cfg:
             raise KeyError("the configuration states no pipeline")
         chosen = derived(cfg["model"])
-        key = (chosen, specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])))
+        stated = dict(pipeline=cfg["pipeline"], graph=cfg["graph"])
+        key = (chosen, self.digested("stated", stated, cfg["pipeline"], cfg["graph"]))
         if key not in self.variants:
             started = time.perf_counter()
             self.variants[key] = (

@@ -1,4 +1,7 @@
+import copy
+import logging
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +20,7 @@ from tuning.families.model_spec import configured, samples, space, views
 from tuning.families.models import build
 from tuning.families.periods import blocks as period_blocks
 
+LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("model_config")
 
 
@@ -91,7 +95,7 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     bank = Deriver.__new__(Deriver)
     bank.registry = SimpleNamespace(**vars(registry()), fingerprint=lambda: "stated")
     bank.cache = Path(tmp_path)
-    bank.variants, bank.roots, bank.device, bank.directory = {}, {}, "cpu", Path(tmp_path)
+    bank.variants, bank.roots, bank.device, bank.directory, bank.digests = {}, {}, "cpu", Path(tmp_path), {}
     bank.source = "source"
     monkeypatch.setattr(
         specs, "settings", lambda declaration, groups: (specs.number("time/history", 1, 32, 16),)
@@ -100,6 +104,42 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     assert bank.variant(cfg)[2]["time/history"] == 1
     cfg["graph"]["time/history"] = 2
     assert bank.variant(cfg)[2]["time/history"] == 2
+
+
+def counted(monkeypatch):
+    started = time.perf_counter()
+    found, original = [], specs.digest
+
+    def digest(value):
+        found.append(value)
+        return original(value)
+
+    monkeypatch.setattr(specs, "digest", digest)
+    LOG.debug("counted exit seconds=%.4f", time.perf_counter() - started)
+    return found
+
+
+def test_a_bank_digests_each_part_of_a_configuration_once_and_again_only_when_it_changes(bank, monkeypatch):
+    started = time.perf_counter()
+    held = Deriver(bank, "cpu", RESIDENT)
+    cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
+    key, _, spec, _ = held.stated(cfg)
+    folder, labels = held.viewed(cfg).folder, held.labels(0, cfg)
+    assert key[1] == specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"]))
+    found = counted(monkeypatch)
+    for _ in range(20):
+        assert held.stated(cfg)[0] == key and held.viewed(cfg).folder == folder and held.labels(0, cfg) is labels
+        assert held.looking(cfg) is held.looking(dict(cfg))
+    assert found == []
+    copied = copy.deepcopy(cfg)
+    assert held.stated(copied)[0] == key and held.viewed(copied).folder == folder and len(found) > 0
+    counts = len(found)
+    held.stated(copied)
+    assert len(found) == counts
+    cfg["graph"]["time/history"] = 5
+    assert held.stated(cfg)[0] == (key[0], specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])))
+    assert held.stated(cfg)[2]["time/history"] == 5 and held.stated(cfg)[0] != key
+    LOG.info("digested once exit seconds=%.4f", time.perf_counter() - started)
 
 
 def test_encoding_and_attention_reject_invalid_parameters_at_construction():

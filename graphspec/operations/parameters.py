@@ -332,6 +332,7 @@ def materialized(spec):
     return {name: value for name, value in spec.items() if name not in PACKING}
 
 
+@timed("parameters.digest")
 def digest(spec):
     return sha256_json(spec)
 
