@@ -19,7 +19,7 @@ from graphspec.sources import synthetic
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 from tuning.batches.batching import batches, pack_batch
-from tuning.families.heads import NONE, REALISATION
+from tuning.families.heads import NONE, REALISATION, REALISATIONS
 from tuning.families.model_spec import VIEWS, views
 from tuning.families.models import build as network
 from tuning.families.periods import blocks as windows
@@ -413,19 +413,33 @@ def test_a_bank_of_decisions_completes_one_fit_reading_the_task_and_the_outcome_
 def test_the_check_skips_and_counts_a_window_whose_decisions_hold_no_chosen_outcome_as_training_does(
     banks, tmp_path, monkeypatch
 ):
+    from test_realisations import REALISED
+
     started = time.perf_counter()
     held = opened(banks, "stated")
-    cfg = support.configuration(held.registry, dict(view="snapshot", **UNREALISED), {"time/history": 2}, 5, SPLITS)
-    monkeypatch.setattr("tuning.fits.check.samples", lambda registry: [cfg["model"]])
-    for name in ("pipeline", "graph"):
-        write_json(tmp_path / (name + ".json"), cfg[name])
-    given = (tmp_path / "check.json", "cpu", 5, support.SEED, SPLITS, dict(decision="squared"))
-    check(banks["stated"], *given, tmp_path / "pipeline.json", tmp_path / "graph.json", 1)
+    REALISATIONS.register("whole", REALISED["whole"])
+    try:
+        models = [
+            support.configuration(held.registry, dict(view="snapshot", **{REALISATION: name}), {"time/history": 2}, 5, SPLITS)
+            for name in (NONE, "whole")
+        ]
+        cfg = models[0]
+        monkeypatch.setattr("tuning.fits.check.samples", lambda registry: [model["model"] for model in models])
+        for name in ("pipeline", "graph"):
+            write_json(tmp_path / (name + ".json"), cfg[name])
+        given = (tmp_path / "check.json", "cpu", 5, support.SEED, SPLITS, dict(decision="squared"))
+        check(banks["stated"], *given, tmp_path / "pipeline.json", tmp_path / "graph.json", 1)
+    finally:
+        del REALISATIONS.held["whole"]
     found = read_json(tmp_path / "check.json")["results"]
     candidates = sorted(block for partition in (0, 1) for block in held.blocks(partition, 2, cfg) if block[0] == 1)
     last = pack_batch(held, windows(held, [candidates[-1]], cfg), cfg, "cpu")
     assert len(last["rows"]) and not held.counted[last["rows"]].any()
-    assert [(result["skipped"], result["block"], result["ok"]) for result in found] == [(1, list(candidates[-2]), True)]
+    assert [(result["skipped"], result["block"], result["ok"]) for result in found] == [
+        (1, list(candidates[-2]), True),
+        (0, list(candidates[-1]), True),
+    ]
+    assert [result["unused_parameters"] for result in found] == [[], []]
     LOG.info("check of decisions exit seconds=%.3f", time.perf_counter() - started)
 
 

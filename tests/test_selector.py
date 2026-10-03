@@ -449,6 +449,7 @@ def test_seconds_of_a_trial_outside_their_meaning_are_refused(seconds):
         ("variant_gb", 2, "variant_bytes"),
         ("batch_sequences", 16, "batch_sequences"),
         ("measures", ["balanced"], "measures"),
+        ("alike", 0.5, "alike"),
     ],
 )
 def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_field(
@@ -483,6 +484,7 @@ def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_fie
         "objective",
         "pipeline",
         "loss",
+        "alike",
         "bank_stored_sha256",
     ],
 )
