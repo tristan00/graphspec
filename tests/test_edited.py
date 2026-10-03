@@ -50,6 +50,7 @@ EDITED = dict(
 )
 READING = [family for family in VIEWS if model_spec.edits({"view": family, "snapshot/spatial": "relational"})]
 ALONE = 1e-5
+JOINED = {"graphs/join": "single", "graphs/join_size": 2}
 UNSEEN = ["parameter lit of put of show", "parameter mode of cut of show", "target along of cut of show"]
 UNSEEN += ["target at of put of show", "target made of put of show"]
 
@@ -285,6 +286,29 @@ def test_each_option_scores_as_its_own_graph_encoded_alone_and_one_step_trains_e
         assert torch.isfinite(loss) and net.head.options is None
         assert all(parameter.grad is not None for parameter in net.head.kinds.parameters())
     LOG.info("edits alone family=%s largest=%s exit seconds=%.3f", family, largest, time.perf_counter() - started)
+
+
+def test_the_options_of_a_decision_in_a_joined_group_are_forks_of_its_history_each_scored_as_it_is_alone(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    values = dict(modelled("snapshot"), **{REALISATION: "edited"})
+    cfg = support.configuration(held.registry, values, dict(PLAIN, **JOINED), 5, SPLITS)
+    chosen, members = last(held, cfg, 1), held.groups(cfg)
+    first = held.viewed(cfg).graphs[members[chosen[0][0]][0]]["steps"]
+    codes = {held.fitted(cfg).code(name) for name in RELATIONS}
+    torch.manual_seed(5)
+    net = network(cfg, held.fitted(cfg)).eval()
+    with forks.Forks(held), torch.no_grad():
+        parts = parted(held, chosen, cfg)
+        values = net(pack_batch(held, chosen, cfg, "cpu"))
+        alone = torch.cat([net(pack_parts(held, [part], cfg, "cpu")) for part in parts])
+        made = [held.resident(part[0], cfg, "cpu") for part in parts]
+        steps = [fork.numpy("spatial_step")[np.isin(fork.numpy("spatial")[:, 2], list(codes))] for fork in made]
+    assert held.joining(cfg) and len(members[chosen[0][0]]) == 2 and len(parts) > 2
+    assert all(part[0].step >= first for part in parts) and any(len(found) for found in steps)
+    assert all((found == part[0].step).all() for found, part in zip(steps, parts))
+    assert torch.allclose(alone, values, rtol=ALONE, atol=ALONE)
+    LOG.info("joined forks exit options=%d seconds=%.3f", len(parts), time.perf_counter() - started)
 
 
 def test_every_guard_holds_for_an_edit_and_one_refuses_a_field_whose_facts_the_family_does_not_read(banks):
