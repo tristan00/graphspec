@@ -45,47 +45,46 @@ def test_the_identities_of_compiled_functions_start_far_from_one_and_differ_betw
     assert first != second and next(FunctionIdentity._unique_ids) == second
 
 
-def test_the_home_of_the_suite_is_named_by_the_checkout_and_the_worker_and_shares_its_compiled_code(request):
+def test_a_home_of_the_suite_is_named_by_its_run_and_worker_and_shares_the_compiled_code_of_the_checkout(request):
     import numba
 
     started = time.perf_counter()
     root = Path(__file__).parent.parent
-    home = rooted(request).home
-    suite = Path(os.environ["GRAPHSPEC_SUITE_HOME"])
-    assert home(suite, root, "gw0") == home(suite, root / "tests" / "..", "gw0")
-    assert home(suite, root, "gw0") != home(suite, root.parent / "elsewhere" / root.name, "gw0")
-    assert home(suite, root, "gw0").parent == home(suite, root, "serial").parent
-    assert home(suite, root, "gw0").parent.parent == suite / "workers"
+    held = rooted(request)
+    suite, run = Path(os.environ["GRAPHSPEC_SUITE_HOME"]), os.environ["GRAPHSPEC_SUITE_RUN"]
+    assert held.lasting(suite, root) == held.lasting(suite, root / "tests" / "..")
+    assert held.lasting(suite, root) != held.lasting(suite, root.parent / "elsewhere" / root.name)
+    assert held.lasting(suite, root).parent == suite / "workers"
+    assert held.home(suite, run, "gw0").parent == held.home(suite, run, "serial").parent == suite / "workers" / run
     worker = os.environ.get("PYTEST_XDIST_WORKER", "serial")
-    assert Path(os.environ["GRAPHSPEC_HOME"]) == home(suite, root, worker)
-    assert os.path.samefile(numba.config.CACHE_DIR, home(suite, root, worker).parent / "numba")
+    assert Path(os.environ["GRAPHSPEC_HOME"]) == held.home(suite, run, worker)
+    assert Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) == held.lasting(suite, root)
+    assert os.path.samefile(numba.config.CACHE_DIR, held.lasting(suite, root) / "numba")
     LOG.info("home exit seconds=%.4f", time.perf_counter() - started)
 
 
-def test_the_suite_clears_what_it_made_under_its_homes_and_keeps_the_compiled_code_of_the_checkout(
-    request, tmp_path
-):
+def test_a_run_of_the_suite_removes_its_own_homes_and_leaves_other_runs_and_the_compiled_code(request, tmp_path):
     from conftest import cleared
 
     started = time.perf_counter()
+    compiled = tmp_path / "checkout" / "numba"
+    for run in ("this", "other"):
+        for worker in ("gw0", "serial"):
+            rooted(request).linked(tmp_path / run / worker, compiled)
+            for place in ("tmp/pytest", "cache/banks/one", "cache/partitions/two"):
+                (tmp_path / run / worker / place).mkdir(parents=True)
+            (tmp_path / run / worker / "stray.txt").write_text("")
+    (compiled / "graphspec_1").mkdir()
+    (compiled / "graphspec_1" / "kernel.nbi").write_text("")
+    removed = cleared(tmp_path / "this")
+    assert len(removed) == 6
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["checkout", "other"]
     for worker in ("gw0", "serial"):
-        for place in ("tmp/pytest", "cache/banks/one", "cache/partitions/two"):
-            (tmp_path / worker / place).mkdir(parents=True)
-        (tmp_path / worker / "stray.txt").write_text("")
-        rooted(request).linked(tmp_path / worker)
-    (tmp_path / "numba" / "graphspec_1").mkdir()
-    (tmp_path / "numba" / "graphspec_1" / "kernel.nbi").write_text("")
-    removed = cleared(tmp_path)
-    assert len(removed) == 8
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["gw0", "numba", "serial"]
-    for worker in ("gw0", "serial"):
-        assert [path.name for path in (tmp_path / worker).iterdir()] == ["cache"]
-        assert [path.name for path in (tmp_path / worker / "cache").iterdir()] == ["numba"]
-        assert os.path.samefile(tmp_path / worker / "cache" / "numba", tmp_path / "numba")
-    assert (tmp_path / "numba" / "graphspec_1" / "kernel.nbi").exists()
-    (tmp_path / "elsewhere" / "cache" / "numba").mkdir(parents=True)
-    with pytest.raises(FileExistsError, match="held apart"):
-        rooted(request).linked(tmp_path / "elsewhere")
+        assert sorted(path.name for path in (tmp_path / "other" / worker).iterdir()) == ["cache", "stray.txt", "tmp"]
+        assert os.path.samefile(tmp_path / "other" / worker / "cache" / "numba", compiled)
+    assert (compiled / "graphspec_1" / "kernel.nbi").exists()
+    with pytest.raises(FileExistsError):
+        rooted(request).linked(tmp_path / "other" / "gw0", compiled)
     LOG.info("cleared test exit seconds=%.4f", time.perf_counter() - started)
 
 

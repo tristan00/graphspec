@@ -22,7 +22,7 @@ SUITE = {"heavy": "heavy-tests-" + os.environ.get("PYTEST_XDIST_WORKER", "serial
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
 HOME = Path(os.environ["GRAPHSPEC_HOME"])
-RECORD = HOME.parent.parent / (HOME.parent.name + ".durations.json")
+RECORD = Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "durations.json"
 SPENT = {}
 EARLY = []
 
@@ -165,15 +165,12 @@ def gone(place):
     return place
 
 
-def cleared(checkout):
+def cleared(run):
     started = time.perf_counter()
-    places = []
-    for worker in sorted(place for place in checkout.iterdir() if place.name != "numba"):
-        places += [place for place in sorted(worker.iterdir()) if place.name != "cache"]
-        if (worker / "cache").is_dir():
-            places += [place for place in sorted((worker / "cache").iterdir()) if place.name != "numba"]
+    places = [place for worker in sorted(run.iterdir()) for place in sorted(worker.iterdir())]
     with ThreadPoolExecutor(8) as pool:
         removed = list(pool.map(gone, places))
+    shutil.rmtree(run)
     LOG.debug("cleared exit removed=%d seconds=%.4f", len(removed), time.perf_counter() - started)
     return removed
 
@@ -194,7 +191,7 @@ def pytest_unconfigure(config):
         thread.join()
     if suite().exists():
         shutil.rmtree(suite())
-    cleared(Path(os.environ["GRAPHSPEC_HOME"]).parent)
+    cleared(HOME.parent)
     LOG.debug("suite removed seconds=%.4f", time.perf_counter() - started)
 
 
