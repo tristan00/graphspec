@@ -12,7 +12,7 @@ from graphspec.schema.added import Added
 from graphspec.schema.declaration import membership, paired
 from graphspec.schema.references import SORTS
 
-from .operation import OPERATIONS, Count, Operation, Phase
+from .operation import OPERATIONS, Count, Need, Operation, Phase
 from .parameters import Parameter, choice, number, registered
 from .rows import counted, fact_bytes
 
@@ -174,13 +174,17 @@ def stated(registry):
     return tuple(result)
 
 
+@timed("negatives.lacking")
+def lacking(registry, value):
+    if registry.tables or registry.schema.sets:
+        return None
+    return "needs a relation or a kind of set edge, and the bank %s states none" % registry.name
+
+
 def named(registry, settings):
     started = time.perf_counter()
-    result = {}
-    if registry.tables or registry.schema.sets:
-        form, name, _ = parsed(settings["negatives/of"])
-        if form == SET:
-            result[name] = "names"
+    form, name, _ = parsed(settings["negatives/of"])
+    result = {name: "names"} if form == SET else {}
     LOG.debug("negatives named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
@@ -196,11 +200,6 @@ def set_tokens(entry, kind, count, kinds, tokens, rows, registry):
 
 @timed("negatives.adds")
 def adds(registry, settings, entry):
-    if not offered(registry):
-        raise ValueError(
-            "graphspec.negatives draws absent edges of a relation or absent sets of a kind of set edge, and the "
-            "bank %s states neither" % registry.name
-        )
     form, name, _ = parsed(settings["negatives/of"])
     if form == LINK:
         edge = registry.named[name]
@@ -436,13 +435,14 @@ NEGATIVE = OPERATIONS.register(
         reads=(),
         splits=("trained", "scored"),
         requires=(
+            Need(None, lacking),
             Count("negatives/degree", "degree", drawing("degree"), "stored", "stored"),
             Count("negatives/hops", "paths", drawing("hops"), "stored", "stored"),
         ),
         changes=(),
         adds=adds,
         kinds=named,
-        version=7,
+        version=8,
         graphs=1,
     ),
 )

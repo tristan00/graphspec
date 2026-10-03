@@ -254,7 +254,13 @@ def resolved(registry, entries):
         operation, entry = held[name]
         context = ChainMap(*[stated[read] for read in reads[name]])
         grown = growing.before(places[name], partial(specified, stated, reads))
+        lacking = operation.lacking(grown)
+        if lacking is not None:
+            raise ValueError("the entry %s of the pipeline is of %s, which %s" % (name, operation.name, lacking))
         stated[name] = given(name, operation.stated(grown), entry["parameters"], context)
+        refused = operation.refused(grown, stated[name])
+        if refused is not None:
+            raise ValueError("the entry %s of the pipeline states %s %s, which %s" % ((name,) + refused))
     result = stepped(found, reads, stated)
     emptied(registry, result)
     LOG.debug("resolved exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
@@ -393,21 +399,27 @@ def space(registry, template):
     reads, held = readers(found), {name: operation for name, operation, _, _ in found}
     result = []
     for name in drawn(found, reads):
-        present, own = PRESENT % name, NAMED % name
+        present, own, operation = PRESENT % name, NAMED % name, held[name]
         prefixes = (own,) + tuple(NAMED % read for read in reads[name])
+        offered = None
+        if operation.lacking(registry) is None:
+            offered = [(parameter, operation.offered(registry, parameter)) for parameter in operation.stated(registry)]
+        if offered is None or any(parameter.options and not options for parameter, options in offered):
+            result.append(Parameter(present, "bool", False, options=(False,)))
+            continue
         result.append(flag(present, True))
         result += [
             Parameter(
                 own + parameter.name,
                 parameter.kind,
-                parameter.default,
+                parameter.default if parameter.default in options or not parameter.options else None,
                 parameter.low,
                 parameter.high,
                 parameter.log,
-                parameter.options,
+                options,
                 qualified(present, parameter, prefixes),
             )
-            for parameter in held[name].stated(registry)
+            for parameter, options in offered
         ]
     LOG.debug("pipeline space exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return tuple(result)
@@ -555,13 +567,16 @@ class Offered:
         }
         self.probes = {}
         for name in self.names:
+            self.probes[name] = None
+            if self.operations[name].kinds is None or True not in self.flags[name].options:
+                continue
             context = {}
             for read in self.reads[name]:
-                context.update(
-                    made(self.operations[read], registry, {}, lambda parameter: settled(bounded[read][parameter.name]))
-                )
-            operation = self.operations[name]
-            self.probes[name] = None if operation.kinds is None else probed(registry, operation, bounded[name], context)
+                if True in self.flags[read].options:
+                    context.update(
+                        made(self.operations[read], registry, {}, lambda parameter: settled(bounded[read][parameter.name]))
+                    )
+            self.probes[name] = probed(registry, self.operations[name], bounded[name], context)
         self.protected, ahead = {}, {}
         tasked = {kind: "the target of the kind of task %s" % task for kind, task in targeted(registry).items()}
         for name in reversed(self.names):

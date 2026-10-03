@@ -8,7 +8,7 @@ from graphspec.infra.timing import timed
 from graphspec.infra.workspace import gathered
 from graphspec.views.spans import encode
 
-from .operation import OPERATIONS, Operation, Phase
+from .operation import OPERATIONS, Need, Operation, Phase
 from .parameters import choice, real
 from .rows import extend, fact_bytes
 from .state import EMPTY, Table
@@ -53,12 +53,20 @@ def stated(registry):
     return result
 
 
+@timed("consecutive.lacking")
+def lacking(registry, value):
+    if orderable(registry):
+        return None
+    return (
+        "needs a relation stated without columns from a kind of node to itself, and the bank %s states none"
+        % registry.name
+    )
+
+
 def named(registry, settings):
     started = time.perf_counter()
-    result = {}
-    if orderable(registry):
-        edge = registry.by_name[settings["consecutive/pairing"].split(":")[0]]
-        result = dict.fromkeys(sorted(selves(registry, edge)), "names")
+    edge = registry.by_name[settings["consecutive/pairing"].split(":")[0]]
+    result = dict.fromkeys(sorted(selves(registry, edge)), "names")
     LOG.debug("consecutive named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
@@ -100,11 +108,6 @@ def members(graph, registry, pairing, kind, moment, carry):
 
 @timed("operators.consecutive")
 def consecutive(graph, registry, spec, seed, limits, carry, held):
-    if not orderable(registry):
-        raise ValueError(
-            "graphspec.consecutive fills a relation stated without columns from a kind of node to itself, and the "
-            "bank %s states none" % registry.name
-        )
     pairing = spec["consecutive/pairing"].split(":")
     edge, gap = registry.by_name[pairing[0]], spec["consecutive/gap"]
     (kind,) = {registry.kind(first) for first in selves(registry, edge)}
@@ -172,11 +175,11 @@ CONSECUTIVE = OPERATIONS.register(
         parameters=stated,
         reads=(),
         splits=(),
-        requires=(),
+        requires=(Need(None, lacking),),
         changes=("facts",),
         adds=None,
         kinds=named,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

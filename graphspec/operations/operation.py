@@ -41,6 +41,24 @@ class Count:
         return dict(name=self.name, counts=self.counts, sets=self.sets, about=self.about)
 
 
+class Need:
+    def __init__(self, parameter, lacking):
+        started = time.perf_counter()
+        if not (parameter is None or type(parameter) is str and parameter) or not callable(lacking):
+            raise ValueError(
+                "a need states none, where the operation needs it whatever its parameters, or the name of the "
+                "parameter whose every value needs it, and a function from a registry and that value, none where "
+                "no parameter is named, to none where the bank holds what it needs and otherwise what it lacks; "
+                "found %r and %r" % (parameter, lacking)
+            )
+        self.parameter, self.lacking = parameter, lacking
+        LOG.debug("need exit parameter=%s seconds=%.4f", parameter, time.perf_counter() - started)
+
+    @timed("operation.Need.declaration")
+    def declaration(self):
+        return dict(need=self.parameter)
+
+
 class Settings:
     def __init__(self, operation, parameters, spec, splits, tasks):
         self.operation, self.spec, self.splits, self.tasks = operation, spec, splits, tasks
@@ -178,7 +196,7 @@ class Operation:
             parameters=callable(parameters),
             reads=type(reads) is tuple and all(type(read) is str for read in reads),
             splits=type(splits) is tuple and all(split in SPLITS for split in splits),
-            requires=type(requires) is tuple and all(isinstance(count, Count) for count in requires),
+            requires=type(requires) is tuple and all(isinstance(held, (Count, Need)) for held in requires),
             changes=type(changes) is tuple and all(change in CHANGES for change in changes),
             adds=adds is None or callable(adds),
             kinds=kinds is None or callable(kinds),
@@ -192,7 +210,7 @@ class Operation:
                 "least one, of distinct names, the last not run in parts and none run in parts after one that "
                 "is; a function from a registry to its parameters; a tuple of the "
                 "names of the operations whose parameters it reads; a tuple of the splits it may read, among %s; "
-                "a tuple of counts; a tuple of what it changes, among %s; none, or a function from a registry, "
+                "a tuple of counts and needs; a tuple of what it changes, among %s; none, or a function from a registry, "
                 "settings and the name of its entry to what it adds; none, or a function from a registry and "
                 "settings to what it does with kinds of node, as a mapping from each to one of %s; a whole "
                 "version from 1; the number of graphs it takes, 1, or 2 where it reads a second graph beside the "
@@ -252,7 +270,7 @@ class Operation:
         met = dict(sets=tuple(registry.schema.sets), about=tuple(registry.schema.about()))
         if any(met.values()):
             for count in self.requires:
-                if not count.active(registry, settings):
+                if not isinstance(count, Count) or not count.active(registry, settings):
                     continue
                 for part, found in met.items():
                     if found and getattr(count, part) == "refuses":
@@ -260,6 +278,31 @@ class Operation:
                             "the count %s of the operation %s counts %s and refuses %s"
                             % (count.name, self.name, count.counts, EDGES[part] % found[0])
                         )
+
+    @timed("operation.Operation.needs")
+    def needs(self, parameter):
+        return [need for need in self.requires if isinstance(need, Need) and need.parameter == parameter]
+
+    @timed("operation.Operation.lacking")
+    def lacking(self, registry):
+        found = [need.lacking(registry, None) for need in self.needs(None)]
+        return next((held for held in found if held is not None), None)
+
+    @timed("operation.Operation.offered")
+    def offered(self, registry, parameter):
+        needs = self.needs(parameter.name)
+        return tuple(
+            option for option in parameter.options if all(need.lacking(registry, option) is None for need in needs)
+        )
+
+    @timed("operation.Operation.refused")
+    def refused(self, registry, values):
+        found = [
+            (need.parameter, values[need.parameter], need.lacking(registry, values[need.parameter]))
+            for need in self.requires
+            if isinstance(need, Need) and need.parameter in values
+        ]
+        return next((held for held in found if held[2] is not None), None)
 
     def added(self, registry, spec, entry):
         if self.adds is None:

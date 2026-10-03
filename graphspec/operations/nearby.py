@@ -8,7 +8,7 @@ from graphspec.infra.timing import timed
 from graphspec.schema.added import Added
 from graphspec.schema.schema import ENCODERS
 
-from .operation import OPERATIONS, Operation, Phase
+from .operation import OPERATIONS, Need, Operation, Phase
 from .parameters import choice, equals, number, real
 from .rows import extend, fact_bytes, made_values
 
@@ -16,10 +16,6 @@ LOG = logging.getLogger(__name__)
 RULES = ("threshold", "nearest")
 BLOCK = 1 << 21
 NUMBER = "number"
-LACKING = (
-    "graphspec.nearby joins nodes of two kinds by the distance between the values of the columns of numbers both "
-    "kinds state, and the bank %s states no two such kinds"
-)
 
 
 def measured(registry, first, second):
@@ -58,17 +54,22 @@ def stated(registry):
     return result
 
 
+@timed("nearby.lacking")
+def lacking(registry, value):
+    if pairable(registry):
+        return None
+    return "needs a column of numbers stated by two kinds of node, or by one, and the bank %s states none" % registry.name
+
+
 def named(registry, settings):
     started = time.perf_counter()
-    result = dict.fromkeys(settings["nearby/kinds"].split(":") if pairable(registry) else (), "names")
+    result = dict.fromkeys(settings["nearby/kinds"].split(":"), "names")
     LOG.debug("nearby named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
 @timed("operators.nearby_adds")
 def adds(registry, settings, entry):
-    if not pairable(registry):
-        raise ValueError(LACKING % registry.name)
     first, second = settings["nearby/kinds"].split(":")
     distance = entry + ".distance"
     return Added(
@@ -118,8 +119,6 @@ def near_pairs(spec, left, right, ranks, same, budget):
 
 @timed("operators.nearby")
 def nearby(graph, registry, spec, seed, limits, carry, held):
-    if not pairable(registry):
-        raise ValueError(LACKING % registry.name)
     first, second = spec["nearby/kinds"].split(":")
     edge, columns = registry.by_name[carry.entry], measured(registry, first, second)
     values, flags = placed(registry, columns)
@@ -177,11 +176,11 @@ NEARBY = OPERATIONS.register(
         parameters=stated,
         reads=(),
         splits=(),
-        requires=(),
+        requires=(Need(None, lacking),),
         changes=("facts",),
         adds=adds,
         kinds=named,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

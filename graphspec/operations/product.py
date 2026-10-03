@@ -9,14 +9,13 @@ from graphspec.schema.added import Added
 from graphspec.schema.schema import ENCODERS
 
 from . import paths
-from .operation import OPERATIONS, Count, Operation, Phase
+from .operation import OPERATIONS, Count, Need, Operation, Phase
 from .parameters import choice, flag, number
 from .rows import fact_bytes, grouped, made_values, runs
 
 LOG = logging.getLogger(__name__)
 NUMBER = "number"
 LONGEST = 3
-LACKING = "graphspec.product multiplies the relations of a bank, and the bank %s states none"
 
 
 @timed("operators.reading")
@@ -64,10 +63,15 @@ def stated(registry):
     return result
 
 
+@timed("product.lacking")
+def lacking(registry, value):
+    if registry.groups:
+        return None
+    return "needs a relation, and the bank %s states none" % registry.name
+
+
 @timed("operators.product_adds")
 def adds(registry, settings, entry):
-    if not registry.groups:
-        raise ValueError(LACKING % registry.name)
     steps, held = path(settings), columns(settings, entry)
     return Added(
         {name: dict(type=NUMBER, encoder=settings["product/encoder"]) for name in held},
@@ -213,11 +217,14 @@ PRODUCT = OPERATIONS.register(
         parameters=stated,
         reads=(),
         splits=(),
-        requires=(Count("product/path", "paths", lambda registry, spec: bool(registry.groups), "stored", "stored"),),
+        requires=(
+            Need(None, lacking),
+            Count("product/path", "paths", lambda registry, spec: bool(registry.groups), "stored", "stored"),
+        ),
         changes=("facts",),
         adds=adds,
         kinds=None,
-        version=3,
+        version=4,
         graphs=1,
     ),
 )

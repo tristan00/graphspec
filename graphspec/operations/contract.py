@@ -12,7 +12,7 @@ from graphspec.schema.added import Added
 from graphspec.schema.declaration import EVERYTHING
 from graphspec.views.graph import unresolved
 
-from .operation import OPERATIONS, Operation, Phase
+from .operation import OPERATIONS, Need, Operation, Phase
 from .parameters import choice
 from .rows import (
     OBSERVATIONS,
@@ -30,10 +30,6 @@ from .state import EMPTY, Table
 
 LOG = logging.getLogger(__name__)
 REDUCTIONS = ("mean", "sum", "min", "max")
-LACKING = (
-    "graphspec.contract groups the nodes of a kind by one of the columns the bank states for it, and the bank %s "
-    "states no kind of node with a column"
-)
 
 
 @timed("operators.groupable")
@@ -55,9 +51,16 @@ def stated(registry):
     return result
 
 
+@timed("contract.lacking")
+def lacking(registry, value):
+    if groupable(registry):
+        return None
+    return "needs a kind of node with a column, and the bank %s states none" % registry.name
+
+
 def named(registry, settings):
     started = time.perf_counter()
-    result = {settings["contract/grouping"].split(":")[0]: "removes"} if groupable(registry) else {}
+    result = {settings["contract/grouping"].split(":")[0]: "removes"}
     LOG.debug("contract named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
@@ -86,8 +89,6 @@ def grouping_tokens(entry, kind, column, kinds, tokens, rows, registry):
 
 @timed("operators.contract_adds")
 def adds(registry, settings, entry):
-    if not groupable(registry):
-        raise ValueError(LACKING % registry.name)
     kind, column = settings["contract/grouping"].split(":")
     joins = {}
     for edge in registry.edges:
@@ -278,11 +279,11 @@ CONTRACT = OPERATIONS.register(
         parameters=stated,
         reads=(),
         splits=(),
-        requires=(),
+        requires=(Need(None, lacking),),
         changes=("observations", "facts"),
         adds=adds,
         kinds=named,
-        version=7,
+        version=8,
         graphs=1,
     ),
 )

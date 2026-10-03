@@ -322,8 +322,8 @@ def test_nearby_adds_a_relation_whose_edges_hold_the_distance_within_which_rows_
         assert new == expected and len(new) == len(rows) > 0
     flagged = support.columned("flagged", ["thing"], [], dict(open=dict(type="flag", encoder="value")))
     assert NEARBY.stated(flagged) == ()
-    with pytest.raises(ValueError, match="by the distance between the values of the columns of numbers both kinds"):
-        pipeline.grown(flagged, resolved(flagged, [dict(operation="graphspec.nearby", parameters={})]), None)
+    with pytest.raises(ValueError, match="needs a column of numbers stated by two kinds of node, or by one, and the bank"):
+        resolved(flagged, [dict(operation="graphspec.nearby", parameters={})])
     LOG.info("nearby exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -583,8 +583,8 @@ def test_contraction_makes_one_node_per_group_of_a_column_with_reduced_values_an
         segments.whole(lacking, {}, grown, steps, SEED, LIMITS, None)
     bare = support.columned("bare", ["thing"], [], {})
     assert contract.CONTRACT.stated(bare) == ()
-    with pytest.raises(ValueError, match="by one of the columns the bank states for it, and the bank bare states no"):
-        pipeline.grown(bare, resolved(bare, [dict(operation="graphspec.contract", parameters={})]), None)
+    with pytest.raises(ValueError, match="which needs a kind of node with a column, and the bank bare states none"):
+        resolved(bare, [dict(operation="graphspec.contract", parameters={})])
     LOG.info("contraction exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -636,9 +636,8 @@ def test_consecutive_rows_of_a_group_are_joined_unless_a_gap_in_time_cuts_them(o
     assert 0 < counts["near:visits:targets", 1.0] < counts["near:visits:targets", 1e9]
     assert counts["near", 1.0] <= counts["near", 1e9]
     plain = support.registry("plain", ["thing"], [])
-    carry, dense = segments.opening(graph, {}, registry)
-    with pytest.raises(ValueError, match="fills a relation stated without columns from a kind of node to itself"):
-        CONSECUTIVE(dense, plain, {}, SEED, LIMITS, carry, CONSECUTIVE.initial(plain, {}), None)
+    with pytest.raises(ValueError, match="needs a relation stated without columns from a kind of node to itself"):
+        resolved(plain, [dict(operation="graphspec.consecutive", parameters={})])
     LOG.info("consecutive exit counts=%s seconds=%.3f", counts, time.perf_counter() - started)
 
 
@@ -880,8 +879,8 @@ def test_a_product_of_relations_and_its_closure_equal_the_walks_enumerated_throu
         assert hops.keys() == {key for key, value in found["*:both"].items() if value == (distance,)} != set()
     bare = support.registry("bare", ["thing"], [])
     assert OPERATIONS.named("graphspec.product").stated(bare) == ()
-    with pytest.raises(ValueError, match="multiplies the relations of a bank, and the bank bare states none"):
-        pipeline.grown(bare, resolved(bare, [dict(operation="graphspec.product", parameters={})]), None)
+    with pytest.raises(ValueError, match="graphspec.product, which needs a relation, and the bank bare states none"):
+        resolved(bare, [dict(operation="graphspec.product", parameters={})])
     LOG.info("product exit paths=%d seconds=%.3f", len(found), time.perf_counter() - started)
 
 

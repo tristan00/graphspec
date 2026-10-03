@@ -1,6 +1,7 @@
 import copy
 import importlib
 import logging
+import re
 import sys
 import time
 from functools import partial
@@ -35,8 +36,9 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.operations.negatives import Rule
+from graphspec.operations.operation import Need
 from graphspec.views.graph import Dense
-from tuning.bank.bank import Deriver
+from tuning.bank.bank import Bank, Deriver
 from tuning.fits.training import fit
 from tuning.searches.selector import random_suggest
 from tuning.statement import state
@@ -189,6 +191,48 @@ def test_a_pipeline_is_stated_as_its_operations_in_order_and_read_back_as_stated
     labelled = [window, dict(window, label="again")]
     assert [step.name for step in pipeline.resolved(registry, labelled)] == ["graphspec.window", "again"]
     LOG.info("stated pipeline exit seconds=%.3f", time.perf_counter() - started)
+
+
+NEEDS = {
+    "graphspec.consecutive": "a relation stated without columns from a kind of node to itself",
+    "graphspec.nearby": "a column of numbers stated by two kinds of node, or by one",
+    "graphspec.contract": "a kind of node with a column",
+    "graphspec.product": "a relation",
+    "graphspec.negatives": "a relation or a kind of set edge",
+    "test.placing": "a kind of node named place",
+}
+
+
+@timed("pipelines.placing")
+def placing(registry, value):
+    if "place" in registry.declared:
+        return None
+    return "needs a kind of node named place, and the bank %s states none" % registry.name
+
+
+def test_an_operation_a_bank_cannot_serve_is_held_absent_by_a_search_and_refused_naming_what_the_bank_lacks(bank):
+    started = time.perf_counter()
+    placed = Operation(
+        "test", "placing", (Phase("placing", parted, None, None),), unruled, (), (), (Need(None, placing),), (), None,
+        None, 1, 1,
+    )
+    OPERATIONS.register(placed.name, placed)
+    try:
+        plain, served = support.columned("plain", ["thing"], [], {}), Bank(bank).registry
+        template = support.template(tuple(NEEDS))
+        for registry, offered in ((plain, (False,)), (served, (False, True))):
+            space = {parameter.name: parameter for parameter in pipeline.space(registry, template)}
+            assert [space["pipeline/" + name].options for name in NEEDS] == [offered] * len(NEEDS)
+        for name, needs in NEEDS.items():
+            message = "the entry %s of the pipeline is of %s, which needs %s, and the bank plain states none"
+            with pytest.raises(ValueError, match=re.escape(message % (name, name, needs))):
+                pipeline.resolved(plain, [dict(operation=name, parameters={})])
+        assert [step.name for step in pipeline.resolved(served, [dict(operation=placed.name, parameters={})])] == [
+            placed.name
+        ]
+    finally:
+        del OPERATIONS.held[placed.name]
+    LOG.info("needs of a bank exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_search_draws_which_operations_are_present_and_their_parameters_never_their_order(bank):
