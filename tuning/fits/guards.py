@@ -95,6 +95,13 @@ class Guard:
         self.name, self.net, self.head, self.seed = realised(cfg["model"]), net, net.head, seed
         self.entry = realisation(self.name)
         self.kinds = list(self.schema.tasks["kinds"])
+        self.aims = np.asarray(
+            [
+                -1 if entry["target"] is None else self.head.targets.index(entry["target"]["kind"])
+                for entry in self.schema.tasks["kinds"].values()
+            ],
+            np.int64,
+        )
         self.series = list(self.schema.series())
         self.generator = torch.Generator().manual_seed(seed)
         self.fields = {task: fielded(self.schema, task) for task in self.schema.decided()}
@@ -110,8 +117,7 @@ class Guard:
         series = self.head.series.weight
         given = torch.cat((task, options), -1)
         values = given.new_zeros((len(options), len(series)))
-        kinds = np.asarray(held["kind"], np.int64)
-        aimed = np.asarray([self.head.targets.index(self.schema.tasks["kinds"][self.kinds[code]]["target"]["kind"]) for code in kinds], np.int64)
+        aimed = self.aims[np.asarray(held["kind"], np.int64)]
         for code, kind in enumerate(self.head.kinds):
             chosen = np.flatnonzero(aimed == code)
             if not len(chosen) or not self.head.decides[code]:
@@ -149,9 +155,13 @@ class Guard:
         held = b["options"]
         fields = {key: value.detach().requires_grad_(True) for key, value in self.head.options.fields(b, members).items()}
         values = self.scored(features, b, fields)[0]
-        weights = torch.randn(values.shape, generator=self.generator).to(values.device) * torch.as_tensor(mask, device=values.device)
+        weights = torch.randn(values.shape, generator=self.generator).to(values.device)
+        weights = weights * torch.as_tensor(mask, device=values.device)
         found = torch.autograd.grad((values * weights).sum(), [fields[name] for name in FIELDS], allow_unused=True)
-        grads = {name: (torch.zeros_like(fields[name]) if grad is None else grad).abs().cpu().numpy() for name, grad in zip(FIELDS, found)}
+        grads = {
+            name: (torch.zeros_like(fields[name]) if grad is None else grad).abs().cpu().numpy()
+            for name, grad in zip(FIELDS, found)
+        }
         owner = np.asarray(held["kind"], np.int64)
         acting = owner[np.asarray(held["action_option"].cpu(), np.int64)]
         roling = acting[np.asarray(held["role_action"].cpu(), np.int64)]
@@ -185,7 +195,8 @@ class Guard:
         moved = np.zeros(len(decision), bool)
         moved[chosen[chosen >= 0]] = True
         others = ~moved & (chosen[decision] >= 0)
-        rows = dict(kind=moved[owner], parameters=moved[owner], targets=moved[owner][np.asarray(held["role_action"].cpu(), np.int64)])
+        roles = moved[owner][np.asarray(held["role_action"].cpu(), np.int64)]
+        rows = dict(kind=moved[owner], parameters=moved[owner], targets=roles)
         for name in FIELDS:
             changed = dict(fields)
             changed[name] = fields[name] + torch.as_tensor(rows[name], device=fields[name].device)[:, None]
