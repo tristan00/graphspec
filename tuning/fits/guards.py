@@ -181,7 +181,21 @@ class Guard:
         LOG.debug("guard derived exit options=%d seconds=%.4f", len(owner), time.perf_counter() - started)
         return {name: value.detach() for name, value in fields.items()}
 
-    def apart(self, features, b, fields, values, mask):
+    def kept(self, features, b, changed, values, mask, others, name):
+        started = time.perf_counter()
+        with torch.no_grad():
+            again = self.scored(features, b, changed)[0].cpu().numpy()
+        differ = others[:, None] & mask & ~close(again, values)
+        if differ.any():
+            kind = self.kinds[int(np.asarray(b["options"]["kind"])[np.flatnonzero(differ.any(1))[0]])]
+            raise ValueError(
+                "the score of an option of the kind of task %s changes when the %s of another option of its "
+                "decision change, and the realisation of options %s does not state that it reads the options of "
+                "a decision together" % (kind, name, self.name)
+            )
+        LOG.debug("guard kept exit moved=%s seconds=%.4f", name, time.perf_counter() - started)
+
+    def apart(self, features, b, members, fields, values, mask):
         started = time.perf_counter()
         held = b["options"]
         decision = np.asarray(held["decision"].cpu(), np.int64)
@@ -198,16 +212,13 @@ class Guard:
         for name in FIELDS:
             changed = dict(fields)
             changed[name] = fields[name] + torch.as_tensor(rows[name], device=fields[name].device)[:, None]
-            with torch.no_grad():
-                again = self.scored(features, b, changed)[0].cpu().numpy()
-            differ = others[:, None] & mask & ~close(again, values)
-            if differ.any():
-                kind = self.kinds[int(np.asarray(held["kind"])[np.flatnonzero(differ.any(1))[0]])]
-                raise ValueError(
-                    "the score of an option of the kind of task %s changes when the %s of another option of its "
-                    "decision change, and the realisation of options %s does not state that it reads the options of "
-                    "a decision together" % (kind, name, self.name)
-                )
+            self.kept(features, b, changed, values, mask, others, name)
+        ends = held["role_member"][torch.as_tensor(roles, device=members.device)].flatten()
+        ends = ends[ends >= 0]
+        shifted = members.index_add(0, ends, members.new_ones((len(ends), members.shape[1])))
+        with torch.no_grad():
+            changed = self.head.options.fields(b, shifted)
+        self.kept(features, b, changed, values, mask, others, "members named by the targets")
         LOG.debug("guard apart exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
 
     def ordered(self, b, fields, options, actions):
@@ -272,7 +283,7 @@ class Guard:
                 values, options, actions = self.scored(features, b, fields)
             values = values.cpu().numpy()
             if not self.entry.together:
-                self.apart(features, b, fields, values, mask)
+                self.apart(features, b, members, fields, values, mask)
             self.ordered(b, fields, options, actions)
             self.alike(b, values, mask)
             self.options += len(values)

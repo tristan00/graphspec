@@ -77,6 +77,15 @@ class Flat(Pooled):
         return options - options.detach(), actions - actions.detach()
 
 
+class Pooling(Pooled):
+    def forward(self, fields, held):
+        options, actions = super().forward(fields, held)
+        targets = fields["targets"] - fields["targets"].mean(-1, keepdim=True)
+        decision = held["decision"][held["action_option"][held["role_action"]]]
+        pooled = targets.new_zeros((len(held["decision"]), targets.shape[1])).index_add(0, decision, targets)
+        return options + pooled[held["decision"]], actions
+
+
 class Realised:
     version = 1
     reads = FIELDS
@@ -115,6 +124,7 @@ REALISED = dict(
     ordered=Realised(Pooled, placed=True),
     flat=Realised(Flat),
     backward=Backward(Pooled),
+    pooling=Realised(Pooling),
 )
 
 
@@ -329,6 +339,9 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
     with pytest.raises(ValueError, match="option of the kind of task turn changes when the kind of another option of its decision change, and the realisation of options mixing does not state"):
         guarded(held, "mixing")
     assert guarded(held, "together")["pairs"] == found["pairs"]
+    pooling = "changes when the members named by the targets of another option of its decision change, and the realisation of options pooling does not state"
+    with pytest.raises(ValueError, match=pooling):
+        guarded(held, "pooling")
     with pytest.raises(ValueError, match="whose actions, go, go, are a set changes with the order of its actions under the realisation of options ordered"):
         guarded(held, "ordered")
     assert guarded(held, "flat")["share"] == 1.0
