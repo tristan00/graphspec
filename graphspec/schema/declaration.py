@@ -55,7 +55,7 @@ class EdgeType:
         )
 
 
-EXTRAS = ("signals", "base", "events", "several", "untasked")
+EXTRAS = ("signals", "base", "events", "several", "untasked", "unvalued")
 STORED = ("member", "pairs")
 FITTED = ("features", "values", "widths")
 
@@ -456,7 +456,7 @@ def hop(distance):
     return "hop:%d" % distance
 
 
-def registry(task, encoding, several, untasked):
+def registry(task, encoding, several, untasked, unvalued):
     started = time.perf_counter()
     unknown = sorted(set(task) - TASK_KEYS)
     if unknown:
@@ -547,6 +547,7 @@ def registry(task, encoding, several, untasked):
         events=bool(schema.events()),
         several=several,
         untasked=list(untasked),
+        unvalued=dict(sorted(unvalued.items())),
     )
     result = Registry(task["name"], encoding, edges, MARKERS, extras)
     LOG.info(

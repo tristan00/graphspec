@@ -14,7 +14,7 @@ from graphspec.schema.schema import VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 12
+VERSION = 13
 PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
 HELD = ("inner_owner", "inner_kind", "inner_values")

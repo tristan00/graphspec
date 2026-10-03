@@ -539,9 +539,10 @@ def contracted(graph, grown, entry, aggregate):
     return observations, sorted(facts), at
 
 
-def test_contraction_makes_one_node_per_group_of_a_column_with_reduced_values_and_edges_that_follow(opened):
+def test_contraction_makes_one_node_per_group_of_a_column_with_reduced_values_and_edges_that_follow(opened, monkeypatch):
     started = time.perf_counter()
     held, registry, graph, names = opened
+    monkeypatch.setitem(registry.extras, "unvalued", {})
     person = registry.kind("person")
     referred = set(graph.member_source.tolist()) | set(graph.member_target.tolist())
     quiet = [who for who in np.flatnonzero(graph.kinds == person).tolist() if who not in referred][:2]
@@ -712,7 +713,12 @@ def test_an_entry_that_names_a_kind_an_earlier_contraction_or_nodes_removed_is_r
     message = "the entry %s of the pipeline names the kind %s, which the entry %s before it removed"
     for removes, label in REMOVERS:
         for name, values, kind in REFUSED:
-            removing = {"contract/grouping": kind + ":v0"} if label is None else {"nodes/%s/keep" % kind: False}
+            valued = min(
+                held
+                for held in contract.groupable(registry)
+                if held.split(":")[0] == kind and held not in registry.extras["unvalued"]
+            )
+            removing = {"contract/grouping": valued} if label is None else {"nodes/%s/keep" % kind: False}
             removal = entry(registry, removes, removing, label, None)
             remover = removes if label is None else label
             later = entry(registry, name, values, "again" if name == "graphspec.contract" else None, None)

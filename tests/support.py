@@ -460,6 +460,7 @@ def columned(name, nodes, edges, columns):
         events=False,
         several=False,
         untasked=[],
+        unvalued={},
     )
     result = Registry(name, encoding, edges, [], extras)
     LOG.debug("registry exit seconds=%.4f", time.perf_counter() - started)

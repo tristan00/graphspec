@@ -16,13 +16,13 @@ from graphspec.engine import join, schedule, segments
 from graphspec.engine.edits import Edit, edited, sliced
 from graphspec.engine.segments import Derivation
 from graphspec.engine.stitch import Appender
+from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import Arrays
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.operations.contract import groupable
-from graphspec.schema.references import ends
 from graphspec.views.graph import DENSE, PER_STEP, Graph, verify_dense
 from tuning.bank.bank import Deriver
 
@@ -524,23 +524,6 @@ def test_every_operation_derives_steps_that_hold_nothing_in_segments_as_it_deriv
     LOG.info("steps that hold nothing exit operations=%d seconds=%.3f", len(steps), time.perf_counter() - started)
 
 
-@timed("segments.groupings")
-def groupings(registry, graphs):
-    kinds = np.asarray(graphs[0].kinds)
-    referred = set(kinds[ends(graphs[0].member_source, graphs[0].member_target)[1]].tolist())
-    found = []
-    for grouping in groupable(registry):
-        kind, column = grouping.split(":")
-        flags, chosen = registry.encoding.slots(column)[1], registry.kind(kind)
-        rows = [
-            np.asarray(graph.x_table)[graph.obs_ref[np.asarray(graph.kinds)[graph.obs_entity] == chosen]]
-            for graph in graphs
-        ]
-        if chosen not in referred or all((held[:, flags] > 0).all() for held in rows):
-            found.append(grouping)
-    return found
-
-
 @GROUP
 def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_equal_whole_and_in_segments(
     bank, registered
@@ -552,9 +535,8 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     graph = shown[0]
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
     beside = {name: [sliced(support.beside(opened, 0, name), 0, SPAN)] for name in sorted(set(graphs.values()))}
-    chosen = groupings(registry, shown + [held[0] for held in beside.values()])
     unsplit = ["link:%s" % table for table in registry.groups]
-    bounds = {GROUPING: chosen, REWIRING: dict(low=1, high=REWIRES), UNSPLIT: unsplit}
+    bounds = {REWIRING: dict(low=1, high=REWIRES), UNSPLIT: unsplit}
     spec = specs.configured(specs.settings(registry, specs.GROUPS), SETTINGS)
     joined = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **JOINED))
     names, found, refused = sorted(OPERATIONS.names()), [], []
@@ -609,7 +591,28 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     assert len(set(found)) + alone == DRAWN and sorted({name for _, held in found for name in held}) == names
     assert found[0][0] and "graphspec.contract" in found[0][1]
     assert {remover for _, _, remover in refused} == {"graphspec.contract", "graphspec.nodes"}
-    assert len(chosen) < len(groupable(registry)) and {grouping.split(":")[0] for grouping in chosen} > {"item"}
+    contracting = pipeline.space(registry, [dict(operation="graphspec.contract")])
+    (offered,) = [held.options for held in contracting if held.name == GROUPING]
+    lacking, found = registry.extras["unvalued"], {}
+    assert sorted(set(groupable(registry)) - set(offered)) == sorted(lacking) != []
+    for entry in opened.manifest["graphs"]:
+        truth = Facts.load(opened.truth(entry["index"]))
+        kinds, entity = np.asarray(truth.kinds), np.asarray(truth.obs_entity)
+        for grouping in groupable(registry):
+            kind, column = grouping.split(":")
+            values = np.asarray(truth.obs_values)[:, registry.encoding.positions([column])[0]]
+            missing = np.unique(entity[(kinds[entity] == registry.kind(kind)) & np.isnan(values)])
+            found[grouping] = found.get(grouping, 0) + len(missing)
+    assert {grouping: count for grouping, count in found.items() if count and "item:" not in grouping} == lacking
+    assert {grouping.split(":")[0] for grouping in offered} > {"item"}
+    grouping = sorted(lacking)[0]
+    kind, column = grouping.split(":")
+    message = "states contract/grouping %s, which needs a value of %s on every node of %s that a reference can name, "
+    message += "and %d nodes of %s in the bank %s lack one in some fact"
+    with pytest.raises(ValueError, match=re.escape(message % (grouping, column, kind, lacking[grouping], kind, registry.name))):
+        pipeline.resolved(
+            registry, [dict(operation="graphspec.contract", parameters=dict(CONTRACTED, **{"contract/grouping": grouping}))]
+        )
     LOG.info(
         "random pipelines exit pipelines=%d refused=%s seconds=%.3f", len(found), refused, time.perf_counter() - started
     )

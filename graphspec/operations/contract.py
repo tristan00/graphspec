@@ -58,6 +58,17 @@ def lacking(registry, value):
     return "needs a kind of node with a column, and the bank %s states none" % registry.name
 
 
+@timed("contract.unvalued")
+def unvalued(registry, value):
+    if value not in registry.extras["unvalued"]:
+        return None
+    kind, column = value.split(":")
+    return (
+        "needs a value of %s on every node of %s that a reference can name, and %d nodes of %s in the bank %s lack one "
+        "in some fact" % (column, kind, registry.extras["unvalued"][value], kind, registry.name)
+    )
+
+
 def named(registry, settings):
     started = time.perf_counter()
     result = {settings["contract/grouping"].split(":")[0]: "removes"}
@@ -279,11 +290,11 @@ CONTRACT = OPERATIONS.register(
         parameters=stated,
         reads=(),
         splits=(),
-        requires=(Need(None, lacking),),
+        requires=(Need(None, lacking), Need("contract/grouping", unvalued)),
         changes=("observations", "facts"),
         adds=adds,
         kinds=named,
-        version=8,
+        version=9,
         graphs=1,
     ),
 )

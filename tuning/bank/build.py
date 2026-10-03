@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import time
+from collections import Counter
 from contextlib import closing
 from functools import partial
 from multiprocessing.util import Finalize
@@ -23,8 +24,10 @@ from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.registries import carried, restored
 from graphspec.schema import declaration
-from graphspec.schema.schema import Encoding, Schema
+from graphspec.schema.references import SORTS
+from graphspec.schema.schema import VALUE, Encoding, Schema
 from graphspec.schema.targets import TARGETS
+from graphspec.schema.targets import pointed as aimed
 from graphspec.schema.time import ALWAYS, NEVER
 from graphspec.sources import ladybug
 
@@ -108,6 +111,31 @@ def several(stated, tables, trained):
     return result
 
 
+@timed("build.nameable")
+def nameable(stated):
+    found = {kind for kinds in aimed(stated).values() for kind in kinds}
+    for entry in stated.tasks["references"].values():
+        found |= set(entry["kinds"])
+        if SORTS.named(entry["sort"]).edges:
+            found |= {kind for table in stated.edges.values() for pair in table["endpoints"] for kind in pair}
+    return [kind for kind in stated.nodes if kind in found]
+
+
+def unvalued(stated, tables):
+    started = time.perf_counter()
+    result = {}
+    for kind in nameable(stated):
+        table = tables["observations"][kind]
+        entity = np.asarray(table.column("entity").to_numpy(), np.int64)
+        for name in stated.nodes[kind]:
+            lacking = np.asarray(table.column(VALUE + name).is_null().to_numpy(zero_copy_only=False), bool)
+            count = len(np.unique(entity[lacking]))
+            if count:
+                result["%s:%s" % (kind, name)] = count
+    LOG.debug("unvalued exit columns=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def scanned(trained, index):
     started = time.perf_counter()
     stated = WORKER["reader"].source.stated
@@ -121,6 +149,7 @@ def scanned(trained, index):
         },
         observing(tables),
         several(stated, tables, trained),
+        unvalued(stated, tables),
     )
     LOG.info("bank scan exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
     return result
@@ -144,7 +173,7 @@ def related(stated, found):
         if entry["column"] is None:
             result[table] = [table]
             continue
-        names = {name for _, relations, _, _ in found for name in relations[table]}
+        names = {name for entry in found for name in entry[1][table]}
         if None in names:
             raise ValueError(
                 "rows of the edge table %s name no relation in the column %s" % (table, entry["column"])
@@ -441,7 +470,8 @@ def build(task_path, output, workers, trained):
                 stated, merged(stated, [entry[0] for entry in found]), None, related(stated, found)
             )
             observers = sorted({name for entry in found for name in entry[2]})
-            registry = declaration.registry(task, encoding, any(entry[3] for entry in found), bare)
+            lacking = sum((Counter(entry[4]) for entry in found), Counter())
+            registry = declaration.registry(task, encoding, any(entry[3] for entry in found), bare, lacking)
             (output / "truth").mkdir(parents=True)
             write_json(output / "supervision.json", rows)
             code = {name: place for place, name in enumerate(stated.series())}
