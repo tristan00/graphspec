@@ -396,3 +396,22 @@ def test_a_realisation_registered_from_outside_completes_one_fit_whose_loss_read
     assert sorted(read) == wanted and not all(np.concatenate([batch["field/chosen"] for batch in READ]))
     LOG.info("fit of a realisation exit seconds=%.3f", time.perf_counter() - started)
 
+
+def test_a_fit_stops_before_it_trains_where_a_guard_refuses_or_equal_pairs_pass_the_share_its_statement_states(
+    banks, tmp_path, statement, monkeypatch
+):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    inline(banks["stated"], (), monkeypatch)
+    given = state(dict(statement, loss=dict(decision="squared"), measures=["mse"], alike=0.5))
+    for name, message in (
+        ("deaf", "the field parameter speed of go of the kind of task turn has no route to the prediction"),
+        ("flat", "have equal predictions under the realisation of options flat, a share of 1.0000 above the statement's"),
+    ):
+        cfg = dict(configured(held, name, modelled("snapshot"), PLAIN), epochs=1)
+        (tmp_path / name).mkdir()
+        with pytest.raises(ValueError, match=message):
+            fit(banks["stated"], tmp_path / name, cfg, held.blocks(0, 2, cfg), 16, time.perf_counter() + 30, given)
+        assert not (tmp_path / name / "result.json").exists() and not (tmp_path / name / "checkpoint.pt").exists()
+    LOG.info("fits refused by guards exit seconds=%.3f", time.perf_counter() - started)
+
