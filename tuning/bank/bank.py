@@ -46,7 +46,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 45
+VIEW = 46
 TOKEN = (1 << 62) - 1
 
 
@@ -149,6 +149,7 @@ def distinct(values, lo, hi, size):
 
 
 class Windows:
+    @timed("bank.Windows.__init__")
     def __init__(self, arrays, members):
         self.entity, self.offsets = arrays["entity"], arrays["snapshot_offsets"]
         self.size, self.members, self.known = len(arrays["entity_kind"]), members, {}
@@ -396,6 +397,7 @@ class Bank:
             LOG.debug("bank looking exit seconds=%.4f", time.perf_counter() - started)
         return self._looking[key]
 
+    @timed("bank.Bank.partitions")
     def partitions(self, cfg):
         return self.looking(cfg)[1]
 
@@ -403,10 +405,10 @@ class Bank:
     def members(self, cfg, partition):
         return np.flatnonzero(self.partitions(cfg) == partition)
 
+    @timed("bank.Bank.truth")
     def truth(self, index):
         return self.directory / "truth" / ("graph_%04d" % index)
 
-    @timed("bank.viewed")
     def viewed(self, cfg):
         spec = self.stated(cfg)[2]
         storage = sets.chosen(self.registry, spec)
@@ -415,7 +417,6 @@ class Bank:
             self._viewed[key] = Viewed(self, *key[:2], storage, self.looking(cfg)[0])
         return self._viewed[key]
 
-    @timed("bank.several")
     def several(self, spec):
         return spec["time/several"] if self.registry.extras["several"] else None
 
@@ -499,11 +500,13 @@ class Bank:
             )
         return self._groups[size]
 
+    @timed("bank.Bank.graphs")
     def graphs(self, cfg):
         if self.joining(cfg):
             return list(range(len(self.groups(cfg))))
         return [graph["index"] for graph in self.viewed(cfg).graphs]
 
+    @timed("bank.Bank.points")
     def points(self, index, cfg):
         viewed = self.viewed(cfg)
         if not self.joining(cfg):
@@ -581,6 +584,7 @@ class Deriver(Bank):
         self.grown = {}
         LOG.debug("deriver exit device=%s seconds=%.4f", device, time.perf_counter() - started)
 
+    @timed("bank.Deriver.limits")
     def limits(self):
         return self.held
 
@@ -710,12 +714,14 @@ class Deriver(Bank):
         LOG.debug("deriver identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
         return result
 
+    @timed("bank.Deriver.variant")
     def variant(self, cfg):
         key, steps, spec, chosen = self.stated(cfg)
         if key not in self.roots:
             self.roots[key] = self.cache / "variants" / specs.digest(self.identity(cfg))
         return self.roots[key], steps, spec, chosen
 
+    @timed("bank.Deriver.stamp")
     def stamp(self, cfg):
         root = self.variant(cfg)[0]
         root.mkdir(parents=True, exist_ok=True)
@@ -754,6 +760,7 @@ class Deriver(Bank):
 
         return self.store.open_written(root / ("graph_%04d" % index), build)
 
+    @timed("bank.Deriver.resident")
     def resident(self, index, cfg, device):
         return self.residents.get(
             self.variant(cfg)[0] / ("graph_%04d" % index),

@@ -27,6 +27,7 @@ def filled(registry, settings):
     return result
 
 
+@timed("merge.carried")
 def carried(registry, spec):
     return {"prune/merge": pruned()}
 
@@ -128,7 +129,7 @@ MERGE = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=None,
         kinds=filled,
-        version=6,
+        version=7,
         graphs=2,
     ),
 )

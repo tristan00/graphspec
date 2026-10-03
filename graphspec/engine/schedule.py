@@ -13,7 +13,7 @@ from graphspec import registries
 from graphspec.infra.files import Arrays, save_array
 from graphspec.infra.hashing import hashed
 from graphspec.infra.processes.processes import guarded, spawned, worker_threads
-from graphspec.infra.timing import measure
+from graphspec.infra.timing import measure, timed
 from graphspec.operations import pipeline
 from graphspec.operations.state import EMPTY
 from graphspec.representations import base as representations
@@ -31,6 +31,7 @@ MADE = "made.npy"
 
 
 class Stage:
+    @timed("schedule.Stage.__init__")
     def __init__(self, name, step, phase, part, carried, source, gather, last):
         self.name, self.step, self.phase, self.part, self.carried = name, step, phase, part, carried
         self.source, self.gather, self.last = source, gather, last
@@ -93,6 +94,7 @@ def attach(jobs, registry, stated, spec, groups, seed, limits, partitions, threa
     LOG.debug("attach exit jobs=%d seconds=%.4f", len(jobs), time.perf_counter() - started)
 
 
+@timed("schedule.staged")
 def staged(function):
     @functools.wraps(function)
     def run(job, *arguments):
@@ -105,6 +107,7 @@ def staged(function):
     return run
 
 
+@timed("schedule.first")
 def first(stage):
     if stage.name == "open":
         return EMPTY
@@ -115,6 +118,7 @@ def first(stage):
     return held if stage.part is None else held[stage.part]
 
 
+@timed("schedule.state_of")
 def state_of(job, stage, index):
     if index == 0:
         return first(stage)
@@ -126,36 +130,43 @@ def state_of(job, stage, index):
     return state
 
 
+@timed("schedule.keep")
 def keep(job, stage, index, state, floating=True):
     PIPE["jobs"][job]["states"][stage.name] = (index + 1, state)
     if floating:
         park(job, 0, "state-" + stage.name, (index + 1, state))
 
 
+@timed("schedule.folder")
 def folder(job, index, stage):
     return PIPE["jobs"][job]["spill"] / ("%s_%05d.pickle" % (stage, index))
 
 
+@timed("schedule.park")
 def park(job, index, stage, value):
     with open(folder(job, index, stage), "wb") as stream:
         pickle.dump(value, stream, protocol=pickle.HIGHEST_PROTOCOL)
 
 
+@timed("schedule.peek")
 def peek(job, index, stage):
     with open(folder(job, index, stage), "rb") as stream:
         return pickle.load(stream)
 
 
+@timed("schedule.taken")
 def taken(job, index, stage):
     value = peek(job, index, stage)
     folder(job, index, stage).unlink()
     return value
 
 
+@timed("schedule.packed")
 def packed(graph, carry, held):
     return dict(graph=(graph.name, graph.steps, graph.arrays), carry=carry, held=held)
 
 
+@timed("schedule.unpacked")
 def unpacked(job, value):
     name, steps, arrays = value["graph"]
     carry = value["carry"]
@@ -304,6 +315,7 @@ def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partiti
     waiting, running, pending, busy, stitched = [], {}, {}, {}, 0
     lookahead = 2 * workers
 
+    @timed("schedule.variants.ready")
     def ready(job, name):
         stage, index = named[name], ordered[job, name]
         return (
@@ -312,6 +324,7 @@ def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partiti
             and all(index in done[job, held] for held in stage.inputs)
         )
 
+    @timed("schedule.variants.chosen")
     def chosen(worker):
         reserved = dedicated and worker < hosts
         found = [

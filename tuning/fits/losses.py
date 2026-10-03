@@ -11,6 +11,7 @@ LOSSES = Names("loss")
 POINTED = ("target", "weight", "series", "aim", "point_row")
 
 
+@timed("losses.standardised")
 def standardised(predictions, batch, bank):
     center, scale = predictions.new_tensor(bank.center), predictions.new_tensor(bank.scale)
     return (batch["target"] - center[batch["series"]]) / scale[batch["series"]]
@@ -19,6 +20,7 @@ def standardised(predictions, batch, bank):
 class Squared:
     reads = ("number", "path")
 
+    @timed("losses.Squared.__call__")
     def __call__(self, predictions, batch, bank):
         error = (predictions - standardised(predictions, batch, bank)).square()
         return (batch["weight"] * error).sum() / batch["weight"].sum()
@@ -27,6 +29,7 @@ class Squared:
 class Balanced:
     reads = ("number", "path")
 
+    @timed("losses.Balanced.__call__")
     def __call__(self, predictions, batch, bank):
         import torch
 
@@ -42,6 +45,7 @@ class Balanced:
         return (series_total / series_tasks.clamp_min(1e-12)).sum() / (series_tasks > 0).sum()
 
 
+@timed("losses.crossed")
 def crossed(predictions, target, batch):
     import torch
 
@@ -60,6 +64,7 @@ def crossed(predictions, target, batch):
 class Entropy:
     reads = ("class", "proportions", "link")
 
+    @timed("losses.Entropy.__call__")
     def __call__(self, predictions, batch, bank):
         return crossed(predictions, batch["target"], batch)
 
@@ -67,6 +72,7 @@ class Entropy:
 class Listwise:
     reads = ("ranking",)
 
+    @timed("losses.Listwise.__call__")
     def __call__(self, predictions, batch, bank):
         row, target = batch["point_row"], batch["target"]
         total = target.new_zeros(batch["tasks"]).index_add_(0, row, target)
@@ -76,6 +82,7 @@ class Listwise:
 class Tokens:
     reads = ("sequence",)
 
+    @timed("losses.Tokens.__call__")
     def __call__(self, predictions, batch, bank):
         row, place, target = batch["point_row"], batch[FIELD + "place"].long(), batch["target"]
         places = int(place.max()) + 1
@@ -91,6 +98,7 @@ class Tokens:
 class Hazard:
     reads = ("survival",)
 
+    @timed("losses.Hazard.__call__")
     def __call__(self, predictions, batch, bank):
         from torch.nn import functional as F
 
@@ -106,6 +114,7 @@ class Hazard:
 class Binary:
     reads = ("classes", "nodes")
 
+    @timed("losses.Binary.__call__")
     def __call__(self, predictions, batch, bank):
         from torch.nn import functional as F
 
@@ -118,6 +127,7 @@ def readers(registry, kind):
     return tuple(name for name in registry.names() if kind in registry.named(name).reads)
 
 
+@timed("losses.chosen")
 def chosen(batch, points):
     held = {key: value[points] for key, value in batch.items() if key in POINTED or key.startswith(FIELD)}
     held["tasks"] = batch["tasks"]
@@ -166,6 +176,7 @@ class Summed:
         self.losses = [LOSSES.named(stated[kind]) for kind in kinds]
         LOG.debug("summed exit kinds=%d seconds=%.4f", len(kinds), time.perf_counter() - started)
 
+    @timed("losses.Summed.__call__")
     def __call__(self, predictions, batch, bank):
         import torch
 

@@ -214,7 +214,6 @@ def shown(registry, storage):
     return result
 
 
-@timed("sets.chosen")
 def chosen(registry, spec):
     return {kind: spec[PARAMETER % kind] for kind in registry.schema.sets}
 

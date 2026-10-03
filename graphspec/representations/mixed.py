@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 
+from graphspec.infra.timing import timed
 from graphspec.operations.state import EMPTY, Table
 
 from . import kernels
@@ -13,10 +14,12 @@ from .registry import REPRESENTATIONS, Representation
 LOG = logging.getLogger(__name__)
 
 
+@timed("mixed.span")
 def span(spec):
     return spec["mixed/trace"] if spec["mixed/trace"] > 0 else 1
 
 
+@timed("mixed.carries")
 def carries(registry, spec):
     width = span(spec)
     return dict(
@@ -35,14 +38,17 @@ def carries(registry, spec):
     )
 
 
+@timed("mixed.horizon")
 def horizon(spec):
     return 0, 0
 
 
 class Shifted:
+    @timed("mixed.Shifted.__init__")
     def __init__(self, table, base):
         self.table, self.base = table, base
 
+    @timed("mixed.Shifted.__getitem__")
     def __getitem__(self, rows):
         return self.table[np.asarray(rows, np.int64) - self.base]
 
@@ -90,6 +96,7 @@ def piece(shown, state):
         extra_x.append(nodes.columns["x"][where][filled])
     carried = Table(np.concatenate(extra_rows), x=np.concatenate(extra_x))
 
+    @timed("mixed.piece.lookup")
     def lookup(ids):
         ids = np.asarray(ids, np.int64)
         local = ids - obs0
@@ -185,10 +192,12 @@ def piece(shown, state):
     return result
 
 
+@timed("mixed.ended")
 def ended(state):
     return dict(mixed_member_offsets=np.asarray([state["holders"]], np.int64))
 
 
+@timed("mixed.check")
 def check(arrays, name, registry, spec):
     return None
 

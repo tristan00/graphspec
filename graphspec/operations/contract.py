@@ -105,6 +105,7 @@ def adds(registry, settings, entry):
     return Added({}, {entry: dict(columns=columns, tokens=tokens)}, {}, {}, joins, {})
 
 
+@timed("contract.carried")
 def carried(registry, spec):
     return {"contract/live": lived(), "contract/groups": Table(EMPTY, value=EMPTY), "prune/contract": pruned()}
 
@@ -281,7 +282,7 @@ CONTRACT = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=adds,
         kinds=named,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

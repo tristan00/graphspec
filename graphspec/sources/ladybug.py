@@ -18,6 +18,7 @@ from graphspec.schema.time import UNITED
 LOG = logging.getLogger(__name__)
 
 
+@timed("ladybug.valued")
 def valued(holder, names):
     return "".join(", %s.`%s` AS `%s%s`" % (holder, name, VALUE, name) for name in names)
 
@@ -84,21 +85,26 @@ class Database:
             len(stated.edges),
         )
 
+    @timed("ladybug.Database.pairs")
     def pairs(self, table):
         return connections(self.connection, table)
 
+    @timed("ladybug.Database.columns")
     def columns(self, table):
         return columns(self.connection, table)
 
+    @timed("ladybug.Database.close")
     def close(self):
         try:
             self.connection.close()
         finally:
             self.store.close()
 
+    @timed("ladybug.Database.reader")
     def reader(self):
         return Reader(self)
 
+    @timed("ladybug.Database.graphs")
     def graphs(self):
         return query(self.connection, "MATCH (g:graph) RETURN g.id AS id, g.name AS name ORDER BY id")
 
@@ -177,6 +183,7 @@ class Reader:
             len(stated.edges),
         )
 
+    @timed("ladybug.Reader.run")
     def run(self, name, graph):
         return query(self.connection, self.statements[name], dict(graph=graph))
 
@@ -254,6 +261,7 @@ TYPES = {
 }
 
 
+@timed("ladybug.typename")
 def typename(dtype):
     if pa.types.is_fixed_size_list(dtype) and dtype.value_type == pa.float32():
         return "FLOAT[%d]" % dtype.list_size
@@ -264,12 +272,13 @@ def typename(dtype):
     return TYPES[dtype]
 
 
+@timed("ladybug.identifier")
 def identifier(name):
     return "`" + name.replace("`", "``") + "`"
 
 
 def declarations(stage):
-    tables = {}
+    started, tables = time.perf_counter(), {}
     for (name, source, target), paths in stage.files.items():
         schema = pq.read_schema(paths[0])
         properties = [
@@ -295,6 +304,7 @@ def declarations(stage):
             identifier(name),
             ", ".join(fields),
         )
+    LOG.debug("declarations exit tables=%d seconds=%.4f", len(tables), time.perf_counter() - started)
 
 
 @exclusive
@@ -320,6 +330,7 @@ def export(staging, output, buffer_pool_size=1 << 30):
     return output
 
 
+@timed("ladybug.main")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--staging", required=True)

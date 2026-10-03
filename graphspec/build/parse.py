@@ -5,6 +5,7 @@ import numpy as np
 
 from graphspec.facts.check import check
 from graphspec.facts.stored import Facts, codes, column, matrix, sparse, tokens
+from graphspec.infra.timing import timed
 from graphspec.schema import time as clock
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import VALUE, absent, inward, outward
@@ -417,6 +418,7 @@ def parse(registry, splits, observers, tables, rows, series, name):
     if np.any(np.diff(ordered_numbers) == 0):
         raise ValueError("two nodes of graph %s share an entity number" % name)
 
+    @timed("parse.parse.local")
     def local(values):
         position = np.searchsorted(ordered_numbers, values)
         if np.any(position >= len(ordered_numbers)) or not np.array_equal(ordered_numbers[position], values):

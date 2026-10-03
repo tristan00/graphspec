@@ -3,6 +3,8 @@ import time
 
 import numpy as np
 
+from graphspec.infra.timing import timed
+
 from .base import localized, resolved
 from .groups import boundary_codes, event_boundaries, event_edges, event_members
 from .kernels import check_boundaries
@@ -11,14 +13,17 @@ from .registry import REPRESENTATIONS, Representation
 LOG = logging.getLogger(__name__)
 
 
+@timed("events.carries")
 def carries(registry, spec):
     return {}
 
 
+@timed("events.horizon")
 def horizon(spec):
     return spec["events/window"] // 2 + 2, spec["events/periods"]
 
 
+@timed("events.extended")
 def extended(recent, halo, events):
     ext = np.concatenate((recent["events"][halo], events)).astype(np.int32)
     values, (left, right) = localized(ext[:, 0], ext[:, 1])
@@ -72,6 +77,7 @@ def piece(shown, state):
     return result
 
 
+@timed("events.check")
 def check(arrays, name, registry, spec):
     events, member = arrays["events"], arrays["event_member"]
     source, destination = arrays["event_dag"].T

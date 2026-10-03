@@ -6,6 +6,7 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from graphspec import registries
+from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema.added import Added
 from graphspec.views.graph import CHANGES as CHECKED
@@ -35,21 +36,15 @@ class Count:
         self.name, self.counts, self.active, self.sets, self.about = name, counts, active, sets, about
         LOG.debug("count exit name=%s seconds=%.4f", name, time.perf_counter() - started)
 
+    @timed("operation.Count.declaration")
     def declaration(self):
         return dict(name=self.name, counts=self.counts, sets=self.sets, about=self.about)
 
 
 class Settings:
     def __init__(self, operation, parameters, spec, splits, tasks):
-        started = time.perf_counter()
         self.operation, self.spec, self.splits, self.tasks = operation, spec, splits, tasks
         self.parameters = {parameter.name: parameter for parameter in parameters}
-        LOG.debug(
-            "settings exit operation=%s parameters=%d seconds=%.4f",
-            operation,
-            len(self.parameters),
-            time.perf_counter() - started,
-        )
 
     def split(self, name):
         started = time.perf_counter()
@@ -139,7 +134,6 @@ class Phase:
         return result
 
     def once(self, graph, registry, settings, seed, limits, carry, held, state, part):
-        started = time.perf_counter()
         if (state is None) != (self.carries is None):
             raise ValueError(
                 "the phase %s %s carried state" % (self.name, "is given no" if state is None else "carries no")
@@ -150,7 +144,6 @@ class Phase:
             found = carry.state
         finally:
             carry.state, carry.part = None, None
-        LOG.debug("phase once exit phase=%s part=%s seconds=%.4f", self.name, part, time.perf_counter() - started)
         return result, found
 
     def run(self, graph, registry, settings, seed, limits, carry, held, state):
@@ -231,12 +224,12 @@ class Operation:
         return found
 
     def settings(self, registry, spec, graph, partitions):
-        started = time.perf_counter()
         parameters = self.stated(registry)
         for read in self.reads:
             parameters += OPERATIONS.named(read).stated(registry)
 
         def tasks(name):
+            started = time.perf_counter()
             if graph is None:
                 raise ValueError(
                     "the operation %s reads the split %s where it states the state it carries" % (self.name, name)
@@ -247,14 +240,13 @@ class Operation:
                     % (graph.name, self.name, name)
                 )
             rows = np.asarray(graph.label_row, np.int64)
-            return np.unique(np.asarray(graph.label_task)[partitions[rows] == SPLITS.index(name)])
+            result = np.unique(np.asarray(graph.label_task)[partitions[rows] == SPLITS.index(name)])
+            LOG.debug("tasks exit operation=%s split=%s seconds=%.4f", self.name, name, time.perf_counter() - started)
+            return result
 
-        result = Settings(self.name, parameters, spec, self.splits, tasks)
-        LOG.debug("settings made exit operation=%s seconds=%.4f", self.name, time.perf_counter() - started)
-        return result
+        return Settings(self.name, parameters, spec, self.splits, tasks)
 
     def check(self, registry, settings):
-        started = time.perf_counter()
         met = dict(sets=tuple(registry.schema.sets), about=tuple(registry.schema.about()))
         if any(met.values()):
             for count in self.requires:
@@ -266,24 +258,20 @@ class Operation:
                             "the count %s of the operation %s counts %s and refuses %s"
                             % (count.name, self.name, count.counts, EDGES[part] % found[0])
                         )
-        LOG.debug("check exit operation=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
     def added(self, registry, spec, entry):
         if self.adds is None:
             return None
-        started = time.perf_counter()
         result = self.adds(registry, self.settings(registry, spec, None, None), entry)
         if not isinstance(result, Added):
             raise ValueError(
                 "the operation %s states what it adds as graphspec.schema.added.Added, found %r" % (self.name, result)
             )
-        LOG.debug("added exit operation=%s entry=%s seconds=%.4f", self.name, entry, time.perf_counter() - started)
         return result
 
     def roles(self, registry, spec):
         if self.kinds is None:
             return {}
-        started = time.perf_counter()
         result = self.kinds(registry, self.settings(registry, spec, None, None))
         if type(result) is not dict or not all(
             kind in registry.declared and role in ROLES for kind, role in result.items()
@@ -292,7 +280,6 @@ class Operation:
                 "the operation %s states what it does with kinds of node as a mapping from kinds the registry "
                 "declares to one of %s, found %r" % (self.name, ", ".join(ROLES), result)
             )
-        LOG.debug("roles exit operation=%s kinds=%d seconds=%.4f", self.name, len(result), time.perf_counter() - started)
         return result
 
     def initial(self, registry, spec):
@@ -320,7 +307,6 @@ class Operation:
         return result
 
     def __call__(self, graph, registry, spec, seed, limits, carry, state, partitions):
-        started = time.perf_counter()
         settings = self.settings(registry, spec, graph, partitions)
         self.check(registry, settings)
         held, found = None, {}
@@ -329,12 +315,6 @@ class Operation:
             held, carried = phase.run(graph, registry, settings, seed, limits, carry, held, given)
             if phase.carries is not None:
                 found[phase.name] = carried
-        LOG.debug(
-            "operation call exit name=%s graph=%s seconds=%.4f",
-            self.name,
-            graph.name,
-            time.perf_counter() - started,
-        )
         return held, found
 
     def declaration(self, registry):

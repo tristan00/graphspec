@@ -28,6 +28,7 @@ FAILURE_POLICY = dict(
 )
 
 
+@timed("selector.distribution")
 def distribution(parameter):
     if parameter.kind in ("bool", "choice"):
         return tpe.categorical(parameter.options)
@@ -53,6 +54,7 @@ def stepped(registry, parameters):
     return specs.narrow(parameters, {held.name: accepted})
 
 
+@timed("selector.graph_space")
 def graph_space(registry, model, bounds):
     return stepped(registry, narrow_group(specs.settings(registry, groups(model)), bounds))
 
@@ -106,6 +108,7 @@ def needing(registry, template, parameters):
     return specs.narrow(parameters, held)
 
 
+@timed("selector.keyed")
 def keyed(prefix, parameter, static):
     name = prefix + parameter.name
     if name not in static or static[name] == parameter.options:
@@ -115,6 +118,7 @@ def keyed(prefix, parameter, static):
 
 @timed("selector.recorded")
 def recorded(registry, template, parameters, flat, record):
+    @timed("selector.recorded.read")
     def read(parameter):
         if parameter.name not in flat:
             raise ValueError("spec lacks the active parameter " + parameter.name)
@@ -134,16 +138,19 @@ def refused(registry, config):
     return []
 
 
+@timed("selector.spaces")
 def spaces(registry, bounds):
     return narrow_group(model_space(registry), bounds), narrow_group(TRAINING, bounds)
 
 
+@timed("selector.runtime_parameter")
 def runtime_parameter(seconds):
     if type(seconds) is not int or seconds < 1:
         raise ValueError("max_seconds is %r and must be a positive integer" % (seconds,))
     return specs.number("max_seconds", seconds, seconds, seconds)
 
 
+@timed("selector.narrow_group")
 def narrow_group(parameters, bounds):
     applicable = {
         key: value
@@ -178,19 +185,23 @@ def check_bounds(registry, bounds, template):
     pipeline.draw(registry, template, pipeline_space(registry, template, bounds), pipeline.settled)
 
 
+@timed("selector.training")
 def training(config):
     return {parameter.name: config[parameter.name] for parameter in TRAINING}
 
 
+@timed("selector.observation")
 def observation(registry, config, value, bounds, template, **attrs):
     params, distributions = {}, {}
     models, trainings = spaces(registry, bounds)
 
+    @timed("selector.observation.enter")
     def enter(prefix, parameters, spec):
         lookup = {parameter.name: parameter for parameter in parameters}
         for name, setting in specs.canonical(parameters, spec).items():
             params[prefix + name], distributions[prefix + name] = setting, distribution(lookup[name])
 
+    @timed("selector.observation.record")
     def record(parameter, value):
         name = keyed("", parameter, static)
         params[name], distributions[name] = value, distribution(parameter)
@@ -207,9 +218,11 @@ def observation(registry, config, value, bounds, template, **attrs):
     return tpe.record(value, params, distributions, config=config, **attrs)
 
 
+@timed("selector.outside")
 def outside(parameters, spec):
     names = []
 
+    @timed("selector.outside.read")
     def read(parameter):
         if parameter.name not in spec:
             names.append(parameter.name)
@@ -225,6 +238,7 @@ def outside(parameters, spec):
     return names
 
 
+@timed("selector.excluded")
 def excluded(registry, config, bounds, template):
     models, trainings = spaces(registry, bounds)
     return (
@@ -237,6 +251,7 @@ def excluded(registry, config, bounds, template):
     )
 
 
+@timed("selector.metadata")
 def metadata(registry, config, seed, training_seed, bounds, template, **extra):
     model, graph = spaces(registry, bounds)[0], graph_space(registry, config["model"], bounds)
     held = pipeline_space(registry, template, bounds)
@@ -257,6 +272,7 @@ def metadata(registry, config, seed, training_seed, bounds, template, **extra):
     )
 
 
+@timed("selector.configuration")
 def configuration(registry, choose, training_seed, bounds, seconds, template):
     models, trainings = spaces(registry, bounds)
     model = specs.draw(models, lambda parameter: choose("model/", parameter))
@@ -276,6 +292,7 @@ def configuration(registry, choose, training_seed, bounds, seconds, template):
     return config
 
 
+@timed("selector.suggest")
 def suggest(registry, observations, failures, seed, training_seed, bounds, seconds, template):
     started = time.perf_counter()
     check_bounds(registry, bounds, template)
@@ -328,6 +345,7 @@ def suggest(registry, observations, failures, seed, training_seed, bounds, secon
     )
 
 
+@timed("selector.random_suggest")
 def random_suggest(registry, seed, training_seed, bounds, seconds, template):
     started = time.perf_counter()
     check_bounds(registry, bounds, template)
@@ -348,6 +366,7 @@ def random_suggest(registry, seed, training_seed, bounds, seconds, template):
     )
 
 
+@timed("selector.load_history")
 def load_history(directory, plan):
     observations, failures, history, failure_history = [], [], [], []
     run = Run(directory, JsonCache())
@@ -382,6 +401,7 @@ def load_history(directory, plan):
     return observations, failures, history, failure_history
 
 
+@timed("selector.seeds")
 def seeds(seed, index):
     started = time.perf_counter()
     rng = np.random.default_rng(np.random.SeedSequence([seed, index, 1]))
@@ -390,10 +410,12 @@ def seeds(seed, index):
     return result
 
 
+@timed("selector.roll")
 def roll():
     return np.random.default_rng().random()
 
 
+@timed("selector.check_mix")
 def check_mix(mix):
     unknown = sorted(set(mix) - {"random", *SURROGATES, "tpe"})
     if unknown:
@@ -403,6 +425,7 @@ def check_mix(mix):
     return mix
 
 
+@timed("selector.pick")
 def pick(mix):
     point, total = roll() * 100, 0.0
     for name, share in mix.items():
@@ -412,6 +435,7 @@ def pick(mix):
     return list(mix)[-1]
 
 
+@timed("selector.append_trial")
 def append_trial(directory, plan, registry, stated):
     started = time.perf_counter()
     observations, failures, history, failure_history = load_history(directory, plan)
@@ -434,6 +458,7 @@ def append_trial(directory, plan, registry, stated):
         surrogate_suggest = dict(botorch=suggest_botorch, forest=suggest_forest)[selector]
         progress_started = time.time()
 
+        @timed("selector.append_trial.progress")
         def progress(value):
             write_json(
                 directory / "selection_progress.json",

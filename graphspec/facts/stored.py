@@ -39,6 +39,7 @@ STORED = (
 )
 
 
+@timed("stored.admitted")
 def admitted(directory, manifest):
     if manifest["version"] != VERSION:
         raise ValueError(
@@ -67,11 +68,13 @@ class Arrays:
         except KeyError:
             raise AttributeError(key) from None
 
+    @timed("stored.Arrays.replace")
     def replace(self, steps=None, **changes):
         return type(self)(
             self.name, self.keys, self.steps if steps is None else steps, **dict(self.arrays, **changes)
         )
 
+    @timed("stored.Arrays.save")
     def save(self, directory):
         directory = output_path(directory)
         directory.mkdir(parents=True, exist_ok=True)
@@ -79,12 +82,14 @@ class Arrays:
         write_json(directory / "graph.json", dict(name=self.name, keys=self.keys, steps=self.steps))
 
     @classmethod
+    @timed("stored.Arrays.load")
     def load(cls, directory, mapped=False):
         directory = Path(directory)
         meta = read_json(directory / "graph.json")
         return cls(meta["name"], meta["keys"], meta["steps"], **read_pack(directory / PACKED, mapped))
 
 
+@timed("stored.moment")
 def moment(value):
     value = int(value)
     return None if value <= ALWAYS or value >= NEVER else value
@@ -376,6 +381,7 @@ class Facts:
         return result
 
 
+@timed("stored.tokens")
 def tokens(registry, kinds, keys):
     return np.asarray(
         [token(registry.nodes[kind] + ":" + key) for kind, key in zip(np.asarray(kinds).tolist(), keys)],
@@ -383,10 +389,12 @@ def tokens(registry, kinds, keys):
     )
 
 
+@timed("stored.column")
 def column(table, name, dtype):
     return table.column(name).to_numpy().astype(dtype)
 
 
+@timed("stored.matrix")
 def matrix(table, name, dtype):
     values = table.column(name).combine_chunks()
     return values.flatten().to_numpy().reshape(len(values), values.type.list_size).astype(dtype)
@@ -422,6 +430,7 @@ def stated(registry, names, values):
     return result
 
 
+@timed("stored.prefixed")
 def prefixed(columns):
     return {VALUE + name: values for name, values in columns.items()}
 

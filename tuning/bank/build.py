@@ -20,6 +20,7 @@ from graphspec.infra.log import configure
 from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.processes.processes import pooled
 from graphspec.infra.runtime import output_path
+from graphspec.infra.timing import timed
 from graphspec.registries import carried, restored
 from graphspec.schema import declaration
 from graphspec.schema.schema import Encoding, Schema
@@ -311,6 +312,7 @@ def supervision(source, trained, names):
     return result, groups, found_splits, untasked(tasks, names)
 
 
+@timed("build.attach")
 def attach(task_path, output, level):
     configure(level)
     release()
@@ -326,6 +328,7 @@ def attach(task_path, output, level):
         raise
 
 
+@timed("build.release")
 def release():
     if WORKER:
         try:
@@ -359,6 +362,7 @@ def graph(context, job):
     return metrics
 
 
+@timed("build.counts")
 def counts(truth):
     return dict(
         unit=truth.unit,

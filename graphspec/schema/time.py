@@ -130,6 +130,7 @@ def stamped(table, model, label, graph):
     started = time.perf_counter()
     count = table.num_rows
 
+    @timed("time.stamped.read")
     def read(name, base):
         if name not in STAMPS[model]:
             return np.array(np.broadcast_to(np.asarray(base, np.int64), (count,)))

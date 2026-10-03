@@ -51,6 +51,7 @@ def initial(registry, spec, chosen):
     return result
 
 
+@timed("base.mapped")
 def mapped(glob, values):
     values = np.asarray(values)
     return gathered(glob, values, -1).astype(np.int32)
@@ -62,6 +63,7 @@ def shifted(values, base):
     return np.where(values >= 0, values + base, -1).astype(np.int32)
 
 
+@timed("base.localized")
 def localized(*columns):
     held = np.concatenate([np.asarray(column, np.int64) for column in columns] + [EMPTY])
     values = np.unique(held)
@@ -73,6 +75,7 @@ def localized(*columns):
     return values, parts
 
 
+@timed("base.resolved")
 def resolved(values, count, halo, base):
     values = np.asarray(values, np.int64)
     if not count:
@@ -80,6 +83,7 @@ def resolved(values, count, halo, base):
     return np.where(values < count, halo[np.clip(values, 0, count - 1)], base + values - count)
 
 
+@timed("base.recent")
 def recent(history, name):
     parts = [item[name] for item in history]
     return {key: np.concatenate([part[key] for part in parts]) for key in parts[0]}
@@ -116,13 +120,16 @@ def identities(events, carry, graph, registry, tasks0):
 
 
 class Link:
+    @timed("base.Link.__init__")
     def __init__(self, carry, state):
         self.glob, self.base, self.state, self.step0 = carry.glob, carry.base, state, carry.step0
         self.obs0, self.attributes = state["obs"], state["attributes"]
 
+    @timed("base.Link.table")
     def table(self, name):
         return self.state[name]
 
+    @timed("base.Link.replay_keys")
     def replay_keys(self, graph):
         table = self.table("replay")
         if not len(table):
@@ -138,6 +145,7 @@ class Link:
             table.columns["state"][chosen],
         )
 
+    @timed("base.Link.remember")
     def remember(self, graph, entity, reference, table):
         last = np.full(len(graph.kinds), -1, np.int64)
         np.maximum.at(last, entity, np.arange(len(entity)))
@@ -156,16 +164,19 @@ class Link:
 
 
 class Shown:
+    @timed("base.Shown.__init__")
     def __init__(self, carry, graph, local, own, work, before, registry, spec, seed, budget):
         self.carry, self.graph, self.local, self.own, self.work = carry, graph, local, own, work
         self.before, self.registry, self.spec, self.seed, self.budget = before, registry, spec, seed, budget
 
+    @timed("base.Shown.recent")
     def recent(self, name):
         if not self.before["history"]:
             return dict(obs=EMPTY_OBS, events=EMPTY_EVENTS)[name]
         return recent(self.before["history"], name)
 
 
+@timed("base.own_arrays")
 def own_arrays(arrays, carry, before, graph):
     glob, step0, obs0, tasks0, rows0 = carry.glob, carry.step0, before["obs"], before["tasks"], before["rows"]
     events = np.asarray(arrays["events"]).astype(np.int64)
@@ -230,11 +241,13 @@ def own_arrays(arrays, carry, before, graph):
     return own, work
 
 
+@timed("base.horizons")
 def horizons(spec, chosen):
     found = [entry.horizon(spec) for entry in chosen] + [(0, 0)]
     return max(steps for steps, _ in found), max(groups for _, groups in found)
 
 
+@timed("base.remembered")
 def remembered(history, piece, next_step, groups, spec, chosen):
     steps, lookback = horizons(spec, chosen)
     return tuple(

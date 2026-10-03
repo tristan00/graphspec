@@ -5,12 +5,14 @@ import time
 from dataclasses import dataclass, field
 
 from graphspec.infra.log import emit
+from graphspec.infra.timing import timed
 
 LOG = logging.getLogger(__name__)
 VERSION = 3
 SEEDS = 2**32
 
 
+@timed("statement.current")
 def current(value):
     return type(value) is int and value == VERSION
 
@@ -30,18 +32,22 @@ def device(value):
     return result
 
 
+@timed("statement.seed")
 def seed(value):
     return type(value) is int and 0 <= value < SEEDS
 
 
+@timed("statement.positive")
 def positive(value):
     return type(value) is int and value >= 1
 
 
+@timed("statement.processors")
 def processors(value):
     return type(value) is int and 1 <= value <= os.cpu_count()
 
 
+@timed("statement.named")
 def named(value):
     return (
         isinstance(value, list)
@@ -50,10 +56,12 @@ def named(value):
     )
 
 
+@timed("statement.splits")
 def splits(value):
     return named(value) and len(value) > 0
 
 
+@timed("statement.word")
 def word(value):
     return type(value) is str and len(value) > 0
 
@@ -162,6 +170,7 @@ class Statement:
         return result
 
 
+@timed("statement.names")
 def names():
     return tuple(entry.name for entry in dataclasses.fields(Statement))
 
@@ -183,6 +192,7 @@ def stated(value):
     return value
 
 
+@timed("statement.seen")
 def seen(given):
     started = time.perf_counter()
     result = None
@@ -199,6 +209,7 @@ def seen(given):
     return result
 
 
+@timed("statement.paired")
 def paired(given):
     started = time.perf_counter()
     result = None

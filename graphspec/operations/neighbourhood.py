@@ -32,6 +32,7 @@ def named(registry, settings):
     return result
 
 
+@timed("neighbourhood.carried")
 def carried(registry, spec):
     return {"neighbourhood/kept": kept(), "prune/neighbourhood": pruned()}
 
@@ -93,7 +94,7 @@ NEIGHBOURHOOD = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=None,
         kinds=named,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

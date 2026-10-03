@@ -29,7 +29,6 @@ class EdgeType:
         "reverse",
     )
 
-    @timed("declarations.edgetype")
     def __init__(self, name, origin, pairs, attributes=(), symmetric=False):
         if not name or not origin:
             raise ValueError("edge declarations require a name and origin")
@@ -44,7 +43,6 @@ class EdgeType:
             raise ValueError("edge attribute names must be unique: " + name)
         self.code = self.reverse = -1
 
-    @timed("declarations.edgetype.declaration")
     def declaration(self):
         return dict(
             name=self.name,
@@ -201,7 +199,6 @@ class Registry:
             )
         return name
 
-    @timed("registry.registry.codes")
     def codes(self, names):
         return np.asarray([self.by_name[name].code for name in names], np.int64)
 
@@ -221,6 +218,7 @@ class Registry:
             declared["extras"],
         )
 
+    @timed("declaration.Registry._allocate")
     def _allocate(self):
         code = 0
         for edge in self.edges:
@@ -232,6 +230,7 @@ class Registry:
                 code += 1
         return code
 
+    @timed("declaration.Registry.__getattr__")
     def __getattr__(self, key):
         if key in FITTED:
             raise ValueError(
@@ -365,12 +364,14 @@ class Registry:
     def ordered(self, name):
         return tuple(column for column in self.attributes(name) if self.schema.kind(column).ordered)
 
+    @timed("declaration.Registry.attribute_width")
     def attribute_width(self, name):
         return self.encoding.width(self.attributes(name))
 
     def kind(self, name):
         return self.node_index[name]
 
+    @timed("declaration.Registry.marker")
     def marker(self, name):
         return self.marker_index[name]
 
@@ -440,14 +441,17 @@ def stored(schema):
     return result
 
 
+@timed("declaration.projection")
 def projection(relation, side, first, second):
     return "project:%s:%s:%s:%s" % (relation, side, first, second)
 
 
+@timed("declaration.completion")
 def completion(first, second):
     return "complete:%s:%s" % (first, second)
 
 
+@timed("declaration.hop")
 def hop(distance):
     return "hop:%d" % distance
 

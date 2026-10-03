@@ -345,6 +345,7 @@ def about(facts, registry, lit, rows):
         for end in (rows["source"][chosen], rows["target"][chosen]):
             lacking |= joined[kinds[end]] & ~np.isin(moments * count + end, lit)
 
+        @timed("view.about.named")
         def named(position):
             row = chosen[position]
             return "the edge of %s from %s to %s of graph %s at %s" % (
@@ -400,6 +401,7 @@ def referred(facts, registry, held):
     return result
 
 
+@timed("view.view")
 def view(facts, registry, held, several):
     steps = len(held["moments"])
     if steps < 1:

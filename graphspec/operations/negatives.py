@@ -74,10 +74,12 @@ class Near:
         return np.isin(wanted, reached)
 
 
+@timed("negatives.unstated")
 def unstated(registry):
     return ()
 
 
+@timed("negatives.hopped")
 def hopped(registry):
     return (number("negatives/hops/within", 1, 3, 2),)
 
@@ -135,6 +137,7 @@ def offered(registry):
     return tuple(result)
 
 
+@timed("negatives.ruled")
 def ruled(name, parameter):
     return lambda spec: spec["negatives/rule"] == name and parameter.active(spec)
 
@@ -418,6 +421,7 @@ def negatives(graph, registry, spec, seed, limits, carry, held):
     return graph
 
 
+@timed("negatives.drawing")
 def drawing(rule):
     return lambda registry, spec: spec["negatives/rule"] == rule
 
@@ -438,7 +442,7 @@ NEGATIVE = OPERATIONS.register(
         changes=(),
         adds=adds,
         kinds=named,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

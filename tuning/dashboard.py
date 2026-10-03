@@ -7,6 +7,7 @@ from graphspec.infra.files import JsonCache
 from graphspec.infra.log import configure
 from graphspec.infra.runtime import home
 from graphspec.infra.serve import HttpError, serve, server
+from graphspec.infra.timing import timed
 
 from .measures import objective
 from .searches.records import Run, Status
@@ -16,12 +17,14 @@ WEB = Path(__file__).with_name("web")
 
 
 class Dashboard:
+    @timed("dashboard.Dashboard.__init__")
     def __init__(self, root):
         self.root = Path(root).resolve()
         if not self.root.is_dir():
             raise ValueError("Run directory does not exist: " + str(self.root))
         self.cache = JsonCache()
 
+    @timed("dashboard.Dashboard.directories")
     def directories(self):
         if (self.root / "plan.json").is_file():
             return {self.root.name: self.root}
@@ -31,12 +34,14 @@ class Dashboard:
             if path.is_dir() and not path.is_symlink() and (path / "plan.json").is_file()
         }
 
+    @timed("dashboard.Dashboard.open")
     def open(self, identity):
         directory = self.directories().get(identity)
         if directory is None:
             raise HttpError(404, "This run is no longer available. Choose another run.")
         return Run(directory, self.cache)
 
+    @timed("dashboard.Dashboard.runs")
     def runs(self, query):
         rows = []
         for identity, path in self.directories().items():
@@ -55,6 +60,7 @@ class Dashboard:
                 rows.append(dict(id=identity, trials=None, status="unreadable", error=str(error)))
         return dict(root=str(self.root), runs=rows)
 
+    @timed("dashboard.Dashboard.snapshot")
     def snapshot(self, query):
         run = self.open(query.get("id"))
         trials = []
@@ -136,6 +142,7 @@ class Dashboard:
             trials=trials,
         )
 
+    @timed("dashboard.Dashboard.optimizer")
     def optimizer(self, query):
         run = self.open(query.get("id"))
         proposals = []
@@ -170,6 +177,7 @@ class Dashboard:
             )
         return dict(proposals=proposals)
 
+    @timed("dashboard.Dashboard.detail")
     def detail(self, query):
         run = self.open(query.get("run"))
         trial = next(iter(run.trials(name=query.get("id") or "")), None)
@@ -200,6 +208,7 @@ class Dashboard:
             log=log,
         )
 
+    @timed("dashboard.Dashboard.route")
     def route(self, function):
         def execute(query):
             started = time.perf_counter()
@@ -214,6 +223,7 @@ class Dashboard:
 
         return execute
 
+    @timed("dashboard.Dashboard.routes")
     def routes(self):
         return {
             "/api/runs": self.route(self.runs),
@@ -223,6 +233,7 @@ class Dashboard:
         }
 
 
+@timed("dashboard.assets")
 def assets():
     return {
         "/app.js": (WEB / "app.js", "text/javascript; charset=utf-8"),
@@ -236,10 +247,12 @@ def assets():
     }
 
 
+@timed("dashboard.create_server")
 def create_server(root, port=0):
     return server(port, WEB / "index.html", Dashboard(root).routes(), assets())
 
 
+@timed("dashboard.main")
 def main():
     parser = argparse.ArgumentParser(description="Track and explore saved tuning runs.")
     parser.add_argument("--runs", type=Path, default=home() / "runs")

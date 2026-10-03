@@ -59,6 +59,7 @@ def shortened(bank, pipeline, every):
 
 
 class TrainingSession:
+    @timed("training.TrainingSession.__init__")
     def __init__(self, bank, bank_directory, directory, config: dict, budget, stated):
         import torch
 
@@ -161,6 +162,7 @@ class TrainingSession:
         )
         return Schedule(training, ends, sizes, batch_size)
 
+    @timed("training.TrainingSession.optimize")
     def optimize(self, batch: dict) -> float:
         import torch
 
@@ -423,6 +425,7 @@ class TrainingSession:
         return result
 
 
+@timed("training.fit")
 def fit(bank_directory, directory, config, training_blocks, batch_size, deadline, statement):
     from graphspec.infra.arrays import RESIDENT
     from tuning.bank.bank import Deriver

@@ -64,6 +64,7 @@ TYPES = Names("column type")
 ENCODERS = Names("encoder")
 
 
+@timed("schema.absent")
 def absent(column):
     return np.asarray(column.is_null().to_numpy(zero_copy_only=False), bool)
 
@@ -84,15 +85,19 @@ class Number:
     symbols = False
     ordered = True
 
+    @timed("schema.Number.read")
     def read(self, column):
         return np.asarray(column.to_numpy(zero_copy_only=False), np.float32)
 
+    @timed("schema.Number.missing")
     def missing(self, stated):
         return np.isnan(stated)
 
+    @timed("schema.Number.codes")
     def codes(self, stated, dictionary):
         return np.asarray(stated, np.float32)
 
+    @timed("schema.Number.stated")
     def stated(self, codes, dictionary):
         return [None if np.isnan(value) else float(value) for value in np.asarray(codes, np.float32)]
 
@@ -103,17 +108,21 @@ class Flag:
     symbols = False
     ordered = False
 
+    @timed("schema.Flag.read")
     def read(self, column):
         values = np.asarray(column.fill_null(False).to_numpy(zero_copy_only=False), np.float32)
         values[absent(column)] = np.nan
         return values
 
+    @timed("schema.Flag.missing")
     def missing(self, stated):
         return np.isnan(stated)
 
+    @timed("schema.Flag.codes")
     def codes(self, stated, dictionary):
         return np.asarray(stated, np.float32)
 
+    @timed("schema.Flag.stated")
     def stated(self, codes, dictionary):
         return [None if np.isnan(value) else bool(value) for value in np.asarray(codes, np.float32)]
 
@@ -124,12 +133,15 @@ class Category:
     symbols = True
     ordered = False
 
+    @timed("schema.Category.read")
     def read(self, column):
         return np.asarray(column.to_pylist(), object)
 
+    @timed("schema.Category.missing")
     def missing(self, stated):
         return np.asarray([value is None for value in stated], bool)
 
+    @timed("schema.Category.codes")
     def codes(self, stated, dictionary):
         position = {value: index for index, value in enumerate(dictionary)}
         unknown = sorted({value for value in stated if value is not None and value not in position})
@@ -137,12 +149,14 @@ class Category:
             raise ValueError("values outside the dictionary of their column: " + ", ".join(unknown))
         return np.asarray([np.nan if value is None else position[value] for value in stated], np.float32)
 
+    @timed("schema.Category.stated")
     def stated(self, codes, dictionary):
         return [
             None if np.isnan(value) else dictionary[int(value)] for value in np.asarray(codes, np.float32)
         ]
 
 
+@timed("schema.parted")
 def parted(codes):
     codes = np.asarray(codes, np.float32)
     known = ~np.isnan(codes)
@@ -152,12 +166,15 @@ def parted(codes):
 class Value:
     types = ("number", "flag")
 
+    @timed("schema.Value.fit")
     def fit(self, codes, dictionary, column):
         return {}
 
+    @timed("schema.Value.widths")
     def widths(self, state):
         return 1, 1
 
+    @timed("schema.Value.encode")
     def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
         return np.where(known, codes, 0)[:, None].astype(np.float32), known[:, None].astype(np.float32)
@@ -166,12 +183,15 @@ class Value:
 class Logarithm:
     types = ("number",)
 
+    @timed("schema.Logarithm.fit")
     def fit(self, codes, dictionary, column):
         return {}
 
+    @timed("schema.Logarithm.widths")
     def widths(self, state):
         return 1, 1
 
+    @timed("schema.Logarithm.encode")
     def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
         held = np.where(known, codes, 0)
@@ -183,6 +203,7 @@ class Logarithm:
 class Standard:
     types = ("number",)
 
+    @timed("schema.Standard.fit")
     def fit(self, codes, dictionary, column):
         values = np.asarray(codes, np.float64)
         if len(values) < 2 or np.ptp(values) == 0:
@@ -192,9 +213,11 @@ class Standard:
             )
         return dict(mean=float(values.mean()), sd=float(values.std(ddof=1)))
 
+    @timed("schema.Standard.widths")
     def widths(self, state):
         return 1, 1
 
+    @timed("schema.Standard.encode")
     def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
         scaled = (np.where(known, codes, state["mean"]).astype(np.float64) - state["mean"]) / state["sd"]
@@ -215,12 +238,15 @@ class OneHot:
         self.unseen = unseen
         LOG.debug("onehot exit unseen=%s seconds=%.4f", unseen, time.perf_counter() - started)
 
+    @timed("schema.OneHot.fit")
     def fit(self, codes, dictionary, column):
         return dict(values=[dictionary[code] for code in np.unique(np.asarray(codes, np.int64)).tolist()])
 
+    @timed("schema.OneHot.widths")
     def widths(self, state):
         return len(state["values"]) + 1, 1
 
+    @timed("schema.OneHot.encode")
     def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
         place = {value: code for code, value in enumerate(dictionary)}
@@ -571,11 +597,9 @@ class Schema:
         LOG.debug("schema holding exit kinds=%d seconds=%.4f", len(nodes), time.perf_counter() - started)
         return held
 
-    @timed("schema.declared")
     def declared(self):
         return dict(self.nodes, **{kind: entry["columns"] for kind, entry in self.sets.items()})
 
-    @timed("schema.entities")
     def entities(self):
         result = self.declared()
         for _, added in self.grown:
@@ -584,7 +608,6 @@ class Schema:
             result.update({kind: entry["columns"] for kind, entry in added.kinds.items()})
         return result
 
-    @timed("schema.added_columns")
     def added_columns(self):
         return tuple(name for _, added in self.grown for name in added.columns)
 
@@ -608,7 +631,6 @@ class Schema:
     def within_columns(self):
         return tuple(dict.fromkeys(name for held in self.holds.values() for name in outward(held)))
 
-    @timed("schema.about")
     def about(self):
         return {table: entry["about"] for table, entry in self.edges.items() if entry["about"] is not None}
 
@@ -896,6 +918,7 @@ class Schema:
         LOG.debug("schema mapping exit seconds=%.4f", time.perf_counter() - started)
         return result
 
+    @timed("schema.Schema.fingerprint")
     def fingerprint(self):
         return sha256_json(self.mapping())
 
@@ -908,6 +931,7 @@ class Schema:
             held["observers"] = WATCHERS
         return held
 
+    @timed("schema.Schema.layout")
     def layout(self):
         groups = list(self.declared().values()) + [self.asked_columns()]
         return tuple(dict.fromkeys(name for columns in groups for name in columns))
@@ -929,7 +953,6 @@ class Schema:
             )
         )
 
-    @timed("schema.targets")
     def targets(self):
         return tuple(
             dict.fromkeys(
@@ -1005,6 +1028,7 @@ class Schema:
     def encoder(self, name):
         return ENCODERS.named(self.columns[name]["encoder"])
 
+    @timed("schema.Schema.symbolic")
     def symbolic(self):
         return tuple(name for name in self.columns if self.kind(name).symbols)
 
@@ -1128,6 +1152,7 @@ class Schema:
     def text(self, encoding):
         started = time.perf_counter()
 
+        @timed("schema.Schema.text.described")
         def described(columns):
             if not columns:
                 return "no columns"
@@ -1138,6 +1163,7 @@ class Schema:
 
         fitted = encoding is not None and encoding.states is not None
 
+        @timed("schema.Schema.text.wide")
         def wide(columns):
             return ", width %d" % encoding.width(columns) if fitted else ""
 
@@ -1310,6 +1336,7 @@ class Encoding:
             time.perf_counter() - started,
         )
 
+    @timed("schema.Encoding.__getattr__")
     def __getattr__(self, key):
         if key in FITTED:
             raise ValueError(
@@ -1318,6 +1345,7 @@ class Encoding:
             )
         raise AttributeError(key)
 
+    @timed("schema.Encoding.declaration")
     def declaration(self):
         return dict(
             dictionaries=self.dictionaries,
@@ -1325,6 +1353,7 @@ class Encoding:
             relations={table: list(names) for table, names in self.relations.items()},
         )
 
+    @timed("schema.Encoding.width")
     def width(self, columns):
         return sum(sum(self.sizes[name]) for name in columns)
 
@@ -1359,9 +1388,11 @@ class Encoding:
         LOG.debug("encoding widened exit rows=%d seconds=%.4f", len(rows), time.perf_counter() - started)
         return result
 
+    @timed("schema.Encoding.positions")
     def positions(self, columns):
         return [self.layout.index(name) for name in columns]
 
+    @timed("schema.Encoding.encoded")
     def encoded(self, columns, codes):
         parts = [
             (np.zeros((len(codes), 0), np.float32),) * 2

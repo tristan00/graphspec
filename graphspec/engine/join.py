@@ -5,6 +5,7 @@ import time
 import numpy as np
 
 from graphspec.infra.hashing import unit
+from graphspec.infra.timing import timed
 from graphspec.infra.workspace import allocate, block_rows, gathered
 from graphspec.views import spans
 from graphspec.views.graph import DENSE, Dense, verify_dense
@@ -13,6 +14,7 @@ LOG = logging.getLogger(__name__)
 CONNECT = "graphs/connect"
 
 
+@timed("join.parameters")
 def parameters(spec):
     return {name: value for name, value in spec.items() if name.startswith("graphs/")}
 

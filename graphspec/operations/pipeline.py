@@ -38,9 +38,11 @@ class Step:
         finally:
             carry.second, carry.entry = None, None
 
+    @timed("pipeline.Step.initial")
     def initial(self, registry):
         return self.operation.initial(registry, self.spec)
 
+    @timed("pipeline.Step.phase")
     def phase(self, place, graph, registry, seed, limits, carry, held, state, part, partitions):
         carry.named(self.graph, self.operation.name, called(self))
         try:
@@ -50,6 +52,7 @@ class Step:
         finally:
             carry.second, carry.entry = None, None
 
+    @timed("pipeline.Step.parts")
     def parts(self, place, registry):
         phase = self.operation.phases[place]
         if phase.parts is None:
@@ -96,7 +99,6 @@ class Local:
 
 
 def checked(entries, fields):
-    started = time.perf_counter()
     if type(entries) is not list:
         raise TypeError("a pipeline is a list of its operations in the order they apply, found %r" % (entries,))
     required = tuple(field for field in fields if field not in OPTIONAL)
@@ -136,7 +138,6 @@ def checked(entries, fields):
             )
         names.add(name)
         found.append((name, operation, label, entry))
-    LOG.debug("checked exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return found
 
 
@@ -173,6 +174,7 @@ def walked(found, before, looped):
     return order
 
 
+@timed("pipeline.drawn")
 def drawn(found, reads):
     return walked(found, reads, "the entry %s of the pipeline reads, through the entries it reads, itself")
 
@@ -193,7 +195,6 @@ def ordered(found, reads, waits):
     return result
 
 
-@timed("pipeline.entered")
 def entered(operation, label):
     return label if label is not None else operation.name.split(".", 1)[1]
 
@@ -210,7 +211,6 @@ class Growing:
         LOG.debug("growing exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
 
     def before(self, place, spec):
-        started = time.perf_counter()
         while len(self.held) <= place:
             name, operation, label, _ = self.found[len(self.held) - 1]
             held = self.held[-1]
@@ -219,12 +219,10 @@ class Growing:
                 if added.holds():
                     held = held.grown(entered(operation, label), added, None)
             self.held.append(held)
-        LOG.debug("growing before exit place=%d seconds=%.4f", place, time.perf_counter() - started)
         return self.held[place]
 
 
 def given(name, parameters, values, context):
-    started = time.perf_counter()
     if type(values) is not dict:
         raise TypeError("the entry %s of the pipeline states its parameters as a mapping, found %r" % (name, values))
     result = {}
@@ -242,7 +240,6 @@ def given(name, parameters, values, context):
         raise ValueError(
             "the entry %s of the pipeline states %s, which are inactive or unknown" % (name, ", ".join(extra))
         )
-    LOG.debug("given exit entry=%s parameters=%d seconds=%.4f", name, len(result), time.perf_counter() - started)
     return result
 
 
@@ -554,6 +551,7 @@ class Offered:
                 ahead.update(dict.fromkeys(must["hits"], "the entry %s after it, held present," % name))
         LOG.debug("offered exit entries=%d seconds=%.4f", len(self.names), time.perf_counter() - started)
 
+    @timed("pipeline.Offered.removed")
     def removed(self, name, roles):
         result = {}
         for earlier in self.names[: self.place[name]]:
@@ -582,6 +580,7 @@ class Offered:
             if not hits.get(option, NONE) & removed.keys() and not removes.get(option, NONE) & guard.keys()
         )
 
+    @timed("pipeline.Offered.blocked")
     def blocked(self, name, flat, removed, guard):
         must = self.probes[name][2]
         lost = sorted(must["hits"] & removed.keys())
@@ -599,6 +598,7 @@ class Offered:
                 trial[parameter.name] = held[0] if parameter.options else parameter.default
         return None
 
+    @timed("pipeline.Offered.context")
     def context(self, name, flat):
         result = {}
         for read in self.reads[name] + (name,):
@@ -606,6 +606,7 @@ class Offered:
             result.update({held.name[len(prefix) :]: flat[held.name] for held in self.owned[read] if held.name in flat})
         return result
 
+    @timed("pipeline.Offered.verified")
     def verified(self, registry, name, flat, removed, guard):
         found = self.operations[name].roles(registry, self.context(name, flat))
         lost = sorted(roled(found, HITS) & removed.keys())
@@ -624,6 +625,7 @@ class Offered:
         return found
 
 
+@timed("pipeline.offered")
 def offered(registry, template, parameters):
     key = (json.dumps(template, sort_keys=True), parameters)
     held = PLANNED.get(registry)

@@ -6,6 +6,8 @@ import numpy as np
 import torch
 from numba import njit, prange
 
+from .timing import timed
+
 LOG = logging.getLogger(__name__)
 GPU_FROM = 1024
 FRACTION = 0.9
@@ -27,6 +29,7 @@ def require(device):
     return parsed
 
 
+@timed("compute.device_for")
 def device_for(size, device):
     if size < GPU_FROM or torch.device(device).type == "cpu":
         return "cpu"
@@ -34,6 +37,7 @@ def device_for(size, device):
     return device
 
 
+@timed("compute.matrix")
 def matrix(values, device):
     return torch.as_tensor(np.asarray(values), dtype=torch.float64, device=device_for(len(values), device))
 

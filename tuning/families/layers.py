@@ -315,6 +315,7 @@ class KeyEmbedding(nn.Module):
         return self.embedding(token.clamp_min(0) % self.table) * (token >= 0)[..., None]
 
 
+@timed("layers.keys_of")
 def keys_of(spec, hidden):
     return KeyEmbedding(hidden, spec["keys/table"]) if spec.get("keys/embedding") else None
 

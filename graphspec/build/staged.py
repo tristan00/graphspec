@@ -8,6 +8,7 @@ import pyarrow.parquet as pq
 
 from graphspec.infra.files import sha256_json
 from graphspec.infra.runtime import cache_path
+from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import (
     EDGE,
@@ -28,7 +29,7 @@ from graphspec.schema.schema import (
 from .output import manifest
 
 LOG = logging.getLogger(__name__)
-INDEX = 3
+INDEX = 4
 IDS = 32
 
 
@@ -36,6 +37,7 @@ def numbers(table, name):
     return table.column(name).to_numpy().astype(np.int64)
 
 
+@timed("staged.unique_positions")
 def unique_positions(positions, assigned, name):
     if np.any(positions < 0) or np.any(positions >= len(assigned)):
         raise ValueError("relationships leave their row partition in " + name)
@@ -44,6 +46,7 @@ def unique_positions(positions, assigned, name):
 
 
 class Unit:
+    @timed("staged.Unit.__init__")
     def __init__(self, directory, entry):
         self.table, self.source, self.target, self.rows = (
             entry["table"],
@@ -69,15 +72,19 @@ class Unit:
             raise ValueError("manifest row count does not match Parquet rows for " + self.name)
         self.bounds = None
 
+    @timed("staged.Unit.types")
     def types(self):
         return {field.name: typename(field.type) for field in self.schema}
 
+    @timed("staged.Unit.read")
     def read(self, columns=None):
         return pa.concat_tables([file.read(columns=columns) for file in self.files])
 
+    @timed("staged.Unit.column")
     def column(self, name):
         return self.read([name]).column(name)
 
+    @timed("staged.Unit.rows_between")
     def rows_between(self, start, stop, columns=None):
         if start < 0 or stop < start or stop > self.rows:
             raise ValueError("row range outside " + self.name)
@@ -93,6 +100,7 @@ class Unit:
         )
         return table.slice(start - int(self.groups[first]), stop - start)
 
+    @timed("staged.Unit.graph_rows")
     def graph_rows(self, graph, columns=None):
         return self.rows_between(int(self.bounds[graph]), int(self.bounds[graph + 1]), columns)
 
@@ -137,9 +145,11 @@ class Staged:
             len(self.names),
         )
 
+    @timed("staged.Staged.pairs")
     def pairs(self, table):
         return tuple(dict.fromkeys((unit.source, unit.target) for unit in self.by_table[table]))
 
+    @timed("staged.Staged.columns")
     def columns(self, table):
         schemas = [
             {name: kind for name, kind in unit.types().items() if name not in ("from", "to")}
@@ -149,6 +159,7 @@ class Staged:
             raise ValueError("inconsistent property schemas for " + table)
         return schemas[0]
 
+    @timed("staged.Staged.ids_of")
     def ids_of(self, table):
         if table not in self.ids:
             (unit,) = self.by_table[table]
@@ -182,12 +193,14 @@ class Staged:
             raise ValueError("rows refer to ids missing from %s" % table)
         return found
 
+    @timed("staged.Staged.graphs_of")
     def graphs_of(self, table):
         if table not in self.graph_of:
             (unit,) = self.by_table[table]
             self.graph_of[table] = numbers(unit.read(columns=["graph"]), "graph")
         return self.graph_of[table]
 
+    @timed("staged.Staged.endpoints")
     def endpoints(self, unit):
         table = unit.read(columns=["from", "to"])
         return self.positions(unit.source, numbers(table, "from")), self.positions(
@@ -228,6 +241,7 @@ class Staged:
                     unit.bounds = self.bounds_of(self.graph_of[unit.source][source], count, table)
         LOG.info("partition exit seconds=%.3f graphs=%d", time.perf_counter() - started, count)
 
+    @timed("staged.Staged.classify")
     def classify(self, table, unit):
         ids = self.ids_of(table)
         if table not in self.dense and np.array_equal(
@@ -236,6 +250,7 @@ class Staged:
             self.based.add(table)
             del self.ids[table]
 
+    @timed("staged.Staged.derived_graphs")
     def derived_graphs(self, table, count):
         graph = np.full(len(self.ids_of(table)), -1, np.int64)
         for candidate, units in self.by_table.items():
@@ -252,6 +267,7 @@ class Staged:
             raise ValueError("%d rows of %s belong to no graph" % (int((graph < 0).sum()), table))
         return graph
 
+    @timed("staged.Staged.persist")
     def persist(self):
         arrays = {"bounds/" + unit.name: unit.bounds for unit in self.units}
         arrays.update({"ids/" + table: ids for table, ids in self.ids.items() if table not in self.dense})
@@ -281,6 +297,7 @@ class Staged:
         LOG.info("partition restored seconds=%.3f graphs=%d", time.perf_counter() - started, len(self.names))
 
     @staticmethod
+    @timed("staged.Staged.bounds_of")
     def bounds_of(graph, count, table):
         if np.any(graph < 0) or np.any(graph >= count):
             raise ValueError("rows of %s name undeclared graphs" % table)
@@ -288,14 +305,17 @@ class Staged:
             raise ValueError("rows of %s are not grouped by graph in order" % table)
         return np.searchsorted(graph, np.arange(count + 1))
 
+    @timed("staged.Staged.reader")
     def reader(self):
         return Reader(self)
 
+    @timed("staged.Staged.close")
     def close(self):
         for unit in self.units:
             for file in unit.files:
                 file.close()
 
+    @timed("staged.Staged.graphs")
     def graphs(self):
         (unit,) = self.by_table["graph"]
         return unit.read(columns=["id", "name"])
@@ -330,11 +350,13 @@ class Staged:
         return result
 
 
+@timed("staged.valued")
 def valued(rows, names):
     return {VALUE + name: rows.column(name) for name in names}
 
 
 class Reader:
+    @timed("staged.Reader.__init__")
     def __init__(self, source):
         self.source = source
 
@@ -395,6 +417,7 @@ class Reader:
         )
         return tables
 
+    @timed("staged.Reader.edges")
     def edges(self, index, table):
         entry = self.source.stated.edges[table]
         parts = []

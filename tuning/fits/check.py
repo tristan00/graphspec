@@ -10,6 +10,7 @@ from graphspec.infra.files import read_json, write_json
 from graphspec.infra.log import configure, emit
 from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.runtime import output_path
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
@@ -20,6 +21,7 @@ from tuning.statement import paired, seen
 from .losses import Summed
 
 
+@timed("check.probe")
 def probe(bank, block, cfg, device, loss):
     from tuning.families.periods import blocks as period_blocks
 
@@ -55,9 +57,11 @@ def probe(bank, block, cfg, device, loss):
     )
 
 
+@timed("check.settled")
 def settled(registry, model, given):
     started = time.perf_counter()
 
+    @timed("check.settled.read")
     def read(parameter):
         if parameter.name not in given:
             raise ValueError(
@@ -71,6 +75,7 @@ def settled(registry, model, given):
 
 
 @exclusive
+@timed("check.check")
 def check(directory, output, device, seed, splits, loss, pipeline_path, settings_path, graph=None):
     entered = time.perf_counter()
     output = output_path(output)
@@ -112,6 +117,7 @@ def check(directory, output, device, seed, splits, loss, pipeline_path, settings
     emit("check_exit", models=len(results), seconds=time.perf_counter() - entered)
 
 
+@timed("check.main")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("directory")

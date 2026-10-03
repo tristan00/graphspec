@@ -38,6 +38,7 @@ def stated(registry):
     started = time.perf_counter()
     nodes, joins = registry.declared, anchoring(registry)
 
+    @timed("edges.stated.anchored")
     def anchored(spec, first, second):
         anchors = [kind for kind in nodes if enabled(spec, "derive/complete_within/" + kind)]
         return not anchors or any(first in joins[kind] and second in joins[kind] for kind in anchors)
@@ -72,6 +73,7 @@ def filterable(registry):
     ]
 
 
+@timed("edges.symmetric")
 def symmetric(registry, spec):
     return np.asarray(
         [edge.symmetric for edge in registry.edges] + [False] * (registry.relations - len(registry.edges))
@@ -97,14 +99,17 @@ def capping(registry, spec):
     )
 
 
+@timed("edges.parts")
 def parts(registry, spec):
     return tuple(filtered_names(registry, spec))
 
 
+@timed("edges.filtering_runs")
 def filtering_runs(registry, spec):
     return {"edges/persistence": runs(), "edges/cap": runs()}
 
 
+@timed("edges.pruning")
 def pruning(registry, spec):
     return {"prune/edges": pruned()}
 
@@ -129,6 +134,7 @@ def edges(graph, registry, spec, seed, limits, carry, held):
     return prune(graph, kept, carry, "edges")
 
 
+@timed("edges.endpoints")
 def endpoints(graph, registry, spec, rows):
     code, source, target = graph.fact_code[rows], graph.fact_source[rows], graph.fact_target[rows]
     both = symmetric(registry, spec)[code]
@@ -151,6 +157,7 @@ def keyed_ends(graph, registry, rows, both, carry):
     )
 
 
+@timed("edges.filtered")
 def filtered(graph, registry, spec, seed, name, rows, carry, pieces):
     prefix = "edges/%s/" % name
     step, present = graph.fact_step[rows], graph.fact_present[rows]
@@ -236,7 +243,7 @@ EDGES = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=None,
-        version=9,
+        version=10,
         graphs=1,
     ),
 )

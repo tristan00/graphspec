@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 
+from graphspec.infra.timing import timed
 from graphspec.schema import time as clock
 
 from .stored import GROUPS, SPARSE, ranks, tokens
@@ -132,6 +133,7 @@ def check(graph, registry, splits, observers):
             owner = np.asarray(graph.obs_entity, np.int64)
             facts = dict(seq=graph.obs_seq, code=graph.kinds[owner], source=place[owner], target=place[owner])
 
+            @timed("check.check.named")
             def named(row):
                 entity = int(graph.obs_entity[row])
                 return "the node %s of the kind %s" % (graph.keys[entity], registry.nodes[graph.kinds[entity]])
@@ -146,6 +148,7 @@ def check(graph, registry, splits, observers):
                 target=place[graph.fact_target],
             )
 
+            @timed("check.check.named")
             def named(row):
                 return "the edge of %s from %s to %s" % (
                     registry.by_code[int(graph.fact_code[row])].name,

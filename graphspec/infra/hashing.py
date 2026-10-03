@@ -10,6 +10,7 @@ SCALE = 9007199254740992.0
 
 
 @lru_cache(maxsize=200000)
+@timed("hashing.token")
 def token(text):
     return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "little")
 

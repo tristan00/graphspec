@@ -9,7 +9,7 @@ from graphspec.infra import files
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.log import emit
 from graphspec.infra.processes.processes import parallel
-from graphspec.infra.timing import Timeline, measure
+from graphspec.infra.timing import Timeline, measure, timed
 from graphspec.registries import carried, restored
 
 from .bank import Bank, Deriver
@@ -17,6 +17,7 @@ from .bank import Bank, Deriver
 WORKER = {}
 
 
+@timed("variants.attach")
 def attach(bank_directory, threads, device, timing_directory=None):
     numba.set_num_threads(threads)
     torch.set_num_threads(threads)
@@ -26,6 +27,7 @@ def attach(bank_directory, threads, device, timing_directory=None):
     )
 
 
+@timed("variants.materialize")
 def materialize(job):
     index, cfg = job
     started = time.perf_counter()
@@ -34,6 +36,7 @@ def materialize(job):
     return index, time.perf_counter() - started
 
 
+@timed("variants.prepare")
 def prepare(bank_directory, cfg, workers, device, timing_directory=None):
     started = time.perf_counter()
     if workers < 1:
@@ -74,6 +77,7 @@ def prepare(bank_directory, cfg, workers, device, timing_directory=None):
     return root
 
 
+@timed("variants.prune")
 def prune(bank_directory, limit, keep):
     started = time.perf_counter()
     total, removed = files.prune(

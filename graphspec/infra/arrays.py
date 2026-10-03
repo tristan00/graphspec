@@ -6,6 +6,7 @@ from collections import OrderedDict
 import numpy as np
 import torch
 
+from .timing import timed
 from .workspace import MEMORY_BYTES
 
 LOG = logging.getLogger(__name__)
@@ -15,6 +16,7 @@ STREAMS, STAGING = {}, {}
 TRANSFER = threading.Lock()
 
 
+@timed("arrays.transfer")
 def transfer(host, device):
     nbytes = host.numel() * host.element_size()
     width = max(1, host[:1].numel() * host.element_size())
@@ -46,10 +48,12 @@ def between(values, low, high):
 class MappedRows:
     is_cuda = False
 
+    @timed("arrays.MappedRows.__init__")
     def __init__(self, values, device, dtype=None):
         self.values, self.device, self.dtype = values, device, dtype
         self.shape = values.shape
 
+    @timed("arrays.MappedRows.__len__")
     def __len__(self):
         return len(self.values)
 
@@ -73,13 +77,16 @@ class MappedRows:
 
 
 class JoinedRows:
+    @timed("arrays.JoinedRows.__init__")
     def __init__(self, parts, device):
         self.parts, self.device = parts, device
         self.shape = (sum(len(part) for part in parts),) + tuple(parts[0].shape[1:])
 
+    @timed("arrays.JoinedRows.__len__")
     def __len__(self):
         return self.shape[0]
 
+    @timed("arrays.JoinedRows.index_select")
     def index_select(self, dimension, indices):
         if dimension != 0:
             raise ValueError("joined arrays select rows along dimension zero")
@@ -97,6 +104,7 @@ class JoinedRows:
         return result
 
 
+@timed("arrays.join_tensors")
 def join_tensors(parts, device):
     if len(parts) == 1:
         return parts[0]
@@ -108,6 +116,7 @@ def join_tensors(parts, device):
 
 
 class Resident:
+    @timed("arrays.Resident.__init__")
     def __init__(self, arrays, device, dtypes, limit=MEMORY_BYTES):
         self.arrays, self.device, self.dtypes = arrays, device, dtypes
         self.limit = limit if torch.device(device).type == "cuda" else MEMORY_BYTES
@@ -177,6 +186,7 @@ class Resident:
             )
         return self.orders[(key, index)]
 
+    @timed("arrays.Resident.nbytes")
     def nbytes(self):
         return sum(
             tensor.numel() * tensor.element_size()
@@ -184,6 +194,7 @@ class Resident:
             if isinstance(tensor, torch.Tensor) and tensor.is_cuda
         )
 
+    @timed("arrays.Resident.rows_by")
     def rows_by(self, key, index, low, high):
         order, sorted_values = self.order(key, index)
         lo, hi = between(sorted_values, low, high)
@@ -191,6 +202,7 @@ class Resident:
 
 
 class Residents:
+    @timed("arrays.Residents.__init__")
     def __init__(self, dtypes, limit=RESIDENT):
         self.dtypes, self.limit, self.held, self.lock = dtypes, limit, OrderedDict(), threading.Lock()
 
@@ -239,6 +251,7 @@ class Pending:
         self.index = index
 
 
+@timed("arrays.views")
 def views(buffer, spans):
     result = []
     for start, nbytes, dtype, shape, target in spans:
@@ -255,14 +268,17 @@ def compact(array, dtype):
     return array, dtype
 
 
+@timed("arrays.shared")
 def shared(nbytes):
     return torch.empty(nbytes, dtype=torch.uint8).share_memory_()
 
 
+@timed("arrays.slot_bytes")
 def slot_bytes(nbytes):
     return -(-(nbytes + nbytes // 4) // (1 << 20)) * (1 << 20)
 
 
+@timed("arrays.cuda_check")
 def cuda_check(error):
     if error != torch.cuda.cudart().cudaError.success:
         raise RuntimeError("CUDA host registration failed: %s" % error)
@@ -281,15 +297,18 @@ class Slot:
             time.perf_counter() - started,
         )
 
+    @timed("arrays.Slot.transfer")
     def transfer(self, nbytes, device):
         return torch.empty(nbytes, dtype=torch.uint8, device=device).copy_(self.tensor[:nbytes])
 
+    @timed("arrays.Slot.release")
     def release(self):
         if self.cuda:
             cuda_check(torch.cuda.cudart().cudaHostUnregister(self.tensor.data_ptr()))
 
 
 class Bundle:
+    @timed("arrays.Bundle.__init__")
     def __init__(self, device):
         self.device, self.items = device, []
 
@@ -302,6 +321,7 @@ class Bundle:
         )
         return Pending(len(self.items) - 1)
 
+    @timed("arrays.Bundle.layout")
     def layout(self):
         arrays, spans, offset = [], [], 0
         for array, target in self.items:
@@ -313,6 +333,7 @@ class Bundle:
         self.items = []
         return arrays, spans, offset + 8
 
+    @timed("arrays.Bundle.write")
     def write(self, buffer, arrays):
         for offset, array in arrays:
             buffer[offset : offset + array.nbytes] = array.reshape(-1).view(np.uint8)
@@ -330,10 +351,12 @@ class Bundle:
         )
         return buffer, spans
 
+    @timed("arrays.Bundle.flush")
     def flush(self, tree):
         buffer, spans = self.pack()
         return self.replace(tree, views(torch.as_tensor(buffer, device=self.device), spans))
 
+    @timed("arrays.Bundle.replace")
     def replace(self, value, tensors):
         if isinstance(value, Pending):
             return tensors[value.index]

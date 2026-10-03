@@ -67,6 +67,7 @@ class ProcessIds(ctypes.Structure):
     _fields_ = [("assigned", DWORD), ("count", DWORD), ("ids", SIZE_T * 1)]
 
 
+@timed("windows_job.function")
 def function(name, result, *arguments):
     call = getattr(KERNEL, name)
     call.restype = result
@@ -86,21 +87,25 @@ wait_handle = function("WaitForSingleObject", DWORD, HANDLE, DWORD)
 close_handle = function("CloseHandle", wintypes.BOOL, HANDLE)
 
 
+@timed("windows_job.checked")
 def checked(value):
     if not value:
         raise ctypes.WinError(ctypes.get_last_error())
     return value
 
 
+@timed("windows_job.close_process")
 def close_process(handle):
     checked(close_handle(handle))
 
 
+@timed("windows_job.stop_process")
 def stop_process(handle):
     if not terminate_process(handle, 1) and ctypes.get_last_error() != ACCESS_DENIED:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
+@timed("windows_job.join_process")
 def join_process(handle):
     if wait_handle(handle, INFINITE) != 0:
         raise ctypes.WinError(ctypes.get_last_error())
@@ -121,6 +126,7 @@ class ProcessGroup:
             self.close()
             raise
 
+    @timed("windows_job.ProcessGroup.member")
     def member(self, handle):
         value = wintypes.BOOL()
         checked(in_job(handle, self.job, ctypes.byref(value)))
@@ -138,6 +144,7 @@ class ProcessGroup:
             finally:
                 checked(close_handle(handle))
 
+    @timed("windows_job.ProcessGroup.members")
     def members(self):
         count = 1
         while True:

@@ -54,6 +54,7 @@ COPIES = dict(
 )
 
 
+@timed("run.fit_timings")
 def fit_timings(directory):
     progress = JsonCache().read(Path(directory) / "fit_progress.json")
     if progress is None:
@@ -69,6 +70,7 @@ def fit_timings(directory):
     )
 
 
+@timed("run.registered")
 def registered(path):
     started = time.perf_counter()
     held = pickle.loads(Path(path).read_bytes())
@@ -77,6 +79,7 @@ def registered(path):
     emit("registered_restored", entries=len(held["entries"]), seconds=time.perf_counter() - started)
 
 
+@timed("run.worker")
 def worker(args):
     directory = Path(args.output)
     config = read_json(directory / "config.json")
@@ -110,6 +113,7 @@ def worker(args):
         raise
 
 
+@timed("run.continued")
 def continued(plan, stated, given):
     started = time.perf_counter()
     lacking = [name for name in (*COPIES, *given) if name not in plan]
@@ -129,6 +133,7 @@ def continued(plan, stated, given):
     return plan
 
 
+@timed("run.counted")
 def counted(manifest, names):
     started = time.perf_counter()
     lacking = [name for name in names if name not in manifest["split_rows"]]
@@ -142,6 +147,7 @@ def counted(manifest, names):
     return result
 
 
+@timed("run.opened")
 def opened(stated, given, bank_path, manifest, limit):
     started = time.perf_counter()
     absent = [FLAGS[name] for name in FLAGS if given[name] is None]
@@ -180,6 +186,7 @@ def opened(stated, given, bank_path, manifest, limit):
 
 
 @exclusive
+@timed("run.run")
 def run(args):
     stated = statements.state(flags(args))
     directory = output_path(args.output)
@@ -260,6 +267,7 @@ def run(args):
         execute(directory, plan, args.continuous, bank.registry, stated)
 
 
+@timed("run.flags")
 def flags(args):
     started = time.perf_counter()
     given = dict(
@@ -282,6 +290,7 @@ def flags(args):
     return result
 
 
+@timed("run.discard_unfinished")
 def discard_unfinished(directory, plan):
     started = time.perf_counter()
     finished = []
@@ -322,6 +331,7 @@ def training_layout(directory, plan, config, stated):
     return path, max(1, stated.batch_sequences * REFERENCE_HISTORY // history)
 
 
+@timed("run.mark_timeout")
 def mark_timeout(trial, max_seconds, started, phases, error):
     for name in ("result.json", "failure.json"):
         path = trial / name
@@ -339,11 +349,13 @@ def mark_timeout(trial, max_seconds, started, phases, error):
     )
 
 
+@timed("run.execute_trial")
 def execute_trial(directory, plan, item, index, started, phases, stated):
     with Timeline(directory / item["directory"] / "runner_timing.json"), measure("trial_runner"):
         return execute_trial_body(directory, plan, item, index, started, phases, stated)
 
 
+@timed("run.execute_trial_body")
 def execute_trial_body(directory, plan, item, index, started, phases, stated):
     from tuning.fits.budget import wait_worker
 
@@ -461,6 +473,7 @@ def execute_trial_body(directory, plan, item, index, started, phases, stated):
     return config
 
 
+@timed("run.execute")
 def execute(directory, plan, continuous, registry, stated):
     from graphspec.infra.arrays import RESIDENT
     from tuning.bank.bank import Deriver
@@ -518,6 +531,7 @@ def execute(directory, plan, continuous, registry, stated):
         emit("run_exit", status=state["status"], seconds=state["seconds"])
 
 
+@timed("run.main")
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)

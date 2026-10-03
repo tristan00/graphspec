@@ -8,10 +8,12 @@ import pyarrow.parquet as pq
 
 from graphspec.infra.files import read_json, write_json
 from graphspec.infra.runtime import output_path
+from graphspec.infra.timing import timed
 
 LOG = logging.getLogger(__name__)
 
 
+@timed("output.manifest")
 def manifest(directory):
     directory = Path(directory).resolve()
     entries = read_json(directory / "stage.json")
@@ -42,6 +44,7 @@ class StageFiles:
     files: dict
     rows: dict
 
+    @timed("output.StageFiles.record")
     def record(self):
         entries = [
             dict(
@@ -57,6 +60,7 @@ class StageFiles:
 
 
 class Stage:
+    @timed("output.Stage.__init__")
     def __init__(self, directory):
         self.directory = output_path(directory)
         self.directory.mkdir(parents=True)
@@ -66,12 +70,15 @@ class Stage:
         self.resources = ExitStack()
         self.closed = False
 
+    @timed("output.Stage.__enter__")
     def __enter__(self):
         return self
 
+    @timed("output.Stage.__exit__")
     def __exit__(self, kind, error, traceback):
         self.close(commit=kind is None)
 
+    @timed("output.Stage.write")
     def write(self, units):
         if self.closed:
             raise RuntimeError("stage is closed")
@@ -108,6 +115,7 @@ class Stage:
         )
 
     @staticmethod
+    @timed("output.Stage.open")
     def open(directory):
         directory = Path(directory).resolve()
         files, rows = {}, {}

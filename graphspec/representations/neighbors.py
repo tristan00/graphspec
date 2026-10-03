@@ -1,20 +1,25 @@
 import logging
 import time
 
+from graphspec.infra.timing import timed
+
 from .groups import neighbors
 from .registry import REPRESENTATIONS, Representation
 
 LOG = logging.getLogger(__name__)
 
 
+@timed("neighbors.carries")
 def carries(registry, spec):
     return {}
 
 
+@timed("neighbors.horizon")
 def horizon(spec):
     return 0, 0
 
 
+@timed("neighbors.piece")
 def piece(shown, state):
     return {}
 
@@ -26,6 +31,7 @@ def adjacency(arrays, registry, spec, limits):
     return result
 
 
+@timed("neighbors.check")
 def check(arrays, name, registry, spec):
     return None
 

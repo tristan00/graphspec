@@ -8,6 +8,7 @@ import pyarrow as pa
 
 from graphspec.infra.files import write_json
 from graphspec.infra.runtime import output_path
+from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import EDGE, LINK, OBSERVED, TARGET, TASK, WRITTEN
 from graphspec.schema.targets import TARGETS
@@ -29,6 +30,7 @@ def write_task(path, name, staging, schema):
 
 
 class GraphTables:
+    @timed("calls.GraphTables.__init__")
     def __init__(self, index, name, unit, schema, **attributes):
         asked = schema.tasks
         held = [
@@ -79,30 +81,7 @@ class GraphTables:
         )
         return result
 
-    def timed(self, where, when, count):
-        started = time.perf_counter()
-        stamps = self.schema.stamps()
-        if not isinstance(when, dict) or sorted(when) != sorted(stamps):
-            raise ValueError(
-                "%s states when it holds as exactly %s, found %r"
-                % (where, ", ".join(stamps) or "nothing", when)
-            )
-        result = {}
-        for name, kind in stamps.items():
-            values = when[name] if isinstance(when[name], list) else [when[name]] * count
-            if len(values) != count:
-                raise ValueError("the column %s of %s needs %d values" % (name, where, count))
-            result[name] = pa.array(
-                [None if value is None else list(value) for value in values]
-                if name == "observers"
-                else values,
-                WRITTEN[kind],
-            )
-        LOG.debug(
-            "graph tables timed exit columns=%d seconds=%.4f", len(stamps), time.perf_counter() - started
-        )
-        return result
-
+    @timed("calls.GraphTables.ids")
     def ids(self, table, count):
         start = self.next.get(table, self.index << 32)
         if start + count > (self.index + 1) << 32:
@@ -110,9 +89,11 @@ class GraphTables:
         self.next[table] = start + count
         return np.arange(start, start + count, dtype=np.int64)
 
+    @timed("calls.GraphTables.put")
     def put(self, key, table):
         self.tables[key] = pa.concat_tables([self.tables[key], table]) if key in self.tables else table
 
+    @timed("calls.GraphTables.nodes")
     def nodes(self, kind, keys):
         if kind not in self.schema.nodes:
             raise ValueError("the schema states no kind of node named " + str(kind))
@@ -135,6 +116,7 @@ class GraphTables:
         self.entities += len(keys)
         return self
 
+    @timed("calls.GraphTables.resolve")
     def resolve(self, kind, keys):
         if kind not in self.lookup:
             raise ValueError("no nodes are declared of the kind " + str(kind))
@@ -143,6 +125,7 @@ class GraphTables:
         except KeyError as error:
             raise ValueError("undeclared node in " + kind + ": " + str(error)) from error
 
+    @timed("calls.GraphTables.observe")
     def observe(self, kind, keys, when, **columns):
         owners = self.resolve(kind, keys)
         values = self.stated("the kind of node " + kind, self.schema.nodes[kind], columns, len(owners))
@@ -154,6 +137,7 @@ class GraphTables:
         self.put((OBSERVED + kind, kind, "observation"), pa.table({"from": owners, "to": ids, **values}))
         return self
 
+    @timed("calls.GraphTables.edges")
     def edges(self, table, source, target, sources, targets, when, present, relation=None, **columns):
         if table not in self.schema.edges or type(present) is not bool:
             raise ValueError("edges name a stated edge table and a boolean presence value: " + str(table))
@@ -183,6 +167,30 @@ class GraphTables:
         self.sequence += count
         self.put((EDGE + table, source, target), pa.table(held))
         return self
+
+    def timed(self, where, when, count):
+        started = time.perf_counter()
+        stamps = self.schema.stamps()
+        if not isinstance(when, dict) or sorted(when) != sorted(stamps):
+            raise ValueError(
+                "%s states when it holds as exactly %s, found %r"
+                % (where, ", ".join(stamps) or "nothing", when)
+            )
+        result = {}
+        for name, kind in stamps.items():
+            values = when[name] if isinstance(when[name], list) else [when[name]] * count
+            if len(values) != count:
+                raise ValueError("the column %s of %s needs %d values" % (name, where, count))
+            result[name] = pa.array(
+                [None if value is None else list(value) for value in values]
+                if name == "observers"
+                else values,
+                WRITTEN[kind],
+            )
+        LOG.debug(
+            "graph tables timed exit columns=%d seconds=%.4f", len(stamps), time.perf_counter() - started
+        )
+        return result
 
     def tasks(self, kind, keys, moment, references, splits, targets, known, weights, observers, **columns):
         started = time.perf_counter()

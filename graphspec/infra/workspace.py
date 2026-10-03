@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from .runtime import output_path
+from .timing import timed
 
 LOG = logging.getLogger(__name__)
 ACTIVE = ContextVar("array_workspace", default=None)
@@ -16,11 +17,13 @@ MEMORY_BYTES = 64 << 20
 
 
 class Workspace:
+    @timed("workspace.Workspace.__init__")
     def __init__(self, directory, memory_bytes=MEMORY_BYTES):
         self.directory = directory
         self.memory_bytes = memory_bytes
         self.arrays = []
 
+    @timed("workspace.Workspace.__enter__")
     def __enter__(self):
         self.started = time.perf_counter()
         self.temporary = None
@@ -63,6 +66,7 @@ def block_rows(values):
     return max(1, BLOCK_BYTES // max(1, math.prod(values.shape[1:]) * values.dtype.itemsize))
 
 
+@timed("workspace.concatenate")
 def concatenate(values):
     values = tuple(values)
     if not values:
@@ -110,6 +114,7 @@ def gathered(table, rows, fill):
     return result
 
 
+@timed("workspace.finite")
 def finite(values):
     return all(
         np.isfinite(values[start : start + block_rows(values)]).all()
@@ -131,6 +136,7 @@ def scatter(values, indices, source, order=None):
         offset += count
 
 
+@timed("workspace.changed")
 def changed(values, left, right):
     result = allocate((len(left),), np.bool_)
     for start in range(0, len(left), block_rows(values)):

@@ -7,6 +7,7 @@ import threading
 from graphspec.infra.timing import timed
 
 
+@timed("worker.watch_owner")
 def watch_owner():
     os.read(sys.stdin.fileno(), 1)
     os.killpg(os.getpgrp(), signal.SIGKILL)

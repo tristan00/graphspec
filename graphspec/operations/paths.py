@@ -56,7 +56,6 @@ def valued(steps):
     return all(column is not None for _, _, column in steps)
 
 
-@timed("paths.kinds")
 def kinds(registry, table, direction):
     if table == UNION:
         pairs = {pair for group in registry.groups for pair in registry.named[group].pairs}
@@ -68,7 +67,6 @@ def kinds(registry, table, direction):
     return pairs if direction == "forward" else flipped
 
 
-@timed("paths.composed")
 def composed(left, right):
     return {(first, last) for first, middle in left for joined, last in right if middle == joined}
 
@@ -176,7 +174,6 @@ def walks(first, second, entities, along, budget, operation):
     return np.repeat(origin, counts), reached[taken], values
 
 
-@timed("paths.reduced")
 def reduced(source, target, values, across, length=None):
     ids, count = kernels.keyed(source, target, np.zeros(len(source), np.int64))
     first = np.flatnonzero(kernels.first_rows(ids, count))
@@ -227,6 +224,7 @@ def powers(source, target, values, limit, entities, aggregate, budget, operation
     return source[kept], target[kept], values[kept], length[kept]
 
 
+@timed("paths.widen")
 def widen(slots, keys_low, keys_high, count, extra, budget, operation):
     budget.workspace(128 * (count + extra), operation + " index")
     if count + extra > len(keys_low):
@@ -306,6 +304,7 @@ def summed(adjacency, series, parameter, device):
     return compute.compose(vectors, np.exp(-parameter * (1 - values)), device)
 
 
+@timed("paths.unlived")
 def unlived():
     return dict(key=EMPTY, source=EMPTY, target=EMPTY, code=EMPTY)
 

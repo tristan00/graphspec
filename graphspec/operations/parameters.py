@@ -6,6 +6,7 @@ import time
 from collections import Counter
 
 from graphspec.infra.files import sha256_json
+from graphspec.infra.timing import timed
 from graphspec.schema.time import SEVERAL
 from graphspec.views.view import offered
 
@@ -106,6 +107,7 @@ def choice(name, options, default, condition=None):
     return Parameter(name, "choice", default, options=options, condition=condition)
 
 
+@timed("parameters.subsets")
 def subsets(kinds):
     return tuple(
         "+".join(members)
@@ -325,6 +327,7 @@ def configured(parameters, values):
     return result
 
 
+@timed("parameters.materialized")
 def materialized(spec):
     return {name: value for name, value in spec.items() if name not in PACKING}
 
@@ -333,6 +336,7 @@ def digest(spec):
     return sha256_json(spec)
 
 
+@timed("parameters.summary")
 def summary(parameters, spec):
     defaults = {parameter.name: parameter.default for parameter in parameters}
     return {name: value for name, value in spec.items() if value != defaults[name]}

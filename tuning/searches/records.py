@@ -28,6 +28,7 @@ OUTCOMES = {
 }
 
 
+@timed("records.child")
 def child(directory: Path, name: str) -> Path:
     path = (directory / name).resolve()
     if path.parent != directory.resolve():
@@ -106,6 +107,7 @@ class Trial:
     running: dict | None
 
     @property
+    @timed("records.Trial.parameters")
     def parameters(self):
         values = dict(self.config)
         budget = self.record.get("budget") if self.record else None

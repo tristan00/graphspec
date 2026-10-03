@@ -11,7 +11,7 @@ from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
 SEED = 0x6772617068
-VERSION = 35
+VERSION = 36
 REMOVES = "references"
 
 
@@ -45,11 +45,9 @@ def kept(operation, before, graph, registry):
 
 
 def checked(step, before, graph, registry):
-    started = time.perf_counter()
     if graph is not before:
         kept(step.operation, before, graph, registry)
         conforms(graph, registry, tuple(part for part in step.operation.changes if part != REMOVES))
-    LOG.debug("checked exit step=%s seconds=%.4f", step.name, time.perf_counter() - started)
     return graph
 
 

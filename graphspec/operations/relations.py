@@ -19,6 +19,7 @@ def joined(registry):
     return result
 
 
+@timed("relations.relating")
 def relating(registry):
     stated = bool(registry.groups)
     return lambda spec: stated
@@ -52,7 +53,7 @@ RELATIONS = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=None,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

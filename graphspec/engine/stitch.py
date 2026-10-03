@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from graphspec.infra.files import Arrays, write_pack
+from graphspec.infra.timing import timed
 from graphspec.infra.workspace import gathered
 from graphspec.operations.state import ENTITIES
 from graphspec.views.graph import DENSE, Dense
@@ -19,6 +20,7 @@ BUFFERED = 64 << 20
 SEGMENTS = "segments.pack"
 
 
+@timed("stitch.header")
 def header(dtype, shape):
     text = "{'descr': %r, 'fortran_order': False, 'shape': %r, }" % (
         np.lib.format.dtype_to_descr(dtype),
@@ -32,6 +34,7 @@ def header(dtype, shape):
 
 
 class Appender:
+    @timed("stitch.Appender.__init__")
     def __init__(self, directory, limit):
         self.directory, self.limit, self.size = Path(directory), limit, 0
         self.kinds, self.rows, self.held, self.streams = {}, {}, {}, None
@@ -58,6 +61,7 @@ class Appender:
             self.spill()
         LOG.debug("appender add exit arrays=%d seconds=%.4f", len(piece), time.perf_counter() - started)
 
+    @timed("stitch.Appender.opened")
     def opened(self, name):
         self.streams[name] = open(self.directory / (name + ".npy"), "wb")
         self.streams[name].write(bytes(HEADER))
@@ -73,6 +77,7 @@ class Appender:
         self.held = {}
         LOG.debug("appender spill exit arrays=%d seconds=%.4f", len(self.streams), time.perf_counter() - started)
 
+    @timed("stitch.Appender.abandon")
     def abandon(self):
         if self.streams is not None:
             for stream in self.streams.values():

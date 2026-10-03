@@ -5,12 +5,14 @@ from datetime import datetime, timezone
 from graphspec.infra.files import JsonCache, write_csv, write_json, write_jsonl
 from graphspec.infra.log import emit
 from graphspec.infra.runtime import output_path
+from graphspec.infra.timing import timed
 from tuning.families.model_spec import describe
 from tuning.measures import objective
 
 from .records import Run, Status
 
 
+@timed("report.report")
 def report(directory):
 
     started = time.perf_counter()

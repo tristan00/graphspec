@@ -30,4 +30,6 @@ def configure(level=logging.INFO, json_lines=False):
 
 
 def emit(event, **fields):
+    started = time.perf_counter()
     print(json.dumps(dict(event=event, utc=datetime.now(timezone.utc).isoformat(), **fields)), flush=True)
+    LOG.debug("emit exit event=%s seconds=%.4f", event, time.perf_counter() - started)

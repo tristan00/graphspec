@@ -74,6 +74,7 @@ def untype(graph, registry, carry):
     return select(graph, FACTS, kept)
 
 
+@timed("relation_forms.living")
 def living(registry, spec):
     return {"relation_forms/live": lived()}
 
@@ -143,7 +144,7 @@ RELATION_FORMS = OPERATIONS.register(
         changes=("facts",),
         adds=adds,
         kinds=None,
-        version=4,
+        version=5,
         graphs=1,
     ),
 )

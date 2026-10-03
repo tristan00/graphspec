@@ -45,10 +45,12 @@ class Features:
 class Frames:
     __slots__ = ("directed", "ranges", "canonical")
 
+    @timed("tensors.Frames.__init__")
     def __init__(self, directed, ranges, canonical):
         self.directed, self.ranges, self.canonical = directed, ranges, canonical
 
 
+@timed("tensors.gathered")
 def gathered(graph, key, index=None):
     return Gather([(graph, key, None if index is None else array(index, torch.long))])
 
@@ -68,11 +70,13 @@ def features(graph, shape, *pieces):
     )
 
 
+@timed("tensors.features_at")
 def features_at(graph, observations):
     index = array(observations, torch.long)
     return features(graph, index.shape, ("x", index, 1.0))
 
 
+@timed("tensors.length")
 def length(value):
     return sum(segment[1][0] for segment in value.segments)
 
@@ -127,6 +131,7 @@ def prepare(value, bundle):
 
 
 class Resolver:
+    @timed("tensors.Resolver.__init__")
     def __init__(self, bank, cfg, tensors, device, graphs):
         self.bank, self.cfg, self.tensors, self.device, self.graphs, self.tables = (
             bank,
@@ -152,6 +157,7 @@ class Resolver:
             self.tables[key] = (join_tensors(parts, self.device), offsets, lengths)
         return self.tables[key]
 
+    @timed("tensors.Resolver.rows")
     def rows(self, key, index):
         if key != "x":
             return self.table(key)[0].index_select(0, index)
@@ -172,6 +178,7 @@ class Resolver:
     def spread(self, values, lengths, total):
         return torch.repeat_interleave(self.numbers(values), self.numbers(lengths), output_size=total)
 
+    @timed("tensors.Resolver.ranges")
     def ranges(self, offsets, spans):
         starts = np.asarray([offsets[graph] + lo for graph, lo, hi in spans], np.int64)
         lengths = np.asarray([hi - lo for graph, lo, hi in spans], np.int64)
@@ -203,6 +210,7 @@ class Resolver:
             else indices[0].reshape(-1)
         )
 
+    @timed("tensors.Resolver.features")
     def features(self, value):
         segments = value.segments
         items = [
@@ -225,6 +233,7 @@ class Resolver:
             for _, shape, pieces in segments
         ]
 
+        @timed("tensors.Resolver.features.resolve")
         def resolve(signature, positions):
             trailing, layout = signature
             chosen = [segments[position] for position in positions]
@@ -269,6 +278,7 @@ class Resolver:
         result = self.grouped(items, resolve)
         return result if value.order is None else result[self.tensors[value.order.index]]
 
+    @timed("tensors.Resolver.gather")
     def gather(self, value):
         segments = value.segments
         items = [
@@ -279,6 +289,7 @@ class Resolver:
             for graph, key, index in segments
         ]
 
+        @timed("tensors.Resolver.gather.resolve")
         def resolve(signature, positions):
             key, whole = signature
             source, offsets, lengths = self.table(key)
@@ -328,6 +339,7 @@ class Resolver:
         return value
 
 
+@timed("tensors.keys")
 def keys(value, found):
     if isinstance(value, Gather):
         found.update(key for _, key, _ in value.segments)

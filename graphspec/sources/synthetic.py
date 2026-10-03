@@ -49,6 +49,7 @@ UNIT = "step"
 TIME = dict(model="clock", units=[UNIT], ties="sequence")
 
 
+@timed("synthetic.edge")
 def edge(source, target, columns, directed=True, relation=DECLARED):
     return dict(
         endpoints=[[source, target]], directed=directed, columns=list(columns), relation=relation, about=None
@@ -185,29 +186,35 @@ def varied(level):
 SHAPES = dict(uniform=uniform, varied=varied)
 
 
+@timed("synthetic.vectors")
 def vectors(rng, rows, columns):
     values = rng.normal(size=(rows, columns)).astype(np.float32)
     present = (rng.random((rows, columns)) < 0.9).astype(np.float32)
     return np.concatenate((values * present, present), 1)
 
 
+@timed("synthetic.fixed")
 def fixed(values):
     values = np.ascontiguousarray(values, np.float32)
     return pa.FixedSizeListArray.from_arrays(pa.array(values.reshape(-1)), values.shape[1])
 
 
+@timed("synthetic.steps_of")
 def steps_of(draws):
     return np.floor(np.abs(np.asarray(draws, np.float64)) * 1000).astype(np.int64)
 
 
+@timed("synthetic.number")
 def number(draws, present, symbols):
     return pa.array(np.asarray(draws, np.float32), pa.float32(), mask=~present)
 
 
+@timed("synthetic.flag")
 def flag(draws, present, symbols):
     return pa.array(steps_of(draws) % 2 == 1, pa.bool_(), mask=~present)
 
 
+@timed("synthetic.category")
 def category(draws, present, symbols):
     chosen = np.asarray(symbols, object)[steps_of(draws) % len(symbols)]
     return pa.array(chosen.tolist(), pa.string(), mask=~present)
@@ -216,6 +223,7 @@ def category(draws, present, symbols):
 STATED = dict(number=number, flag=flag, category=category)
 
 
+@timed("synthetic.stated")
 def stated(shape, name, draws, present):
     kind = shape["schema"]["columns"][name]["type"]
     if kind not in STATED:
@@ -229,9 +237,11 @@ def stated(shape, name, draws, present):
 
 
 class Counter:
+    @timed("synthetic.Counter.__init__")
     def __init__(self):
         self.next = {}
 
+    @timed("synthetic.Counter.take")
     def take(self, table, count):
         start = self.next.get(table, 0)
         self.next[table] = start + count
@@ -492,6 +502,7 @@ def edge_facts(schema, tables, moments):
     return result
 
 
+@timed("synthetic.path_points")
 def path_points(steps, period):
     moments = np.arange(period - 1, steps, period)
     source = np.repeat(np.arange(steps), [int((moments > step).sum()) for step in range(steps)])
@@ -499,6 +510,7 @@ def path_points(steps, period):
     return source, later.astype(np.int64)
 
 
+@timed("synthetic.labels")
 def labels(graphs, level, settings):
     steps, period = settings["steps"], settings["period"]
     if level == "task":
@@ -692,6 +704,7 @@ def case_rows(schema, index, graph, counter):
         )
         entity += len(keys)
 
+    @timed("synthetic.case_rows.found")
     def found(kind, keys):
         strangers = sorted({key for key in keys if key not in lookup[kind]})
         if strangers:

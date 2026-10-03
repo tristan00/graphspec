@@ -57,5 +57,6 @@ class GraphBudget:
                 % (operation, size, available)
             )
 
+    @timed("budgets.GraphBudget.dense")
     def dense(self, nodes, operation):
         self.workspace(int(nodes) * int(nodes) * 80, operation)

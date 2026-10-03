@@ -8,6 +8,7 @@ from .timing import timed
 
 
 class HttpError(Exception):
+    @timed("serve.HttpError.__init__")
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
@@ -21,6 +22,7 @@ def server(port, page, routes, assets=None):
         static.update(assets)
 
     class Handler(BaseHTTPRequestHandler):
+        @timed("serve.server.Handler.do_GET")
         def do_GET(self):
             parts = urlsplit(self.path)
             path, query = parts.path, {key: values[-1] for key, values in parse_qs(parts.query).items()}
@@ -49,11 +51,13 @@ def server(port, page, routes, assets=None):
                 return
             self.send_body(200, body, content_type)
 
+        @timed("serve.server.Handler.send_json_error")
         def send_json_error(self, status, message):
             self.send_body(
                 status, json.dumps(dict(error=message)).encode("utf-8"), "application/json; charset=utf-8"
             )
 
+        @timed("serve.server.Handler.send_body")
         def send_body(self, status, body, content_type):
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -62,6 +66,7 @@ def server(port, page, routes, assets=None):
             self.end_headers()
             self.wfile.write(body)
 
+        @timed("serve.server.Handler.log_message")
         def log_message(self, format, *args):
             pass
 

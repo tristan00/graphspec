@@ -4,18 +4,23 @@ import time
 import numpy as np
 from numba import njit
 
+from graphspec.infra.timing import timed
+
 LOG = logging.getLogger(__name__)
 
 
+@timed("spans.counted")
 def counted(counts):
     return np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
 
 
+@timed("spans.flat")
 def flat(column):
     column = np.ascontiguousarray(column)
     return column.reshape(column.shape[0], int(np.prod(column.shape[1:], dtype=np.int64))).view(np.uint8)
 
 
+@timed("spans.words")
 def words(*columns):
     parts = [flat(column) for column in columns]
     raw = np.concatenate(parts, axis=1) if parts else np.zeros((0, 0), np.uint8)
@@ -116,6 +121,7 @@ def topological(sources, targets, nodes, priority):
     return rank
 
 
+@timed("spans.runs")
 def runs(group, step):
     order = np.lexsort((step, group))
     group, step = group[order], step[order]
@@ -157,6 +163,7 @@ def observation_spans(entity, step, x):
     return result
 
 
+@timed("spans.observation_rows")
 def observation_rows(entity, start, stop):
     lengths = (stop - start).astype(np.int64)
     span = np.repeat(np.arange(len(start)), lengths)
@@ -193,6 +200,7 @@ def displaced(ranks):
     return moved
 
 
+@timed("spans.patches")
 def patches(at, span, rank):
     same = np.flatnonzero(at[1:] == at[:-1])
     broken = np.unique(at[same[rank[same] > rank[same + 1]]])
@@ -269,6 +277,7 @@ def fact_spans(step, source, target, code, present, values):
     return result
 
 
+@timed("spans.ordered_facts")
 def ordered_facts(spans, steps):
     start, stop, rank = spans["fact_start"], spans["fact_stop"], spans["fact_rank"]
     lengths = (stop - start).astype(np.int64)
@@ -294,6 +303,7 @@ def ordered_facts(spans, steps):
     return bounds, span
 
 
+@timed("spans.fact_rows")
 def fact_rows(spans, steps):
     bounds, span = ordered_facts(spans, steps)
     at = np.repeat(np.arange(steps, dtype=np.int64), np.diff(bounds))
@@ -306,6 +316,7 @@ def fact_rows(spans, steps):
     present = rows >= 0
     chosen, gone = rows[present], -1 - rows[~present]
 
+    @timed("spans.fact_rows.pick")
     def pick(name, removal):
         values = spans[name]
         result = np.empty(len(rows), values.dtype)
@@ -373,6 +384,7 @@ def all_covered(offsets, lows, highs, entity, low, high):
     return -1
 
 
+@timed("spans.active")
 def active(start, stop, steps, key=None):
     lengths = (stop - start).astype(np.int64)
     span = np.repeat(np.arange(len(start)), lengths)

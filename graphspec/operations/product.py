@@ -189,10 +189,12 @@ def product_assemble(graph, registry, spec, seed, limits, carry, held):
     return paths.assembled(graph, found + (np.asarray(references, np.int64),), stop, budget)
 
 
+@timed("product.recent")
 def recent(registry, spec):
     return {"product/recency": runs()}
 
 
+@timed("product.living")
 def living(registry, spec):
     return {"product/live": paths.unlived()}
 
@@ -215,7 +217,7 @@ PRODUCT = OPERATIONS.register(
         changes=("facts",),
         adds=adds,
         kinds=None,
-        version=2,
+        version=3,
         graphs=1,
     ),
 )

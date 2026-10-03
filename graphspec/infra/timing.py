@@ -6,14 +6,14 @@ from contextlib import contextmanager, nullcontext
 from functools import wraps
 from pathlib import Path
 
-from .files import write_json
-
+LOG = logging.getLogger(__name__)
 CURRENT = None
 UNMEASURED = nullcontext()
 
 
 class Timeline:
     def __init__(self, path=None):
+        started = time.perf_counter()
         self.path = None if path is None else Path(path)
         self.lock = threading.RLock()
         self.nodes = {}
@@ -21,9 +21,11 @@ class Timeline:
         self.stopped = threading.Event()
         self.thread = None
         self.error = None
+        LOG.debug("timeline exit recorded=%s seconds=%.4f", self.path is not None, time.perf_counter() - started)
 
     def __enter__(self):
         global CURRENT
+        started = time.perf_counter()
         self.stopped.clear()
         self.error = None
         self.previous = CURRENT
@@ -32,10 +34,12 @@ class Timeline:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.thread = threading.Thread(target=self.record, daemon=True)
             self.thread.start()
+        LOG.debug("timeline enter exit seconds=%.4f", time.perf_counter() - started)
         return self
 
     def __exit__(self, *exception):
         global CURRENT
+        started = time.perf_counter()
         self.stopped.set()
         if self.thread is not None:
             self.thread.join()
@@ -43,15 +47,18 @@ class Timeline:
             self.flush()
         finally:
             CURRENT = self.previous
+        LOG.debug("timeline leave exit seconds=%.4f", time.perf_counter() - started)
         if exception[0] is None and self.error is not None:
             raise self.error
 
     def record(self):
+        started = time.perf_counter()
         try:
             while not self.stopped.wait(1):
                 self.flush()
         except Exception as error:
             self.error = error
+        LOG.debug("timeline record exit failed=%s seconds=%.4f", self.error is not None, time.perf_counter() - started)
 
     @contextmanager
     def measure(self, name):
@@ -96,17 +103,23 @@ class Timeline:
                     node["seconds"] += elapsed
                     node["self_seconds"] += elapsed - children - active_child
                     node["active"] += 1
-            return dict(
+            result = dict(
                 version=1,
                 pid=os.getpid(),
                 recorded_at=time.time(),
                 nodes=[dict(path=list(path), **value) for path, value in sorted(nodes.items())],
             )
+        LOG.debug("timeline snapshot exit nodes=%d seconds=%.4f", len(nodes), time.perf_counter() - now)
+        return result
 
     def flush(self):
+        from .files import write_json
+
+        started = time.perf_counter()
         if self.path is not None:
             with self.lock:
                 write_json(self.path, self.snapshot())
+        LOG.debug("timeline flush exit seconds=%.4f", time.perf_counter() - started)
 
 
 def measure(name):

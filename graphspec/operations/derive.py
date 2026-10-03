@@ -67,7 +67,6 @@ def stated(registry):
 
 
 def named(registry, settings):
-    started = time.perf_counter()
     result = {}
     for edge in registry.edges:
         if edge.origin[0] == "project" and enabled(settings, "derive/" + edge.name):
@@ -75,18 +74,20 @@ def named(registry, settings):
     for kind in registry.declared:
         if enabled(settings, "derive/complete/" + kind) or enabled(settings, "derive/complete_within/" + kind):
             result[kind] = "names"
-    LOG.debug("derive named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
+@timed("derive.closing")
 def closing(spec):
     return "derive/hops" in spec and spec["derive/hops"] > 1
 
 
+@timed("derive.diffusing")
 def diffusing(spec):
     return "derive/diffusion" in spec and spec["derive/diffusion"] != "none"
 
 
+@timed("derive.rewiring")
 def rewiring(spec):
     return "derive/rewiring" in spec and spec["derive/rewiring"] != "none"
 
@@ -96,6 +97,7 @@ def projecting(registry, spec):
     return any(enabled(spec, "derive/" + edge.name) for edge in registry.edges if edge.origin[0] == "project")
 
 
+@timed("derive.undirected")
 def undirected(source, target, entities):
     use = source != target
     key = np.unique(
@@ -105,6 +107,7 @@ def undirected(source, target, entities):
     return (key // entities).astype(np.int32), (key % entities).astype(np.int32)
 
 
+@timed("derive.recalled")
 def recalled(memo, name, inputs, budget, compute):
     held = memo.get(name)
     if held is not None and all(np.array_equal(old, new) for old, new in zip(held[0], inputs)):
@@ -123,6 +126,7 @@ def project(graph, registry, edge, source, target, code, recency, cap, tokens, b
     members, owners = (source[use], target[use]) if side == "sources" else (target[use], source[use])
     ages = recency[use]
 
+    @timed("derive.project.compute")
     def compute():
         kept = paths.latest(owners, members, ages, tokens, cap)
         held, at, kinds = members[kept], owners[kept], np.asarray(graph.kinds)[members[kept]]
@@ -171,12 +175,14 @@ def closure(registry, u, v, limit, entities, budget):
     ]
 
 
+@timed("derive.blocks")
 def blocks(labels):
     order = np.argsort(labels, kind="stable")
     bounds = np.flatnonzero(np.r_[True, np.diff(labels[order]) != 0, True])
     return [order[lo:hi] for lo, hi in zip(bounds[:-1], bounds[1:]) if hi - lo > 1]
 
 
+@timed("derive.diffusion_scores")
 def diffusion_scores(adjacency, spec, device):
     series, parameter = SERIES[spec["derive/diffusion"]]
     scores = paths.summed(adjacency, series, spec[parameter], device)
@@ -226,15 +232,18 @@ def diffuse(registry, spec, present, u, v, tokens, budget):
     return source, target, np.full(len(source), registry.code("diffusion"), np.int64)
 
 
+@timed("derive.neighbours")
 def neighbours(adjacency):
     return np.r_[0, np.cumsum(adjacency.sum(1))].astype(np.int64), np.nonzero(adjacency)[1].astype(np.int64)
 
 
+@timed("derive.forman")
 def forman(adjacency, sources, targets):
     offsets, columns = neighbours(adjacency)
     return kernels.forman(adjacency, offsets, columns, sources.astype(np.int64), targets.astype(np.int64))
 
 
+@timed("derive.spectral")
 def spectral(adjacency, members, device):
     from graphspec.infra import compute
 
@@ -251,6 +260,7 @@ def spectral(adjacency, members, device):
     return float(values[-1] - values[-2]), members[i], members[j]
 
 
+@timed("derive.fosr")
 def fosr(adjacencies, found, device):
     best = None
     for label, adjacency in enumerate(adjacencies):
@@ -263,6 +273,7 @@ def fosr(adjacencies, found, device):
 
 
 def component_edges(present, u, v):
+    started = time.perf_counter()
     local_u, local_v = np.searchsorted(present, u), np.searchsorted(present, v)
     labels = kernels.components(local_u.astype(np.int64), local_v.astype(np.int64), len(present))
     groups = blocks(labels)
@@ -275,8 +286,10 @@ def component_edges(present, u, v):
         rows = order[lo:hi]
         source, target = np.searchsorted(members, local_u[rows]), np.searchsorted(members, local_v[rows])
         yield members, source, target
+    LOG.debug("component edges exit components=%d seconds=%.4f", len(groups), time.perf_counter() - started)
 
 
+@timed("derive.component_adjacencies")
 def component_adjacencies(present, u, v, budget, operation):
     edges = list(component_edges(present, u, v))
     cells = sum(len(members) ** 2 for members, _, _ in edges)
@@ -292,6 +305,7 @@ def component_adjacencies(present, u, v, budget, operation):
     return groups, adjacencies
 
 
+@timed("derive.curvature_extreme")
 def curvature_extreme(groups, adjacencies, found, maximum=False):
     best = None
     for label, adjacency in enumerate(adjacencies):
@@ -314,6 +328,7 @@ def canonical_rewire(spec, present, u, v, tokens, moment, seed, budget):
     canonical, low, high = ranked(present, u, v, tokens)
     size, width = len(tokens), len(canonical)
 
+    @timed("derive.canonical_rewire.drawn")
     def drawn(iteration, left, right):
         left, right = tokens[canonical[left]], tokens[canonical[right]]
         count = len(left)
@@ -390,6 +405,7 @@ def rewire(spec, present, u, v, entities, drawn, budget):
     return ((added // entities).astype(present.dtype), (added % entities).astype(present.dtype)), cut
 
 
+@timed("derive.derivation")
 def derivation(registry, spec):
     projected = [
         edge
@@ -533,10 +549,12 @@ def derive_assemble(graph, registry, spec, seed, limits, carry, held):
     return paths.assembled(graph, found + (np.full(len(found[0]), -1, np.int64),), stop, budget)
 
 
+@timed("derive.recent")
 def recent(registry, spec):
     return {"derive/recency": runs()}
 
 
+@timed("derive.living")
 def living(registry, spec):
     return {"prune/derive": pruned(), "derive/live": paths.unlived()}
 
@@ -568,7 +586,7 @@ DERIVE = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=named,
-        version=10,
+        version=11,
         graphs=1,
     ),
 )

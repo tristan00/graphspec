@@ -28,6 +28,7 @@ def stated(registry):
     return result
 
 
+@timed("periods.carried")
 def carried(registry, spec):
     return dict(member=-1, start=0, position=0)
 
@@ -72,7 +73,7 @@ PERIODS = OPERATIONS.register(
         changes=("time",),
         adds=None,
         kinds=None,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

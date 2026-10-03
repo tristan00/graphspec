@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 
+from graphspec.infra.timing import timed
 from graphspec.operations.state import EMPTY
 
 from .base import INFINITE, localized, resolved
@@ -12,14 +13,17 @@ from .registry import REPRESENTATIONS, Representation
 LOG = logging.getLogger(__name__)
 
 
+@timed("coupling.carries")
 def carries(registry, spec):
     return dict(entity=EMPTY, row=EMPTY, step=EMPTY)
 
 
+@timed("coupling.horizon")
 def horizon(spec):
     return 0, spec["coupling/periods"]
 
 
+@timed("coupling.tail_length")
 def tail_length(spec):
     chosen, mode, width, cap, limit = coupling_setting(spec, 0, 0)
     if mode == 0:
@@ -27,6 +31,7 @@ def tail_length(spec):
     return int(chosen.max())
 
 
+@timed("coupling.coupled")
 def coupled(shown, state):
     own, work, spec, budget, obs0 = shown.own, shown.work, shown.spec, shown.budget, shown.before["obs"]
     entity, step = own["entity"].astype(np.int64), own["step"].astype(np.int64)
@@ -56,6 +61,7 @@ def coupled(shown, state):
     return np.stack((source, target), 1).astype(np.int32).reshape(-1, 2)
 
 
+@timed("coupling.bounded")
 def bounded(shown, lookback, window):
     own, work, obs0 = shown.own, shown.work, shown.before["obs"]
     recent = shown.recent("obs")
@@ -94,6 +100,7 @@ def piece(shown, state):
     return result
 
 
+@timed("coupling.check")
 def check(arrays, name, registry, spec):
     step, entity, period = arrays["step"], arrays["entity"], arrays["period"]
     source, destination = arrays["coupling"].T

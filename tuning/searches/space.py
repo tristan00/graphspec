@@ -42,6 +42,7 @@ FAILURE_POLICY = dict(
 )
 
 
+@timed("space.histogram")
 def histogram(values):
     values = np.asarray(values, np.float64)
     low, high = float(values.min()), float(values.max())
@@ -50,6 +51,7 @@ def histogram(values):
     return dict(edges=edges.tolist(), counts=counts.tolist())
 
 
+@timed("space.flatten")
 def flatten(config, template):
     return {
         **{"model/" + name: value for name, value in config["model"].items()},
@@ -99,6 +101,7 @@ class Space:
             self.fixings[key] = specs.narrow(self.pipeline, held)
         return self.fixings[key]
 
+    @timed("space.Space.importance")
     def importance(self, weights):
         column, totals = 0, {}
         for name, parameter in self.parameters.items():
@@ -108,12 +111,14 @@ class Space:
         ranked = sorted(totals.items(), key=lambda item: -item[1])[:IMPORTANT]
         return [dict(name=name, value=value) for name, value in ranked if value > 0]
 
+    @timed("space.Space.random_names")
     def random_names(self, patterns):
         unknown = [p for p in patterns if not any(fnmatch.fnmatchcase(n, p) for n in self.parameters)]
         if unknown:
             raise ValueError("random parameter names unknown parameters: " + ", ".join(unknown))
         return [n for n in self.parameters if any(fnmatch.fnmatchcase(n, p) for p in patterns)]
 
+    @timed("space.Space.encode")
     def encode(self, configs):
         encoded = np.zeros((len(configs), self.width), dtype=np.float64)
         for row, config in enumerate(configs):
@@ -136,6 +141,7 @@ class Space:
                 column += width
         return encoded
 
+    @timed("space.Space.draw")
     def draw(self, rng, training_seed, fixed, base=None, probability=1.0):
         base = {} if base is None else base
 
@@ -167,6 +173,7 @@ class Space:
 POOL = {}
 
 
+@timed("space.pool")
 def pool():
     if "executor" not in POOL:
         started = time.perf_counter()
@@ -176,12 +183,14 @@ def pool():
     return POOL["executor"]
 
 
+@timed("space.draw_chunk")
 def draw_chunk(registry, bounds, seconds, history, template, seed, training_seed, fixed, count):
     space = Space(registry, bounds, seconds, history, template)
     rng = np.random.default_rng(seed)
     return [space.draw(rng, training_seed, fixed) for _ in range(count)]
 
 
+@timed("space.draw_candidates")
 def draw_candidates(registry, bounds, seconds, history, template, seed, training_seed, fixed, count):
     started = time.perf_counter()
     workers = min(os.cpu_count(), count)
@@ -204,6 +213,7 @@ def draw_candidates(registry, bounds, seconds, history, template, seed, training
     return candidates
 
 
+@timed("space.propose")
 def propose(
     build,
     registry,
@@ -227,6 +237,7 @@ def propose(
     complete = [entry["status"] == "complete" for entry in records]
     losses = [entry["objective"] if ok else 0.0 for entry, ok in zip(records, complete)]
 
+    @timed("space.propose.update")
     def update(stage):
         if progress is not None:
             progress(

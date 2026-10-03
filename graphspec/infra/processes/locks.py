@@ -7,6 +7,8 @@ from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 
+from ..timing import timed
+
 if os.name == "nt":
     import msvcrt
 else:
@@ -22,9 +24,11 @@ class LockBusy(OSError):
 
 
 class Lock:
+    @timed("locks.Lock.__init__")
     def __init__(self, path):
         self.path = Path(path)
 
+    @timed("locks.Lock.__enter__")
     def __enter__(self):
         self.stream = self.path.open("a+b")
         self.stream.seek(0)
@@ -40,6 +44,7 @@ class Lock:
             raise
         return self
 
+    @timed("locks.Lock.__exit__")
     def __exit__(self, *exception):
         self.stream.seek(0)
         if os.name == "nt":
@@ -51,6 +56,7 @@ class Lock:
 
 @contextmanager
 def singleton(name, message):
+    started = time.perf_counter()
     if os.name == "nt":
         from .windows_mutex import Mutex
 
@@ -67,6 +73,7 @@ def singleton(name, message):
         yield
     finally:
         lock.__exit__(None, None, None)
+        LOG.debug("singleton exit name=%s seconds=%.4f", name, time.perf_counter() - started)
 
 
 @contextmanager
@@ -88,8 +95,10 @@ def heavy_job():
                 LOG.info("heavy job exit pid=%d seconds=%.3f", os.getpid(), time.perf_counter() - started)
 
 
+@timed("locks.exclusive")
 def exclusive(function):
     @wraps(function)
+    @timed("locks.exclusive.run")
     def run(*args, **kwargs):
         with heavy_job():
             return function(*args, **kwargs)

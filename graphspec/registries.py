@@ -6,6 +6,8 @@ import time
 from collections.abc import MutableMapping
 from importlib import import_module
 
+from graphspec.infra.timing import timed
+
 LOG = logging.getLogger(__name__)
 REGISTRIES = []
 CHANGES = itertools.count(1)
@@ -43,11 +45,13 @@ class Held(MutableMapping):
     def __iter__(self):
         return iter(self.entries)
 
+    @timed("registries.Held.__len__")
     def __len__(self):
         return len(self.entries)
 
 
 class Names:
+    @timed("registries.Names.__init__")
     def __init__(self, label):
         if any(registry.label == label for registry in REGISTRIES):
             raise ValueError("a registry is labelled %s twice" % label)
@@ -55,6 +59,7 @@ class Names:
         self.module = sys._getframe(1).f_globals["__name__"]
         REGISTRIES.append(self)
 
+    @timed("registries.Names.__setattr__")
     def __setattr__(self, name, value):
         if name == "held":
             value = value if type(value) is Held else Held(value)

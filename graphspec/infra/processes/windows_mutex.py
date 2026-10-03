@@ -5,6 +5,7 @@ import threading
 import time
 from ctypes import wintypes
 
+from ..timing import timed
 from .locks import LockBusy
 
 LOG = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class TokenUser(ctypes.Structure):
     _fields_ = [("sid", POINTER), ("attributes", DWORD)]
 
 
+@timed("windows_mutex.function")
 def function(library, name, result, *arguments):
     call = getattr(library, name)
     call.restype = result
@@ -55,12 +57,14 @@ release_mutex = function(KERNEL, "ReleaseMutex", wintypes.BOOL, HANDLE)
 close_handle = function(KERNEL, "CloseHandle", wintypes.BOOL, HANDLE)
 
 
+@timed("windows_mutex.checked")
 def checked(value):
     if not value:
         raise ctypes.WinError(ctypes.get_last_error())
     return value
 
 
+@timed("windows_mutex.user_identity")
 def user_identity():
     token = HANDLE()
     checked(open_token(current_process(), TOKEN_QUERY, ctypes.byref(token)))
@@ -78,6 +82,7 @@ def user_identity():
 
 
 class Mutex:
+    @timed("windows_mutex.Mutex.__init__")
     def __init__(self, name):
         identity = hashlib.sha256(name.encode("utf-8")).hexdigest()
         self.name = "Global\\graphspec.user-%s.%s" % (user_identity(), identity)
@@ -108,6 +113,7 @@ class Mutex:
             raise
         return self
 
+    @timed("windows_mutex.Mutex.__exit__")
     def __exit__(self, *exception):
         self.close()
 

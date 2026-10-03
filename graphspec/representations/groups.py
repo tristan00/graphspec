@@ -16,18 +16,20 @@ from graphspec.schema.references import SORTS, ends
 from . import kernels
 
 LOG = logging.getLogger(__name__)
-VERSION = 16
+VERSION = 17
 EVENT_KINDS = ("observation", "relation", "task")
 WALK_SAMPLES, WALK_HOPS, PERIOD_LOOKBACK = 32, 4, 3
 WALKS, PERIOD_WALKS = "graphspec.walks/walks", "graphspec.walks/period_walks"
 EMPTY = np.zeros(0, np.int64)
 
 
+@timed("groups.lags")
 def lags(maximum):
     values = tuple(2**i for i in range(int(math.log2(maximum)) + 1))
     return values if values[-1] == maximum else (*values, maximum)
 
 
+@timed("groups.replay")
 def replay(
     entity,
     step,
@@ -71,10 +73,12 @@ def replay(
     return events, table
 
 
+@timed("groups.observed_features")
 def observed_features(arrays):
     return np.asarray(arrays["x_table"])[arrays["x_ref"]]
 
 
+@timed("groups.referenced_change")
 def referenced_change(table, left, right):
     result = left != right
     differ = np.flatnonzero(result)
@@ -182,6 +186,7 @@ def left(graph, registry, rows):
     return registry.linked[kinds[rows]] & (kept[rows] < 2)
 
 
+@timed("groups.carried_rows")
 def carried_rows(link, entity, x_table):
     last = link.table("last")
     found = last.find(link.glob[entity])
@@ -205,6 +210,7 @@ def base(graph, registry, spec, link):
         probe = np.asarray(moments, np.int64) * len(kinds) + owners
         return np.where(np.asarray(owners) >= 0, held.lookup("row", probe, -1), -1)
 
+    @timed("groups.base.observed")
     def observed(owners, moments):
         rows = found(owners, moments)
         if np.any(rows < 0):
@@ -378,6 +384,7 @@ def affinity_index(events, steps, kinds):
     return result
 
 
+@timed("groups.marked_edges")
 def marked_edges(pieces, period, codes):
     if not pieces:
         return np.empty((0, 4), np.int32)
@@ -397,6 +404,7 @@ def marked_edges(pieces, period, codes):
     )
 
 
+@timed("groups.ordered")
 def ordered(source, destination, relation, gap, size):
     order = kernels.by_target(np.asarray(source, np.int64), np.asarray(destination, np.int64), size)
     output = np.empty((len(order), 4), np.int32)
@@ -405,10 +413,12 @@ def ordered(source, destination, relation, gap, size):
     return output
 
 
+@timed("groups.boundary_codes")
 def boundary_codes(registry):
     return np.asarray([-1] + [registry.code(name) for name in BOUNDARIES], np.int32)
 
 
+@timed("groups.coupling_setting")
 def coupling_setting(spec, steps, rows):
     scheme = spec["coupling/scheme"]
     chosen, width, cap, limit = np.zeros(0, np.int64), 0, 0, 0
@@ -425,6 +435,7 @@ def coupling_setting(spec, steps, rows):
     return chosen, mode, width, cap, limit
 
 
+@timed("groups.coupling_edges")
 def coupling_edges(entity, step, spec, steps, rows, entities, budget):
     chosen, mode, width, cap, limit = coupling_setting(spec, steps, rows)
     return kernels.coupled(
@@ -440,6 +451,7 @@ def coupling_edges(entity, step, spec, steps, rows, entities, budget):
     )
 
 
+@timed("groups.observation_boundaries")
 def observation_boundaries(entity, step, groups, period, lookback, window, entities, count, registry, budget):
     shape = (count, entities)
     budget.workspace(shape[0] * shape[1] * 8, "observation boundary tables")
@@ -464,6 +476,7 @@ def observation_boundaries(entity, step, groups, period, lookback, window, entit
     return result
 
 
+@timed("groups.event_setting")
 def event_setting(spec):
     link = spec["events/link"]
     chosen = np.asarray(
@@ -472,10 +485,12 @@ def event_setting(spec):
     return chosen, link == "window", spec["events/window"], spec["events/cap"]
 
 
+@timed("groups.event_members")
 def event_members(events, spec):
     return np.isin(events[:, 3], [EVENT_KINDS.index(kind) for kind in spec["events/kinds"].split("+")])
 
 
+@timed("groups.event_edges")
 def event_edges(events, identity, member, spec, entities, budget):
     chosen, windowed, window, cap = event_setting(spec)
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
@@ -494,6 +509,7 @@ def event_edges(events, identity, member, spec, entities, budget):
     )
 
 
+@timed("groups.event_boundaries")
 def event_boundaries(events, member, groups, period, lookback, window, entities, registry, budget):
     source, target, ticks = (np.ascontiguousarray(events[:, column].astype(np.int64)) for column in range(3))
     before, after, flags = kernels.boundaries(
@@ -513,6 +529,7 @@ def event_boundaries(events, member, groups, period, lookback, window, entities,
     )
 
 
+@timed("groups.neighbor_members")
 def neighbor_members(events, spec):
     kinds = spec["neighbors/kinds"].split("+")
     use = (events[:, 3] == 2) & ("task" in kinds)
@@ -521,6 +538,7 @@ def neighbor_members(events, spec):
     return use
 
 
+@timed("groups.neighbor_lists")
 def neighbor_lists(events, use, entities, identity):
     ids = np.flatnonzero(use)
     source, target = events[ids, 0], events[ids, 1]
@@ -542,6 +560,7 @@ def neighbors(arrays, spec):
     return dict(neighbor_ids=ids, neighbor_offsets=offsets)
 
 
+@timed("groups.walk_arrays")
 def walk_arrays(ids, offsets, events, identity, roots, keys, moments, prior, first, last, spec, seed, budget):
     bias, window, fanout = spec["walks/bias"], spec["walks/window"], spec["walks/fanout"]
     count = len(moments)
@@ -599,6 +618,7 @@ def walk_arrays(ids, offsets, events, identity, roots, keys, moments, prior, fir
     )
 
 
+@timed("groups.mixed_sizes")
 def mixed_sizes(rows, moments, trace, changes, bundles, seen, carried=0):
     groups = (rows + carried) // trace if trace else 0
     limit = rows + (rows if changes else 0) + groups + (moments if bundles else 0) + seen
@@ -607,6 +627,7 @@ def mixed_sizes(rows, moments, trace, changes, bundles, seen, carried=0):
     return limit, wires, holders
 
 
+@timed("groups.mixed_features")
 def mixed_features(
     kind, mode, fill, member_offset, member_id, rows, columns, width, task, offsets, spec, base=0
 ):

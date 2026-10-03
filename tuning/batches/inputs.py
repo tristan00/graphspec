@@ -11,6 +11,7 @@ from graphspec.engine.transform import SEED
 from graphspec.infra import workspace
 from graphspec.infra.arrays import Resident, between
 from graphspec.infra.hashing import hashed, salted
+from graphspec.infra.timing import timed
 from graphspec.operations.rows import counted, keyed_relations
 from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.references import SORTS
@@ -27,6 +28,7 @@ ORDERS = dict(recent=0, uniform=1, decay=2)
 CANDIDATES = ("code", "step", "source", "target")
 
 
+@timed("inputs.sampling")
 def sampling(spec):
     order = spec["neighbors/order"]
     return ORDERS[order], spec["neighbors/decay"] if order == "decay" else 0.0
@@ -61,6 +63,7 @@ def tree(graph, held, entities, cutoffs, floor, count, depth, registry, spec, se
         levels.append((entities, cutoffs, mask, gaps, relation))
         entities, cutoffs = children, times
 
+    @timed("inputs.tree.node")
     def node(members, moments):
         observations = gather.latest(observation_ids, observation_offsets, step, members, moments)
         result = dict(x=features_at(graph, observations), kind=gathered(graph, "entity_kind", members))
@@ -193,6 +196,7 @@ class Window:
     compact: bool
 
     @classmethod
+    @timed("inputs.Window.open")
     def open(cls, bank, block, cfg):
         from tuning.families.model_spec import row_local, windowed
 
@@ -214,6 +218,7 @@ class Window:
         )
 
 
+@timed("inputs.observed_inputs")
 def observed_inputs(window, lo, hi):
     entity = window.held.numpy("entity")[lo:hi]
     result = dict(
@@ -225,6 +230,7 @@ def observed_inputs(window, lo, hi):
     return result
 
 
+@timed("inputs.frame_inputs")
 def frame_inputs(window, start, stop):
     lo, hi = (int(value) for value in window.held.numpy("snapshot_offsets")[[start, stop]])
     result = dict(observed_inputs(window, lo, hi), lo=lo, observations=hi - lo)
@@ -232,6 +238,7 @@ def frame_inputs(window, start, stop):
     return result
 
 
+@timed("inputs.snapshot_inputs")
 def snapshot_inputs(b, window):
     from tuning.families.model_spec import shared_frames, temporal
 
@@ -501,6 +508,7 @@ def partnered(pair, members):
     return result
 
 
+@timed("inputs.spatial_inputs")
 def spatial_inputs(b, window):
     held, registry = window.held, window.registry
     start, stop, lo = window.start, window.stop, window.lo
@@ -533,6 +541,7 @@ def spatial_inputs(b, window):
     )
 
 
+@timed("inputs.lifted_inputs")
 def lifted_inputs(b, window):
     held, registry = window.held, window.registry
     lo, hi = window.lo, window.hi
@@ -560,6 +569,7 @@ def lifted_inputs(b, window):
     )
 
 
+@timed("inputs.mixed_inputs")
 def mixed_inputs(b, window):
     graph, start, stop = window.graph, window.start, window.stop
     held, tokens = window.held, window.tokens
@@ -598,6 +608,7 @@ def mixed_inputs(b, window):
         b["mixed"]["token"] = np.r_[workspace.gathered(tokens, owner, -1), b["member_token"]]
 
 
+@timed("inputs.events_inputs")
 def events_inputs(b, window, blocks):
     graph, start, stop = window.graph, window.start, window.stop
     held = window.held
@@ -628,6 +639,7 @@ def events_inputs(b, window, blocks):
         dag_inputs(b, window, left, right, position)
 
 
+@timed("inputs.dag_inputs")
 def dag_inputs(b, window, left, right, position):
     held, events = window.held, b["events"]
     moment = b["row_steps"][b["member_row"]] + window.start
@@ -682,6 +694,7 @@ def walked(bank, window, roots, moments):
     return result
 
 
+@timed("inputs.walks_inputs")
 def walks_inputs(b, window, context, bank):
     from tuning.families.periods import enabled, lookback
 
@@ -729,6 +742,7 @@ def walks_inputs(b, window, context, bank):
         b["walk_token"] = workspace.gathered(tokens, np.where(known, nodes, -1), -1)
 
 
+@timed("inputs.base_inputs")
 def base_inputs(bank, block, window):
     graph, start, stop = window.graph, window.start, window.stop
     first, last, lo, hi = window.first, window.last, window.lo, window.hi
@@ -779,6 +793,7 @@ def base_inputs(bank, block, window):
     return b
 
 
+@timed("inputs.tree_inputs")
 def tree_inputs(b, window):
     from tuning.families.model_spec import neighbors
 
@@ -800,6 +815,7 @@ def tree_inputs(b, window):
     )
 
 
+@timed("inputs.neighbor_history_inputs")
 def neighbor_history_inputs(b, window, blocks):
     from tuning.families.model_spec import neighbors
 
@@ -884,6 +900,7 @@ def affinity_inputs(b, window):
     )
 
 
+@timed("inputs.prepare_context")
 def prepare_context(window, b):
     from tuning.families.periods import enabled
 
@@ -895,6 +912,7 @@ def prepare_context(window, b):
     return result
 
 
+@timed("inputs.context_inputs")
 def context_inputs(b, window, blocks, context):
     from .period_inputs import history_tokens, mixed_edges, temporal_edges
 
@@ -923,6 +941,7 @@ def basis(window, entities):
     return result
 
 
+@timed("inputs.entity_space")
 def entity_space(b, window, blocks):
     graph, held, start = window.graph, window.held, window.start
     fields = [key for key in ("entity", "history_ids", "common_ids", "member_entity") if key in b]

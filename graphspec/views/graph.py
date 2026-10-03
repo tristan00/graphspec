@@ -236,6 +236,7 @@ def placed(graph, registry, steps, entities):
     LOG.debug("placed exit graph=%s tasks=%d seconds=%.4f", name, tasks, time.perf_counter() - started)
 
 
+@timed("graph.verify_dense")
 def verify_dense(graph, registry, known=None):
     name, steps, entities = graph.name, graph.steps, len(graph.kinds)
     lengths = dict(
@@ -325,6 +326,7 @@ def verify_dense(graph, registry, known=None):
         raise ValueError(unreached(graph, registry, member[np.flatnonzero(lost)[0]], "a node"))
 
 
+@timed("graph.ordered")
 def ordered(*keys):
     if len(keys[0]) < 2:
         return True

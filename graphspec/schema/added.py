@@ -7,7 +7,6 @@ LOG = logging.getLogger(__name__)
 PROVISIONAL = "value"
 
 
-@timed("added.paired")
 def paired(stated, where):
     if (
         type(stated) is not tuple
@@ -26,7 +25,6 @@ def named(stated, where):
     return stated
 
 
-@timed("added.mapping")
 def mapping(stated, where):
     if type(stated) is not dict or not all(type(name) is str and name for name in stated):
         raise ValueError("%s is a mapping from names, found %r" % (where, stated))

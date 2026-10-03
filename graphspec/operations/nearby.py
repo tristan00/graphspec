@@ -22,7 +22,6 @@ LACKING = (
 )
 
 
-@timed("operators.measured")
 def measured(registry, first, second):
     columns, kinds = registry.schema.columns, registry.schema.declared()
     return tuple(name for name in kinds[first] if name in kinds[second] and columns[name]["type"] == NUMBER)
@@ -182,7 +181,7 @@ NEARBY = OPERATIONS.register(
         changes=("facts",),
         adds=adds,
         kinds=named,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

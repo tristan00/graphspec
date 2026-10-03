@@ -10,10 +10,12 @@ from pathlib import Path
 from types import ModuleType
 
 from .processes.locks import Lock, LockBusy
+from .timing import timed
 
 LOG = logging.getLogger(__name__)
 
 
+@timed("runtime.configured_home")
 def configured_home():
     value = os.environ.get("GRAPHSPEC_HOME")
     if not value or not Path(value).is_absolute():
@@ -21,6 +23,7 @@ def configured_home():
     return Path(os.path.abspath(value))
 
 
+@timed("runtime.output_path")
 def output_path(path):
     path = Path(os.path.abspath(Path(path).expanduser()))
     code = Path(os.path.abspath(__file__)).parents[2]
@@ -31,6 +34,7 @@ def output_path(path):
     return path
 
 
+@timed("runtime.home")
 def home():
     return output_path(configured_home())
 
@@ -155,5 +159,6 @@ def compiled():
     LOG.info("compiled code shared between processes seconds=%.3f", time.perf_counter() - started)
 
 
+@timed("runtime.cache_path")
 def cache_path(namespace, identity):
     return home() / "cache" / namespace / identity

@@ -5,10 +5,12 @@ from .runtime import output_path
 from .timing import timed
 
 
+@timed("code.files")
 def files(packages):
     return sorted({path for package in packages for path in Path(package).rglob("*.py")})
 
 
+@timed("code.relative")
 def relative(path, packages):
     root = min(
         (Path(package) for package in packages if path.is_relative_to(package)),

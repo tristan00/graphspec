@@ -38,14 +38,12 @@ def stated(registry):
 
 
 def named(registry, settings):
-    started = time.perf_counter()
     result = {}
     for kind in registry.declared:
         if not settings["nodes/%s/keep" % kind]:
             result[kind] = "removes"
         elif settings["nodes/%s/filter" % kind] != "none":
             result[kind] = "names"
-    LOG.debug("nodes named exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
@@ -54,16 +52,19 @@ def filtered(registry, spec, mode):
     return any(holds(spec, "nodes/%s/filter" % kind, mode) for kind in registry.declared)
 
 
+@timed("nodes.counters")
 def counters(carry, name, graph):
     return np.asarray(carry.state[name].lookup("value", carry.glob, 0), np.int64).copy()
 
 
+@timed("nodes.remember")
 def remember(carry, name, graph, values):
     chosen = np.flatnonzero(graph.entity_connected)
     keys = carry.glob[chosen]
     carry.state[name] = carry.state[name].replaced(keys, keys, value=values[chosen])
 
 
+@timed("nodes.carried")
 def carried(registry, spec):
     return {
         "nodes/total_degree": Table(EMPTY, value=EMPTY),
@@ -172,7 +173,7 @@ NODES = OPERATIONS.register(
         changes=("observations", "facts", "references"),
         adds=None,
         kinds=named,
-        version=9,
+        version=10,
         graphs=1,
     ),
 )

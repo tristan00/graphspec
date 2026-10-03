@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 
+from graphspec.infra.timing import timed
 from graphspec.schema.references import MEMBERS
 from graphspec.views.graph import LABELS, PER_STEP, TASKS, Dense
 
@@ -18,6 +19,7 @@ PARTS = dict(
 )
 
 
+@timed("edits.compact")
 def compact(table, reference):
     reference = np.asarray(reference)
     used = np.unique(reference[reference >= 0]).astype(np.int64)
@@ -61,10 +63,12 @@ def cut(graph, low, high):
     return result, rows, values, int(first)
 
 
+@timed("edits.sliced")
 def sliced(graph, low, high):
     return cut(graph, low, high)[0]
 
 
+@timed("edits.columns")
 def columns(stated, names, where):
     if type(stated) is not dict or set(stated) != set(names):
         raise ValueError("an edit states %s as a mapping of %s, found %r" % (where, ", ".join(names), stated))
@@ -91,6 +95,7 @@ class Edit:
         }
         LOG.debug("edit exit seconds=%.4f", time.perf_counter() - started)
 
+    @timed("edits.Edit.moments")
     def moments(self):
         return np.concatenate(
             [self.removed[part]["step"] for part in self.removed]
@@ -108,6 +113,7 @@ class Edit:
         return result
 
 
+@timed("edits.matched")
 def matched(left, right):
     left, right = np.asarray(left, np.int64), np.asarray(right, np.int64)
     if not len(left) or not len(right):
@@ -120,6 +126,7 @@ def matched(left, right):
     return found[1][inverse[: len(left)]], found[0][inverse[len(left) :]]
 
 
+@timed("edits.ordered")
 def ordered(arrays, key):
     order = np.argsort(key, kind="stable")
     return {name: value[order] for name, value in arrays.items()}

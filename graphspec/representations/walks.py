@@ -4,6 +4,7 @@ import time
 import numpy as np
 
 from graphspec.infra.hashing import hashed
+from graphspec.infra.timing import timed
 from graphspec.infra.workspace import gathered
 
 from .base import localized, resolved
@@ -14,10 +15,12 @@ from .registry import REPRESENTATIONS, Representation
 LOG = logging.getLogger(__name__)
 
 
+@timed("walks.carries")
 def carries(registry, spec):
     return {}
 
 
+@timed("walks.horizon")
 def horizon(spec):
     return spec["walks/window"] + 2, PERIOD_LOOKBACK
 
@@ -73,6 +76,7 @@ def piece(shown, state):
     return result
 
 
+@timed("walks.check")
 def check(arrays, name, registry, spec):
     events = arrays["events"]
     moments = np.asarray(arrays["row_step"], np.int64)[np.asarray(arrays["member_row"], np.int64)]

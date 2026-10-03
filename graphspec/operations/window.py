@@ -32,6 +32,7 @@ def stated(registry):
     return result
 
 
+@timed("window.reach")
 def reach(graph, spec, start, lasting):
     if spec["time/scheme"] == "state":
         reached = np.full(len(start), graph.steps - 1, np.int64)
@@ -43,10 +44,12 @@ def reach(graph, spec, start, lasting):
     return np.where(lasting, reached, np.minimum(reached, member_end(graph)[start] - 1))
 
 
+@timed("window.groups_of")
 def groups_of(graph):
     return np.cumsum(np.r_[0, np.diff(graph.period) != 0])
 
 
+@timed("window.horizon")
 def horizon(graph, spec, carry, group0, start):
     if spec["time/scheme"] == "state":
         return np.full(len(start), FOREVER, np.int64)
@@ -55,6 +58,7 @@ def horizon(graph, spec, carry, group0, start):
     return carry.step0 + np.asarray(start, np.int64) + spec["time/window"] - 1
 
 
+@timed("window.beyond")
 def beyond(graph, spec, carry, group0, end):
     if spec["time/scheme"] == "state":
         return np.ones(len(end), bool)
@@ -63,6 +67,7 @@ def beyond(graph, spec, carry, group0, end):
     return end >= carry.step0 + graph.steps
 
 
+@timed("window.carried_reach")
 def carried_reach(graph, spec, carry, group0, end):
     if spec["time/scheme"] == "state":
         return np.full(len(end), graph.steps - 1, np.int64)
@@ -71,6 +76,7 @@ def carried_reach(graph, spec, carry, group0, end):
     return end - carry.step0
 
 
+@timed("window.carried")
 def carried(registry, spec):
     return dict(
         group=-1,
@@ -96,6 +102,7 @@ def carried(registry, spec):
     )
 
 
+@timed("window.held")
 def held(graph, carry):
     obs, facts = carry.state["obs"], carry.state["facts"]
     added_obs, added_facts = len(obs["entity"]), len(facts["source"])
@@ -106,6 +113,7 @@ def held(graph, carry):
     carry.x_global = np.concatenate((carry.x_global, obs["ref"]))
     carry.value_global = np.concatenate((carry.value_global, facts["ref"]))
 
+    @timed("window.held.prefixed")
     def prefixed(name, values):
         return np.concatenate((np.asarray(values), graph.arrays[name])).astype(graph.arrays[name].dtype)
 
@@ -251,7 +259,7 @@ WINDOW = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=None,
         kinds=None,
-        version=8,
+        version=9,
         graphs=1,
     ),
 )

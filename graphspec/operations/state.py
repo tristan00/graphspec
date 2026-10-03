@@ -25,13 +25,13 @@ SECOND = (
 
 
 class Table:
-    @timed("carry.table")
     def __init__(self, keys=(), **columns):
         keys = np.asarray(keys, np.int64)
         order = np.argsort(keys, kind="stable")
         self.keys = keys[order]
         self.columns = {name: np.asarray(value)[order] for name, value in columns.items()}
 
+    @timed("state.Table.__len__")
     def __len__(self):
         return len(self.keys)
 
@@ -60,9 +60,11 @@ class Table:
 
 
 class Entities:
+    @timed("state.Entities.__init__")
     def __init__(self, kinds, tokens, connected):
         self.kinds, self.tokens, self.connected = kinds, tokens, connected
 
+    @timed("state.Entities.__len__")
     def __len__(self):
         return len(self.kinds)
 
@@ -86,6 +88,7 @@ class Second:
         self.value_table, self.value_global = np.asarray(value_table), np.asarray(value_global, np.int64)
         LOG.debug("second exit graph=%s seconds=%.4f", name, time.perf_counter() - started)
 
+    @timed("state.Second.__getattr__")
     def __getattr__(self, key):
         if key in SECOND:
             return self.__dict__["arrays"][key]
@@ -93,17 +96,18 @@ class Second:
 
 
 class Segment:
+    @timed("state.Segment.__init__")
     def __init__(self, glob, base, step0, task0, known, x_global, value_global, entities, seconds):
         self.glob, self.base, self.step0, self.task0 = glob, base, step0, task0
         self.known, self.x_global, self.value_global = known, x_global, value_global
         self.entities, self.state, self.part = entities, None, None
         self.seconds, self.second, self.entry, self.candidates = seconds, None, None, []
 
+    @timed("state.Segment.__getstate__")
     def __getstate__(self):
         return dict(self.__dict__, entities=None, state=None, part=None, second=None, entry=None)
 
     def named(self, name, operation, entry):
-        started = time.perf_counter()
         self.entry = entry
         if name is None:
             self.second = None
@@ -114,8 +118,8 @@ class Segment:
             )
         else:
             self.second = self.seconds[name]
-        LOG.debug("named exit operation=%s graph=%s seconds=%.4f", operation, name, time.perf_counter() - started)
 
+    @timed("state.Segment.keys")
     def keys(self, code, source, target):
         return encode(code, self.glob[source], self.glob[target], self.base)
 

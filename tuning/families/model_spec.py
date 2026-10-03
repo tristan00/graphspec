@@ -1,6 +1,7 @@
 import logging
 import time
 
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, number, real
 from graphspec.operations.pipeline import resolved
@@ -66,6 +67,7 @@ def view(*names):
     return among("view", names)
 
 
+@timed("model_spec.attends")
 def attends(spec):
     return spec.get("snapshot/sequence") == "attention" or spec.get("snapshot/temporal") == "entity_attention"
 
@@ -74,6 +76,7 @@ def memory_state(spec):
     return spec.get("view") == "memory" and spec["memory/update"] != "mutual_rnn"
 
 
+@timed("model_spec.reads_time")
 def reads_time(spec):
     if spec["view"] == "memory":
         return spec["memory/update"] != "antisymmetric" or spec["memory/embedding"] == "attention"
@@ -83,10 +86,12 @@ def reads_time(spec):
     )
 
 
+@timed("model_spec.embeds_keys")
 def embeds_keys(spec):
     return spec["view"] in EMBEDDING
 
 
+@timed("model_spec.reads_dropout")
 def reads_dropout(spec):
     if spec["view"] == "snapshot":
         return (
@@ -222,18 +227,22 @@ def blocks(spec):
     return {"affinity": frozenset(("events", "affinity")), "signal": frozenset(("signal",))}[kind]
 
 
+@timed("model_spec.windowed")
 def windowed(spec):
     return spec["view"] == "affinity"
 
 
+@timed("model_spec.shared_frames")
 def shared_frames(spec):
     return spec["view"] == "snapshot" and spec["snapshot/temporal"] != "coupling_edges"
 
 
+@timed("model_spec.temporal")
 def temporal(spec, modes):
     return spec["view"] == "snapshot" and spec["snapshot/temporal"] in modes
 
 
+@timed("model_spec.row_local")
 def row_local(spec):
     return spec["view"] in ("tree", "walks", "sequence", "mixed", "event_graph")
 
@@ -244,29 +253,25 @@ def groups(spec):
 
 
 def unread():
-    started = time.perf_counter()
-    result = tuple(name for name in REGISTERED.names() if name not in GROUPS)
-    LOG.debug("unread exit representations=%d seconds=%.4f", len(result), time.perf_counter() - started)
-    return result
+    return tuple(name for name in REGISTERED.names() if name not in GROUPS)
 
 
 def derived(spec):
-    started = time.perf_counter()
     lacking = [DERIVES % name for name in unread() if DERIVES % name not in spec]
     if lacking:
         raise KeyError(
             "the model states no %s; a representation registered outside the groups the families read is "
             "derived where the model states it" % ", ".join(lacking)
         )
-    result = groups(spec) + tuple(name for name in unread() if spec[DERIVES % name])
-    LOG.debug("derived exit representations=%d seconds=%.4f", len(result), time.perf_counter() - started)
-    return result
+    return groups(spec) + tuple(name for name in unread() if spec[DERIVES % name])
 
 
+@timed("model_spec.neighbors")
 def neighbors(spec):
     return spec[spec["view"] + "/neighbors"]
 
 
+@timed("model_spec.describe")
 def describe(spec):
     parts = [spec["view"]]
     for name, value in spec.items():
@@ -277,6 +282,7 @@ def describe(spec):
     return " ".join(parts)
 
 
+@timed("model_spec.configured")
 def configured(registry, values):
     return specs.configured(space(registry), values)
 
@@ -305,6 +311,7 @@ def samples(registry):
     ]
     result = []
 
+    @timed("model_spec.samples.add")
     def add(values):
         spec = specs.canonical(
             parameters, draw(parameters, lambda parameter: values.get(parameter.name, parameter.default))

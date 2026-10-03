@@ -17,12 +17,14 @@ from .stitch import BUFFERED, Appender, joined, stitched
 LOG = logging.getLogger(__name__)
 
 
+@timed("segments.table_sizes")
 def table_sizes(graph):
     if "x_table" in graph.arrays:
         return len(graph.x_table), len(graph.value_table)
     return len(graph.obs_x), len(graph.fact_values) + len(graph.removal_values)
 
 
+@timed("segments.features")
 def features(member):
     return member.x_table if isinstance(member, Dense) else member.obs_x
 
@@ -73,6 +75,7 @@ def placed(carry, graph, tops):
     return rows, values
 
 
+@timed("segments.alone")
 def alone(member):
     kinds = np.asarray(member.kinds).astype(np.int64)
     connected = np.asarray(member.entity_connected) if isinstance(member, Dense) else np.zeros(len(kinds), bool)
@@ -390,6 +393,7 @@ def opened(plan, member, graph, low, high, edit, entities, seen):
 
 
 class Source:
+    @timed("segments.Source.__init__")
     def __init__(self, plan, members, registry, steps, spec, groups, seed, limits, partitions):
         self.plan, self.members, self.registry, self.steps, self.spec = plan, members, registry, steps, spec
         self.chosen, self.seed, self.limits, self.partitions = representing(groups), seed, limits, partitions
@@ -408,6 +412,7 @@ class Source:
 
 
 class Derived:
+    @timed("segments.Derived.__init__")
     def __init__(self, member, low, high, carry, graph, piece, fresh):
         self.member, self.low, self.high, self.carry, self.graph = member, low, high, carry, graph
         self.piece, self.fresh = piece, fresh
@@ -457,6 +462,7 @@ def advanced(source, member, graph, low, high, edit, state):
 
 
 class Derivation:
+    @timed("segments.Derivation.__init__")
     def __init__(self, source, parent, time, state, segments):
         self.source, self.parent, self.time, self.state, self.segments = source, parent, time, state, segments
 
@@ -504,6 +510,7 @@ class Derivation:
         LOG.info("forked exit forks=%d seconds=%.3f", len(result), time.perf_counter() - started)
         return result
 
+    @timed("segments.Derivation.chain")
     def chain(self):
         found, node = [], self
         while node is not None:
@@ -511,6 +518,7 @@ class Derivation:
             node = node.parent
         return found[::-1]
 
+    @timed("segments.Derivation.derivations")
     def derivations(self):
         return [segment for node in self.chain() for segment in node.segments]
 

@@ -18,7 +18,6 @@ SIDES = ("sources", "targets")
 WHOLE = -1
 
 
-@timed("operators.selves")
 def selves(registry, edge):
     return {first for first, second in edge.pairs if first == second and first in registry.declared}
 
@@ -64,6 +63,7 @@ def named(registry, settings):
     return result
 
 
+@timed("consecutive.carried")
 def carried(registry, spec):
     return {
         "consecutive/joined": Table(EMPTY, value=EMPTY),
@@ -176,7 +176,7 @@ CONSECUTIVE = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=named,
-        version=5,
+        version=6,
         graphs=1,
     ),
 )

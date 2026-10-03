@@ -17,12 +17,14 @@ from pathlib import Path
 import numpy as np
 
 from .runtime import output_path
+from .timing import timed
 
 if os.name == "nt":
     from .windows_files import open_read, replace
 else:
     from os import replace
 
+    @timed("files.open_read")
     def open_read(path):
         return Path(path).open("r", encoding="utf-8")
 
@@ -38,6 +40,7 @@ SIZES, SWEEPERS = {}, {}
 PUBLISH = threading.Lock()
 
 
+@timed("files.write_json")
 def write_json(path, value):
     with PUBLISH:
         path = output_path(path)
@@ -53,17 +56,20 @@ def write_json(path, value):
             temporary.unlink(missing_ok=True)
 
 
+@timed("files.read_json")
 def read_json(path):
     with open_read(path) as stream:
         return json.load(stream)
 
 
+@timed("files.write_jsonl")
 def write_jsonl(path, rows):
     with output_path(path).open("w", encoding="utf-8") as stream:
         for row in rows:
             stream.write(json.dumps(row, allow_nan=False) + "\n")
 
 
+@timed("files.write_csv")
 def write_csv(path, columns, rows):
     with output_path(path).open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, columns)
@@ -75,6 +81,7 @@ def sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
+@timed("files.sha256_file")
 def sha256_file(path):
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
@@ -171,6 +178,7 @@ def save_arrays(directory, arrays):
 
 
 @functools.lru_cache(maxsize=4096)
+@timed("files.described")
 def described(header, major):
     if major not in (1, 2):
         raise ValueError("an array file of format version %d is not read" % major)
@@ -235,25 +243,31 @@ class Arrays(Mapping):
             return np.array(self[key])
         return load_array(self.sources[key])
 
+    @timed("files.Arrays.__iter__")
     def __iter__(self):
         return iter(list(self.sources) + list(self.packed))
 
+    @timed("files.Arrays.__len__")
     def __len__(self):
         return len(self.sources) + len(self.packed)
 
+    @timed("files.Arrays.__contains__")
     def __contains__(self, key):
         return key in self.sources or key in self.packed
 
 
 class ArrayStore:
+    @timed("files.ArrayStore.__init__")
     def __init__(self, limit=128):
         if type(limit) is not int or limit < 1:
             raise ValueError("array cache entry limit must be a positive integer")
         self.limit, self.loaded = limit, OrderedDict()
 
+    @timed("files.ArrayStore.open")
     def open(self, folder, build):
         return self.open_written(folder, lambda destination: save_arrays(destination, build()))
 
+    @timed("files.ArrayStore.open_written")
     def open_written(self, folder, build):
         folder = Path(folder)
         if folder in self.loaded:
@@ -282,10 +296,12 @@ class ArrayStore:
 
 
 class JsonCache:
+    @timed("files.JsonCache.__init__")
     def __init__(self):
         self.cache = {}
         self.lock = threading.Lock()
 
+    @timed("files.JsonCache.read")
     def read(self, path):
         path = Path(path)
         try:
@@ -300,6 +316,7 @@ class JsonCache:
                 self.cache[path] = (key, read_json(path))
             return self.cache[path][1]
 
+    @timed("files.JsonCache.require")
     def require(self, path):
         value = self.read(path)
         if value is None:
@@ -307,6 +324,7 @@ class JsonCache:
         return value
 
 
+@timed("files.folder_size")
 def folder_size(folder):
     total, stack = 0, [str(folder)]
     while stack:

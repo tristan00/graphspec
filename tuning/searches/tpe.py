@@ -8,24 +8,28 @@ from graphspec.infra.timing import timed
 VERSION = version("optuna")
 
 
+@timed("tpe.categorical")
 def categorical(options):
     from optuna.distributions import CategoricalDistribution
 
     return CategoricalDistribution(list(options))
 
 
+@timed("tpe.integer")
 def integer(low, high):
     from optuna.distributions import IntDistribution
 
     return IntDistribution(low, high)
 
 
+@timed("tpe.real")
 def real(low, high, log=False):
     from optuna.distributions import FloatDistribution
 
     return FloatDistribution(low, high, log=log)
 
 
+@timed("tpe.propose")
 def propose(trial, name, domain):
     from optuna.distributions import CategoricalDistribution, IntDistribution
 
@@ -36,6 +40,7 @@ def propose(trial, name, domain):
     return trial.suggest_float(name, domain.low, domain.high, log=domain.log)
 
 
+@timed("tpe.draw")
 def draw(domain, rng):
     from optuna.distributions import CategoricalDistribution, IntDistribution
 

@@ -10,6 +10,7 @@ from .inputs import tree
 from .tensors import Features, array, features, gathered, joined, length
 
 
+@timed("period_inputs.prior_rows")
 def prior_rows(held, periods, entities):
     periods, entities = np.broadcast_arrays(periods, entities)
     count = len(held.numpy("period_ends"))

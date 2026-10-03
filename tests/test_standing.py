@@ -13,8 +13,9 @@ pytestmark = pytest.mark.xdist_group("standing")
 ROOT = Path(__file__).parent.parent
 CODE = ("graphspec", "tuning")
 NAMED = ("graphspec", "tuning")
-TIMERS = ("perf_counter", "timed", "measure")
-MARKS = ("timed",)
+MARKS = ("timed", "staged")
+LOGGERS = ("debug", "info", "warning", "error", "exception", "critical")
+NESTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 NUMERAL = ("3", "iii", "three")
 BETWEEN = r"[\W_]*"
 PIECES = (
@@ -120,26 +121,258 @@ UNVERSIONED = (
     "graphspec/infra/windows_files.py",
 )
 RECORDED = {
-    "graphspec.periods": (5, "801dde91649ee01b08f81a7a8dc0821dee53a49e12cf8d45a27f1cf2ec4c7a35"),
-    "graphspec.window": (8, "e4dc992b560a0ef5b38c09072e6d8ad51e35403ecd2da959dc6484eff67e4899"),
-    "graphspec.nodes": (9, "4b70590b860d512d4efc0a86d201e9e64ce6e268ec6692466d513d7d2b0c74f7"),
-    "graphspec.derive": (10, "280f51812abb2830ef0019a264f1bd9cb716234f35c959a386a72a61bfc21a2f"),
-    "graphspec.relations": (5, "c4fa3ed5da0e9121609653133853386c5c2425cb5922b37c17cd2506cdf6d54d"),
-    "graphspec.edges": (9, "cac33b8c4babee91f5ee7c73591a9bb5685157e4ad92e511212c3f47a5054846"),
-    "graphspec.relation_forms": (4, "1b4560925702edea18b724073b2612f960cdc51204c16d85c6702b5728cc3a13"),
-    "graphspec.merge": (6, "e5bb973ef6e36bff52cc6ae0a4dc9da2aac1f0fb9b159fe8ee02670d8470ff23"),
-    "graphspec.difference": (4, "7c9daef7d4fae58b7d8942dde4e68928341ec8792e211789a83b11e0588709df"),
-    "graphspec.nearby": (5, "98348ff8fb7519887946c8f1d45c0b0968f9d8227518039ee45bf075efcc25f9"),
-    "graphspec.consecutive": (5, "7866390b6490d3e503326d26130dbaff6ba3895f90656c873da5c436e16105e6"),
-    "graphspec.neighbourhood": (5, "3add2956084409f10e0a13b0a9f97c23fabe1a4ba9c1876e81588f4198c96a72"),
+    "graphspec.periods": (6, "cd172dca349c911dae1c321344a5d8571ca0a87a2236b66bbf31ac55cdf41c95"),
+    "graphspec.window": (9, "315a707590f159fe2bd680a8e65231f0138836be4fd3cfc6fc5fe7484e4e8e26"),
+    "graphspec.nodes": (10, "0a71c751bfa6ca8d935eaa328c4032df83de03138c908b956dcfef7bd3d2b3ac"),
+    "graphspec.derive": (11, "0bcbbdd6b2372962fa09fc2d0f489bdfd6204ebb949c5e0fe6279b321891958e"),
+    "graphspec.relations": (6, "4f53a7e4da84a14b242dffa7bf6b3cf8b6e7e2aa7568f83d609b1762267aeaf6"),
+    "graphspec.edges": (10, "1d48cae007cdd44335b5ca9ce5dd6ea5ace44bbd5ee150b5807932ca6af3c6e6"),
+    "graphspec.relation_forms": (5, "d171f2d0bd7961373fe3180ac7ac6306ea350799fa0df01dfe8696a4b0e00570"),
+    "graphspec.merge": (7, "85736377e2a227c72e9316de8e5e513b80fd99d58f39b955240444704b27d6bb"),
+    "graphspec.difference": (5, "4d4f13f3cc158e0fddb9dde7b324af58d6f6d81be6b71bc9f1e8a670418a32d0"),
+    "graphspec.nearby": (6, "6a901b29d15031a8f8017201e9dde987ab59ee4837efad6917a0ad72c84633a3"),
+    "graphspec.consecutive": (6, "d244bd7273e2bb8767c3f9b7cbba8362a9014cb22c412c5d828f2c4f4ab953c9"),
+    "graphspec.neighbourhood": (6, "7feff8c7492860ef0019661bd2b46a47f2373daf01faf7e4974a71762ac2629c"),
     "graphspec.measures": (3, "738ad2944004dd94058b9877cbe44c1755ace68f2466b16d92affca51993aa88"),
-    "graphspec.contract": (6, "97d57415b043a2ad41cb76be27a881711be5f01cba9a280f576a511f2da8fcef"),
-    "graphspec.product": (2, "370633caf9d75f6c20a823a9e076d48763c17297ae6f33ef2eef9dd1a87314e4"),
-    "graphspec.negatives": (5, "9470ca6778131c4bb612a0ba4d2fc815413befa84bd574a4b9a0c4c5621a8b9c"),
-    "derivation": (35, "d749e8fd81bc84267d9899ce7733f2ac0a8de69838ce4b8ab58d00e600a3ba86"),
-    "views": (45, "d9e07eb50f2b4cac52908aa880481bd4d29f3db87da744ea9bf58ad2c262908a"),
-    "representations": (16, "fc076a0a290b750ee8ed2ee75ef1fe0e637d5ff6a4e170bb562849f3b00063b1"),
-    "index": (3, "88b543b0553df433070b05d9875cff180c36e2420133819f9149d993577ca405"),
+    "graphspec.contract": (7, "38b16e367216b1bbcc637e922fd74ef7e4d1c85e857b4067383f3568c3e5e3fd"),
+    "graphspec.product": (3, "d0c09e09b3f2d702ab9d6386bfdafc3c35cddfdae8a9fc4fa21283446479d2e7"),
+    "graphspec.negatives": (6, "14defe736b009f6eaf6fa92b1dd2b29508298985ba8227511aa4b5ab5b34d7a6"),
+    "derivation": (36, "4d6a8aaf5fc340a20fcd697cb122123e7a068c998b058c1787449582de7f9932"),
+    "views": (46, "1ae630938cb6a3445e57a886a53d6b2ae80125482cc7c7aa4e98e3c4d3423a00"),
+    "representations": (17, "6c373d07917515df876e95c6f3b946d61eccb5d105b0face340a3d80d4901e9c"),
+    "index": (4, "de51fe453ec964424b70224c54bc8f64438a811c8326745daa22a105984f3f36"),
+}
+CALLED = {
+    "graphspec/budgets.py:GraphBudget.pair_limit": 16517,
+    "graphspec/budgets.py:GraphBudget.pairs": 15043,
+    "graphspec/budgets.py:GraphBudget.retain": 8672,
+    "graphspec/budgets.py:GraphBudget.workspace": 9057,
+    "graphspec/build/staged.py:Staged.positions": 6736,
+    "graphspec/build/staged.py:numbers": 7586,
+    "graphspec/engine/stitch.py:globalized": 6939,
+    "graphspec/engine/transform.py:checked": 5072,
+    "graphspec/facts/stored.py:Arrays.__getattr__": 503710,
+    "graphspec/facts/stored.py:Arrays.__init__": 8846,
+    "graphspec/facts/stored.py:Facts.__getattr__": 31411,
+    "graphspec/infra/arrays.py:Bundle.hold": 47049,
+    "graphspec/infra/arrays.py:Pending.__init__": 47049,
+    "graphspec/infra/arrays.py:between": 7257,
+    "graphspec/infra/arrays.py:compact": 47049,
+    "graphspec/infra/files.py:Arrays.__getitem__": 17426,
+    "graphspec/infra/files.py:Arrays.read": 8396,
+    "graphspec/infra/files.py:aligned": 45371,
+    "graphspec/infra/files.py:load_array": 26201,
+    "graphspec/infra/files.py:save_array": 7088,
+    "graphspec/infra/files.py:sha256_bytes": 79325,
+    "graphspec/infra/files.py:sha256_json": 79305,
+    "graphspec/infra/hashing.py:stacked": 7610,
+    "graphspec/infra/log.py:JsonLog.format": 3,
+    "graphspec/infra/timing.py:Timeline.measure": 32640,
+    "graphspec/infra/timing.py:measure": 1060976,
+    "graphspec/infra/timing.py:timed": 7749,
+    "graphspec/infra/timing.py:timed.<locals>.decorate": 7749,
+    "graphspec/infra/workspace.py:allocate": 8856,
+    "graphspec/infra/workspace.py:block_rows": 20723,
+    "graphspec/infra/workspace.py:gathered": 21322,
+    "graphspec/infra/workspace.py:held": 10088,
+    "graphspec/infra/workspace.py:scatter": 14158,
+    "graphspec/infra/workspace.py:take": 8027,
+    "graphspec/operations/consecutive.py:selves": 12771,
+    "graphspec/operations/derive.py:named": 8322,
+    "graphspec/operations/edges.py:filtering": 24084,
+    "graphspec/operations/edges.py:filters": 13257,
+    "graphspec/operations/nearby.py:measured": 14576,
+    "graphspec/operations/nodes.py:named": 6071,
+    "graphspec/operations/operation.py:Operation.__call__": 5313,
+    "graphspec/operations/operation.py:Operation.added": 5958,
+    "graphspec/operations/operation.py:Operation.check": 5353,
+    "graphspec/operations/operation.py:Operation.roles": 22517,
+    "graphspec/operations/operation.py:Operation.settings": 26579,
+    "graphspec/operations/operation.py:Phase.once": 8954,
+    "graphspec/operations/operation.py:Phase.run": 8496,
+    "graphspec/operations/operation.py:Settings.__contains__": 191152,
+    "graphspec/operations/operation.py:Settings.__getitem__": 240291,
+    "graphspec/operations/operation.py:Settings.__init__": 26579,
+    "graphspec/operations/operation.py:Settings.stated": 431443,
+    "graphspec/operations/parameters.py:Parameter.__init__": 497631,
+    "graphspec/operations/parameters.py:Parameter.active": 1846685,
+    "graphspec/operations/parameters.py:Parameter.check": 686953,
+    "graphspec/operations/parameters.py:Parameter.declaration": 50871,
+    "graphspec/operations/parameters.py:Parameter.given": 18668,
+    "graphspec/operations/parameters.py:Parameter.uniform": 36161,
+    "graphspec/operations/parameters.py:among": 78023,
+    "graphspec/operations/parameters.py:bound_for": 443490,
+    "graphspec/operations/parameters.py:canonical.<locals>.read": 21571,
+    "graphspec/operations/parameters.py:choice": 74670,
+    "graphspec/operations/parameters.py:differs": 16162,
+    "graphspec/operations/parameters.py:digest": 77118,
+    "graphspec/operations/parameters.py:draw": 8976,
+    "graphspec/operations/parameters.py:enabled": 872963,
+    "graphspec/operations/parameters.py:equals": 56239,
+    "graphspec/operations/parameters.py:flag": 45766,
+    "graphspec/operations/parameters.py:holds": 282556,
+    "graphspec/operations/parameters.py:narrow": 5157,
+    "graphspec/operations/parameters.py:number": 134958,
+    "graphspec/operations/parameters.py:real": 31398,
+    "graphspec/operations/paths.py:composed": 166358,
+    "graphspec/operations/paths.py:kinds": 330422,
+    "graphspec/operations/paths.py:reduced": 6532,
+    "graphspec/operations/paths.py:written": 89921,
+    "graphspec/operations/pipeline.py:Growing.before": 10361,
+    "graphspec/operations/pipeline.py:Local.__contains__": 90038,
+    "graphspec/operations/pipeline.py:Local.__getitem__": 68677,
+    "graphspec/operations/pipeline.py:Local.__init__": 117441,
+    "graphspec/operations/pipeline.py:Offered.allowed": 45001,
+    "graphspec/operations/pipeline.py:Step.__call__": 5309,
+    "graphspec/operations/pipeline.py:Step.__init__": 10392,
+    "graphspec/operations/pipeline.py:called": 11376,
+    "graphspec/operations/pipeline.py:checked": 6284,
+    "graphspec/operations/pipeline.py:entered": 12371,
+    "graphspec/operations/pipeline.py:given": 10361,
+    "graphspec/operations/pipeline.py:made": 30840,
+    "graphspec/operations/pipeline.py:narrowed": 32880,
+    "graphspec/operations/pipeline.py:probed.<locals>.probe": 10738,
+    "graphspec/operations/pipeline.py:probed.<locals>.spec": 30317,
+    "graphspec/operations/pipeline.py:qualified": 207455,
+    "graphspec/operations/pipeline.py:roled": 32952,
+    "graphspec/operations/pipeline.py:settled": 523961,
+    "graphspec/operations/sets.py:chosen": 14863,
+    "graphspec/operations/state.py:Segment.named": 5365,
+    "graphspec/operations/state.py:Table.__init__": 14358,
+    "graphspec/operations/state.py:Table.find": 15621,
+    "graphspec/operations/state.py:Table.lookup": 9255,
+    "graphspec/operations/window.py:by_period": 6097,
+    "graphspec/registries.py:Held.__getitem__": 318046,
+    "graphspec/registries.py:Held.__iter__": 92505,
+    "graphspec/registries.py:Names.named": 157178,
+    "graphspec/registries.py:Names.names": 91856,
+    "graphspec/representations/groups.py:base.<locals>.found": 6568,
+    "graphspec/schema/added.py:mapping": 14736,
+    "graphspec/schema/added.py:paired": 5752,
+    "graphspec/schema/declaration.py:EdgeType.__init__": 55349,
+    "graphspec/schema/declaration.py:EdgeType.declaration": 28438,
+    "graphspec/schema/declaration.py:Registry.attributes": 16141,
+    "graphspec/schema/declaration.py:Registry.code": 14099,
+    "graphspec/schema/declaration.py:Registry.codes": 54734,
+    "graphspec/schema/declaration.py:Registry.group": 76257,
+    "graphspec/schema/declaration.py:Registry.kind": 98165,
+    "graphspec/schema/declaration.py:Registry.ordered": 6490,
+    "graphspec/schema/schema.py:Schema.about": 7058,
+    "graphspec/schema/schema.py:Schema.added_columns": 5542,
+    "graphspec/schema/schema.py:Schema.declared": 25151,
+    "graphspec/schema/schema.py:Schema.encoder": 7510,
+    "graphspec/schema/schema.py:Schema.entities": 7928,
+    "graphspec/schema/schema.py:Schema.kind": 21126,
+    "graphspec/schema/schema.py:Schema.targets": 8658,
+    "graphspec/schema/schema.py:fields": 22989,
+    "graphspec/schema/schema.py:listed": 8821,
+    "graphspec/schema/schema.py:named": 16783,
+    "graphspec/schema/schema.py:typename": 8190,
+    "graphspec/views/spans.py:encode": 5326,
+    "tuning/bank/bank.py:Bank.joining": 19804,
+    "tuning/bank/bank.py:Bank.several": 14863,
+    "tuning/bank/bank.py:Bank.viewed": 14639,
+    "tuning/batches/batching.py:moved": 5533,
+    "tuning/batches/tensors.py:Features.__init__": 18680,
+    "tuning/batches/tensors.py:Gather.__init__": 6216,
+    "tuning/batches/tensors.py:Host.__init__": 14499,
+    "tuning/batches/tensors.py:Resolver.grouped": 5515,
+    "tuning/batches/tensors.py:Resolver.local": 5271,
+    "tuning/batches/tensors.py:Resolver.numbers": 15010,
+    "tuning/batches/tensors.py:Resolver.run": 72237,
+    "tuning/batches/tensors.py:Resolver.spread": 6477,
+    "tuning/batches/tensors.py:Resolver.table": 16401,
+    "tuning/batches/tensors.py:array": 55197,
+    "tuning/batches/tensors.py:features": 8891,
+    "tuning/batches/tensors.py:joined": 18596,
+    "tuning/batches/tensors.py:prepare": 71178,
+    "tuning/families/affinity.py:AffinityNet.forward": 59,
+    "tuning/families/event_graph.py:EventGraphNet.forward": 84,
+    "tuning/families/layers.py:Asked.forward": 1046,
+    "tuning/families/layers.py:CausalAttention.forward": 682,
+    "tuning/families/layers.py:EvolvingLayer.forward": 4,
+    "tuning/families/layers.py:GatedTCN.forward": 3,
+    "tuning/families/layers.py:GraphCell.forward": 8,
+    "tuning/families/layers.py:GraphCell.support": 16,
+    "tuning/families/layers.py:Groups.__init__": 239,
+    "tuning/families/layers.py:Head.forward": 1047,
+    "tuning/families/layers.py:KeyEmbedding.forward": 64,
+    "tuning/families/layers.py:MatrixGate.forward": 12,
+    "tuning/families/layers.py:NodeHead.forward": 375,
+    "tuning/families/layers.py:NumberHead.forward": 822,
+    "tuning/families/layers.py:PathHead.forward": 103,
+    "tuning/families/layers.py:References.forward": 1046,
+    "tuning/families/layers.py:Relations.forward": 622,
+    "tuning/families/layers.py:ScoreHead.forward": 21,
+    "tuning/families/layers.py:Segments.__init__": 382,
+    "tuning/families/layers.py:SelectiveSSM.forward": 8,
+    "tuning/families/layers.py:SequenceHead.forward": 85,
+    "tuning/families/layers.py:Spatial.forward": 521,
+    "tuning/families/layers.py:TemporalEdges.forward": 224,
+    "tuning/families/layers.py:TimeEncoding.forward": 1302,
+    "tuning/families/layers.py:aggregate": 280,
+    "tuning/families/layers.py:attribute_inputs": 143,
+    "tuning/families/layers.py:chebyshev": 7,
+    "tuning/families/layers.py:chebyshev.<locals>.laplacian": 17,
+    "tuning/families/layers.py:masked_mean": 86,
+    "tuning/families/layers.py:masked_weights": 466,
+    "tuning/families/layers.py:mean": 1995,
+    "tuning/families/layers.py:padded": 216,
+    "tuning/families/layers.py:related": 172,
+    "tuning/families/layers.py:segment_matmul": 760,
+    "tuning/families/layers.py:segment_softmax": 16,
+    "tuning/families/layers.py:segments": 382,
+    "tuning/families/memory.py:Antisymmetric.matrix": 60,
+    "tuning/families/memory.py:Antisymmetric.step": 60,
+    "tuning/families/memory.py:Intensity.step": 4,
+    "tuning/families/memory.py:MailboxGRU.prepare": 74,
+    "tuning/families/memory.py:MailboxGRU.step": 330,
+    "tuning/families/memory.py:MemoryNet.forward": 88,
+    "tuning/families/memory.py:MemoryNet.forward.<locals>.clock": 342,
+    "tuning/families/memory.py:MemoryNet.paired": 9,
+    "tuning/families/memory.py:MemoryNet.readout": 88,
+    "tuning/families/memory.py:MutualRNN.initial": 1,
+    "tuning/families/memory.py:MutualRNN.read": 2,
+    "tuning/families/memory.py:MutualRNN.step": 4,
+    "tuning/families/memory.py:Rule.initial": 87,
+    "tuning/families/memory.py:Rule.prepare": 14,
+    "tuning/families/memory.py:Rule.read": 231,
+    "tuning/families/memory.py:Rule.state": 223,
+    "tuning/families/mixed.py:MessageLayer.forward": 138,
+    "tuning/families/mixed.py:MixedNet.forward": 69,
+    "tuning/families/model_spec.py:blocks": 47478,
+    "tuning/families/model_spec.py:derived": 42127,
+    "tuning/families/model_spec.py:groups": 45458,
+    "tuning/families/model_spec.py:memory_state": 9250,
+    "tuning/families/model_spec.py:unread": 87228,
+    "tuning/families/model_spec.py:view": 71400,
+    "tuning/families/periods.py:EndContext.forward": 135,
+    "tuning/families/periods.py:enabled": 4495,
+    "tuning/families/periods.py:gather_end": 11,
+    "tuning/families/periods.py:lookback": 4880,
+    "tuning/families/projection.py:ProjectionNet.forward": 80,
+    "tuning/families/projection.py:ProjectionNet.structural": 80,
+    "tuning/families/sequence.py:MixerLayer.forward": 2,
+    "tuning/families/sequence.py:SequenceNet.forward": 83,
+    "tuning/families/sequence.py:SequenceNet.mixer": 1,
+    "tuning/families/sequence.py:SequenceNet.ssm": 2,
+    "tuning/families/sequence.py:SequenceNet.transformer": 80,
+    "tuning/families/signal.py:SignalNet.adjacency": 62,
+    "tuning/families/signal.py:SignalNet.forward": 62,
+    "tuning/families/snapshot.py:SnapshotNet.coupling": 28,
+    "tuning/families/snapshot.py:SnapshotNet.entity_sequence": 201,
+    "tuning/families/snapshot.py:SnapshotNet.forward": 244,
+    "tuning/families/snapshot.py:SnapshotNet.framed": 30,
+    "tuning/families/snapshot.py:SnapshotNet.graph_sequence": 15,
+    "tuning/families/snapshot.py:SnapshotNet.observed": 244,
+    "tuning/families/snapshot.py:SnapshotNet.previous": 18,
+    "tuning/families/snapshot.py:SnapshotNet.referred": 244,
+    "tuning/families/snapshot.py:SnapshotNet.values": 244,
+    "tuning/families/tree.py:TreeNet.encode": 266,
+    "tuning/families/tree.py:TreeNet.forward": 75,
+    "tuning/families/walks.py:WalkNet.forward": 202,
+    "tuning/families/walks.py:WalkNet.walked": 202,
+    "tuning/searches/space.py:Space.draw.<locals>.choose": 10787,
 }
 
 
@@ -183,32 +416,55 @@ def library():
     LOG.debug("library parsed exit modules=%d seconds=%.4f", len(trees), time.perf_counter() - started)
 
 
-def timing(tree):
+def functions(tree):
     started = time.perf_counter()
-    found = any(
-        called(node.func) in TIMERS
-        if isinstance(node, ast.Call)
-        else isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and any(called(entry) in MARKS for entry in node.decorator_list)
-        for node in ast.walk(tree)
-    )
-    LOG.debug("timing exit found=%s seconds=%.4f", found, time.perf_counter() - started)
+    found, waiting = [], [(tree, "")]
+    while waiting:
+        node, prefix = waiting.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found.append((prefix + child.name, child))
+                waiting.append((child, prefix + child.name + ".<locals>."))
+            elif isinstance(child, ast.ClassDef):
+                waiting.append((child, prefix + child.name + "."))
+            else:
+                waiting.append((child, prefix))
+    LOG.debug("functions exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return found
 
 
-def untimed(root, folders):
+def logs(function):
     started = time.perf_counter()
-    found = []
+    names, waiting = set(), [node for node in ast.iter_child_nodes(function) if not isinstance(node, NESTED)]
+    while waiting:
+        node = waiting.pop()
+        if isinstance(node, ast.Call):
+            names.add(called(node.func))
+        waiting.extend(child for child in ast.iter_child_nodes(node) if not isinstance(child, NESTED))
+    found = "perf_counter" in names and not names.isdisjoint(LOGGERS)
+    LOG.debug("logs exit function=%s found=%s seconds=%.6f", function.name, found, time.perf_counter() - started)
+    return found
+
+
+def untimed(root, folders, listed):
+    started = time.perf_counter()
+    found, stale, held = [], [], set()
     for place, source in sources(root, folders):
-        tree = parsed(source)
-        defines = any(
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not compiled(node)
-            for node in ast.walk(tree)
-        )
-        if defines and not timing(tree):
-            found.append(place)
-    LOG.debug("untimed exit modules=%d seconds=%.4f", len(found), time.perf_counter() - started)
-    return found
+        for name, function in functions(parsed(source)):
+            key = "%s:%s" % (place, name)
+            if compiled(function):
+                continue
+            timing = any(called(getattr(entry, "func", entry)) in MARKS for entry in function.decorator_list)
+            timing = timing or logs(function)
+            if key in listed:
+                held.add(key)
+                if timing:
+                    stale.append(key)
+            elif not timing:
+                found.append(key)
+    stale = sorted(stale + [key for key in listed if key not in held])
+    LOG.debug("untimed exit found=%d stale=%d seconds=%.4f", len(found), len(stale), time.perf_counter() - started)
+    return sorted(found), stale
 
 
 def spelling(pieces):
@@ -377,49 +633,58 @@ def write(root, place, source):
     LOG.debug("write exit place=%s seconds=%.4f", place, time.perf_counter() - started)
 
 
-def test_every_module_that_defines_a_function_times_something(tmp_path):
-    assert untimed(ROOT, CODE) == []
+def test_every_function_logs_its_time_or_is_compiled_or_is_listed_with_its_calls_per_run(tmp_path):
+    assert untimed(ROOT, CODE, CALLED) == ([], [])
+    clock = "import logging\nimport time\n\nLOG = logging.getLogger(__name__)\n\n\n"
+    logged = "    started = time.perf_counter()\n    LOG.debug('work exit seconds=%.4f', time.perf_counter() - started)\n"
     write(tmp_path, "graphspec/plain.py", "def work():\n    return 1\n")
     write(tmp_path, "graphspec/constant.py", "VALUE = 1\n")
-    write(
-        tmp_path,
-        "tuning/kernel.py",
-        "from numba import njit\n\n\n@njit(cache=True)\ndef work():\n    return 1\n",
-    )
-    write(tmp_path, "tuning/clocked.py", "import time\n\n\ndef work():\n    return time.perf_counter()\n")
-    write(
-        tmp_path,
-        "tuning/marked.py",
-        "from graphspec.infra.timing import timed\n\n\n@timed('work')\ndef work():\n    return 1\n",
-    )
+    write(tmp_path, "tuning/kernel.py", "from numba import njit\n\n\n@njit(cache=True)\ndef work():\n    return 1\n")
+    write(tmp_path, "tuning/clocked.py", clock + "def work():\n" + logged)
+    write(tmp_path, "tuning/deadline.py", clock + "def work():\n    return time.perf_counter() + 1\n")
+    write(tmp_path, "tuning/told.py", clock + "def work():\n    LOG.info('work')\n")
+    write(tmp_path, "tuning/marked.py", "from graphspec.infra.timing import timed\n\n\n@timed('work')\ndef work():\n    return 1\n")
+    write(tmp_path, "tuning/staged.py", "@staged\ndef work(job, index):\n    return None\n")
     write(
         tmp_path,
         "tuning/measured.py",
-        "from graphspec.infra.timing import measure\n\n\ndef work():\n"
-        "    with measure('work'):\n        return 1\n",
-    )
-    write(tmp_path, "graphspec/remarked.py", "def work():\n    return 1  # perf_counter timed measure(\n")
-    write(tmp_path, "graphspec/quoted.py", "def work():\n    return 'time.perf_counter() measure( timed'\n")
-    write(
-        tmp_path,
-        "graphspec/dated.py",
-        "from datetime import timedelta\n\n\ndef work():\n    return timedelta(seconds=1)\n",
+        "from graphspec.infra.timing import measure\n\n\ndef work():\n    with measure('work'):\n        return 1\n",
     )
     write(
         tmp_path,
-        "graphspec/imported.py",
-        "from time import perf_counter\n\nfrom graphspec.infra.timing import measure, timed\n\n\n"
-        "def work():\n    return perf_counter, measure, timed\n",
+        "graphspec/nested.py",
+        clock + "def work():\n    def inner():\n        return 1\n\n" + logged + "    return inner\n",
     )
-    write(tmp_path, "tuning/measurement.py", "def work(measurement, untimed):\n    return measurement(untimed)\n")
-    assert untimed(tmp_path, CODE) == [
-        "graphspec/dated.py",
-        "graphspec/imported.py",
-        "graphspec/plain.py",
-        "graphspec/quoted.py",
-        "graphspec/remarked.py",
-        "tuning/measurement.py",
-    ]
+    write(
+        tmp_path,
+        "graphspec/outer.py",
+        clock + "def work():\n    def inner():\n" + logged.replace("    ", "        ") + "\n    return inner\n",
+    )
+    write(
+        tmp_path,
+        "graphspec/methods.py",
+        clock + "class Held:\n    def __init__(self):\n" + logged.replace("    ", "        ") + "\n"
+        "    def read(self):\n        return 1\n",
+    )
+    write(tmp_path, "graphspec/remarked.py", "def work():\n    return 1  # perf_counter LOG.debug timed\n")
+    write(tmp_path, "graphspec/quoted.py", "def work():\n    return 'time.perf_counter() LOG.debug( timed'\n")
+    write(tmp_path, "graphspec/each.py", "def each():\n    return 1\n\n\ndef again():\n    return 2\n")
+    listed = {"graphspec/each.py:each": 9000, "graphspec/each.py:gone": 9000, "tuning/marked.py:work": 9000}
+    assert untimed(tmp_path, CODE, listed) == (
+        [
+            "graphspec/each.py:again",
+            "graphspec/methods.py:Held.read",
+            "graphspec/nested.py:work.<locals>.inner",
+            "graphspec/outer.py:work",
+            "graphspec/plain.py:work",
+            "graphspec/quoted.py:work",
+            "graphspec/remarked.py:work",
+            "tuning/deadline.py:work",
+            "tuning/measured.py:work",
+            "tuning/told.py:work",
+        ],
+        ["graphspec/each.py:gone", "tuning/marked.py:work"],
+    )
 
 
 def test_no_name_of_a_dataset_that_was_an_adapter_appears(tmp_path):

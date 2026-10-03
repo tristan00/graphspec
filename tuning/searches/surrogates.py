@@ -6,6 +6,7 @@ import torch
 
 from graphspec.infra import compute
 from graphspec.infra.log import emit
+from graphspec.infra.timing import timed
 
 from .space import propose
 
@@ -15,6 +16,7 @@ TREES = 100
 COMPLETION_WEIGHT = 3.0
 
 
+@timed("surrogates.fit_model")
 def fit_model(x, y):
     from botorch.models.map_saas import get_map_saas_model
     from botorch.models.transforms.outcome import Standardize
@@ -42,6 +44,7 @@ def fit_model(x, y):
 
 
 class Search:
+    @timed("surrogates.Search.__init__")
     def __init__(self, x, losses, completed, device):
         from botorch.acquisition.analytic import LogConstrainedExpectedImprovement, LogExpectedImprovement
         from botorch.models import ModelListGP
@@ -79,6 +82,7 @@ class Search:
             seconds=time.perf_counter() - started,
         )
 
+    @timed("surrogates.Search.evaluate")
     def evaluate(self, x):
         posterior = self.objective.posterior(x)
         mean, deviation = -posterior.mean.reshape(-1), posterior.variance.clamp_min(0).sqrt().reshape(-1)
@@ -95,6 +99,7 @@ class Search:
             scores["completion_probability"] = torch.special.ndtr(z).reshape(-1)
         return scores
 
+    @timed("surrogates.Search.choose")
     def choose(self, candidates):
         started = time.perf_counter()
         x = torch.as_tensor(np.asarray(candidates), dtype=torch.double, device=self.device).unsqueeze(-2)
@@ -115,6 +120,7 @@ class Search:
         return index, float(self.scores["acquisition"][index])
 
 
+@timed("surrogates.log_expected_improvement")
 def log_expected_improvement(best, mean, deviation):
     from scipy.stats import norm
 
@@ -127,6 +133,7 @@ def log_expected_improvement(best, mean, deviation):
 
 
 class Forest:
+    @timed("surrogates.Forest.__init__")
     def __init__(self, x, losses, completed, seed):
         from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
@@ -162,6 +169,7 @@ class Forest:
             seconds=time.perf_counter() - started,
         )
 
+    @timed("surrogates.Forest.choose")
     def choose(self, candidates):
         from joblib import Parallel, delayed
         from scipy.stats import norm
@@ -203,6 +211,7 @@ class Forest:
         return index, float(scores["acquisition"][index])
 
 
+@timed("surrogates.botorch_model")
 def botorch_model(x, losses, complete, seed, device):
     import botorch
 
@@ -217,6 +226,7 @@ def botorch_model(x, losses, complete, seed, device):
     return model
 
 
+@timed("surrogates.forest_model")
 def forest_model(x, losses, complete, seed, device):
     import sklearn
 

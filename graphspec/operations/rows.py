@@ -37,6 +37,7 @@ def keyed_relations(registry):
     return KEYED[registry]
 
 
+@timed("rows.counted")
 def counted(counts):
     return np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
 
@@ -78,6 +79,7 @@ def shown(graph, step, source, target):
     return np.isin(moment + np.asarray(source, np.int64), lit) & np.isin(moment + np.asarray(target, np.int64), lit)
 
 
+@timed("rows.fact_bytes")
 def fact_bytes(graph):
     return sum(graph.arrays[name].dtype.itemsize for name in FACTS)
 
@@ -122,12 +124,14 @@ def written(registry, rows, columns, codes, dtype, named):
     return result
 
 
+@timed("rows.select")
 def select(graph, names, mask):
     if mask.all():
         return graph
     return graph.replace(**{name: take(graph.arrays[name], mask) for name in names})
 
 
+@timed("rows.extend")
 def extend(graph, source, target, code, step, present, references):
     if not len(source):
         return graph
@@ -195,14 +199,17 @@ def prune(graph, kept, carry, name):
     )
 
 
+@timed("rows.pruned")
 def pruned():
     return Table(EMPTY, state=np.zeros(0, np.int8))
 
 
+@timed("rows.kept")
 def kept():
     return Table(EMPTY, value=EMPTY)
 
 
+@timed("rows.lived")
 def lived():
     return Table(EMPTY, pair=EMPTY, source=EMPTY, target=EMPTY, code=EMPTY)
 
@@ -293,10 +300,12 @@ def first_kept(carry, name, graph, entity, step, alive):
     return first
 
 
+@timed("rows.runs")
 def runs():
     return Table(EMPTY, last=EMPTY, current=EMPTY, begun=EMPTY)
 
 
+@timed("rows.prune_mask")
 def prune_mask(fact_source, fact_target, fact_code, fact_present, kept, connected, carry, name):
     table = carry.state["prune/" + name]
     keys = carry.keys(fact_code, fact_source, fact_target)
@@ -323,6 +332,7 @@ def prune_mask(fact_source, fact_target, fact_code, fact_present, kept, connecte
     return result
 
 
+@timed("rows.run_state")
 def run_state(carry, name, graph, ids, count, step, keys):
     last, current, begun = np.full(count, -2, np.int64), np.zeros(count, np.int64), np.zeros(count, np.int64)
     group_key = np.zeros(count, np.int64)
@@ -344,6 +354,7 @@ def run_state(carry, name, graph, ids, count, step, keys):
     )
 
 
+@timed("rows.open_runs")
 def open_runs(carry, name, pieces):
     carry.state[name] = Table(
         np.concatenate([piece[0] for piece in pieces] + [np.zeros(0, np.int64)]),
@@ -354,6 +365,7 @@ def open_runs(carry, name, pieces):
     )
 
 
+@timed("rows.member_end")
 def member_end(graph):
     member = graph.step_graph
     first = np.r_[0, np.flatnonzero(np.diff(member)) + 1]

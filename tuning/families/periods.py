@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from graphspec.infra.timing import timed
 from graphspec.infra.workspace import gathered
 
 LOG = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ def blocks(bank, original, cfg):
 
 
 class EndContext(nn.Module):
+    @timed("periods.EndContext.__init__")
     def __init__(self, width):
         super().__init__()
         self.value = nn.Linear(width, width, bias=False)

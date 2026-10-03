@@ -25,6 +25,7 @@ from .tensors import keys, prepare, resolve
 LOG = logging.getLogger(__name__)
 
 
+@timed("packing.serve")
 def serve(bank_directory, cfg, threads, resident, device, jobs, results, entries, timing_directory=None):
     path = None if timing_directory is None else Path(timing_directory) / ("packing-%s.json" % os.getpid())
     with Timeline(path), measure("packing_worker"):
@@ -83,9 +84,11 @@ def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results,
 
 
 class Packer:
+    @timed("packing.Packer.__enter__")
     def __enter__(self):
         return self
 
+    @timed("packing.Packer.__exit__")
     def __exit__(self, *exception):
         self.close()
 
@@ -151,6 +154,7 @@ class Packer:
         limit = self.bank.residents.limit // copies
         active, first = Counter(), 0
 
+        @timed("packing.Packer.prefetch.ready")
         def ready(index):
             nonlocal first
             while first < min(self.position, index + 1):
@@ -185,6 +189,7 @@ class Packer:
             time.perf_counter() - started,
         )
 
+    @timed("packing.Packer.submit")
     def submit(self, index, groups):
         number = self.free.popleft()
         slot = self.slots.get(number)

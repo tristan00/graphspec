@@ -105,6 +105,7 @@ def batches(blocks, size, sizes, shuffle, frame_budget=None, chunk=CHUNK):
     return result
 
 
+@timed("batching.combine_tree")
 def combine_tree(trees):
     return {
         key: combine_tree([tree[key] for tree in trees])
@@ -114,6 +115,7 @@ def combine_tree(trees):
     }
 
 
+@timed("batching.attributed")
 def attributed(parts):
     edge_offsets = np.r_[0, np.cumsum([len(p["relation"]) for p in parts])]
     names = list(parts[0]["attributes"])
@@ -138,6 +140,7 @@ def attributed(parts):
     )
 
 
+@timed("batching.shared")
 def shared(parts):
     spans = {}
     for p in parts:
@@ -427,5 +430,6 @@ def recipe_batch(bank, blocks, cfg):
     return b
 
 
+@timed("batching.pack_batch")
 def pack_batch(bank, blocks, cfg, device):
     return materialise(bank, cfg, recipe_batch(bank, blocks, cfg), device)

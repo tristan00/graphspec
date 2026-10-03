@@ -7,7 +7,7 @@ from pathlib import Path
 
 from graphspec.infra.files import JsonCache
 from graphspec.infra.processes.processes import Heartbeat
-from graphspec.infra.timing import Timeline
+from graphspec.infra.timing import Timeline, timed
 
 LOG = logging.getLogger(__name__)
 TIMEOUT_EXIT_CODE = 124
@@ -27,6 +27,7 @@ def policy(preparation_seconds):
 
 
 class FitBudget:
+    @timed("budget.FitBudget.__init__")
     def __init__(self, directory, deadline, preparation_seconds):
         self.timeline = Timeline()
         self.deadline = deadline
@@ -46,6 +47,7 @@ class FitBudget:
         self.updated = time.perf_counter()
         self.pulse(self.phase)
 
+    @timed("budget.FitBudget.__enter__")
     def __enter__(self):
         self.timeline.__enter__()
         self.root = self.timeline.measure("fit")
@@ -54,6 +56,7 @@ class FitBudget:
         self.thread.start()
         return self
 
+    @timed("budget.FitBudget.__exit__")
     def __exit__(self, *exception):
         self.stopped.set()
         if self.thread is not None:
@@ -64,6 +67,7 @@ class FitBudget:
         if exception[0] is None and self.error is not None:
             raise self.error
 
+    @timed("budget.FitBudget.record")
     def record(self):
         try:
             while not self.stopped.wait(1.0):
@@ -74,6 +78,7 @@ class FitBudget:
 
     @contextmanager
     def measure(self, name):
+        started = time.perf_counter()
         with self.lock:
             self.active[name] = time.perf_counter()
             if name == "graph_prepare":
@@ -95,21 +100,28 @@ class FitBudget:
                 if name == "graph_prepare":
                     self.graph_preparation["finished"] = time.perf_counter()
                     self.pulse()
+            LOG.debug("budget measure exit name=%s seconds=%.4f", name, time.perf_counter() - started)
 
     def batches(self, stream, name):
-        iterator = iter(stream)
+        started, iterator, count = time.perf_counter(), iter(stream), 0
         while True:
             with self.measure(name):
                 try:
                     batch = next(iterator)
                 except StopIteration:
+                    LOG.debug(
+                        "budget batches exit name=%s batches=%d seconds=%.4f", name, count, time.perf_counter() - started
+                    )
                     return
+            count += 1
             yield batch
 
+    @timed("budget.FitBudget.check")
     def check(self):
         if time.perf_counter() >= self.deadline:
             raise TimeoutError("trial deadline reached")
 
+    @timed("budget.FitBudget.pulse")
     def pulse(self, phase=None):
         with self.lock:
             now = time.perf_counter()
@@ -133,10 +145,12 @@ class FitBudget:
 
 
 class PreparationTimeout(subprocess.TimeoutExpired):
+    @timed("budget.PreparationTimeout.__str__")
     def __str__(self):
         return REASON % self.timeout
 
 
+@timed("budget.wait_worker")
 def wait_worker(process, deadline, directory, preparation_seconds):
     cache = JsonCache()
     while True:

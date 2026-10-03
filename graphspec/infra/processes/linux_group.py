@@ -9,6 +9,7 @@ SET_CHILD_SUBREAPER = 36
 GET_CHILD_SUBREAPER = 37
 
 
+@timed("linux_group.checked")
 def checked(result):
     if result < 0:
         error = ctypes.get_errno()
@@ -26,6 +27,7 @@ class ProcessGroup:
         checked(LIBC.prctl(GET_CHILD_SUBREAPER, ctypes.byref(self.previous), 0, 0, 0))
         checked(LIBC.prctl(SET_CHILD_SUBREAPER, 1, 0, 0, 0))
 
+    @timed("linux_group.ProcessGroup.attach")
     def attach(self, process):
         self.process = process
 

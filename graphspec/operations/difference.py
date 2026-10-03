@@ -20,6 +20,7 @@ def stated(registry):
     return result
 
 
+@timed("difference.carried")
 def carried(registry, spec):
     return {"prune/difference": pruned()}
 
@@ -67,7 +68,7 @@ DIFFERENCE = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=None,
-        version=4,
+        version=5,
         graphs=2,
     ),
 )
