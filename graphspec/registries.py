@@ -2,6 +2,7 @@ import itertools
 import logging
 import pickle
 import sys
+import threading
 import time
 from collections.abc import MutableMapping
 from contextlib import contextmanager
@@ -13,7 +14,16 @@ LOG = logging.getLogger(__name__)
 REGISTRIES = []
 CHANGES = itertools.count(1)
 GENERATION = 0
-READ = dict(held=None, by=None)
+
+
+class Reading(threading.local):
+    def __init__(self):
+        started = time.perf_counter()
+        self.held, self.frame = None, None
+        LOG.debug("reading exit thread=%d seconds=%.6f", threading.get_ident(), time.perf_counter() - started)
+
+
+READ = Reading()
 
 
 def changed():
@@ -99,13 +109,16 @@ class Names:
     def named(self, name):
         if type(name) is not str or name not in self.held:
             raise KeyError("no %s is registered under the name %r" % (self.label, name))
-        if self.versioned and READ["by"] is not None and READ["held"] is not None and (self.label, name) not in READ["held"]:
-            raise ValueError(
-                "the operation %s reads the %s %s, which the key of the variant it derives does not hold; an "
-                "operation reads an entry it chooses by a parameter stated with "
-                "graphspec.operations.parameters.registered, and an entry the statement names from its place in the "
-                "statement, never by a name of its own" % (READ["by"], self.label, name)
-            )
+        if self.versioned and READ.held is not None and (self.label, name) not in READ.held:
+            found = reader(sys._getframe(1))
+            if found is not None:
+                raise ValueError(
+                    "the code %s.%s reads the %s %s during a derivation whose registry, pipeline, settings and "
+                    "representations do not name it; code registered from outside the library reads an entry chosen "
+                    "by a parameter stated with graphspec.operations.parameters.registered, and one the statement or "
+                    "the schema names from its place there, never by a name of its own"
+                    % (found.f_globals["__name__"], found.f_code.co_qualname, self.label, name)
+                )
         return self.held[name]
 
     def names(self):
@@ -119,14 +132,30 @@ def versions(read):
     return [list(entry) for entry in found]
 
 
+def reader(frame):
+    started = time.perf_counter()
+    library, found, below = {registry.module.partition(".")[0] for registry in REGISTRIES}, None, True
+    while frame is not None and below:
+        package = frame.f_globals["__name__"].partition(".")[0]
+        if frame is READ.frame or package in library and found is not None:
+            below = False
+        elif package not in library and found is None and package not in sys.stdlib_module_names:
+            found = frame
+        frame = frame.f_back
+    result = None if below else found
+    LOG.debug("reader exit outside=%s seconds=%.6f", result is not None, time.perf_counter() - started)
+    return result
+
+
 @contextmanager
 def keyed(held):
     started = time.perf_counter()
-    before, READ["held"] = READ["held"], frozenset(held)
+    before = READ.held, READ.frame
+    READ.held, READ.frame = frozenset(held), sys._getframe(2)
     try:
         yield
     finally:
-        READ["held"] = before
+        READ.held, READ.frame = before
         LOG.debug("keyed exit entries=%d seconds=%.4f", len(held), time.perf_counter() - started)
 
 
@@ -160,12 +189,13 @@ def carried():
                 ) from error
         found.append((registry.label, registry.module, tuple(held)))
     LOG.debug("carried exit registries=%d seconds=%.4f", len(found), time.perf_counter() - started)
-    return tuple(found), READ["held"]
+    return tuple(found), READ.held
 
 
 def restored(given):
     started = time.perf_counter()
-    entries, READ["held"] = given
+    entries, READ.held = given
+    READ.frame = None
     for module in sorted({module for _, module, held in entries if held is not None}):
         import_module(module)
     loaded = [

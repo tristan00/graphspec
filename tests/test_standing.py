@@ -44,6 +44,10 @@ LOADERS = ("import_module", "__import__", "run_module")
 LOCAL = re.compile(r"(^|[\\/])local([\\/]|$)")
 INFRA = "graphspec/infra"
 GROUPED = ("graphspec", "tuning")
+REGISTRY = "Names"
+REGISTERED = "REGISTRIES"
+LOOKUP = "graphspec/registries.py"
+WRITTEN = re.compile(r"^[ \t]*del .*$|\.held\.pop\(|\.held\[[^\]\n]*\][ \t]*=(?!=)", re.M)
 LAYERS = {
     INFRA: (),
     "graphspec/registries.py": (),
@@ -152,8 +156,8 @@ RECORDED = {
     "graphspec.contract": (7, "38b16e367216b1bbcc637e922fd74ef7e4d1c85e857b4067383f3568c3e5e3fd"),
     "graphspec.product": (3, "d0c09e09b3f2d702ab9d6386bfdafc3c35cddfdae8a9fc4fa21283446479d2e7"),
     "graphspec.negatives": (7, "9b8c3873643df24cb35407ce19b9503a7f6a3f6cd31444c57f842931279215d5"),
-    "derivation": (44, "02c6636b10da9c21d3e5832ec1530073aebb0c058bc5e33cc46a90321564a1ea"),
-    "views": (56, "676bb62ff0eee08d01c044b0fc7b39a6b6070351b321ad617af41ae3bf3f8d91"),
+    "derivation": (45, "0683eff37baf800d16d126b8523cf207f02c4bef792a6d7299425668caee9335"),
+    "views": (57, "f2aaace55637b4357b0f58015f704e41e16a746c3cc080dc7f869b12ef6a80ec"),
     "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
     "index": (5, "0c2dbace2e5333eb6de3c15286b206fadd7e66a8bfac6d181c8802e891b68cc8"),
     "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
@@ -838,6 +842,80 @@ def test_graphspec_does_not_import_tuning_and_nothing_reads_local(tmp_path):
     ]
 
 
+def registered(root):
+    started = time.perf_counter()
+    trees = [parsed(source) for _, source in sources(root, CODE)]
+    kinds = {REGISTRY} | {
+        node.name
+        for tree in trees
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and REGISTRY in map(called, node.bases)
+    }
+    found = {
+        target.id
+        for tree in trees
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and called(node.value.func) in kinds
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    LOG.debug("registered exit names=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def bypassing(root, places, names):
+    started = time.perf_counter()
+    found, reach = [], names | {REGISTERED}
+    for place in listed(root, places):
+        source = (root / place).read_text(encoding="utf-8")
+        left = WRITTEN.sub("", source) if ".held" in source else ""
+        if place == LOOKUP or ".held" not in left or not any(name in source for name in reach):
+            continue
+        looped, written, held = set(), set(), []
+        for node in ast.walk(parsed(source)):
+            if isinstance(node, (ast.For, ast.comprehension)) and reach & set(map(called, ast.walk(node.iter))):
+                looped |= {target.id for target in ast.walk(node.target) if isinstance(target, ast.Name)}
+            elif isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load):
+                written.add(id(node.value))
+            elif isinstance(node, ast.Attribute) and node.attr == "pop":
+                written.add(id(node.value))
+            elif isinstance(node, ast.Attribute) and node.attr == "held":
+                held.append(node)
+        found += [
+            (place, node.lineno)
+            for node in held
+            if id(node) not in written
+            and (called(node.value) in names or isinstance(node.value, ast.Name) and node.value.id in looped)
+        ]
+    LOG.debug("bypassing exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return sorted(found)
+
+
+def test_only_the_registries_read_what_a_registry_holds_and_other_code_reads_it_by_its_lookup(tmp_path):
+    started = time.perf_counter()
+    names = registered(ROOT)
+    assert {"OPERATIONS", "REPRESENTATIONS", "NEGATIVES", "ENCODERS", "TIES", "MEASURES"} <= names
+    assert bypassing(ROOT, PROJECT, names) == []
+    write(tmp_path, LOOKUP, "def work(NEGATIVES):\n    return NEGATIVES.held['hops']\n")
+    write(tmp_path, "graphspec/direct.py", "from graphspec import NEGATIVES\n\nFOUND = NEGATIVES.held['hops']\n")
+    write(tmp_path, "tuning/copied.py", "from graphspec.schema import time\n\nCOPY = dict(time.TIES.held)\n")
+    write(tmp_path, "tests/looped.py", "from graphspec import registries\n\nFOUND = [names.held for names in registries.REGISTRIES]\n")
+    write(tmp_path, "tests/pair.py", "from graphspec import TIES, TYPES\n\nfor names in (TIES, TYPES):\n    COPY = dict(names.held)\n")
+    write(
+        tmp_path,
+        "tests/written.py",
+        "def work(NEGATIVES, entry, window, encoding):\n    NEGATIVES.held['parity'] = entry\n"
+        "    del NEGATIVES.held['parity']\n    NEGATIVES.held.pop('parity', None)\n    return window.held, encoding.held\n",
+    )
+    assert bypassing(tmp_path, ("graphspec", "tuning", "tests"), names) == [
+        ("graphspec/direct.py", 3),
+        ("tests/looped.py", 3),
+        ("tests/pair.py", 4),
+        ("tuning/copied.py", 3),
+    ]
+    LOG.info("registries read by lookup exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_every_module_sits_in_a_group_and_imports_only_the_groups_below_it(tmp_path):
     assert layered(ROOT, CODE) == ([], [])
     for place in ("graphspec", "graphspec/infra", "graphspec/infra/processes", "graphspec/views", "tuning"):
@@ -922,7 +1000,7 @@ def shipped():
 
     started = time.perf_counter()
     found = {
-        "%s %s" % (registry.label, name): registry.held[name]
+        "%s %s" % (registry.label, name): registry.named(name)
         for registry in registries.REGISTRIES
         if registry.versioned and registry is not OPERATIONS
         for name in sorted(registry.shipped)

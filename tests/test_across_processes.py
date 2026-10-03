@@ -7,6 +7,7 @@ from functools import partial
 import numpy as np
 import pytest
 import registered
+import support
 from support import SEED, configuration
 
 from graphspec import (
@@ -236,18 +237,18 @@ def test_a_worker_holds_exactly_the_entries_its_caller_holds_or_stops_naming_one
     keyed = {(NEGATIVES.label, "parity")}
     with registries.keyed(keyed):
         started = spawned(registered.ready, (), carried, restored)
-    assert registries.READ["held"] is None
-    monkeypatch.setitem(registries.READ, "held", None)
+    assert registries.READ.held is None
+    monkeypatch.setattr(registries.READ, "held", None)
     for names in REGISTRIES:
-        monkeypatch.setattr(names, "held", dict(names.held))
+        monkeypatch.setattr(names, "held", support.entries(names))
     monkeypatch.setattr(processes, "FAILED", [])
     NEGATIVES.held["parity"] = Rule(registered.parities, registered.parity, 9)
     SEVERAL.held["stale"] = registered.middle
     del STEPS.held["changes"]
     started["initializer"](*started["initargs"])
-    assert guarded(abs, -1) == 1 and registries.READ["held"] == keyed
+    assert guarded(abs, -1) == 1 and registries.READ.held == keyed and registries.READ.frame is None
     assert NEGATIVES.named("parity").version == 1 and "stale" not in SEVERAL.names() and "changes" in STEPS.names()
-    assert all(names.held[name] is names.shipped[name] for names in REGISTRIES for name in names.shipped)
+    assert all(names.named(name) is names.shipped[name] for names in REGISTRIES for name in names.shipped)
     monkeypatch.setattr(registered.Kept, "version", 2)
     started["initializer"](*started["initargs"])
     with pytest.raises(
@@ -287,7 +288,7 @@ def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(
         if pickled is not None
     } == {(names.label, name) for names, name, _ in ENTRIES} | {(SEES.label, "vanished")}
     monkeypatch.setattr(processes, "FAILED", [])
-    monkeypatch.setattr(SEES, "held", dict(SEES.held))
+    monkeypatch.setattr(SEES, "held", support.entries(SEES))
     started["initializer"](*started["initargs"])
     with pytest.raises(AttributeError, match="Vanished"):
         guarded(abs, -1)

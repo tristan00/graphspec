@@ -9,6 +9,7 @@ import pyarrow.parquet as pq
 
 from graphspec import OPERATIONS
 from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.operations.pipeline import resolved
@@ -478,6 +479,11 @@ def normal(tasks, schema):
     }
     LOG.debug("normal exit references=%d seconds=%.4f", len(references), time.perf_counter() - started)
     return dict(tasks, references=references)
+
+
+@timed("support.entries")
+def entries(names):
+    return {name: names.named(name) for name in names.names()}
 
 
 def several(registry):

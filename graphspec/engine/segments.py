@@ -3,10 +3,14 @@ import time
 
 import numpy as np
 
+from graphspec import registries
 from graphspec.infra.timing import measure, timed
 from graphspec.infra.workspace import gathered
+from graphspec.operations import sets
+from graphspec.operations.operation import OPERATIONS
 from graphspec.operations.state import EMPTY, ENTITIES, SECOND, Entities, Second, Segment
 from graphspec.representations import base as representations
+from graphspec.representations.registry import REPRESENTATIONS
 from graphspec.representations.registry import chosen as representing
 from graphspec.views.graph import Dense
 
@@ -15,6 +19,25 @@ from .edits import cut, edited
 from .stitch import BUFFERED, Appender, joined, stitched
 
 LOG = logging.getLogger(__name__)
+
+
+def reading(registry, steps, read):
+    started = time.perf_counter()
+    found = registry.schema.read() + [(OPERATIONS, [step.operation.name for step in steps])] + read
+    found += [
+        (parameter.registry, [step.parameters[parameter.name]])
+        for step in steps
+        for parameter in step.operation.stated(registry)
+        if parameter.registry is not None and parameter.name in step.parameters
+    ]
+    result = frozenset((names.label, name) for names, held in found for name in held)
+    LOG.debug("reading exit entries=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+@timed("segments.shown")
+def shown(registry, spec, groups):
+    return [(sets.STORAGE, list(sets.chosen(registry, spec).values())), (REPRESENTATIONS, list(groups))]
 
 
 @timed("segments.table_sizes")
@@ -394,9 +417,10 @@ def opened(plan, member, graph, low, high, edit, entities, seen):
 
 class Source:
     @timed("segments.Source.__init__")
-    def __init__(self, plan, members, registry, steps, spec, groups, seed, limits, partitions):
+    def __init__(self, plan, members, registry, steps, spec, groups, seed, limits, partitions, held):
         self.plan, self.members, self.registry, self.steps, self.spec = plan, members, registry, steps, spec
         self.chosen, self.seed, self.limits, self.partitions = representing(groups), seed, limits, partitions
+        self.held = held
 
     def initial(self):
         started = time.perf_counter()
@@ -475,9 +499,11 @@ class Derivation:
                 "a derivation begins from graphs in the form the operations work on, Graph.dense(); found %s"
                 % ", ".join(strangers)
             )
-        plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), room, registry)
-        source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
-        result = cls(source, None, 0, source.initial(), ())
+        held = reading(registry, steps, shown(registry, spec, groups))
+        with registries.keyed(held):
+            plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), room, registry)
+            source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions, held)
+            result = cls(source, None, 0, source.initial(), ())
         LOG.info("derivation begun exit graphs=%d seconds=%.3f", len(members), time.perf_counter() - started)
         return result
 
@@ -490,10 +516,11 @@ class Derivation:
                 "step %d across %d graphs" % (self.time, high, len(spans))
             )
         state, segments = self.state, []
-        for member, low, stop in spans:
-            moved = None if edit is None else edit.moved(-int(self.source.plan.steps[member]))
-            segment, state = advanced(self.source, member, self.source.members[member], low, stop, moved, state)
-            segments.append(segment)
+        with registries.keyed(self.source.held):
+            for member, low, stop in spans:
+                moved = None if edit is None else edit.moved(-int(self.source.plan.steps[member]))
+                segment, state = advanced(self.source, member, self.source.members[member], low, stop, moved, state)
+                segments.append(segment)
         result = Derivation(self.source, self, high, state, tuple(segments))
         LOG.info(
             "continued exit time=%d high=%d segments=%d seconds=%.3f",
@@ -526,26 +553,27 @@ class Derivation:
         started = time.perf_counter()
         source, segments = self.source, self.derivations()
         arrays = joined([segment.piece for segment in segments])
-        for name, value in representations.ended(source.chosen, self.state["representations"]).items():
-            arrays[name] = np.r_[arrays[name], value]
         table = np.concatenate(
             source.plan.tables(source.members)
             + [np.asarray(segment.fresh[0]).astype(np.float16, copy=False) for segment in segments]
         )
         entities = self.state["entities"]
-        result = representations.stitched(
-            arrays,
-            table,
-            entities.kinds,
-            entities.tokens,
-            source.registry,
-            source.spec,
-            source.chosen,
-            source.limits,
-            self.time,
-            None,
-        )
-        representations.validate(result, source.plan.name, source.registry, source.spec, source.chosen)
+        with registries.keyed(source.held):
+            for name, value in representations.ended(source.chosen, self.state["representations"]).items():
+                arrays[name] = np.r_[arrays[name], value]
+            result = representations.stitched(
+                arrays,
+                table,
+                entities.kinds,
+                entities.tokens,
+                source.registry,
+                source.spec,
+                source.chosen,
+                source.limits,
+                self.time,
+                None,
+            )
+            representations.validate(result, source.plan.name, source.registry, source.spec, source.chosen)
         LOG.info("derivation arrays exit arrays=%d seconds=%.3f", len(result), time.perf_counter() - started)
         return result
 
@@ -585,10 +613,11 @@ def single(beside):
 
 def apart(graph, beside, registry, steps, seed, limits, partitions):
     started = time.perf_counter()
-    plan = Plan([graph], paired(steps, single(beside)), alone(graph), 0, registry)
-    carry, dense, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, EMPTY)
-    states = transform.initial(registry, steps)
-    derived, _ = transform.derive(dense, registry, steps, seed, limits, partitions, carry, states, False)
+    with registries.keyed(reading(registry, steps, [])):
+        plan = Plan([graph], paired(steps, single(beside)), alone(graph), 0, registry)
+        carry, dense, _, _ = opened(plan, 0, graph, 0, graph.steps, None, plan.entities, EMPTY)
+        states = transform.initial(registry, steps)
+        derived, _ = transform.derive(dense, registry, steps, seed, limits, partitions, carry, states, False)
     drawn = carry.drawn()
     candidates = dict(drawn, source=carry.local(drawn["source"]), target=carry.local(drawn["target"]))
     LOG.info(
@@ -614,40 +643,42 @@ def opening(graph, beside, registry):
 
 def variant(members, beside, registry, steps, spec, groups, seed, limits, partitions, destination):
     started = time.perf_counter()
-    plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), 0, registry)
-    source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions)
-    state = source.initial()
-    appender = Appender(destination, BUFFERED)
-    made = []
-    try:
-        for member, graph in enumerate(members):
-            clock = time.perf_counter()
-            with measure("dense"):
-                dense = graph.dense()
-            segment, state = advanced(source, member, dense, 0, dense.steps, None, state)
-            made.append(np.asarray(segment.fresh[0]).astype(np.float16, copy=False))
-            with measure("spill"):
-                appender.add(segment.piece)
-            LOG.info("segment build exit index=%d seconds=%.3f", member, time.perf_counter() - clock)
-        appender.add(representations.ended(source.chosen, state["representations"]))
-    except BaseException:
-        appender.abandon()
-        raise
-    written = appender.close()
-    with measure("stitch"):
-        arrays = representations.stitched(
-            written,
-            np.concatenate(plan.tables(members) + made),
-            plan.entities.kinds,
-            plan.entities.tokens,
-            registry,
-            spec,
-            source.chosen,
-            limits,
-            int(plan.steps[-1]),
-            destination,
-        )
-    representations.validate(arrays, plan.name, registry, spec, source.chosen)
+    held = reading(registry, steps, shown(registry, spec, groups))
+    with registries.keyed(held):
+        plan = Plan(members, paired(steps, beside), unified(members, registry, spec, seed), 0, registry)
+        source = Source(plan, members, registry, steps, spec, groups, seed, limits, partitions, held)
+        state = source.initial()
+        appender = Appender(destination, BUFFERED)
+        made = []
+        try:
+            for member, graph in enumerate(members):
+                clock = time.perf_counter()
+                with measure("dense"):
+                    dense = graph.dense()
+                segment, state = advanced(source, member, dense, 0, dense.steps, None, state)
+                made.append(np.asarray(segment.fresh[0]).astype(np.float16, copy=False))
+                with measure("spill"):
+                    appender.add(segment.piece)
+                LOG.info("segment build exit index=%d seconds=%.3f", member, time.perf_counter() - clock)
+            appender.add(representations.ended(source.chosen, state["representations"]))
+        except BaseException:
+            appender.abandon()
+            raise
+        written = appender.close()
+        with measure("stitch"):
+            arrays = representations.stitched(
+                written,
+                np.concatenate(plan.tables(members) + made),
+                plan.entities.kinds,
+                plan.entities.tokens,
+                registry,
+                spec,
+                source.chosen,
+                limits,
+                int(plan.steps[-1]),
+                destination,
+            )
+        representations.validate(arrays, plan.name, registry, spec, source.chosen)
     LOG.info(
         "variant exit seconds=%.3f segments=%d observations=%d events=%d",
         time.perf_counter() - started,

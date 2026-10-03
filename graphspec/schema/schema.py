@@ -645,6 +645,18 @@ class Schema:
     def about(self):
         return {table: entry["about"] for table, entry in self.edges.items() if entry["about"] is not None}
 
+    @timed("schema.Schema.read")
+    def read(self):
+        return [
+            (TYPES, [column["type"] for column in self.columns.values()]),
+            (ENCODERS, [column["encoder"] for column in self.columns.values()]),
+            (HELD, [held["encoder"] for held in self.holds.values()]),
+            (SORTS, [entry["sort"] for entry in self.tasks["references"].values()]),
+            (TARGETS, list(self.targets())),
+            (TIES, [] if self.ties is None else [self.ties]),
+            (ABOUT, list(self.about().values())),
+        ]
+
     def asked(self, stated):
         started = time.perf_counter()
         entry = fields(stated, ASKED, "the tasks")

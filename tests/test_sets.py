@@ -7,7 +7,7 @@ import pytest
 import support
 
 from conftest import SPLITS, Inline
-from graphspec import ABOUT, HELD, STORAGE, inspect
+from graphspec import ABOUT, HELD, NEGATIVES, STORAGE, inspect
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments
 from graphspec.facts.stored import Facts
@@ -420,7 +420,7 @@ def test_a_set_edge_is_one_edge_per_pair_of_members_under_the_pairs_form(bank):
 
 
 def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, monkeypatch):
-    monkeypatch.setattr(HELD, "held", dict(HELD.held))
+    monkeypatch.setattr(HELD, "held", support.entries(HELD))
     held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), STORED["node"], 5, SPLITS)
     registry = held.fitted(cfg)
@@ -529,6 +529,18 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
         "note, which are about edges",
     ):
         segments.whole(dense, {}, registry, steps, support.SEED, GraphLimits("cpu"), None)
+    monkeypatch.setattr(NODES, "requires", (Count("nodes/degree", "degree", peeking, "stored", "stored"),))
+    with pytest.raises(
+        ValueError,
+        match="the code test_sets.peeking reads the rule of negative sampling hops during a derivation whose registry",
+    ):
+        segments.whole(dense, {}, registry, steps, support.SEED, GraphLimits("cpu"), None)
+
+
+@timed("sets.peeking")
+def peeking(registry, settings):
+    NEGATIVES.named("hops")
+    return True
 
 
 @timed("sets.members_of")

@@ -3,14 +3,16 @@ import importlib
 import logging
 import sys
 import time
+from functools import partial
 from pathlib import Path
 
 import fixture
 import keyed
 import numpy as np
 import pytest
+import registered
 import support
-from registered import everything, parities, parity, running, unchecked, uncounted, unlooking
+from registered import HUB, everything, hubs, parities, parity, running, unchecked, uncounted, unlooking
 
 from conftest import SPLITS, Inline
 from graphspec import (
@@ -289,7 +291,8 @@ def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leav
     before = opened.variant(cfg)[0]
     seen = dict(cfg, splits=dict(SPLITS, sees=dict(train=["without_scored"], validation=[])))
     assert opened.variant(seen)[0] == Deriver(bank, "cpu", support.SEED, RESIDENT).variant(seen)[0] != before
-    assert opened.holds(seen) - opened.holds(cfg) == {(SEES.label, "without_scored")}
+    entries = [{tuple(entry) for entry in opened.identity(held)["entries"]} for held in (seen, cfg)]
+    assert entries[0] - entries[1] == {(SEES.label, "without_scored", 1)}
     rows = [opened.arrays(0, held).read("row_index") for held in (cfg, seen)]
     assert not identical(*rows) and opened.variant(cfg)[0] == before
     other = Deriver(bank, "cpu", support.SEED + 1, RESIDENT)
@@ -361,9 +364,129 @@ READERS = dict(
     fixed=(fixed, unruled, "hops"),
     stated=(chosen, ruling, None),
 )
+PEEKING = dict(at=None)
+PEEKED = (
+    "the code test_pipelines.%s reads the rule of negative sampling hops during a derivation whose registry, "
+    "pipeline, settings and representations do not name it"
+)
 
 
-def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_variant_and_its_views_hold_it(bank):
+@timed("pipelines.carrying")
+def carrying(registry, settings):
+    if PEEKING["at"] == "carrying":
+        NEGATIVES.named("hops")
+    return {}
+
+
+@timed("pipelines.parting")
+def parting(registry, settings):
+    if PEEKING["at"] == "parting":
+        NEGATIVES.named("hops")
+    return ("one",)
+
+
+@timed("pipelines.parted")
+def parted(graph, registry, settings, seed, limits, carry, held):
+    return graph
+
+
+@timed("pipelines.peeking")
+def peeking(graph, registry, settings, seed, limits, carry, held):
+    if "peek/on" in settings and PEEKING["at"] == "peeking":
+        NEGATIVES.named("hops")
+    return graph
+
+
+@timed("pipelines.conditioned")
+def conditioned(spec):
+    if PEEKING["at"] == "conditioned":
+        NEGATIVES.named("hops")
+    return True
+
+
+@timed("pipelines.peeks")
+def peeks(registry):
+    return (specs.flag("peek/on", True, conditioned),)
+
+
+@timed("pipelines.begins")
+def begins(registry, spec):
+    if PEEKING["at"] == "begins":
+        NEGATIVES.named("hops")
+    return {}
+
+
+@timed("pipelines.looking")
+def looking(spec):
+    if PEEKING["at"] == "looking":
+        NEGATIVES.named("hops")
+    return 0, 0
+
+
+@timed("pipelines.pieced")
+def pieced(shown, state):
+    if PEEKING["at"] == "pieced":
+        NEGATIVES.named("hops")
+    return {}
+
+
+@timed("pipelines.closing")
+def closing(state):
+    if PEEKING["at"] == "closing":
+        NEGATIVES.named("hops")
+    return {}
+
+
+@timed("pipelines.stitching")
+def stitching(arrays, registry, spec, limits):
+    if PEEKING["at"] == "stitching":
+        NEGATIVES.named("hops")
+    return {}
+
+
+@timed("pipelines.checking")
+def checking(arrays, name, registry, spec):
+    if PEEKING["at"] == "checking":
+        NEGATIVES.named("hops")
+
+
+@timed("pipelines.hubbing")
+def hubbing(entry, kinds, tokens, rows, registry):
+    if PEEKING["at"] == "hubbing":
+        NEGATIVES.named("hops")
+    return hubs(entry, kinds, tokens, rows, registry)
+
+
+def peeked(places, derive):
+    started = time.perf_counter()
+    for place in places:
+        PEEKING["at"] = place
+        with pytest.raises(ValueError, match=PEEKED % place):
+            derive()
+    PEEKING["at"] = None
+    LOG.debug("peeked exit places=%d seconds=%.4f", len(places), time.perf_counter() - started)
+
+
+PEEKER = Representation("test.peeker", "encode", begins, looking, pieced, closing, stitching, checking, 1)
+PEEKS = Operation(
+    "test",
+    "peeks",
+    (Phase("parted", parted, carrying, parting), Phase("peeking", peeking, None, None)),
+    peeks,
+    (),
+    (),
+    (),
+    (),
+    None,
+    None,
+    1,
+    1,
+)
+
+
+def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_variant_and_its_views_hold_it(
+    bank, monkeypatch
+):
     started = time.perf_counter()
     unversioned = Representation("test.probe", "encode", uncounted, unlooking, running, None, None, unchecked, None)
     with pytest.raises(ValueError, match="the representation test.probe states no version"):
@@ -415,12 +538,36 @@ def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_varian
                 continue
             with pytest.raises(
                 ValueError,
-                match="the operation %s reads the rule of negative sampling %s, which the key of the variant it "
-                "derives does not hold" % (operation.name, read),
+                match="the code test_pipelines.%s reads the rule of negative sampling %s during a derivation whose "
+                "registry, pipeline, settings and representations do not name it" % (function.__name__, read),
             ):
                 opened.arrays(opened.graphs(cfg)[0], cfg)
         finally:
             del OPERATIONS.held[operation.name]
+    monkeypatch.setattr(registered, "hubs", hubbing)
+    for names, entry in ((OPERATIONS, PEEKS), (REPRESENTATIONS, PEEKER), (OPERATIONS, HUB)):
+        names.register(entry.name, entry)
+    try:
+        opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
+        cfg = support.configuration(
+            opened.registry, dict(view="snapshot"), support.several(opened.registry), 5, SPLITS, (PEEKS.name,)
+        )
+        registry, (steps, spec), dense = opened.fitted(cfg), opened.stated(cfg)[1:3], support.shown(opened, 0).dense()
+        begin = partial(
+            Derivation.begun, [dense], {}, registry, steps, spec, (PEEKER.name,), support.SEED, GraphLimits("cpu"), None, 0
+        )
+        peeked(("carrying", "parting", "begins"), begin)
+        begun = begin()
+        peeked(("peeking", "conditioned", "pieced", "looking"), partial(begun.continued, dense.steps, None))
+        done = begun.continued(dense.steps, None)
+        peeked(("closing", "stitching", "checking"), done.arrays)
+        assert len(done.arrays())
+        hub = pipeline.resolved(opened.registry, [dict(operation=HUB.name, parameters={})])
+        grown = pipeline.grown(registry, hub, None)
+        peeked(("hubbing",), partial(segments.whole, dense, {}, grown, hub, support.SEED, GraphLimits("cpu"), None))
+    finally:
+        PEEKING["at"] = None
+        del OPERATIONS.held[PEEKS.name], REPRESENTATIONS.held[PEEKER.name], OPERATIONS.held[HUB.name]
     LOG.info("versioned entries exit seconds=%.3f", time.perf_counter() - started)
 
 

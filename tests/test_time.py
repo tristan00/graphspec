@@ -504,7 +504,7 @@ def test_a_form_stops_where_it_cannot_state_what_it_is_given():
 
 def test_forms_rules_for_ties_and_choices_of_steps_are_registered_from_outside(monkeypatch):
     for names in (FORMS, TIES):
-        monkeypatch.setattr(names, "held", dict(names.held))
+        monkeypatch.setattr(names, "held", support.entries(names))
     FORMS.register("lasting", forms.Form(lambda table, length: forms.signal(table, 0, length), True))
     rows = pa.table(dict(key=["a"], index=pa.array([2], pa.int64())))
     found = forms.reduced("lasting", "clock", rows, length=3).to_pydict()
@@ -815,8 +815,8 @@ def test_the_rule_for_several_facts_is_stated_where_a_bank_holds_them_and_valida
     assert "time/several" not in {parameter.name for parameter in specs.settings(forms_bank.registry, ())}
     truth = truths(seen)["several"]
     before = validate(truth, seen.registry, seen.splits)
-    monkeypatch.setattr(SEVERAL, "held", dict(broken=broken, **SEVERAL.held))
-    monkeypatch.setattr(STEPS, "held", dict(broken=Broken(), **STEPS.held))
+    monkeypatch.setattr(SEVERAL, "held", dict(broken=broken, **support.entries(SEVERAL)))
+    monkeypatch.setattr(STEPS, "held", dict(broken=Broken(), **support.entries(STEPS)))
     after = validate(truth, seen.registry, seen.splits)
     assert len(before) == len(after) > 0
     for left, right in zip(before, after):
@@ -945,7 +945,7 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
     from graphspec.views.view import offered
     from graphspec.views.visible import unstated
 
-    monkeypatch.setattr(STEPS, "held", dict(STEPS.held))
+    monkeypatch.setattr(STEPS, "held", support.entries(STEPS))
 
     class Halved:
         version = 1

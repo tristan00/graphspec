@@ -20,7 +20,7 @@ from graphspec.representations.registry import chosen as representing
 from graphspec.views.graph import Dense, Graph, verify_dense
 
 from . import transform
-from .segments import Plan, opened, paired, placed, unified
+from .segments import Plan, opened, paired, placed, reading, shown, unified
 from .stitch import BUFFERED, Appender
 
 LOG = logging.getLogger(__name__)
@@ -271,27 +271,32 @@ def launched(executors):
 
 def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partitions):
     started = time.perf_counter()
-    plans = [
-        Plan(job["members"], paired(steps, job["beside"]), unified(job["members"], registry, spec, seed), 0, registry)
-        for job in jobs
-    ]
-    stages = staging(steps, registry)
+    with registries.keyed(reading(registry, steps, shown(registry, spec, groups))):
+        plans = [
+            Plan(job["members"], paired(steps, job["beside"]), unified(job["members"], registry, spec, seed), 0, registry)
+            for job in jobs
+        ]
+        stages = staging(steps, registry)
+        initargs = (
+            [
+                (plan, [str(path) for path in job["paths"]], str(job["spill"]), str(job["destination"]))
+                for plan, job in zip(plans, jobs)
+            ],
+            registry,
+            [step.entry() for step in steps],
+            spec,
+            groups,
+            seed,
+            limits,
+            partitions,
+            max(1, numba.config.NUMBA_NUM_THREADS // workers),
+        )
+        executors = [
+            ProcessPoolExecutor(1, **spawned(attach, initargs, registries.carried, registries.restored))
+            for _ in range(workers)
+        ]
     named = {stage.name: stage for stage in stages}
     sizes = [len(job["members"]) for job in jobs]
-    initargs = (
-        [
-            (plan, [str(path) for path in job["paths"]], str(job["spill"]), str(job["destination"]))
-            for plan, job in zip(plans, jobs)
-        ],
-        registry,
-        [step.entry() for step in steps],
-        spec,
-        groups,
-        seed,
-        limits,
-        partitions,
-        max(1, numba.config.NUMBA_NUM_THREADS // workers),
-    )
     hosts, dedicated = max(1, workers // 8), workers > 2
     order = {stage.name: place for place, stage in enumerate(stages)}
     ordered = {(job, stage.name): 0 for job in range(len(jobs)) for stage in stages}
@@ -330,10 +335,6 @@ def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partiti
             return job, name, arguments
         return None
 
-    executors = [
-        ProcessPoolExecutor(1, **spawned(attach, initargs, registries.carried, registries.restored))
-        for _ in range(workers)
-    ]
     try:
         with worker_threads(initargs[-1]):
             launched(executors)

@@ -12,7 +12,7 @@ import pyarrow as pa
 import torch
 from numba import njit
 
-from graphspec import OPERATIONS, Registry, registries
+from graphspec import Registry, registries
 from graphspec.budgets import GraphLimits
 from graphspec.engine import join, schedule, segments, transform
 from graphspec.engine.edits import sliced
@@ -34,10 +34,9 @@ from graphspec.operations import pipeline, sets
 from graphspec.operations.pipeline import resolved
 from graphspec.representations import groups as representations
 from graphspec.representations.registry import REPRESENTATIONS
-from graphspec.schema.references import SORTS
-from graphspec.schema.schema import ENCODERS, HELD, TYPES, WRITTEN, Encoding, fitted
+from graphspec.schema.schema import ENCODERS, WRITTEN, Encoding, fitted
 from graphspec.schema.targets import TARGETS
-from graphspec.schema.time import ABOUT, SEVERAL, TIES
+from graphspec.schema.time import SEVERAL
 from graphspec.views.graph import Graph
 from graphspec.views.view import STEPS, beside, finished, sampled, sequences, view
 from graphspec.views.visible import SEES, STATEMENT, Looking
@@ -49,7 +48,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 56
+VIEW = 57
 TOKEN = (1 << 62) - 1
 
 
@@ -200,24 +199,9 @@ def coded():
     return dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION)
 
 
-@timed("bank.holding")
-def holding(entries, steps):
-    return frozenset((label, name) for label, name, _ in entries) | {
-        (OPERATIONS.label, step.operation.name) for step in steps
-    }
-
-
 def readings(registry, steps, several, storage, sees):
     started = time.perf_counter()
-    schema = registry.schema
-    result = [
-        (TYPES, [column["type"] for column in schema.columns.values()]),
-        (ENCODERS, [column["encoder"] for column in schema.columns.values()]),
-        (HELD, [held["encoder"] for held in schema.holds.values()]),
-        (SORTS, [entry["sort"] for entry in schema.tasks["references"].values()]),
-        (TARGETS, list(schema.targets())),
-        (TIES, [] if schema.ties is None else [schema.ties]),
-        (ABOUT, [entry["about"] for entry in schema.edges.values() if entry["about"] is not None]),
+    result = registry.schema.read() + [
         (STEPS, [steps]),
         (SEVERAL, [] if several is None else [several]),
         (sets.STORAGE, list(storage.values())),
@@ -692,22 +676,19 @@ class Deriver(Bank):
         if not provisional.schema.added_columns():
             LOG.debug("deriver growing exit columns=0 seconds=%.4f", time.perf_counter() - started)
             return provisional
-        entries = registries.versions(self.reads(steps, spec, cfg)[1])
         named = specs.digest(
             dict(
                 pipeline=[step.keyed() for step in steps],
                 device=self.device,
                 seed=self.seed,
                 versions=coded(),
-                entries=entries,
+                entries=registries.versions(self.reads(steps, spec, cfg)[1]),
             )
         )
         path = viewed.folder / "added" / (named + ".json")
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            with registries.keyed(holding(entries, steps)):
-                states = self.trained(viewed, steps, provisional, cfg)
-            write_json(path, dict(states=states))
+            write_json(path, dict(states=self.trained(viewed, steps, provisional, cfg)))
         result = pipeline.grown(viewed.registry, steps, read_json(path)["states"])
         LOG.info("deriver growing exit columns=%d seconds=%.3f", len(result.schema.added_columns()), time.perf_counter() - started)
         return result
@@ -766,10 +747,9 @@ class Deriver(Bank):
                 members = [Graph.load(path, mapped=True) for path in paths]
                 beside = self.seconds(steps, self.groups(cfg)[index], cfg, True)
                 jobs.append(dict(members=members, beside=beside, paths=paths, spill=spill, destination=temporary))
-            with registries.keyed(self.holds(cfg)):
-                schedule.variants(
-                    jobs, self.fitted(cfg), steps, spec, chosen, self.seed, workers, self.limits(), self.partitions(cfg)
-                )
+            schedule.variants(
+                jobs, self.fitted(cfg), steps, spec, chosen, self.seed, workers, self.limits(), self.partitions(cfg)
+            )
             for (temporary, final), job in zip(folders, jobs):
                 shutil.rmtree(job["spill"])
                 temporary.replace(final)
@@ -825,10 +805,6 @@ class Deriver(Bank):
         _, steps, spec, chosen = self.stated(cfg)
         return self.cache / "variants" / specs.digest(self.identity(cfg)), steps, spec, chosen
 
-    @timed("bank.Deriver.holds")
-    def holds(self, cfg):
-        return holding(self.identity(cfg)["entries"], self.stated(cfg)[1])
-
     @timed("bank.Deriver.stamp")
     def stamp(self, cfg):
         root = self.variant(cfg)[0]
@@ -849,19 +825,18 @@ class Deriver(Bank):
             with Workspace(destination):
                 try:
                     members = [Graph.load(self.view(member, cfg), mapped=joining) for member in indices]
-                    with registries.keyed(self.holds(cfg)):
-                        segments.variant(
-                            members,
-                            self.seconds(steps, indices, cfg, joining),
-                            self.fitted(cfg),
-                            steps,
-                            spec,
-                            chosen,
-                            self.seed,
-                            self.limits(),
-                            self.partitions(cfg),
-                            destination,
-                        )
+                    segments.variant(
+                        members,
+                        self.seconds(steps, indices, cfg, joining),
+                        self.fitted(cfg),
+                        steps,
+                        spec,
+                        chosen,
+                        self.seed,
+                        self.limits(),
+                        self.partitions(cfg),
+                        destination,
+                    )
                 except BaseException as error:
                     traceback.clear_frames(error.__traceback__)
                     raise

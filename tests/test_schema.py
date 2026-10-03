@@ -162,7 +162,7 @@ class Halved:
 
 def test_column_types_and_encoders_are_registered_by_name_from_outside(monkeypatch):
     for names in (TYPES, ENCODERS):
-        monkeypatch.setattr(names, "held", dict(names.held))
+        monkeypatch.setattr(names, "held", support.entries(names))
     TYPES.register("count", Count())
     ENCODERS.register("halved", Halved())
     with pytest.raises(ValueError, match="the column type count is registered twice"):

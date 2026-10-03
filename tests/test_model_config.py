@@ -96,7 +96,7 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     stated = registry()
     stated.extras["several"] = False
     stated.schema.columns, stated.schema.holds, stated.schema.edges, stated.schema.sets = {}, {}, {}, {}
-    stated.schema.ties = None
+    stated.schema.ties, stated.schema.read = None, list
     bank.registry, bank.manifest = SimpleNamespace(**vars(stated)), dict(spec_sha256="stated")
     bank.cache = Path(tmp_path)
     bank.variants, bank.device, bank.directory, bank.digests = {}, "cpu", Path(tmp_path), {}
