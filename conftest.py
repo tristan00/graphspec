@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import shutil
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -43,6 +44,14 @@ def linked(place, compiled):
         link.symlink_to(compiled, target_is_directory=True)
     LOG.debug("linked exit place=%s seconds=%.4f", place, time.perf_counter() - started)
     return link
+
+
+def bytecode(place):
+    started = time.perf_counter()
+    os.environ.pop("PYTHONDONTWRITEBYTECODE", None)
+    os.environ["PYTHONPYCACHEPREFIX"] = sys.pycache_prefix = str(place)
+    LOG.debug("bytecode exit place=%s seconds=%.4f", place, time.perf_counter() - started)
+    return place
 
 
 def temporary(place):
@@ -97,6 +106,9 @@ def ended(suite, run):
     if shared.exists():
         shutil.rmtree(shared)
     removed = cleared(run)
+    mirror = Path(sys.pycache_prefix) / run.relative_to(run.anchor)
+    if mirror.exists():
+        shutil.rmtree(mirror)
     LOG.info("ended exit run=%s removed=%d seconds=%.4f", run.name, len(removed), time.perf_counter() - started)
     return run
 
@@ -149,6 +161,7 @@ os.environ["GRAPHSPEC_HOME"] = str(
 @pytest.hookimpl(wrapper=True)
 def pytest_sessionstart(session):
     linked(Path(os.environ["GRAPHSPEC_HOME"]), Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "numba")
+    bytecode(Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "bytecode")
     os.environ["PYTEST_DEBUG_TEMPROOT"] = str(temporary(Path(os.environ["GRAPHSPEC_HOME"])))
     result = yield
     started = time.perf_counter()

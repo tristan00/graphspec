@@ -39,7 +39,7 @@ class WorkerProcess:
         self.process = None
         self.closed = False
         self.started = False
-        self.invocation = [sys.executable, "-B", "-u", "-m", "graphspec.infra.processes.worker", module, *arguments]
+        self.invocation = [sys.executable, "-u", "-m", "graphspec.infra.processes.worker", module, *arguments]
         self.stream = stream
 
     @property

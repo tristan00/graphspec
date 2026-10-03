@@ -380,6 +380,7 @@ def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leav
     assert Deriver(bank, "cpu", support.SEED, RESIDENT).variant(cfg)[0] == before
     module = tmp_path / "edited_probe.py"
     monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
     stated = dict(cfg, pipeline=cfg["pipeline"] + [dict(operation="probe.edited", parameters={})])
     roots = []
     try:

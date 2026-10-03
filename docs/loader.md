@@ -145,7 +145,7 @@ Inputs are read-only: partition indexes and derived bank data are stored under t
 
 On Windows, named mutexes scoped to the user's SID serialize public bank builds, model checks, fits, and searches across runtime homes. These guards create no lock files in the profile, runtime home, or checkout; Windows releases ownership when its owner exits. Internal worker processes belong to the admitted job.
 
-For source development use `python -B` or `PYTHONDONTWRITEBYTECODE=1` to keep bytecode out of the checkout. Pytest's repository cache is disabled. Compilation caches, lint caches, and test temporary directories must stay under the configured runtime home; use an external `--basetemp` beneath its `tmp/` directory. Previous `~/.graphspec/settings.json` files are retired and are not read.
+For source development use `python -B` or `PYTHONDONTWRITEBYTECODE=1` to keep bytecode out of the checkout. Importing the library turns writing bytecode off for its process and the processes it starts, unless `PYTHONPYCACHEPREFIX` names a folder outside the checkout on the home's volume, where Python then keeps it; a prefix inside the checkout stops the import naming it. The suite keeps its bytecode so, in `workers/<checkout>-<hash>/bytecode` under the home, beside its compiled code. Pytest's repository cache is disabled. Compilation caches, lint caches, and test temporary directories must stay under the configured runtime home; use an external `--basetemp` beneath its `tmp/` directory. Previous `~/.graphspec/settings.json` files are retired and are not read.
 
 ## Environment setup
 

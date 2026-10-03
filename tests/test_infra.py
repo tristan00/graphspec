@@ -70,7 +70,7 @@ def test_a_home_whose_temporary_folder_is_longer_than_windows_hands_to_libraries
     (tmp_path / "importing.py").write_text("import graphspec\n")
     root = Path(__file__).parent.parent
     done = subprocess.run(
-        [sys.executable, "-B", str(tmp_path / "importing.py")],
+        [sys.executable, str(tmp_path / "importing.py")],
         env=dict(os.environ, GRAPHSPEC_HOME=str(longer), PYTHONPATH=str(root)),
         cwd=root,
         capture_output=True,
@@ -90,6 +90,8 @@ def test_the_identities_of_compiled_functions_start_far_from_one_and_differ_betw
 
 
 def test_a_home_of_the_suite_is_named_by_its_run_and_worker_and_shares_the_compiled_code_of_the_checkout(request):
+    import sys
+
     import numba
 
     started = time.perf_counter()
@@ -104,6 +106,8 @@ def test_a_home_of_the_suite_is_named_by_its_run_and_worker_and_shares_the_compi
     assert Path(os.environ["GRAPHSPEC_HOME"]) == held.home(suite, run, worker)
     assert Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) == held.lasting(suite, root)
     assert os.path.samefile(numba.config.CACHE_DIR, held.lasting(suite, root) / "numba")
+    assert sys.pycache_prefix == os.environ["PYTHONPYCACHEPREFIX"] == str(held.lasting(suite, root) / "bytecode")
+    assert "PYTHONDONTWRITEBYTECODE" not in os.environ
     LOG.info("home exit seconds=%.4f", time.perf_counter() - started)
 
 
@@ -134,10 +138,16 @@ def test_a_run_of_the_suite_removes_its_own_homes_and_leaves_other_runs_and_the_
 def test_a_run_removes_at_its_start_the_homes_of_runs_whose_processes_all_ended_and_never_those_of_a_run_going(
     request, tmp_path
 ):
+    import sys
+
     from graphspec.infra.processes.locks import Lock, LockBusy
 
     started = time.perf_counter()
     held, workers = rooted(request), tmp_path / "workers"
+    mirror = Path(sys.pycache_prefix) / workers.relative_to(workers.anchor)
+    for run in ("killed", "going", "orphaned", "this"):
+        (mirror / run / "serial" / "tmp").mkdir(parents=True)
+        (mirror / run / "serial" / "tmp" / "probe.cpython-314.pyc").write_bytes(b"")
     for run in ("killed", "going", "orphaned"):
         for worker in ("serial", "gw0"):
             (workers / run / worker / "tmp").mkdir(parents=True)
@@ -152,6 +162,7 @@ def test_a_run_removes_at_its_start_the_homes_of_runs_whose_processes_all_ended_
         assert sorted(path.name for path in (tmp_path / "tmp" / "suite").iterdir()) == ["going", "orphaned"]
         kept = ["going", "graphspec-0123456789ab", "gw3", "orphaned", "runs.lock", "starting", "this"]
         assert sorted(path.name for path in workers.iterdir()) == kept
+        assert sorted(path.name for path in mirror.iterdir()) == ["going", "orphaned", "this"]
         with pytest.raises(LockBusy):
             Lock(workers / "this" / "serial.alive").__enter__()
         worker, none = held.begun(tmp_path, "this", "gw0", False)
@@ -159,6 +170,7 @@ def test_a_run_removes_at_its_start_the_homes_of_runs_whose_processes_all_ended_
         worker.__exit__(None, None, None)
         assert held.finished(tmp_path, "this", alive) == workers / "this"
         assert sorted(path.name for path in workers.iterdir()) == [name for name in kept if name != "this"]
+        assert sorted(path.name for path in mirror.iterdir()) == ["going", "orphaned"]
     finally:
         for lock in going:
             lock.__exit__(None, None, None)
@@ -291,7 +303,7 @@ def test_a_lock_names_its_holder_and_a_wait_stops_naming_the_lock_the_holder_and
     from graphspec.infra.processes.locks import Lock, holder
 
     started = time.perf_counter()
-    ended = subprocess.Popen([sys.executable, "-B", "-V"], stdout=subprocess.DEVNULL)
+    ended = subprocess.Popen([sys.executable, "-V"], stdout=subprocess.DEVNULL)
     ended.wait()
     path = tmp_path / "kept.lock"
     lock = Lock(path).__enter__()

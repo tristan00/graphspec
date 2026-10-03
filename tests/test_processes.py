@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows process ownersh
 PROBE = """import json, os, socket, subprocess, sys
 port = int(sys.argv[1])
 if len(sys.argv) == 2:
-    subprocess.Popen([sys.executable, '-B', __file__, str(port), 'child'])
+    subprocess.Popen([sys.executable, __file__, str(port), 'child'])
 with socket.create_connection(('127.0.0.1', port)) as connection:
     connection.sendall((json.dumps(os.getpid()) + '\\n').encode())
     connection.recv(1)
@@ -107,7 +107,7 @@ def test_windows_owner_death_terminates_its_job(tmp_path):
         listener.listen()
         listener.settimeout(5)
         owner = subprocess.Popen(
-            [sys.executable, "-B", str(owner_script), str(listener.getsockname()[1])],
+            [sys.executable, str(owner_script), str(listener.getsockname()[1])],
             stdout=stream,
             stderr=subprocess.STDOUT,
             creationflags=0x08000000,

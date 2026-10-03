@@ -77,13 +77,18 @@ def initialize_storage():
         "npm_config_cache": root / "cache" / "npm",
     }
     os.environ.update({key: str(output_path(path)) for key, path in directories.items()})
-    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    sys.dont_write_bytecode = True
+    if sys.pycache_prefix is None:
+        os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+        sys.dont_write_bytecode = True
+    else:
+        output_path(sys.pycache_prefix)
     tempfile.tempdir = str(temporary)
     if "numba" in sys.modules:
         sys.modules["numba"].config.CACHE_DIR = os.environ["NUMBA_CACHE_DIR"]
-    LOG.info("storage ready root=%s seconds=%.3f", root, time.perf_counter() - started)
+    LOG.info(
+        "storage ready root=%s bytecode=%s seconds=%.3f", root, sys.pycache_prefix, time.perf_counter() - started
+    )
 
 
 def identities():

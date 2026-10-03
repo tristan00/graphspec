@@ -14,8 +14,8 @@ LOG = logging.getLogger(__name__)
 def started(code, name, directory):
     clock = time.perf_counter()
     process = subprocess.Popen(
-        [sys.executable, "-B", "-c", code, name],
-        env=dict(os.environ, GRAPHSPEC_HOME=str(directory), PYTHONDONTWRITEBYTECODE="1"),
+        [sys.executable, "-c", code, name],
+        env=dict(os.environ, GRAPHSPEC_HOME=str(directory)),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -41,8 +41,8 @@ def answered(process):
 
 def child(code, name, directory):
     return subprocess.run(
-        [sys.executable, "-B", "-c", code, name],
-        env=dict(os.environ, GRAPHSPEC_HOME=str(directory), PYTHONDONTWRITEBYTECODE="1"),
+        [sys.executable, "-c", code, name],
+        env=dict(os.environ, GRAPHSPEC_HOME=str(directory)),
         capture_output=True,
         text=True,
         timeout=5,

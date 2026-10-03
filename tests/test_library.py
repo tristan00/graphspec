@@ -111,7 +111,7 @@ def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):
     ) % name
     with heavy_job():
         result = subprocess.run(
-            [sys.executable, "-B", "-c", program], capture_output=True, text=True, timeout=4
+            [sys.executable, "-c", program], capture_output=True, text=True, timeout=4
         )
     assert result.returncode != 0 and "another graph build or training job" in result.stderr
 

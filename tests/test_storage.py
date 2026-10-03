@@ -71,18 +71,21 @@ def test_runtime_output_survives_a_path_that_vanishes_while_it_is_resolved(tmp_p
                 runtime.output_path(checkout / "artifacts" / ("trial-%d" % index))
 
 
-def test_initialization_redirects_cached_temporary_and_dependency_storage(tmp_path, monkeypatch):
+@pytest.mark.parametrize("prefixed", [False, True])
+def test_initialization_redirects_cached_temporary_and_dependency_storage(tmp_path, monkeypatch, prefixed):
     root = tmp_path / "runtime"
     stale = tmp_path / "stale"
     numba = SimpleNamespace(config=SimpleNamespace(CACHE_DIR=str(stale)))
     with monkeypatch.context() as patch:
         patch.setattr(os, "environ", dict(os.environ))
         patch.setenv("GRAPHSPEC_HOME", str(root))
+        patch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
         for key in ("TEMP", "TMP", "TMPDIR", "TORCH_HOME", "NUMBA_CACHE_DIR", "PIP_CACHE_DIR"):
             patch.setenv(key, str(stale))
         patch.setattr(tempfile, "tempdir", str(stale))
-        patch.setattr(sys, "dont_write_bytecode", False)
         patch.setitem(sys.modules, "numba", numba)
+        patch.setattr(sys, "pycache_prefix", str(tmp_path / "bytecode") if prefixed else None)
+        patch.setattr(sys, "dont_write_bytecode", False)
 
         runtime.initialize_storage()
 
@@ -93,9 +96,22 @@ def test_initialization_redirects_cached_temporary_and_dependency_storage(tmp_pa
         for key in ("TORCH_HOME", "NUMBA_CACHE_DIR", "PIP_CACHE_DIR", "CUDA_CACHE_PATH"):
             assert Path(os.environ[key]).is_relative_to(root / "cache")
         assert numba.config.CACHE_DIR == os.environ["NUMBA_CACHE_DIR"]
-        assert os.environ["PYTHONDONTWRITEBYTECODE"] == "1"
-        assert sys.dont_write_bytecode
+        assert os.environ.get("PYTHONDONTWRITEBYTECODE") == (None if prefixed else "1")
+        assert sys.dont_write_bytecode == (not prefixed)
         assert not stale.exists()
+
+
+def test_initialization_refuses_a_prefix_of_bytecode_inside_the_checkout(tmp_path, monkeypatch):
+    checkout = Path(runtime.__file__).resolve().parents[2]
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "environ", dict(os.environ))
+        patch.setenv("GRAPHSPEC_HOME", str(tmp_path / "runtime"))
+        patch.setattr(tempfile, "tempdir", tempfile.tempdir)
+        patch.setitem(sys.modules, "numba", SimpleNamespace(config=SimpleNamespace(CACHE_DIR=None)))
+        patch.setattr(sys, "dont_write_bytecode", True)
+        patch.setattr(sys, "pycache_prefix", str(checkout / "bytecode"))
+        with pytest.raises(ValueError, match="outside the code directory"):
+            runtime.initialize_storage()
 
 
 def test_child_initializes_storage_before_creating_temporary_files(tmp_path):
@@ -122,13 +138,14 @@ with tempfile.NamedTemporaryFile() as stream:
         'torch': os.environ['TORCH_HOME'],
         'numba': os.environ['NUMBA_CACHE_DIR'],
         'bytecode_disabled': sys.dont_write_bytecode,
+        'told': os.environ.get('PYTHONDONTWRITEBYTECODE'),
         'checked_imports': checked,
     }))
 """
-    environment = dict(os.environ, GRAPHSPEC_HOME=str(root))
+    environment = dict(os.environ, GRAPHSPEC_HOME=str(root), PYTHONPYCACHEPREFIX=sys.pycache_prefix)
     environment.update({key: str(tmp_path / "stale") for key in ("TEMP", "TMP", "TMPDIR")})
     child = subprocess.run(
-        [sys.executable, "-B", "-c", script],
+        [sys.executable, "-c", script],
         env=environment,
         capture_output=True,
         text=True,
@@ -140,5 +157,5 @@ with tempfile.NamedTemporaryFile() as stream:
     assert not Path(result["temporary"]).exists()
     assert Path(result["torch"]).is_relative_to(root / "cache")
     assert Path(result["numba"]).is_relative_to(root / "cache")
-    assert result["bytecode_disabled"]
+    assert not result["bytecode_disabled"] and result["told"] is None
     assert result["checked_imports"]
