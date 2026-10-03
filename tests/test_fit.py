@@ -119,6 +119,7 @@ def test_the_key_of_a_variant_holds_the_device(bank):
     assert sorted(left) == [
         "added",
         "device",
+        "entries",
         "groups",
         "pipeline",
         "schema",

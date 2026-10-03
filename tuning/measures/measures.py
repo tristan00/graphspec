@@ -9,7 +9,7 @@ from graphspec.registries import Names, ship
 from graphspec.schema.targets import TARGETS, accumulated
 
 LOG = logging.getLogger(__name__)
-MEASURES = Names("measure")
+MEASURES = Names("measure", False)
 
 
 @dataclass(frozen=True)

@@ -203,5 +203,5 @@ def check(arrays, name, registry, spec):
 
 
 MIXED = REPRESENTATIONS.register(
-    "mixed", Representation("mixed", "structure", carries, horizon, piece, ended, None, check)
+    "mixed", Representation("mixed", "structure", carries, horizon, piece, ended, None, check, 1)
 )

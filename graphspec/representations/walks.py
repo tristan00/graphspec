@@ -88,5 +88,5 @@ def check(arrays, name, registry, spec):
 
 
 WALKS = REPRESENTATIONS.register(
-    "walks", Representation("walks", "sample", carries, horizon, piece, None, adjacency, check)
+    "walks", Representation("walks", "sample", carries, horizon, piece, None, adjacency, check, 1)
 )

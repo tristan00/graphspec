@@ -174,7 +174,7 @@ def test_a_representation_registered_in_each_family_completes_one_fit_on_cpu(
         for family in FAMILIES
     }
     with pytest.raises(ValueError, match="states its family as one of structure, sample, encode, found 'drawn'"):
-        Representation("test.drawn", "drawn", *(lambda *arguments: None,) * 3, None, None, lambda *arguments: None)
+        Representation("test.drawn", "drawn", *(lambda *arguments: None,) * 3, None, None, lambda *arguments: None, 1)
     opened = Deriver(bank, "cpu", RESIDENT)
     stated = {DERIVES % entry.name: True for entry in ADDED}
     with pytest.raises(KeyError, match="the model states no %s" % (DERIVES % LINKED.name)):
@@ -1051,6 +1051,7 @@ def test_a_rule_of_negative_sampling_draws_each_candidate_in_proportion_to_its_w
 
 
 class Later(Halved):
+    version = 1
     types = ("number",)
 
 

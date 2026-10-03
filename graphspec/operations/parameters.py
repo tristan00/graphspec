@@ -19,9 +19,9 @@ DIRECTIONS = ("inverse", "symmetric", "directed")
 
 
 class Parameter:
-    __slots__ = ("name", "kind", "default", "low", "high", "log", "options", "condition")
+    __slots__ = ("name", "kind", "default", "low", "high", "log", "options", "condition", "registry")
 
-    def __init__(self, name, kind, default, low=None, high=None, log=False, options=(), condition=None):
+    def __init__(self, name, kind, default, low=None, high=None, log=False, options=(), condition=None, registry=None):
         if kind not in ("bool", "choice", "int", "float"):
             raise ValueError("unknown parameter kind: " + kind)
         if kind in ("bool", "choice") and not options:
@@ -34,7 +34,7 @@ class Parameter:
             raise ValueError("only a choice or a flag may be stated by the pipeline without a default: " + name)
         self.name, self.kind, self.default = name, kind, default
         self.low, self.high, self.log, self.options = low, high, log, tuple(options)
-        self.condition = condition
+        self.condition, self.registry = condition, registry
         if default is not None:
             self.check(default)
 
@@ -105,6 +105,11 @@ def real(name, low, high, default, condition=None, log=False):
 
 def choice(name, options, default, condition=None):
     return Parameter(name, "choice", default, options=options, condition=condition)
+
+
+@timed("parameters.registered")
+def registered(name, registry, default, condition=None):
+    return Parameter(name, "choice", default, options=registry.names(), condition=condition, registry=registry)
 
 
 @timed("parameters.subsets")

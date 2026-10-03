@@ -126,6 +126,7 @@ def test_a_schema_of_another_version_or_with_an_unknown_name_is_refused():
 
 
 class Count:
+    version = 1
     accepts = ("INT32",)
     written = pa.int32()
     symbols = False
@@ -145,6 +146,7 @@ class Count:
 
 
 class Halved:
+    version = 1
     types = ("count",)
 
     def fit(self, codes, dictionary, column):

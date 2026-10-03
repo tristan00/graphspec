@@ -122,5 +122,5 @@ def check(arrays, name, registry, spec):
 
 
 COUPLING = REPRESENTATIONS.register(
-    "coupling", Representation("coupling", "structure", carries, horizon, piece, None, None, check)
+    "coupling", Representation("coupling", "structure", carries, horizon, piece, None, None, check, 1)
 )

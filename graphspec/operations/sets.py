@@ -10,13 +10,13 @@ from graphspec.schema.declaration import membership, paired
 from graphspec.views.spans import counted
 
 LOG = logging.getLogger(__name__)
-STORAGE = Names("form of storage of edges joining sets")
+STORAGE = Names("form of storage of edges joining sets", True)
 NODE = "node"
 PARAMETER = "sets/%s/storage"
 
 
 class Form:
-    def __init__(self, function, nodes, members):
+    def __init__(self, function, nodes, members, version):
         started = time.perf_counter()
         if type(nodes) is not bool:
             raise ValueError(
@@ -26,7 +26,7 @@ class Form:
             raise ValueError(
                 "a form of storage states with true or false whether it shows the values of the members"
             )
-        self.function, self.nodes, self.members = function, nodes, members
+        self.function, self.nodes, self.members, self.version = function, nodes, members, version
         LOG.debug("form exit nodes=%s members=%s seconds=%.4f", nodes, members, time.perf_counter() - started)
 
     @timed("sets.form.call")
@@ -179,8 +179,8 @@ def pairs(facts, registry, kind):
     return result
 
 
-STORAGE.register(NODE, Form(node, True, True))
-STORAGE.register("pairs", Form(pairs, False, False))
+STORAGE.register(NODE, Form(node, True, True, 1))
+STORAGE.register("pairs", Form(pairs, False, False, 1))
 
 
 def offered(registry, kind):

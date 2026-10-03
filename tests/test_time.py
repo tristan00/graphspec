@@ -515,6 +515,7 @@ def test_forms_rules_for_ties_and_choices_of_steps_are_registered_from_outside(m
         forms.reduced("absent", "clock", rows)
 
     class Backwards:
+        version = 1
         columns = dict(seq="INT32")
 
         def keys(self, facts):
@@ -946,6 +947,8 @@ def test_a_choice_of_steps_registered_from_outside_is_offered_where_it_serves(ba
     monkeypatch.setattr(STEPS, "held", dict(STEPS.held))
 
     class Halved:
+        version = 1
+
         def serves(self, registry):
             return registry.name == "ordered"
 

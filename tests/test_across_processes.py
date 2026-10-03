@@ -225,7 +225,7 @@ def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_an
 
 def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(entries, monkeypatch):
     class Local:
-        pass
+        version = 1
 
     SEES.register("local", Local())
     try:
@@ -237,7 +237,7 @@ def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(
             parallel(abs, [1, 2], 2, registered.ready, (), carried, restored)
     finally:
         del SEES.held["local"]
-    registered.Vanished = type("Vanished", (), {"__module__": registered.__name__})
+    registered.Vanished = type("Vanished", (), {"__module__": registered.__name__, "version": 1})
     SEES.register("vanished", registered.Vanished())
     try:
         started = spawned(registered.ready, (), carried, restored)

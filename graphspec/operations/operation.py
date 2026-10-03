@@ -354,7 +354,7 @@ class Operations(Names):
         return result
 
 
-OPERATIONS = Operations("operation")
+OPERATIONS = Operations("operation", True)
 
 
 def listed(registry):

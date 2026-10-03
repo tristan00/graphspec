@@ -19,6 +19,7 @@ NAME = "registered"
 
 
 class Count:
+    version = 1
     accepts = ("INT32",)
     written = pa.int32()
     symbols = False
@@ -38,6 +39,7 @@ class Count:
 
 
 class Halved:
+    version = 1
     types = ("count",)
 
     def fit(self, codes, dictionary, column):
@@ -53,6 +55,8 @@ class Halved:
 
 
 class Counted:
+    version = 1
+
     @timed("registered.counted.width")
     def width(self, encoding, held):
         return 1
@@ -63,6 +67,7 @@ class Counted:
 
 
 class Rank:
+    version = 1
     columns = dict(seq="INT32")
 
     @timed("registered.rank.keys")
@@ -71,12 +76,16 @@ class Rank:
 
 
 class Kept:
+    version = 1
+
     @timed("registered.kept.kept")
     def kept(self, lacking, named):
         return np.ones(len(lacking), bool)
 
 
 class Own(Tasks):
+    version = 1
+
     @timed("registered.own.serves")
     def serves(self, registry):
         return registry.name == NAME
@@ -254,9 +263,11 @@ def parity(near, steps, anchors, candidates, settings):
     return (near.tokens[candidates] % np.uint64(2) == settings["negatives/test.parity/odd"]).astype(np.float64)
 
 
-TRIPLE = Sort(True, False, 3, 3, True)
-PARITY = Rule(parities, parity)
-STORED = Form(node, True, True)
+middle.version = 1
+everything.version = 1
+TRIPLE = Sort(True, False, 3, 3, True, 1)
+PARITY = Rule(parities, parity, 1)
+STORED = Form(node, True, True, 1)
 TALLY = Operation(
     "test", "tally", (Phase("tally", tallied, untallied, None),), unstated, (), (), (), ("time",), None, None, 1, 1
 )
@@ -274,6 +285,6 @@ HUB = Operation(
     1,
     1,
 )
-RUNNING = Representation("test.running", "encode", uncounted, unlooking, running, None, None, unchecked)
-LINKED = Representation("test.linked", "structure", unlinked, unlooking, linked, None, None, checked_links)
-KEPT = Representation("test.kept", "sample", unkept, unlooking, kept, None, None, checked_kept)
+RUNNING = Representation("test.running", "encode", uncounted, unlooking, running, None, None, unchecked, 1)
+LINKED = Representation("test.linked", "structure", unlinked, unlooking, linked, None, None, checked_links, 1)
+KEPT = Representation("test.kept", "sample", unkept, unlooking, kept, None, None, checked_kept, 1)

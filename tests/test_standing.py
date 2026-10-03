@@ -1,5 +1,6 @@
 import ast
 import hashlib
+import inspect
 import logging
 import platform
 import re
@@ -150,11 +151,56 @@ RECORDED = {
     "graphspec.measures": (3, "738ad2944004dd94058b9877cbe44c1755ace68f2466b16d92affca51993aa88"),
     "graphspec.contract": (7, "38b16e367216b1bbcc637e922fd74ef7e4d1c85e857b4067383f3568c3e5e3fd"),
     "graphspec.product": (3, "d0c09e09b3f2d702ab9d6386bfdafc3c35cddfdae8a9fc4fa21283446479d2e7"),
-    "graphspec.negatives": (6, "14defe736b009f6eaf6fa92b1dd2b29508298985ba8227511aa4b5ab5b34d7a6"),
-    "derivation": (40, "d3a5648e90d52fdd3a8a918796138f152ce35d92e4999ffbe0ece5027123b9d4"),
-    "views": (49, "91dade1fb16c37656f3a3516e9137767730171c3c933d9494eb48355ddc53671"),
-    "representations": (17, "6c373d07917515df876e95c6f3b946d61eccb5d105b0face340a3d80d4901e9c"),
+    "graphspec.negatives": (7, "9b8c3873643df24cb35407ce19b9503a7f6a3f6cd31444c57f842931279215d5"),
+    "derivation": (41, "c4653e064507dc2f298f6177a7ac68f78527a01936ae6ab79a754ee4a42d245a"),
+    "views": (50, "a3ec9260fe0888a8de920c953a9b0463f86dffe3ecba3ea36bcdd697337190f6"),
+    "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
     "index": (4, "de51fe453ec964424b70224c54bc8f64438a811c8326745daa22a105984f3f36"),
+    "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
+    "sort of reference graph": (1, "24c024a38804e098c970eb76d2c06bb0529d30901259df6aa5e098c9696ca51e"),
+    "sort of reference node": (1, "5130e549da2053ab17d7ad3ddb45baaf74b38153c74af98f470f297b7c42489c"),
+    "sort of reference nodes": (1, "c2845aac870668cb1a7ef9af24f5dcf258985a9025c5992adb89d32e82132ccb"),
+    "sort of reference path": (1, "ef8b408a7f613b72f84a2cb7405fece8577b06b1af8af8d6bd349ffa280cf561"),
+    "sort of reference subgraph": (1, "9206b9009931a59db36c911108cdccc89ed38d49d152154931b39a55434d36d5"),
+    "rule for ties key": (1, "a4e0d0a26364c974ca8dc334460d78197a8c729db817355c5fb84b8646cebce8"),
+    "rule for ties sequence": (1, "078803164ea4937fd4486327aa026370f61738c4f425568a025f9f4f9cccb4d6"),
+    "choice among several facts first": (1, "31418db33e313293508900519a7abb04373c2213b67ecfbef4dfe10c67dcdc61"),
+    "choice among several facts last": (1, "85fb73f00c8b8cfb028c0a5e3e27af47c1ad52b2433e9e1b3ee820ca4a70d4f3"),
+    "rule for an edge about an edge lapse": (1, "6a9566d17407a138dc10fefca2e6ca1cccf008d3daeaaa0edafa1b83415dab83"),
+    "rule for an edge about an edge stop": (1, "2f9c970e78c82a146854446dc2d6acbf9fe9467b0e01bc7f85dac6023739cb25"),
+    "kind of target class": (1, "f78cf9068c67e8ce4efc13f3b57010d8450f194454102783e07cba4fd002ef0c"),
+    "kind of target classes": (1, "79cb267fe0f48363992eba8d9303737c0616ceca794b14f7eb8d8719590bdaaa"),
+    "kind of target link": (1, "d5b0dff20b55cd1c6dcf81f4b867c0d6cad3d56787b05bb5d0e37cc521b8945d"),
+    "kind of target nodes": (1, "9f79fa665dc9b89095fd97412bc0f701f399f4023a7e71db5ee268302fb6dd40"),
+    "kind of target number": (1, "0433e59bfbc96aeb2fc5670d5860ee6552afa1441823330e5355564b821a3948"),
+    "kind of target path": (1, "042b93e8dc67bca45549401e6ee082bf0bd8490b1d3ea363fe8f229f4ab405c3"),
+    "kind of target proportions": (1, "d73466f5cd017eba6111a95921e8a4afccc98e7248f551580a7df18cc3da7373"),
+    "kind of target ranking": (1, "fa3c8c64a1ad8a91d061c8c02961bfe1adb4e20cf894055f7f51af00c891f32f"),
+    "kind of target sequence": (1, "b63cf67cf25d2753bfc3e794768fd085e5d285a41e9bba01fa9258076f15ed87"),
+    "kind of target survival": (1, "c70b16063d22c5c97f05b65edc196fef6e9264d342a721cfb57c3a6635417d09"),
+    "column type category": (1, "e242885fbfd05f259fab475426d315185cfb3e691ebe8ddf2361297af9b53221"),
+    "column type flag": (1, "35fcdebca490f610d7cfdc1a9aaf9b36e23519328df31803f32bb770a46c3f80"),
+    "column type number": (1, "5cda0b56ca50b2e33d213c1a503ca6f7480e3e220ea4ed62f46b306058f5561b"),
+    "encoder logarithm": (1, "0919b8ac7aeaa365625a2bc8b4ff2ef62d0b6e4f9d8b1c2c6dc3407ca65767df"),
+    "encoder onehot": (1, "76925b82262bfb0b4e0dd341c341453836cbdd9ca88d87ab94c0fe55790eca77"),
+    "encoder standard": (1, "9ccd227e1b5b2f654a965ccb733121cef9b7b5ec9d1a427efb178590f9eaf957"),
+    "encoder value": (1, "6616774c8484dd0e63362850973de30dd5c90d40b2ce928c1d759c323c6dda3f"),
+    "encoder of held graphs pooled": (1, "13ebcf0b70f33ce809dede5450330eb1cf15a15d85225eb8b935b48e90035f32"),
+    "encoder of held graphs propagated": (1, "a93c9d323421eb2bcc6fd7bb54e5abd6790f147df313e142adcf14fb8c6054b2"),
+    "rule of what a split may see without_scored": (1, "e1a7c29865951328158791db66ec25c031e56e994a0636fe97f1b899ab156bd2"),
+    "rule of what a split may see without_targets": (1, "00cd86033d82aa67b9600420e183c6f51050179225e977c3b4cb37c838315564"),
+    "choice of steps changes": (1, "9044190a1306a354b2777eb7ee8c7ba5c73979f2548900bad5280480d1278ec4"),
+    "choice of steps tasks": (1, "f0cf89c005e77cc3e889830d43957f921a681611cc565c1deddbc2ca3e16ee75"),
+    "form of storage of edges joining sets node": (1, "553cb32f29dd2d02a0a718e30ce2c9b97a111d35b72c853b27e4d138d1acff92"),
+    "form of storage of edges joining sets pairs": (1, "cbe4ad8cc0f271143c76b8dc72f65ee44068724b91c7ac00779e824da3c5e85f"),
+    "rule of negative sampling degree": (1, "3ee5c8bc7a9ca4599205d44ced998d1916092f98a21021340bd427fa9ba20084"),
+    "rule of negative sampling hops": (1, "2195d9648d20bb9fefdf2b1175c67bfd0d5f0a25714f073383197a1f41b342cf"),
+    "rule of negative sampling uniform": (1, "0e7031f7a595f5416bbd3e1b0fa4793e6a60aaf4c7a6b5962b60c07b9126f414"),
+    "representation coupling": (1, "b52d854e14d862c835eb76aecc1c40aa43835299e8ee1338a26b73943842cbf0"),
+    "representation events": (1, "5c6f88939ebd7bc42bfdf9c222b1db01226d2028881731819ca7c3f894dd1d11"),
+    "representation mixed": (1, "b7d34f2ef59357ccf6e21a29411c518c1755dc65ceb26af077226893e6e0b933"),
+    "representation neighbors": (1, "51b17a72ca7c7f338da213e8793578175b9595ec842d96fbed31ab18f1acd9f5"),
+    "representation walks": (1, "62e70850779fece256ff02d8da3a783911e2e0f2ace971bb482d0a1b1be7feeb"),
 }
 CALLED = {
     "graphspec/budgets.py:GraphBudget.pair_limit": 16523,
@@ -857,11 +903,39 @@ def versions():
     return found
 
 
-def unrecorded(root, units, recorded, held):
+def code(entry):
+    started = time.perf_counter()
+    if inspect.isfunction(entry):
+        found = inspect.getsource(entry)
+    else:
+        parts = [inspect.getsource(kind) for kind in type(entry).__mro__ if kind.__module__.split(".")[0] in CODE]
+        parts += [
+            name + "=" + (code(value) if callable(value) else repr(value)) for name, value in sorted(vars(entry).items())
+        ]
+        found = "\n".join(parts)
+    LOG.debug("code exit characters=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found.replace("\r\n", "\n")
+
+
+def shipped():
+    from graphspec import OPERATIONS, registries
+
+    started = time.perf_counter()
+    found = {
+        "%s %s" % (registry.label, name): registry.held[name]
+        for registry in registries.REGISTRIES
+        if registry.versioned and registry is not OPERATIONS
+        for name in sorted(registry.shipped)
+    }
+    LOG.debug("shipped exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def unrecorded(digests, recorded, held):
     started = time.perf_counter()
     found = []
-    for name, places in units.items():
-        version, digest = held[name], digested(root, places)
+    for name, digest in digests.items():
+        version = held[name]
         if name in recorded and recorded[name] == (version, digest):
             continue
         if name in recorded and recorded[name][0] == version:
@@ -923,14 +997,21 @@ def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_
     placed = [place for places in VERSIONED.values() for place in listed(ROOT, places)] + listed(ROOT, UNVERSIONED)
     assert len(placed) == len(set(placed))
     assert sorted(set(listed(ROOT, ("graphspec",))) - set(placed)) == []
-    assert unrecorded(ROOT, VERSIONED, RECORDED, held) == []
-    window = {name: VERSIONED[name] for name in ("graphspec.window",)}
-    source = (ROOT / window["graphspec.window"][0]).read_text(encoding="utf-8")
-    write(tmp_path, window["graphspec.window"][0], source + "\nEDITED = 1\n")
+    entries = shipped()
+    digests = {name: digested(ROOT, places) for name, places in VERSIONED.items()}
+    digests.update({name: hashlib.sha256(code(entry).encode()).hexdigest() for name, entry in entries.items()})
+    held.update({name: entry.version for name, entry in entries.items()})
+    assert sorted(digests) == sorted(RECORDED)
+    assert unrecorded(digests, RECORDED, held) == []
+    window = VERSIONED["graphspec.window"]
+    source = (ROOT / window[0]).read_text(encoding="utf-8")
+    write(tmp_path, window[0], source + "\nEDITED = 1\n")
     version = held["graphspec.window"]
-    assert unrecorded(tmp_path, window, RECORDED, held) == [
-        "the code of graphspec.window changed and its version %d did not; raise it" % version
+    edited = {"graphspec.window": digested(tmp_path, window), "encoder standard": digests["column type number"]}
+    assert unrecorded(edited, RECORDED, held) == [
+        "the code of graphspec.window changed and its version %d did not; raise it" % version,
+        "the code of encoder standard changed and its version %d did not; raise it" % held["encoder standard"],
     ]
-    assert unrecorded(tmp_path, window, RECORDED, dict(held, **{"graphspec.window": version + 1}))[0].startswith(
+    assert unrecorded(edited, RECORDED, dict(held, **{"graphspec.window": version + 1}))[0].startswith(
         "record graphspec.window at version %d with the digest " % (version + 1)
     )

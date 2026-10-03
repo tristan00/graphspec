@@ -8,7 +8,7 @@ FAMILIES = ("structure", "sample", "encode")
 
 
 class Representation:
-    def __init__(self, name, family, carries, horizon, piece, ended, stitched, check):
+    def __init__(self, name, family, carries, horizon, piece, ended, stitched, check, version):
         started = time.perf_counter()
         if type(name) is not str or not name or "/" in name:
             raise ValueError("a representation states its name as a word without a slash, found %r" % (name,))
@@ -37,7 +37,7 @@ class Representation:
                 % (name, ", ".join(wrong))
             )
         self.name, self.family, self.carries, self.horizon, self.piece = name, family, carries, horizon, piece
-        self.ended, self.stitched, self.check = ended, stitched, check
+        self.ended, self.stitched, self.check, self.version = ended, stitched, check, version
         LOG.debug("representation exit name=%s family=%s seconds=%.4f", name, family, time.perf_counter() - started)
 
 
@@ -54,7 +54,7 @@ class Representations(Names):
         return result
 
 
-REPRESENTATIONS = Representations("representation")
+REPRESENTATIONS = Representations("representation", True)
 
 
 def chosen(names):

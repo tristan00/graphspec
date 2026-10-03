@@ -7,7 +7,7 @@ from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
 LOG = logging.getLogger(__name__)
-SORTS = Names("sort of reference")
+SORTS = Names("sort of reference", True)
 ABSENT = ("stop", "keep")
 ENDS = dict(relation="STRING", to_kind="STRING", to_key="STRING")
 ORDER = dict(place="INT32")
@@ -15,7 +15,7 @@ MEMBERS = ("member_task", "member_name", "member_place", "member_source", "membe
 
 
 class Sort:
-    def __init__(self, nodes, edges, least, most, ordered):
+    def __init__(self, nodes, edges, least, most, ordered, version):
         started = time.perf_counter()
         if type(nodes) is not bool or type(edges) is not bool or type(ordered) is not bool:
             raise ValueError("a sort of reference states with true or false what it holds and its order")
@@ -31,6 +31,7 @@ class Sort:
         if (nodes or edges) != (most is None or most > 0):
             raise ValueError("a sort of reference holds members exactly when it states what they are")
         self.nodes, self.edges, self.least, self.most, self.ordered = nodes, edges, least, most, ordered
+        self.version = version
         self.whole = not nodes and not edges
         LOG.debug("sort exit seconds=%.4f", time.perf_counter() - started)
 
@@ -107,12 +108,12 @@ class Sort:
         return first, second
 
 
-SORTS.register("node", Sort(True, False, 1, 1, False))
-SORTS.register("edge", Sort(False, True, 1, 1, False))
-SORTS.register("nodes", Sort(True, False, 1, None, False))
-SORTS.register("path", Sort(False, True, 1, None, True))
-SORTS.register("subgraph", Sort(True, True, 1, None, False))
-SORTS.register("graph", Sort(False, False, 0, 0, False))
+SORTS.register("node", Sort(True, False, 1, 1, False, 1))
+SORTS.register("edge", Sort(False, True, 1, 1, False, 1))
+SORTS.register("nodes", Sort(True, False, 1, None, False, 1))
+SORTS.register("path", Sort(False, True, 1, None, True, 1))
+SORTS.register("subgraph", Sort(True, True, 1, None, False, 1))
+SORTS.register("graph", Sort(False, False, 0, 0, False, 1))
 
 
 def ends(source, target):

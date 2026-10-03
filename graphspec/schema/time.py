@@ -14,12 +14,13 @@ STAMPS = dict(none=(), order=("since", "until"), clock=("since", "until"))
 STAMPS["clocks"] = ("since", "until", "known", "replaced")
 UNITED = ("clock", "clocks")
 OPEN = dict(since=ALWAYS, until=NEVER, replaced=NEVER)
-TIES = Names("rule for ties")
-SEVERAL = Names("choice among several facts")
-ABOUT = Names("rule for an edge about an edge")
+TIES = Names("rule for ties", True)
+SEVERAL = Names("choice among several facts", True)
+ABOUT = Names("rule for an edge about an edge", True)
 
 
 class Sequence:
+    version = 1
     columns = dict(seq="INT32")
 
     @timed("clock.sequence.keys")
@@ -28,6 +29,7 @@ class Sequence:
 
 
 class Key:
+    version = 1
     columns = {}
 
     @timed("clock.key.keys")
@@ -46,6 +48,8 @@ def last(starts, stops):
 
 
 class Stop:
+    version = 1
+
     def kept(self, lacking, named):
         started = time.perf_counter()
         lacking = np.asarray(lacking, bool)
@@ -59,11 +63,15 @@ class Stop:
 
 
 class Lapse:
+    version = 1
+
     @timed("clock.lapse.kept")
     def kept(self, lacking, named):
         return ~np.asarray(lacking, bool)
 
 
+first.version = 1
+last.version = 1
 TIES.register("sequence", Sequence())
 TIES.register("key", Key())
 SEVERAL.register("first", first)

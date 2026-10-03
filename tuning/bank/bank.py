@@ -35,11 +35,14 @@ from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline, sets
 from graphspec.operations.pipeline import resolved
 from graphspec.representations import groups as representations
-from graphspec.schema.schema import ENCODERS, WRITTEN, Encoding, fitted
+from graphspec.representations.registry import REPRESENTATIONS
+from graphspec.schema.references import SORTS
+from graphspec.schema.schema import ENCODERS, HELD, TYPES, WRITTEN, Encoding, fitted
 from graphspec.schema.targets import TARGETS
+from graphspec.schema.time import ABOUT, SEVERAL, TIES
 from graphspec.views.graph import Graph
-from graphspec.views.view import beside, finished, sampled, sequences, view
-from graphspec.views.visible import STATEMENT, Looking
+from graphspec.views.view import STEPS, beside, finished, sampled, sequences, view
+from graphspec.views.visible import SEES, STATEMENT, Looking
 
 LOG = logging.getLogger(__name__)
 PACKAGES = (Path(__file__).parents[1], Path(__file__).parents[2] / "graphspec")
@@ -47,7 +50,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 49
+VIEW = 50
 TOKEN = (1 << 62) - 1
 
 
@@ -193,14 +196,43 @@ def written(folder, build):
     return folder
 
 
+def readings(registry, steps, several, storage, sees):
+    started = time.perf_counter()
+    schema = registry.schema
+    result = [
+        (TYPES, [column["type"] for column in schema.columns.values()]),
+        (ENCODERS, [column["encoder"] for column in schema.columns.values()]),
+        (HELD, [held["encoder"] for held in schema.holds.values()]),
+        (SORTS, [entry["sort"] for entry in schema.tasks["references"].values()]),
+        (TARGETS, list(schema.targets())),
+        (TIES, [] if schema.ties is None else [schema.ties]),
+        (ABOUT, [entry["about"] for entry in schema.edges.values() if entry["about"] is not None]),
+        (STEPS, [steps]),
+        (SEVERAL, [] if several is None else [several]),
+        (sets.STORAGE, list(storage.values())),
+        (SEES, [rule for rules in sees.values() for rule in rules]),
+    ]
+    LOG.debug("readings exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
 class Viewed:
     def __init__(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
         self.steps, self.several, self.storage, self.looking = steps, several, storage, looking
+        splits = looking.mapping()
         self.folder = (
             bank.cache
             / "views"
-            / specs.digest(dict(steps=steps, several=several, storage=storage, splits=looking.mapping()))
+            / specs.digest(
+                dict(
+                    steps=steps,
+                    several=several,
+                    storage=storage,
+                    splits=splits,
+                    entries=registries.versions(readings(bank.registry, steps, several, storage, splits["sees"])),
+                )
+            )
         )
         if not (self.folder / "index.json").exists():
             self.build(bank, steps, several, storage, looking)
@@ -428,6 +460,7 @@ class Bank:
             self.several(spec),
             self.digested("storage", storage, spec),
             self.digested("splits", cfg["splits"], cfg["splits"]),
+            registries.GENERATION,
         )
         if key not in self._viewed:
             self._viewed[key] = Viewed(self, *key[:2], storage, self.looking(cfg)[0])
@@ -566,7 +599,7 @@ class Bank:
             raise KeyError("the configuration states no pipeline")
         chosen = self.chosen(cfg["model"])
         stated = dict(pipeline=cfg["pipeline"], graph=cfg["graph"])
-        key = (chosen, self.digested("stated", stated, cfg["pipeline"], cfg["graph"]))
+        key = (chosen, self.digested("stated", stated, cfg["pipeline"], cfg["graph"]), registries.GENERATION)
         if key not in self.variants:
             self.variants[key] = self.settled(cfg, chosen)
         return key, *self.variants[key]
@@ -744,6 +777,13 @@ class Deriver(Bank):
             device=self.device,
             seeds=dict(derivation=SEED),
             versions=dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION),
+            entries=registries.versions(
+                readings(
+                    self.registry, spec["time/steps"], self.several(spec), sets.chosen(self.registry, spec), cfg["splits"]["sees"]
+                )
+                + pipeline.read(self.registry, steps)
+                + [(REPRESENTATIONS, chosen)]
+            ),
         )
         LOG.debug("deriver identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
         return result

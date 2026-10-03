@@ -7,6 +7,7 @@ from tuning.measures.measures import needless
 
 
 class Share:
+    version = 1
     scaled = False
     matures = None
     names = None

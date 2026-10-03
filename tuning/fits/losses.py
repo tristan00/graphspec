@@ -7,7 +7,7 @@ from tuning.families.heads import FIELD
 from tuning.measures.measures import MEASURES
 
 LOG = logging.getLogger(__name__)
-LOSSES = Names("loss")
+LOSSES = Names("loss", False)
 POINTED = ("target", "weight", "series", "aim", "point_row")
 
 

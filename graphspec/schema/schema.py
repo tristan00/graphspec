@@ -60,8 +60,8 @@ ENDS = ("from", "to")
 FITTED = ("sizes", "values", "held", "inner", "features")
 
 
-TYPES = Names("column type")
-ENCODERS = Names("encoder")
+TYPES = Names("column type", True)
+ENCODERS = Names("encoder", True)
 
 
 @timed("schema.absent")
@@ -80,6 +80,7 @@ def typename(kind):
 
 
 class Number:
+    version = 1
     accepts = ("FLOAT",)
     written = pa.float32()
     symbols = False
@@ -103,6 +104,7 @@ class Number:
 
 
 class Flag:
+    version = 1
     accepts = ("BOOL", "BOOLEAN")
     written = pa.bool_()
     symbols = False
@@ -128,6 +130,7 @@ class Flag:
 
 
 class Category:
+    version = 1
     accepts = ("STRING",)
     written = pa.string()
     symbols = True
@@ -164,6 +167,7 @@ def parted(codes):
 
 
 class Value:
+    version = 1
     types = ("number", "flag")
 
     @timed("schema.Value.fit")
@@ -181,6 +185,7 @@ class Value:
 
 
 class Logarithm:
+    version = 1
     types = ("number",)
 
     @timed("schema.Logarithm.fit")
@@ -201,6 +206,7 @@ class Logarithm:
 
 
 class Standard:
+    version = 1
     types = ("number",)
 
     @timed("schema.Standard.fit")
@@ -225,6 +231,7 @@ class Standard:
 
 
 class OneHot:
+    version = 1
     types = ("category",)
     choices = ("stop", "shared")
 
@@ -280,6 +287,8 @@ def outward(held):
 
 
 class Pooled:
+    version = 1
+
     @timed("schema.pooled.width")
     def width(self, encoding, held):
         return encoding.width(inward(held)) + 1
@@ -300,6 +309,8 @@ class Pooled:
 
 
 class Propagated:
+    version = 1
+
     @timed("schema.propagated.width")
     def width(self, encoding, held):
         return 2 * encoding.width(inward(held)) + 1
@@ -326,7 +337,7 @@ class Propagated:
         return result
 
 
-HELD = Names("encoder of held graphs")
+HELD = Names("encoder of held graphs", True)
 TYPES.register("number", Number())
 TYPES.register("flag", Flag())
 TYPES.register("category", Category())

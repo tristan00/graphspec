@@ -13,11 +13,11 @@ from graphspec.schema.declaration import membership, paired
 from graphspec.schema.references import SORTS
 
 from .operation import OPERATIONS, Count, Operation, Phase
-from .parameters import Parameter, choice, number
+from .parameters import Parameter, choice, number, registered
 from .rows import counted, fact_bytes
 
 LOG = logging.getLogger(__name__)
-NEGATIVES = Names("rule of negative sampling")
+NEGATIVES = Names("rule of negative sampling", True)
 LINK, SET = "link", "set"
 SALTS = dict(link="graphspec.negatives/links", set="graphspec.negatives/sets")
 TINY = 2.0**-54
@@ -25,7 +25,7 @@ EMPTY = np.zeros(0, np.int64)
 
 
 class Rule:
-    def __init__(self, parameters, weights):
+    def __init__(self, parameters, weights, version):
         started = time.perf_counter()
         if not callable(parameters) or not callable(weights):
             raise ValueError(
@@ -33,7 +33,7 @@ class Rule:
                 "negatives/<rule>/<name>, and a function from the facts of a segment, the steps, the nodes kept and "
                 "the candidates drawn for them, and the settings, to the weight of every candidate"
             )
-        self.parameters, self.weights = parameters, weights
+        self.parameters, self.weights, self.version = parameters, weights, version
         LOG.debug("rule exit seconds=%.4f", time.perf_counter() - started)
 
 
@@ -99,9 +99,9 @@ def hops(near, steps, anchors, candidates, settings):
     return near.within(steps, anchors, candidates, settings["negatives/hops/within"]).astype(np.float64)
 
 
-NEGATIVES.register("uniform", Rule(unstated, uniform))
-NEGATIVES.register("degree", Rule(unstated, degree))
-NEGATIVES.register("hops", Rule(hopped, hops))
+NEGATIVES.register("uniform", Rule(unstated, uniform, 1))
+NEGATIVES.register("degree", Rule(unstated, degree, 1))
+NEGATIVES.register("hops", Rule(hopped, hops, 1))
 
 
 @timed("negatives.parsed")
@@ -148,7 +148,7 @@ def stated(registry):
     if options:
         result = [
             choice("negatives/of", options, options[0]),
-            choice("negatives/rule", NEGATIVES.names(), "uniform"),
+            registered("negatives/rule", NEGATIVES, "uniform"),
             number("negatives/count", 1, 16, 1),
         ]
         for name in NEGATIVES.names():
@@ -442,7 +442,7 @@ NEGATIVE = OPERATIONS.register(
         changes=(),
         adds=adds,
         kinds=named,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

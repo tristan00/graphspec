@@ -8,6 +8,7 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from graphspec.infra.timing import timed
+from graphspec.schema.schema import ENCODERS, TYPES
 from graphspec.schema.targets import pointed
 
 from .operation import OPERATIONS
@@ -334,6 +335,22 @@ def additions(registry, steps):
             held = held.grown(called(step), added, None)
             result.append((called(step), added))
     LOG.debug("additions exit steps=%d added=%d seconds=%.4f", len(steps), len(result), time.perf_counter() - started)
+    return result
+
+
+def read(registry, steps):
+    started = time.perf_counter()
+    held, result = registry, []
+    for step in steps:
+        for parameter in step.operation.stated(held):
+            if parameter.registry is not None and parameter.name in step.parameters:
+                result.append((parameter.registry, [step.parameters[parameter.name]]))
+        added = step.operation.added(held, step.spec, called(step))
+        if added is not None and added.holds():
+            columns = added.columns.values()
+            result += [(TYPES, [column["type"] for column in columns]), (ENCODERS, [column["encoder"] for column in columns])]
+            held = held.grown(called(step), added, None)
+    LOG.debug("read exit steps=%d read=%d seconds=%.4f", len(steps), len(result), time.perf_counter() - started)
     return result
 
 

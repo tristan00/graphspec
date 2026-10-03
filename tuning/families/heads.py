@@ -6,7 +6,7 @@ from graphspec.registries import Names, ship
 from graphspec.schema.targets import TARGETS, Sequence
 
 LOG = logging.getLogger(__name__)
-HEADS = Names("head of a kind of target")
+HEADS = Names("head of a kind of target", False)
 FIELD = "field/"
 
 

@@ -57,7 +57,7 @@ def visible(since, until, known, replaced, permitted, moments, looking):
     return begun.astype(np.int64), ended.astype(np.int64)
 
 
-SEES = Names("rule of what a split may see")
+SEES = Names("rule of what a split may see", True)
 STATEMENT = ("trained", "scored", "sees")
 
 
@@ -245,6 +245,8 @@ def without_scored(facts, registry, held):
     return result
 
 
+without_targets.version = 1
+without_scored.version = 1
 SEES.register("without_targets", without_targets)
 SEES.register("without_scored", without_scored)
 

@@ -458,6 +458,8 @@ def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, 
     assert "holds graphs encoded by propagated: " in inspect(bank)
 
     class Counted:
+        version = 1
+
         def width(self, encoding, held):
             return 1
 

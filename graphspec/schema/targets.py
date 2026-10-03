@@ -11,8 +11,8 @@ from .references import SORTS
 from .time import UNITED
 
 LOG = logging.getLogger(__name__)
-TARGETS = Names("kind of target")
-UTILITIES = Names("utility")
+TARGETS = Names("kind of target", True)
+UTILITIES = Names("utility", False)
 BETTER = ("higher", "lower")
 UTILITY = ("name", "better")
 SUMMED = 1e-6
@@ -188,6 +188,7 @@ def each(column, series, where):
 
 
 class Number:
+    version = 1
     scaled = True
     matures = "number"
     names = None
@@ -242,6 +243,7 @@ class Number:
 
 
 class Path:
+    version = 1
     scaled = True
     matures = None
     names = None
@@ -330,6 +332,7 @@ class Over:
 
 
 class Class(Over):
+    version = 1
     least = 2
     matures = "category"
 
@@ -368,6 +371,7 @@ class Class(Over):
 
 
 class Classes(Over):
+    version = 1
     least = 1
     matures = "flag"
 
@@ -412,6 +416,7 @@ class Classes(Over):
 
 
 class Proportions(Over):
+    version = 1
     least = 2
     matures = "number"
 
@@ -458,6 +463,7 @@ class Proportions(Over):
 
 
 class Sequence(Over):
+    version = 1
     least = 1
     matures = None
     parameters = ("length",)
@@ -530,6 +536,7 @@ class Sequence(Over):
 
 
 class Survival:
+    version = 1
     scaled = False
     matures = None
     names = None
@@ -661,6 +668,8 @@ class Members(Pointed):
 
 
 class Ranking(Members):
+    version = 1
+
     @timed("targets.ranking.points")
     def points(self, rows, target, where):
         owner, y = located(rows, where)
@@ -695,6 +704,8 @@ class Ranking(Members):
 
 
 class Nodes(Members):
+    version = 1
+
     @timed("targets.nodes.points")
     def points(self, rows, target, where):
         owner, y = located(rows, where)
@@ -726,6 +737,7 @@ class Nodes(Members):
 
 
 class Link(Pointed):
+    version = 1
     names = "linked"
     parameters = ("relation",)
 

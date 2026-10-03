@@ -93,14 +93,28 @@ def test_antisymmetric_state_readout_has_no_unused_time_encoding():
 
 def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     bank = Deriver.__new__(Deriver)
-    bank.registry = SimpleNamespace(**vars(registry()), fingerprint=lambda: "stated")
+    stated = registry()
+    stated.extras["several"] = False
+    stated.schema.columns, stated.schema.holds, stated.schema.edges, stated.schema.sets = {}, {}, {}, {}
+    stated.schema.ties = None
+    bank.registry = SimpleNamespace(**vars(stated), fingerprint=lambda: "stated")
     bank.cache = Path(tmp_path)
     bank.variants, bank.roots, bank.device, bank.directory, bank.digests = {}, {}, "cpu", Path(tmp_path), {}
     bank.source, bank.choices = "source", {}
     monkeypatch.setattr(
-        specs, "settings", lambda declaration, groups: (specs.number("time/history", 1, 32, 16),)
+        specs,
+        "settings",
+        lambda declaration, groups: (
+            specs.number("time/history", 1, 32, 16),
+            specs.choice("time/steps", ("tasks",), "tasks"),
+        ),
     )
-    cfg = {"model": {"view": "signal"}, "pipeline": [], "graph": {"time/history": 1}, "splits": SPLITS}
+    cfg = {
+        "model": {"view": "signal"},
+        "pipeline": [],
+        "graph": {"time/history": 1, "time/steps": "tasks"},
+        "splits": SPLITS,
+    }
     assert bank.variant(cfg)[2]["time/history"] == 1
     cfg["graph"]["time/history"] = 2
     assert bank.variant(cfg)[2]["time/history"] == 2
@@ -137,7 +151,7 @@ def test_a_bank_digests_each_part_of_a_configuration_once_and_again_only_when_it
     held.stated(copied)
     assert len(found) == counts
     cfg["graph"]["time/history"] = 5
-    assert held.stated(cfg)[0] == (key[0], specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])))
+    assert held.stated(cfg)[0] == (key[0], specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])), key[2])
     assert held.stated(cfg)[2]["time/history"] == 5 and held.stated(cfg)[0] != key
     LOG.info("digested once exit seconds=%.4f", time.perf_counter() - started)
 

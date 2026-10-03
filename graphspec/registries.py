@@ -50,12 +50,21 @@ class Held(MutableMapping):
         return len(self.entries)
 
 
+@timed("registries.version")
+def version(entry):
+    own = vars(entry) if hasattr(entry, "__dict__") and "version" in vars(entry) else vars(type(entry))
+    found = own["version"] if "version" in own else None
+    return found if type(found) is int and found >= 1 else None
+
+
 class Names:
     @timed("registries.Names.__init__")
-    def __init__(self, label):
+    def __init__(self, label, versioned):
         if any(registry.label == label for registry in REGISTRIES):
             raise ValueError("a registry is labelled %s twice" % label)
-        self.label, self.held, self.shipped = label, {}, frozenset()
+        if type(versioned) is not bool:
+            raise ValueError("the registry %s states with true or false whether its entries state versions" % label)
+        self.label, self.versioned, self.held, self.shipped = label, versioned, {}, frozenset()
         self.module = sys._getframe(1).f_globals["__name__"]
         REGISTRIES.append(self)
 
@@ -72,6 +81,12 @@ class Names:
             raise ValueError("a %s is registered under a name, found %r" % (self.label, name))
         if name in self.held:
             raise ValueError("the %s %s is registered twice" % (self.label, name))
+        if self.versioned and version(entry) is None:
+            raise ValueError(
+                "the %s %s states no version: an entry of a registry that derivation, views or packing read "
+                "states its version, a whole number from 1 raised whenever its code changes, as the attribute "
+                "version of itself or of its own class" % (self.label, name)
+            )
         self.held[name] = entry
         LOG.debug(
             "register exit label=%s name=%s seconds=%.4f", self.label, name, time.perf_counter() - started
@@ -85,6 +100,13 @@ class Names:
 
     def names(self):
         return tuple(self.held)
+
+
+def versions(read):
+    started = time.perf_counter()
+    found = sorted({(registry.label, name, version(registry.named(name))) for registry, names in read for name in names})
+    LOG.debug("versions exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return [list(entry) for entry in found]
 
 
 def ship(registries):

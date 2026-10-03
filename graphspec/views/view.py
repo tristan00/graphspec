@@ -16,7 +16,7 @@ from .graph import Graph, Shown, verify
 from .visible import permitted
 
 LOG = logging.getLogger(__name__)
-STEPS = Names("choice of steps")
+STEPS = Names("choice of steps", True)
 
 
 @timed("view.sequence")
@@ -46,6 +46,8 @@ def at(graph, moments, times):
 
 
 class Tasks:
+    version = 1
+
     @timed("view.tasks.serves")
     def serves(self, registry):
         return True
@@ -85,6 +87,8 @@ class Tasks:
 
 
 class Changes:
+    version = 1
+
     @timed("view.changes.serves")
     def serves(self, registry):
         return True

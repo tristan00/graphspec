@@ -10,16 +10,19 @@ import keyed
 import numpy as np
 import pytest
 import support
+from registered import everything, parities, parity, running, unchecked, uncounted, unlooking
 
 from conftest import SPLITS, Inline
-from graphspec import OPERATIONS, Operation, Phase
+from graphspec import NEGATIVES, OPERATIONS, REPRESENTATIONS, SEES, SEVERAL, Operation, Phase, Representation
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments, transform
 from graphspec.engine.segments import Derivation
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
+from graphspec.operations.negatives import Rule
 from graphspec.views.graph import Dense
 from tuning.bank.bank import Deriver
 from tuning.fits.training import fit
@@ -268,7 +271,8 @@ def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leav
     cfg = support.configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS)
     key = opened.identity(cfg)
     assert sorted(key) == [
-        "added", "device", "groups", "pipeline", "schema", "seeds", "settings", "source", "splits", "versions"
+        "added", "device", "entries", "groups", "pipeline", "schema", "seeds", "settings", "source", "splits",
+        "versions",
     ]
     assert key["schema"] == opened.manifest["spec_sha256"] and key["seeds"] == dict(derivation=transform.SEED)
     assert key["added"] == []
@@ -295,6 +299,55 @@ def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leav
         OPERATIONS.held.pop("probe.edited", None)
         sys.modules.pop("edited_probe", None)
     assert roots[0] == roots[1] != roots[2]
+
+
+@timed("pipelines.unseeing")
+def unseeing(facts, registry, held):
+    return everything(facts, registry, held)
+
+
+unseeing.version = 2
+
+
+def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_variant_and_its_views_hold_it(bank):
+    started = time.perf_counter()
+    unversioned = Representation("test.probe", "encode", uncounted, unlooking, running, None, None, unchecked, None)
+    with pytest.raises(ValueError, match="the representation test.probe states no version"):
+        REPRESENTATIONS.register("test.probe", unversioned)
+    with pytest.raises(ValueError, match="the choice among several facts test.middle states no version"):
+        SEVERAL.register("test.middle", lambda starts, stops: starts)
+    assert "test.probe" not in REPRESENTATIONS.names() and "test.middle" not in SEVERAL.names()
+    found = {}
+    for version, seeing in ((1, everything), (2, unseeing)):
+        REPRESENTATIONS.register(
+            "test.probe",
+            Representation("test.probe", "encode", uncounted, unlooking, running, None, None, unchecked, version),
+        )
+        NEGATIVES.register("test.parity", Rule(parities, parity, version))
+        SEES.register("test.sees", seeing)
+        try:
+            opened = Deriver(bank, "cpu", RESIDENT)
+            splits = dict(SPLITS, sees=dict(train=["test.sees"], validation=[]))
+            values = {"negatives/of": "link:visits", "negatives/rule": "test.parity", "negatives/count": 2}
+            model = {"view": "snapshot", "representations/test.probe": True}
+            cfg = support.configuration(
+                opened.registry, model, values, 5, splits, support.SEVEN + ("graphspec.negatives",)
+            )
+            found[version] = opened.identity(cfg)["entries"], opened.variant(cfg)[0], opened.viewed(cfg).folder
+        finally:
+            del REPRESENTATIONS.held["test.probe"], NEGATIVES.held["test.parity"], SEES.held["test.sees"]
+    for version in (1, 2):
+        entries = {tuple(entry) for entry in found[version][0]}
+        assert {
+            ("representation", "test.probe", version),
+            ("rule of negative sampling", "test.parity", version),
+            ("rule of what a split may see", "test.sees", version),
+            ("choice of steps", "tasks", 1),
+            ("column type", "number", 1),
+            ("kind of target", "number", 1),
+        } <= entries
+    assert found[1][1] != found[2][1] and found[1][2] != found[2][2]
+    LOG.info("versioned entries exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_stage_and_the_representation(

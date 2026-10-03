@@ -71,9 +71,12 @@ def without_beside(facts, registry, held):
     return result
 
 
+without_beside.version = 1
+
+
 @pytest.fixture(scope="module", autouse=True)
 def registered():
-    SORTS.register("pair", Sort(True, False, 2, 2, False))
+    SORTS.register("pair", Sort(True, False, 2, 2, False, 1))
     SEES.register("without_beside", without_beside)
     yield
     del SORTS.held["pair"], SEES.held["without_beside"]
@@ -336,7 +339,7 @@ def test_kinds_state_one_and_five_references_of_every_sort(bank):
         relation="STRING", to_kind="STRING", to_key="STRING", place="INT32"
     )
     with pytest.raises(ValueError, match="the sort of reference pair is registered twice"):
-        SORTS.register("pair", Sort(True, False, 2, 2, False))
+        SORTS.register("pair", Sort(True, False, 2, 2, False, 1))
     with pytest.raises(KeyError, match="no sort of reference is registered under the name 'absent'"):
         Schema(
             dict(
@@ -416,9 +419,9 @@ def test_a_sort_checks_the_members_a_task_names():
             "the reference route", [2], place=np.arange(2), **dict(route, source=np.asarray([0, 3]))
         )
     with pytest.raises(ValueError, match="holds members exactly when it states what they are"):
-        Sort(True, False, 0, 0, False)
+        Sort(True, False, 0, 0, False, 1)
     with pytest.raises(ValueError, match="states the least and the most members it holds, found 2 and 1"):
-        Sort(True, False, 2, 1, False)
+        Sort(True, False, 2, 1, False, 1)
     with pytest.raises(ValueError, match="the reference whole is of the sort graph and names kinds of node"):
         mapping = stated("keep")
         mapping["tasks"]["references"]["whole"]["kinds"] = ["maker"]

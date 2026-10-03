@@ -96,5 +96,5 @@ def check(arrays, name, registry, spec):
 
 
 EVENTS = REPRESENTATIONS.register(
-    "events", Representation("events", "structure", carries, horizon, piece, None, None, check)
+    "events", Representation("events", "structure", carries, horizon, piece, None, None, check, 1)
 )

@@ -10,7 +10,7 @@ from graphspec.schema.time import ALWAYS, NEVER, UNITED
 from graphspec.views import spans
 
 LOG = logging.getLogger(__name__)
-FORMS = Names("form")
+FORMS = Names("form", False)
 GIVEN = ("since", "until")
 
 
