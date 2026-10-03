@@ -98,9 +98,10 @@ class Stage:
                 self.rows[key] += table.num_rows
 
     def close(self, commit=True):
-        if self.closed:
-            return
         started = time.perf_counter()
+        if self.closed:
+            LOG.debug("stage close exit closed before seconds=%.4f", time.perf_counter() - started)
+            return
         try:
             self.resources.close()
             if commit:

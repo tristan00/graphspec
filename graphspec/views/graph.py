@@ -113,17 +113,16 @@ class Dense(Arrays):
 
 
 def joining(registry):
-    if registry in JOINS:
-        return JOINS[registry]
     started = time.perf_counter()
-    nodes, found = len(registry.nodes), []
-    for edge in registry.edges:
-        for source, target in edge.pairs:
-            ends = {(registry.kind(source), registry.kind(target))}
-            if edge.symmetric:
-                ends.add((registry.kind(target), registry.kind(source)))
-            found += [(edge.code * nodes + first) * nodes + second for first, second in ends]
-    JOINS[registry] = np.unique(np.asarray(found, np.int64))
+    if registry not in JOINS:
+        nodes, found = len(registry.nodes), []
+        for edge in registry.edges:
+            for source, target in edge.pairs:
+                ends = {(registry.kind(source), registry.kind(target))}
+                if edge.symmetric:
+                    ends.add((registry.kind(target), registry.kind(source)))
+                found += [(edge.code * nodes + first) * nodes + second for first, second in ends]
+        JOINS[registry] = np.unique(np.asarray(found, np.int64))
     LOG.debug("joining exit relations=%d seconds=%.4f", len(registry.edges), time.perf_counter() - started)
     return JOINS[registry]
 

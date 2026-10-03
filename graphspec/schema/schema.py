@@ -1368,11 +1368,12 @@ class Encoding:
         raise KeyError("the encoding holds no column %s" % name)
 
     def widened(self, rows):
+        started = time.perf_counter()
         added = self.schema.added_columns()
         if not added:
+            LOG.debug("encoding widened exit added=0 seconds=%.4f", time.perf_counter() - started)
             return rows
-        started = time.perf_counter()
-        stem = [name for name in self.table if name not in added]
+        stem =[name for name in self.table if name not in added]
         values, flags = (sum(self.sizes[name][part] for name in stem) for part in (0, 1))
         kept = np.r_[
             np.arange(values), self.values + np.arange(flags), self.features - self.inner + np.arange(self.inner)

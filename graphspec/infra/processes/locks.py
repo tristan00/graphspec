@@ -126,10 +126,11 @@ def singleton(name, message):
 @contextmanager
 def heavy_job():
     with SERIAL:
+        started = time.perf_counter()
         if getattr(ACTIVE, "held", False):
             yield
+            LOG.debug("heavy job exit within a held job seconds=%.3f", time.perf_counter() - started)
             return
-        started = time.perf_counter()
         with singleton(
             "heavy", "another graph build or training job is running; finish it before starting this job"
         ):

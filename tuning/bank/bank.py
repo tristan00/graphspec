@@ -47,7 +47,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 47
+VIEW = 48
 TOKEN = (1 << 62) - 1
 
 
@@ -384,12 +384,12 @@ class Bank:
         return held[2]
 
     def looking(self, cfg):
+        started = time.perf_counter()
         if "splits" not in cfg:
             raise KeyError("the configuration states no splits to train on and to score on")
         stated = cfg["splits"]
         key = self.digested("splits", stated, stated)
         if key not in self._looking:
-            started = time.perf_counter()
             lacking = [name for name in STATEMENT if name not in stated]
             if lacking or len(stated) != len(STATEMENT):
                 raise KeyError("the splits of the configuration state exactly " + ", ".join(STATEMENT))
@@ -404,7 +404,7 @@ class Bank:
                 for name in names:
                     partitions[self.split["indices"][name]] = partition
             self._looking[key] = (held, partitions)
-            LOG.debug("bank looking exit seconds=%.4f", time.perf_counter() - started)
+        LOG.debug("bank looking exit seconds=%.4f", time.perf_counter() - started)
         return self._looking[key]
 
     @timed("bank.Bank.partitions")
@@ -480,20 +480,22 @@ class Bank:
         return self._shared_kinds
 
     def tokens(self, held):
+        started = time.perf_counter()
         if held not in self._tokens:
-            started = time.perf_counter()
             stated, kinds = self.shared_kinds(), held.numpy("entity_kind")
             shared = np.zeros(len(kinds), bool)
             inside = kinds < len(stated)
             shared[inside] = stated[kinds[inside]]
             self._tokens[held] = np.where(shared, held.numpy("entity_token"), -1)
-            LOG.debug("bank tokens exit entities=%d seconds=%.4f", len(kinds), time.perf_counter() - started)
-        return self._tokens[held]
+        result = self._tokens[held]
+        LOG.debug("bank tokens exit entities=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
 
     def joining(self, cfg):
         return self.stated(cfg)[2]["graphs/join"] == "single"
 
     def groups(self, cfg):
+        started = time.perf_counter()
         spec, viewed = self.stated(cfg)[2], self.viewed(cfg)
         size = (
             spec["time/steps"],
@@ -502,17 +504,18 @@ class Bank:
             self.digested("splits", cfg["splits"], cfg["splits"]),
             spec["graphs/join_size"],
         )
-        if size not in self._groups:
-            started = time.perf_counter()
-            partitions = self.partitions(cfg)
-            keys = [tuple(np.unique(partitions[viewed.labels[graph["index"]][0]]).tolist()) for graph in viewed.graphs]
-            self._groups[size] = grouped(viewed.graphs, keys, size[-1])
-            LOG.info(
-                "bank groups exit seconds=%.3f size=%d groups=%d",
-                time.perf_counter() - started,
-                size[-1],
-                len(self._groups[size]),
-            )
+        if size in self._groups:
+            LOG.debug("bank groups exit held seconds=%.4f", time.perf_counter() - started)
+            return self._groups[size]
+        partitions = self.partitions(cfg)
+        keys = [tuple(np.unique(partitions[viewed.labels[graph["index"]][0]]).tolist()) for graph in viewed.graphs]
+        self._groups[size] = grouped(viewed.graphs, keys, size[-1])
+        LOG.info(
+            "bank groups exit seconds=%.3f size=%d groups=%d",
+            time.perf_counter() - started,
+            size[-1],
+            len(self._groups[size]),
+        )
         return self._groups[size]
 
     @timed("bank.Bank.graphs")
@@ -538,6 +541,7 @@ class Bank:
         started = time.perf_counter()
         viewed = self.viewed(cfg)
         if not self.joining(cfg):
+            LOG.debug("bank labels exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
             return viewed.labels[index]
         members = self.groups(cfg)[index]
         offsets = np.r_[0, np.cumsum([len(viewed.row_steps[member]) for member in members])]
@@ -549,7 +553,7 @@ class Bank:
         return result
 
     def stated(self, cfg):
-        from tuning.families.model_spec import derived, groups
+        from tuning.families.model_spec import derived
 
         if "pipeline" not in cfg:
             raise KeyError("the configuration states no pipeline")
@@ -557,14 +561,20 @@ class Bank:
         stated = dict(pipeline=cfg["pipeline"], graph=cfg["graph"])
         key = (chosen, self.digested("stated", stated, cfg["pipeline"], cfg["graph"]))
         if key not in self.variants:
-            started = time.perf_counter()
-            self.variants[key] = (
-                resolved(self.registry, cfg["pipeline"]),
-                specs.canonical(specs.settings(self.registry, groups(cfg["model"])), cfg["graph"]),
-                chosen,
-            )
-            LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)
+            self.variants[key] = self.settled(cfg, chosen)
         return key, *self.variants[key]
+
+    def settled(self, cfg, chosen):
+        from tuning.families.model_spec import groups
+
+        started = time.perf_counter()
+        result = (
+            resolved(self.registry, cfg["pipeline"]),
+            specs.canonical(specs.settings(self.registry, groups(cfg["model"])), cfg["graph"]),
+            chosen,
+        )
+        LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)
+        return result
 
     @timed("blocks")
     def blocks(self, partition, history, cfg):
@@ -615,6 +625,7 @@ class Deriver(Bank):
         started = time.perf_counter()
         provisional = pipeline.grown(viewed.registry, steps, None)
         if not provisional.schema.added_columns():
+            LOG.debug("deriver growing exit columns=0 seconds=%.4f", time.perf_counter() - started)
             return provisional
         named = specs.digest(dict(pipeline=[step.keyed() for step in steps], device=self.device, seed=SEED))
         path = viewed.folder / "added" / (named + ".json")

@@ -338,18 +338,18 @@ def folder_size(folder):
 
 
 def cached_size(folder):
+    started = time.perf_counter()
     entries = len(os.listdir(folder))
     held = SIZES.get(folder)
     if held is None or held[0] != entries:
-        started = time.perf_counter()
         held = SIZES[folder] = (entries, folder_size(folder))
-        LOG.debug(
-            "folder size exit folder=%s entries=%d bytes=%d seconds=%.3f",
-            folder.name,
-            entries,
-            held[1],
-            time.perf_counter() - started,
-        )
+    LOG.debug(
+        "folder size exit folder=%s entries=%d bytes=%d seconds=%.3f",
+        folder.name,
+        entries,
+        held[1],
+        time.perf_counter() - started,
+    )
     return held[1]
 
 

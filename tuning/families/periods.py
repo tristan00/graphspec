@@ -20,9 +20,10 @@ def enabled(cfg):
 
 
 def blocks(bank, original, cfg):
-    if not enabled(cfg):
-        return original
     started = time.perf_counter()
+    if not enabled(cfg):
+        LOG.debug("period blocks exit unchanged blocks=%d seconds=%.4f", len(original), time.perf_counter() - started)
+        return original
     output, starts = [], {}
     context = lookback(cfg)
     for graph, start, stop, target, partition, first, last in original:

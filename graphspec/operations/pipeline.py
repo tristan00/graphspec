@@ -465,6 +465,7 @@ def made(operation, registry, context, value):
 
 
 def probed(registry, operation, bounded, context):
+    started = time.perf_counter()
     key = (
         operation.name,
         tuple((name, held.default, held.low, held.high, held.options) for name, held in sorted(bounded.items())),
@@ -472,9 +473,9 @@ def probed(registry, operation, bounded, context):
     )
     held = PROBED.setdefault(registry, {})
     if key in held:
+        LOG.debug("probed exit operation=%s held seconds=%.4f", operation.name, time.perf_counter() - started)
         return held[key]
-    started = time.perf_counter()
-    choices = [parameter.name for parameter in operation.stated(registry) if bounded[parameter.name].options]
+    choices =[parameter.name for parameter in operation.stated(registry) if bounded[parameter.name].options]
 
     def spec(chosen):
         return made(

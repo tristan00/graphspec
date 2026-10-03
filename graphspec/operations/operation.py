@@ -206,15 +206,17 @@ class Operation:
 
     def stated(self, registry):
         held = STATED.setdefault(registry, {})
-        if self in held and held[self][0] == registries.GENERATION:
-            return held[self][1]
+        if self not in held or held[self][0] != registries.GENERATION:
+            held[self] = registries.GENERATION, self.gathered(registry)
+        return held[self][1]
+
+    def gathered(self, registry):
         started = time.perf_counter()
         found = tuple(self.parameters(registry))
         counted = Counter(parameter.name for parameter in found)
         twice = sorted(name for name, count in counted.items() if count > 1)
         if twice:
             raise ValueError("the operation %s states the parameters %s twice" % (self.name, ", ".join(twice)))
-        held[self] = registries.GENERATION, found
         LOG.debug(
             "stated exit operation=%s parameters=%d seconds=%.4f",
             self.name,

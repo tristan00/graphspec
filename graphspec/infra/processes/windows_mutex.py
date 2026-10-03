@@ -107,10 +107,10 @@ class Mutex:
             if result not in (WAIT_OBJECT, WAIT_ABANDONED):
                 raise RuntimeError("unexpected mutex wait result: %d" % result)
             self.owned = True
-            LOG.info("mutex enter name=%s seconds=%.3f", self.name, time.perf_counter() - started)
         except BaseException:
             self.close()
             raise
+        LOG.info("mutex enter name=%s seconds=%.3f", self.name, time.perf_counter() - started)
         return self
 
     @timed("windows_mutex.Mutex.__exit__")

@@ -125,66 +125,68 @@ class Resident:
     def tensor(self, key):
         with self.lock:
             if key not in self.tensors:
-                started = time.perf_counter()
-                values = self.arrays[key]
-                if values.nbytes > self.limit:
-                    self.tensors[key] = MappedRows(values, self.device, self.dtypes.get(key))
-                else:
-                    host = torch.as_tensor(self.arrays.read(key), dtype=self.dtypes.get(key))
-                    self.tensors[key] = (
-                        host if torch.device(self.device).type == "cpu" else transfer(host, self.device)
-                    )
-                LOG.debug(
-                    "resident tensor exit key=%s device=%s seconds=%.4f",
-                    key,
-                    self.device,
-                    time.perf_counter() - started,
-                )
+                self.tensors[key] = self.placed(key)
             return self.tensors[key]
+
+    def placed(self, key):
+        started = time.perf_counter()
+        values = self.arrays[key]
+        if values.nbytes > self.limit:
+            result = MappedRows(values, self.device, self.dtypes.get(key))
+        else:
+            host = torch.as_tensor(self.arrays.read(key), dtype=self.dtypes.get(key))
+            result = host if torch.device(self.device).type == "cpu" else transfer(host, self.device)
+        LOG.debug(
+            "resident tensor exit key=%s device=%s seconds=%.4f", key, self.device, time.perf_counter() - started
+        )
+        return result
 
     def numpy(self, key):
         if key not in self.loaded:
-            started = time.perf_counter()
-            values = self.arrays[key]
-            self.loaded[key] = values if values.nbytes > MEMORY_BYTES else self.arrays.read(key)
-            LOG.debug(
-                "resident numpy exit key=%s bytes=%d seconds=%.4f",
-                key,
-                self.loaded[key].nbytes,
-                time.perf_counter() - started,
-            )
+            self.loaded[key] = self.read(key)
         return self.loaded[key]
 
+    def read(self, key):
+        started = time.perf_counter()
+        values = self.arrays[key]
+        result = values if values.nbytes > MEMORY_BYTES else self.arrays.read(key)
+        LOG.debug(
+            "resident numpy exit key=%s bytes=%d seconds=%.4f", key, result.nbytes, time.perf_counter() - started
+        )
+        return result
+
     def column(self, key, index):
+        started = time.perf_counter()
         if (key, index) not in self.columns:
-            started = time.perf_counter()
             values = self.numpy(key)[:, index]
             self.columns[(key, index)] = (
                 values if values.nbytes > MEMORY_BYTES else np.ascontiguousarray(values)
             )
-            LOG.debug(
-                "resident column exit key=%s index=%d rows=%d seconds=%.4f",
-                key,
-                index,
-                len(self.columns[(key, index)]),
-                time.perf_counter() - started,
-            )
-        return self.columns[(key, index)]
+        result = self.columns[(key, index)]
+        LOG.debug(
+            "resident column exit key=%s index=%d rows=%d seconds=%.4f",
+            key,
+            index,
+            len(result),
+            time.perf_counter() - started,
+        )
+        return result
 
     def order(self, key, index):
+        started = time.perf_counter()
         if (key, index) not in self.orders:
-            started = time.perf_counter()
             values = self.column(key, index)
             order = np.argsort(values, kind="stable")
             self.orders[(key, index)] = (order, values[order])
-            LOG.debug(
-                "resident order exit key=%s index=%d rows=%d seconds=%.4f",
-                key,
-                index,
-                len(order),
-                time.perf_counter() - started,
-            )
-        return self.orders[(key, index)]
+        result = self.orders[(key, index)]
+        LOG.debug(
+            "resident order exit key=%s index=%d rows=%d seconds=%.4f",
+            key,
+            index,
+            len(result[0]),
+            time.perf_counter() - started,
+        )
+        return result
 
     @timed("arrays.Resident.nbytes")
     def nbytes(self):
@@ -207,7 +209,7 @@ class Residents:
         self.dtypes, self.limit, self.held, self.lock = dtypes, limit, OrderedDict(), threading.Lock()
 
     def get(self, key, device, open_arrays, limit=MEMORY_BYTES, budget=None):
-        slot = (key, str(device))
+        started, slot = time.perf_counter(), (key, str(device))
         with self.lock:
             if budget is not None:
                 held = [name for name in self.held if name[1] == slot[1] and name != slot]
@@ -218,19 +220,21 @@ class Residents:
                     if total <= budget:
                         break
                     total -= self.held.pop(name).nbytes()
-            if slot not in self.held:
-                started = time.perf_counter()
+            opened = slot not in self.held
+            if opened:
                 self.held[slot] = Resident(open_arrays(), device, self.dtypes, limit)
-                LOG.debug(
-                    "residents open exit key=%s device=%s held=%d seconds=%.4f",
-                    key,
-                    device,
-                    len(self.held),
-                    time.perf_counter() - started,
-                )
                 while len(self.held) > self.limit:
                     self.held.popitem(last=False)
-            return self.held[slot]
+            result = self.held[slot]
+        LOG.debug(
+            "residents get exit key=%s device=%s opened=%s held=%d seconds=%.4f",
+            key,
+            device,
+            opened,
+            len(self.held),
+            time.perf_counter() - started,
+        )
+        return result
 
 
 NUMPY = {

@@ -25,15 +25,13 @@ KEYED = WeakKeyDictionary()
 
 
 def keyed_relations(registry):
+    started = time.perf_counter()
     if registry not in KEYED:
-        started = time.perf_counter()
         tokens, symmetric = np.zeros(registry.relations, np.uint64), np.zeros(registry.relations, bool)
         for edge in registry.edges:
             tokens[edge.code], symmetric[edge.code] = token(edge.name), edge.symmetric
         KEYED[registry] = tokens, symmetric
-        LOG.debug(
-            "keyed relations exit relations=%d seconds=%.4f", len(registry.edges), time.perf_counter() - started
-        )
+    LOG.debug("keyed relations exit relations=%d seconds=%.4f", len(registry.edges), time.perf_counter() - started)
     return KEYED[registry]
 
 

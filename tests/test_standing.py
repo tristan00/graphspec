@@ -150,8 +150,8 @@ RECORDED = {
     "graphspec.contract": (7, "38b16e367216b1bbcc637e922fd74ef7e4d1c85e857b4067383f3568c3e5e3fd"),
     "graphspec.product": (3, "d0c09e09b3f2d702ab9d6386bfdafc3c35cddfdae8a9fc4fa21283446479d2e7"),
     "graphspec.negatives": (6, "14defe736b009f6eaf6fa92b1dd2b29508298985ba8227511aa4b5ab5b34d7a6"),
-    "derivation": (37, "f8163a03c399616de7eaccd815f4d0dc6bb94db9dd9530cedeb367dbceefe23b"),
-    "views": (47, "92e9c35b058007b1889db290875b06b855e74380ba0da42ade48ad35595d6949"),
+    "derivation": (38, "2be3beb0a2894c89fc01dddc56c72c0f6e12854cc550229730f5648d738304f4"),
+    "views": (48, "d54f2274e64e460757472d5d99f685915ef77aee309e3355845840ca32435afc"),
     "representations": (17, "6c373d07917515df876e95c6f3b946d61eccb5d105b0face340a3d80d4901e9c"),
     "index": (4, "de51fe453ec964424b70224c54bc8f64438a811c8326745daa22a105984f3f36"),
 }
@@ -169,6 +169,8 @@ CALLED = {
     "graphspec/facts/stored.py:Facts.__getattr__": 31659,
     "graphspec/infra/arrays.py:Bundle.hold": 47217,
     "graphspec/infra/arrays.py:Pending.__init__": 47217,
+    "graphspec/infra/arrays.py:Resident.numpy": 73489,
+    "graphspec/infra/arrays.py:Resident.tensor": 5149,
     "graphspec/infra/arrays.py:between": 7281,
     "graphspec/infra/arrays.py:compact": 47217,
     "graphspec/infra/files.py:Arrays.__getitem__": 17602,
@@ -201,6 +203,7 @@ CALLED = {
     "graphspec/operations/operation.py:Operation.check": 5402,
     "graphspec/operations/operation.py:Operation.roles": 22552,
     "graphspec/operations/operation.py:Operation.settings": 26698,
+    "graphspec/operations/operation.py:Operation.stated": 59961,
     "graphspec/operations/operation.py:Phase.once": 9031,
     "graphspec/operations/operation.py:Phase.run": 8580,
     "graphspec/operations/operation.py:Settings.__contains__": 191893,
@@ -284,6 +287,7 @@ CALLED = {
     "tuning/bank/bank.py:Bank.digested": 76411,
     "tuning/bank/bank.py:Bank.joining": 19870,
     "tuning/bank/bank.py:Bank.several": 14951,
+    "tuning/bank/bank.py:Bank.stated": 42219,
     "tuning/bank/bank.py:Bank.viewed": 14727,
     "tuning/batches/batching.py:moved": 5557,
     "tuning/batches/tensors.py:Features.__init__": 18744,
@@ -446,6 +450,26 @@ def functions(tree):
     return found
 
 
+def told(statement):
+    return isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call) and called(statement.value.func) in LOGGERS
+
+
+def returns(block, logged):
+    for statement in block:
+        if isinstance(statement, NESTED):
+            continue
+        if isinstance(statement, ast.Return) and not logged:
+            return True, logged
+        inner = logged or isinstance(statement, (ast.Try, ast.TryStar)) and any(map(told, statement.finalbody))
+        held = [getattr(statement, name) for name in ("body", "orelse", "finalbody") if getattr(statement, name, None)]
+        found = [returns(part, inner) for part in held + [entry.body for entry in getattr(statement, "handlers", ())]]
+        found += [returns(entry.body, inner) for entry in getattr(statement, "cases", ())]
+        if any(early for early, _ in found):
+            return True, logged
+        logged = inner or told(statement) or isinstance(statement, (ast.With, ast.AsyncWith)) and found[0][1]
+    return False, logged
+
+
 def logs(function):
     started = time.perf_counter()
     names, waiting = set(), [node for node in ast.iter_child_nodes(function) if not isinstance(node, NESTED)]
@@ -454,7 +478,7 @@ def logs(function):
         if isinstance(node, ast.Call):
             names.add(called(node.func))
         waiting.extend(child for child in ast.iter_child_nodes(node) if not isinstance(child, NESTED))
-    found = "perf_counter" in names and not names.isdisjoint(LOGGERS)
+    found = "perf_counter" in names and not names.isdisjoint(LOGGERS) and not returns(function.body, False)[0]
     LOG.debug("logs exit function=%s found=%s seconds=%.6f", function.name, found, time.perf_counter() - started)
     return found
 
@@ -679,6 +703,33 @@ def test_every_function_logs_its_time_or_is_compiled_or_is_listed_with_its_calls
         clock + "class Held:\n    def __init__(self):\n" + logged.replace("    ", "        ") + "\n"
         "    def read(self):\n        return 1\n",
     )
+    line = "LOG.debug('work exit seconds=%.4f', time.perf_counter() - started)\n"
+    write(
+        tmp_path,
+        "tuning/early.py",
+        clock + "def work(held):\n    started = time.perf_counter()\n    if held:\n        return 1\n    " + line + "    return 2\n",
+    )
+    write(
+        tmp_path,
+        "tuning/hit.py",
+        clock + "def work(held):\n    if held:\n        started = time.perf_counter()\n        " + line + "    return 1\n",
+    )
+    write(
+        tmp_path,
+        "tuning/entered.py",
+        clock + "def work(held):\n    started = time.perf_counter()\n    " + line + "    if held:\n        return 1\n    return 2\n",
+    )
+    write(
+        tmp_path,
+        "tuning/ended.py",
+        clock + "def work(held):\n    started = time.perf_counter()\n    try:\n        if held:\n            return 1\n"
+        "        return 2\n    finally:\n        " + line,
+    )
+    write(
+        tmp_path,
+        "tuning/within.py",
+        clock + "def work(held):\n    with held:\n        started = time.perf_counter()\n        " + line + "    return 1\n",
+    )
     write(tmp_path, "graphspec/remarked.py", "def work():\n    return 1  # perf_counter LOG.debug timed\n")
     write(tmp_path, "graphspec/quoted.py", "def work():\n    return 'time.perf_counter() LOG.debug( timed'\n")
     write(tmp_path, "graphspec/each.py", "def each():\n    return 1\n\n\ndef again():\n    return 2\n")
@@ -693,6 +744,8 @@ def test_every_function_logs_its_time_or_is_compiled_or_is_listed_with_its_calls
             "graphspec/quoted.py:work",
             "graphspec/remarked.py:work",
             "tuning/deadline.py:work",
+            "tuning/early.py:work",
+            "tuning/hit.py:work",
             "tuning/measured.py:work",
             "tuning/told.py:work",
         ],

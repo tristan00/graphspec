@@ -161,6 +161,7 @@ class Segment:
         started = time.perf_counter()
         names = np.setdiff1d(np.asarray(names, np.int64), self.glob)
         if not len(names):
+            LOG.debug("widened exit entities=%d added=0 seconds=%.4f", len(self.glob), time.perf_counter() - started)
             return graph, np.arange(len(self.glob))
         glob = np.union1d(self.glob, names)
         position = np.searchsorted(glob, self.glob)

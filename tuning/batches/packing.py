@@ -284,9 +284,10 @@ class Packer:
         self.loader, self.loading_done = None, None
 
     def close(self):
-        if self.closed:
-            return
         started = time.perf_counter()
+        if self.closed:
+            LOG.debug("packer exit closed before seconds=%.4f", time.perf_counter() - started)
+            return
         self.closed = True
         self.stop_prefetch()
         if self.pending:
