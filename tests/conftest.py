@@ -185,6 +185,10 @@ def pytest_unconfigure(config):
         LOG.debug("worker ends without finalizing seconds=%.4f", time.perf_counter() - started)
         sys.stdout.flush()
         sys.stderr.flush()
+        if os.name == "nt":
+            import _winapi
+
+            _winapi.TerminateProcess(_winapi.GetCurrentProcess(), 0)
         os._exit(0)
     for thread in EARLY:
         thread.join()
@@ -309,8 +313,9 @@ def warmup(request):
 def processes_early(request):
     started = time.perf_counter()
     grouped = request.node.get_closest_marker("xdist_group")
-    if WORKER and grouped is not None and grouped.args[0] == "workers":
-        request.getfixturevalue("packers")
+    early = dict(workers="packers", candidates="candidate_pool")
+    if WORKER and grouped is not None and grouped.args[0] in early:
+        request.getfixturevalue(early[grouped.args[0]])
     LOG.debug("processes early exit seconds=%.4f", time.perf_counter() - started)
 
 
