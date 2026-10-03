@@ -5,7 +5,7 @@ import numpy as np
 
 from graphspec.infra.timing import timed
 from graphspec.schema.references import MEMBERS
-from graphspec.views.graph import LABELS, PER_STEP, TASKS, Dense
+from graphspec.views.graph import LABELS, PER_STEP, TASKS, Dense, joining
 
 LOG = logging.getLogger(__name__)
 OBSERVED = ("obs_entity", "obs_step", "obs_ref", "obs_anchor")
@@ -132,8 +132,72 @@ def ordered(arrays, key):
     return {name: value[order] for name, value in arrays.items()}
 
 
-def edited(graph, edit):
+@timed("edits.joins")
+def joins(edge):
+    found = "; ".join("%s to %s" % pair for pair in edge.pairs)
+    return found + " in either order" if edge.symmetric else found
+
+
+def admitted(graph, edit, registry):
     started = time.perf_counter()
+    made = np.asarray(edit.entities["kind"], np.int64)
+    strange = np.flatnonzero((made < 0) | (made >= len(registry.nodes)))
+    if len(strange):
+        raise ValueError(
+            "an edit of graph %s adds in its row %d of entities an entity of the kind %d, and its registry holds the "
+            "kinds 0 to %d" % (graph.name, strange[0], made[strange[0]], len(registry.nodes) - 1)
+        )
+    kinds = np.r_[np.asarray(graph.kinds, np.int64), made]
+    for change, part, names in (
+        ("removes", "observations", ("entity",)),
+        ("removes", "facts", ("source", "target")),
+        ("adds", "observations", ("entity",)),
+        ("adds", "facts", ("source", "target")),
+    ):
+        for name in names:
+            held = np.asarray((edit.removed if change == "removes" else edit.added)[part][name], np.int64)
+            outside = np.flatnonzero((held < 0) | (held >= len(kinds)))
+            if len(outside):
+                raise ValueError(
+                    "an edit of graph %s names in its row %d of the %s it %s the entity %d as its %s, and the graph "
+                    "holds the entities 0 to %d, with the %d the edit adds"
+                    % (graph.name, outside[0], part, change, held[outside[0]], name, len(graph.kinds) - 1, len(made))
+                )
+    added = edit.added["facts"]
+    code, source, target = (np.asarray(added[name], np.int64) for name in ("code", "source", "target"))
+    unknown = np.flatnonzero((code < 0) | (code >= registry.relations))
+    unknown = unknown if len(unknown) else np.flatnonzero(~registry.canonical[code])
+    if len(unknown):
+        raise ValueError(
+            "an edit of graph %s adds in its row %d of facts a fact of the code %d, which names no relation of its "
+            "registry; a fact names a relation by its canonical code" % (graph.name, unknown[0], code[unknown[0]])
+        )
+    nodes = len(registry.nodes)
+    lost = np.flatnonzero(~np.isin((code * nodes + kinds[source]) * nodes + kinds[target], joining(registry)))
+    if len(lost):
+        row = lost[0]
+        edge = registry.by_code[int(code[row])]
+        raise ValueError(
+            "an edit of graph %s adds in its row %d of facts a fact of %s from the entity %d of the kind %s to the "
+            "entity %d of the kind %s, and %s joins %s"
+            % (
+                graph.name,
+                row,
+                edge.name,
+                source[row],
+                registry.nodes[kinds[source[row]]],
+                target[row],
+                registry.nodes[kinds[target[row]]],
+                edge.name,
+                joins(edge),
+            )
+        )
+    LOG.debug("admitted exit graph=%s facts=%d seconds=%.4f", graph.name, len(code), time.perf_counter() - started)
+
+
+def edited(graph, edit, registry):
+    started = time.perf_counter()
+    admitted(graph, edit, registry)
     moments = edit.moments()
     if len(moments) and (moments.min() < 0 or moments.max() >= graph.steps):
         raise ValueError(

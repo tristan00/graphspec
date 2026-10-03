@@ -380,6 +380,7 @@ def test_relation_forms_keep_or_reduce_parallel_edges_and_add_reverse_edges_and_
                 facts=dict(stated_facts, present=np.ones(len(copies), bool), values=weights),
             ),
         ),
+        registry,
     )
     tokens = np.asarray(doubled.entity_token).astype(np.uint64)
     counts = {}

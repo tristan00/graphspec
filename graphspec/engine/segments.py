@@ -358,7 +358,7 @@ def opened(plan, member, graph, low, high, edit, entities, seen):
     x_global, value_global = plan.x[member] + rows, plan.values[member] + values
     if edit is not None:
         tables = len(piece.x_table), len(piece.value_table)
-        piece = edited(piece, edit.moved(-low))
+        piece = edited(piece, edit.moved(-low), plan.registry)
         start = len(ids)
         ids = np.r_[ids, len(entities) + np.arange(len(piece.kinds) - start)]
         entities = entities.added(np.asarray(piece.kinds)[start:], np.asarray(piece.entity_token)[start:])

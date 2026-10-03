@@ -344,6 +344,13 @@ def made(graph, entities=(), removed=None, added=None):
     )
 
 
+@timed("segments.fact")
+def fact(graph, moment, source, target, code):
+    values = np.full((1, graph.value_table.shape[1]), np.nan)
+    stated = dict(source=[source], target=[target], code=[code], step=[moment], present=[True], values=values)
+    return made(graph, added=dict(facts=stated))
+
+
 def edits(graph, moment):
     entity, table = np.asarray(graph.obs_entity), np.asarray(graph.x_table, np.float32)
     at = np.asarray(graph.obs_step) == moment
@@ -411,7 +418,7 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
         assert derivation.parent is history
         assert [(item.member, item.low, item.high) for item in derivation.segments] == [(0, moment, graph.steps)]
         assert all(mine is held for mine, held in zip(derivation.derivations(), history.derivations()))
-        whole = graph if change is None else edited(graph, change)
+        whole = graph if change is None else edited(graph, change, registry)
         expected = begun(whole, beside, registry, steps, spec, 0).continued(graph.steps, None)
         derived, reference = derivation.derived(), expected.derived()
         assert unequal(derived.arrays, reference.arrays, DENSE_READ) == []
@@ -420,9 +427,41 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
         assert unequal(found, held, VARIANT_READ) == []
     with pytest.raises(ValueError, match="and it was begun with room for 0"):
         begun(graph, beside, registry, steps, spec, 0).continued(graph.steps, changes[0])
-    missing = made(graph, removed=dict(observations=dict(entity=[len(graph.kinds)], step=[moment])))
+    kinds, at = np.asarray(graph.kinds), np.asarray(graph.obs_step) == moment
+    entity = np.asarray(graph.obs_entity)[at]
+    unseen = int(np.setdiff1d(np.arange(len(kinds)), entity)[0])
+    missing = made(graph, removed=dict(observations=dict(entity=[unseen], step=[moment])))
     with pytest.raises(ValueError, match="which the graph does not hold"):
         history.continued(graph.steps, missing)
+    person, place = (int(entity[kinds[entity] == registry.kind(kind)][0]) for kind in ("person", "place"))
+    outside, x = len(kinds) + 5, np.asarray(graph.x_table, np.float32)[np.asarray(graph.obs_ref)[at][:1]]
+    held = "and the graph holds the entities 0 to %d, with the 0 the edit adds" % (len(kinds) - 1)
+    for edit, message in (
+        (
+            fact(graph, moment, place, person, registry.code("owns")),
+            "adds in its row 0 of facts a fact of owns from the entity %d of the kind place to the entity %d of the "
+            "kind person, and owns joins person to item" % (place, person),
+        ),
+        (
+            fact(graph, moment, person, outside, registry.code("visits")),
+            "names in its row 0 of the facts it adds the entity %d as its target, %s" % (outside, held),
+        ),
+        (
+            made(graph, added=dict(observations=dict(entity=[len(kinds)], step=[moment], x=x))),
+            "names in its row 0 of the observations it adds the entity %d as its entity, %s" % (len(kinds), held),
+        ),
+        (
+            made(graph, removed=dict(observations=dict(entity=[-1], step=[moment]))),
+            "names in its row 0 of the observations it removes the entity -1 as its entity, %s" % held,
+        ),
+        (
+            fact(graph, moment, person, place, registry.relations + 3),
+            "adds in its row 0 of facts a fact of the code %d, which names no relation of its registry"
+            % (registry.relations + 3),
+        ),
+    ):
+        with pytest.raises(ValueError, match=re.escape("an edit of graph %s %s" % (graph.name, message))):
+            history.continued(graph.steps, edit)
     _, joined, stated = every(opened, support.fitted(opened), True, VALUES, ())
     both = Derivation.begun(
         [graph, graph],
