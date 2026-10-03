@@ -11,10 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from graphspec.infra.files import read_json, write_json
-from graphspec.infra.processes import locks
-from graphspec.infra.processes.locks import Lock, LockBusy
-
 WORKER = "PYTEST_XDIST_WORKER" in os.environ
 LOG = logging.getLogger(__name__)
 SUITE = {"heavy": "heavy-tests-" + os.environ.get("PYTEST_XDIST_WORKER", "serial")}
@@ -23,16 +19,23 @@ SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], vali
 RECORD = Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "durations.json"
 SPENT = {}
 EARLY = []
+ORIGINAL = {}
 
 
-def suite_singleton(name, message, original=locks.singleton):
+def suite_singleton(name, message):
     started = time.perf_counter()
-    lock = original(SUITE.get(name, name), message)
+    lock = ORIGINAL["singleton"](SUITE.get(name, name), message)
     LOG.debug("suite_singleton exit name=%s seconds=%.4f", name, time.perf_counter() - started)
     return lock
 
 
-locks.singleton = suite_singleton
+def suited():
+    from graphspec.infra.processes import locks
+
+    started = time.perf_counter()
+    ORIGINAL.update(singleton=locks.singleton, heavy_job=locks.heavy_job)
+    locks.singleton, locks.heavy_job = suite_singleton, shared_heavy_job
+    LOG.debug("suited exit seconds=%.4f", time.perf_counter() - started)
 
 
 def pytest_configure(config):
@@ -50,6 +53,8 @@ def unit(nodeid):
 
 
 def ordered(items):
+    from graphspec.infra.files import read_json
+
     started = time.perf_counter()
     spent = read_json(RECORD) if RECORD.exists() else {}
     units = [unit(item.nodeid) for item in items]
@@ -95,15 +100,21 @@ def made_early():
     LOG.debug("made early exit seconds=%.4f", time.perf_counter() - started)
 
 
+@pytest.hookimpl(wrapper=True)
 def pytest_sessionstart(session):
+    result = yield
     started = time.perf_counter()
+    suited()
     if not WORKER and session.config.pluginmanager.has_plugin("dsession"):
         EARLY.append(threading.Thread(target=made_early, daemon=True))
         EARLY[0].start()
     LOG.debug("session start exit early=%d seconds=%.4f", len(EARLY), time.perf_counter() - started)
+    return result
 
 
 def pytest_sessionfinish(session):
+    from graphspec.infra.files import read_json, write_json
+
     started = time.perf_counter()
     if not WORKER and session.config.pluginmanager.has_plugin("dsession"):
         held = read_json(RECORD) if RECORD.exists() else {}
@@ -112,9 +123,11 @@ def pytest_sessionfinish(session):
 
 
 @contextmanager
-def shared_heavy_job(original=locks.heavy_job):
+def shared_heavy_job():
+    from graphspec.infra.processes.locks import LockBusy
+
     while True:
-        job = original()
+        job = ORIGINAL["heavy_job"]()
         try:
             job.__enter__()
             break
@@ -128,14 +141,13 @@ def shared_heavy_job(original=locks.heavy_job):
         job.__exit__(None, None, None)
 
 
-locks.heavy_job = shared_heavy_job
-
-
 def suite():
     return Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "tmp" / "suite" / os.environ["GRAPHSPEC_SUITE_RUN"]
 
 
 def shared(name, make):
+    from graphspec.infra.processes.locks import Lock, LockBusy
+
     started = time.perf_counter()
     root = suite() / name
     root.parent.mkdir(parents=True, exist_ok=True)

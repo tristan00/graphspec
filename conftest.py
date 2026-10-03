@@ -45,6 +45,14 @@ def linked(place, compiled):
     return link
 
 
+def temporary(place):
+    started = time.perf_counter()
+    result = place / "tmp"
+    result.mkdir(parents=True, exist_ok=True)
+    LOG.debug("temporary exit place=%s seconds=%.4f", place, time.perf_counter() - started)
+    return result
+
+
 def gone(place):
     started = time.perf_counter()
     if place.is_dir():
@@ -137,19 +145,28 @@ os.environ["GRAPHSPEC_HOME"] = str(
     )
 )
 linked(Path(os.environ["GRAPHSPEC_HOME"]), Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "numba")
-ALIVE.append(
-    begun(
-        os.environ["GRAPHSPEC_SUITE_HOME"],
-        os.environ["GRAPHSPEC_SUITE_RUN"],
-        os.environ.get("PYTEST_XDIST_WORKER", "serial"),
-        "PYTEST_XDIST_WORKER" not in os.environ,
-    )[0]
-)
+os.environ["PYTEST_DEBUG_TEMPROOT"] = str(temporary(Path(os.environ["GRAPHSPEC_HOME"])))
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_sessionstart(session):
+    result = yield
+    started = time.perf_counter()
+    ALIVE.append(
+        begun(
+            os.environ["GRAPHSPEC_SUITE_HOME"],
+            os.environ["GRAPHSPEC_SUITE_RUN"],
+            os.environ.get("PYTEST_XDIST_WORKER", "serial"),
+            "PYTEST_XDIST_WORKER" not in os.environ,
+        )[0]
+    )
+    LOG.debug("session start exit seconds=%.4f", time.perf_counter() - started)
+    return result
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_unconfigure(config):
     result = yield
-    if "PYTEST_XDIST_WORKER" not in os.environ:
+    while ALIVE and "PYTEST_XDIST_WORKER" not in os.environ:
         finished(os.environ["GRAPHSPEC_SUITE_HOME"], os.environ["GRAPHSPEC_SUITE_RUN"], ALIVE.pop())
     return result
