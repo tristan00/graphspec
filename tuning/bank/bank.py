@@ -53,7 +53,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 70
+VIEW = 71
 TOKEN = (1 << 62) - 1
 
 
@@ -681,7 +681,7 @@ class Deriver(Bank):
         self.device, self.seed = device, seed
         super().__init__(directory)
         self.store, self.residents = ArrayStore(), Residents(DTYPES, resident)
-        self.grown = {}
+        self.grown, self.forking = {}, None
         LOG.debug("deriver exit device=%s seconds=%.4f", device, time.perf_counter() - started)
 
     @timed("bank.Deriver.limits")

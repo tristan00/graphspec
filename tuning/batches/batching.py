@@ -7,7 +7,7 @@ import numpy as np
 from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from tuning.bank.bank import ROWS
-from tuning.bank.forks import UNMOVED, Part
+from tuning.bank.forks import UNMOVED, Forks, Part
 from tuning.bank.options import offered
 from tuning.families.heads import FIELD, realisation
 from tuning.families.model_spec import realised
@@ -276,6 +276,11 @@ def recipe_batch(bank, blocks, cfg):
 
 @timed("recipe_parts")
 def recipe_parts(bank, blocks, cfg):
+    with Forks(bank):
+        return combined(bank, blocks, cfg)
+
+
+def combined(bank, blocks, cfg):
     started = time.perf_counter()
     if not blocks:
         raise ValueError("a batch requires at least one window")
@@ -515,9 +520,11 @@ def recipe_parts(bank, blocks, cfg):
 
 @timed("batching.pack_batch")
 def pack_batch(bank, blocks, cfg, device):
-    return materialise(bank, cfg, recipe_batch(bank, blocks, cfg), device)
+    with Forks(bank):
+        return materialise(bank, cfg, recipe_batch(bank, blocks, cfg), device)
 
 
 @timed("batching.pack_parts")
 def pack_parts(bank, blocks, cfg, device):
-    return materialise(bank, cfg, recipe_parts(bank, blocks, cfg), device)
+    with Forks(bank):
+        return materialise(bank, cfg, recipe_parts(bank, blocks, cfg), device)

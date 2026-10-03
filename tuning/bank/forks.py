@@ -1,13 +1,13 @@
 import logging
 import time
 from dataclasses import dataclass
-from weakref import WeakKeyDictionary
 
 import numpy as np
 
 from graphspec.engine.edits import Edit
 from graphspec.engine.segments import Derivation, padded
 from graphspec.facts.stored import encoded, unheld
+from graphspec.infra.arrays import Resident
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import MEMORY_BYTES
 from graphspec.views.graph import Graph
@@ -16,7 +16,6 @@ from tuning.families.heads import coded, realisation
 from .options import TOKEN, offered
 
 LOG = logging.getLogger(__name__)
-CHAINS = WeakKeyDictionary()
 UNMOVED = ()
 
 
@@ -33,6 +32,41 @@ class Held(dict):
     @timed("forks.Held.read")
     def read(self, key):
         return self[key]
+
+
+class Forks:
+    @timed("forks.Forks.__init__")
+    def __init__(self, bank):
+        self.bank, self.chains, self.held, self.outer = bank, {}, {}, None
+
+    @timed("forks.Forks.__enter__")
+    def __enter__(self):
+        self.outer = self.bank.forking
+        if self.outer is None:
+            self.bank.forking = self
+        return self.bank.forking
+
+    def __exit__(self, *exception):
+        started = time.perf_counter()
+        if self.outer is None:
+            self.bank.forking = None
+        LOG.debug(
+            "forks exit released=%s chains=%d forks=%d seconds=%.4f",
+            self.outer is None,
+            len(self.chains),
+            len(self.held),
+            time.perf_counter() - started,
+        )
+
+
+@timed("forks.opened")
+def opened(bank):
+    if bank.forking is None:
+        raise ValueError(
+            "the forks of a derivation are held by the work that reads them, and no work holds them here; a fork "
+            "is derived within tuning.bank.forks.Forks(bank), which releases its forks and their histories at its end"
+        )
+    return bank.forking
 
 
 @timed("forks.widened")
@@ -68,7 +102,7 @@ def begun(bank, cfg, graph):
 
 def trunk(bank, cfg, graph, step):
     started = time.perf_counter()
-    chains = CHAINS.setdefault(bank, {})
+    chains = opened(bank).chains
     key = (bank.variant(cfg)[0], graph)
     if key not in chains:
         chains[key] = {0: begun(bank, cfg, graph)}
@@ -214,8 +248,10 @@ def forked(bank, part, cfg, device):
     if part.option < 0:
         result = bank.resident(part.graph, cfg, device)
     else:
-        key = (bank.variant(cfg)[0], editing(bank, cfg), part)
-        result = bank.residents.get(key, device, lambda: derived(bank, cfg, part), MEMORY_BYTES, None)
+        held, key = opened(bank).held, (bank.variant(cfg)[0], editing(bank, cfg), part, str(device))
+        if key not in held:
+            held[key] = Resident(derived(bank, cfg, part), device, bank.residents.dtypes, MEMORY_BYTES)
+        result = held[key]
     LOG.debug("forks forked exit option=%d seconds=%.4f", part.option, time.perf_counter() - started)
     return result
 

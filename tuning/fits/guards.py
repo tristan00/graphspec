@@ -8,7 +8,7 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 from graphspec.operations.pipeline import emptied
-from tuning.bank.forks import made, trunk
+from tuning.bank.forks import Forks, made, trunk
 from tuning.bank.options import offered
 from tuning.batches.batching import batches, pack_batch, pack_parts
 from tuning.families.heads import NONE, REALISATION, coded, fielded, realisation, refused
@@ -477,7 +477,8 @@ def guarded(bank, cfg, net, stated, size):
     try:
         for group in groups:
             if back:
-                guard.checked(pack_batch(bank, group, cfg, stated.device))
+                with Forks(bank):
+                    guard.checked(pack_batch(bank, group, cfg, stated.device))
             else:
                 guard.checked(pack_batch(bank, group, cfg, stated.device), pack_batch(bank, group, plain, stated.device))
     finally:

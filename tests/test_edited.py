@@ -1,6 +1,8 @@
+import gc
 import logging
 import re
 import time
+import weakref
 
 import numpy as np
 import pytest
@@ -179,35 +181,63 @@ def test_the_options_of_a_decision_are_forks_of_one_history_each_adding_its_fact
         return continued(derivation, high, edit)
 
     monkeypatch.setattr(Derivation, "continued", counted)
-    parts = [parted(held, [block], cfg) for block in blocks]
-    for block in blocks:
-        pack_batch(held, [block], cfg, "cpu")
-    steps = [found[0][0].step for found in parts]
-    options = [len(found) for found in parts]
-    assert all(part[0].option >= 0 and part[0].move == () for found in parts for part in found) and options[1] > 2
-    assert calls == [(0, steps[0], True)] + [(steps[0], steps[0] + 1, False)] * options[0] + [
-        (steps[0], steps[1], True)
-    ] + [(steps[1], steps[1] + 1, False)] * options[1]
-    monkeypatch.undo()
-    codes = {held.fitted(cfg).code(name) for name in RELATIONS}
-    whole = held.arrays(0, cfg)
-    assert not np.isin(np.asarray(whole["spatial"])[:, 2], list(codes)).any()
-    trunk = forks.trunk(held, cfg, 0, steps[1]).continued(steps[1] + 1, None).arrays()
-    for part in parts[1]:
-        fork = held.resident(part[0], cfg, "cpu")
-        spatial, step = fork.numpy("spatial"), fork.numpy("spatial_step")
-        entity, kept = fork.numpy("entity"), np.asarray(trunk["entity"])
-        earlier = step < steps[1]
-        assert np.array_equal(entity[spatial[earlier][:, :2]], kept[np.asarray(trunk["spatial"])[np.asarray(trunk["spatial_step"]) < steps[1]][:, :2]])
-        assert not np.isin(spatial[earlier][:, 2], list(codes)).any()
-        assert (step[np.isin(spatial[:, 2], list(codes))] == steps[1]).all()
-    actions = forks.offered(held).actions[1][[part[0].option for part in parts[1]]]
-    assert any(
-        np.isin(held.resident(part[0], cfg, "cpu").numpy("spatial")[:, 2], list(codes)).any()
-        for part, count in zip(parts[1], actions)
-        if count
-    )
+    with forks.Forks(held):
+        parts = [parted(held, [block], cfg) for block in blocks]
+        for block in blocks:
+            pack_batch(held, [block], cfg, "cpu")
+        steps = [found[0][0].step for found in parts]
+        options = [len(found) for found in parts]
+        assert all(part[0].option >= 0 and part[0].move == () for found in parts for part in found) and options[1] > 2
+        assert calls == [(0, steps[0], True)] + [(steps[0], steps[0] + 1, False)] * options[0] + [
+            (steps[0], steps[1], True)
+        ] + [(steps[1], steps[1] + 1, False)] * options[1]
+        monkeypatch.undo()
+        codes = {held.fitted(cfg).code(name) for name in RELATIONS}
+        whole = held.arrays(0, cfg)
+        assert not np.isin(np.asarray(whole["spatial"])[:, 2], list(codes)).any()
+        trunk = forks.trunk(held, cfg, 0, steps[1]).continued(steps[1] + 1, None).arrays()
+        for part in parts[1]:
+            fork = held.resident(part[0], cfg, "cpu")
+            spatial, step = fork.numpy("spatial"), fork.numpy("spatial_step")
+            entity, kept = fork.numpy("entity"), np.asarray(trunk["entity"])
+            earlier = step < steps[1]
+            assert np.array_equal(entity[spatial[earlier][:, :2]], kept[np.asarray(trunk["spatial"])[np.asarray(trunk["spatial_step"]) < steps[1]][:, :2]])
+            assert not np.isin(spatial[earlier][:, 2], list(codes)).any()
+            assert (step[np.isin(spatial[:, 2], list(codes))] == steps[1]).all()
+        actions = forks.offered(held).actions[1][[part[0].option for part in parts[1]]]
+        assert any(
+            np.isin(held.resident(part[0], cfg, "cpu").numpy("spatial")[:, 2], list(codes)).any()
+            for part, count in zip(parts[1], actions)
+            if count
+        )
     LOG.info("forks of one history exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_chains_and_forks_a_batch_reads_are_released_once_it_is_packed(banks, monkeypatch):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    cfg = configured(held, "edited", "snapshot")
+    alive, made, derived = [], Derivation.__init__, forks.derived
+
+    @timed("edited.tracked")
+    def tracked(derivation, *arguments):
+        made(derivation, *arguments)
+        alive.append(("chain", weakref.ref(derivation)))
+
+    @timed("edited.kept")
+    def kept(*arguments):
+        result = derived(*arguments)
+        alive.append(("fork", weakref.ref(result)))
+        return result
+
+    monkeypatch.setattr(Derivation, "__init__", tracked)
+    monkeypatch.setattr(forks, "derived", kept)
+    b = pack_batch(held, last(held, cfg, 2), cfg, "cpu")
+    gc.collect()
+    counts = [sort for sort, _ in alive]
+    assert len(b["options"]["row"]) > 2 and counts.count("fork") >= len(b["options"]["row"]) and "chain" in counts
+    assert not [sort for sort, held in alive if held() is not None]
+    LOG.info("forks released exit made=%d seconds=%.3f", len(counts), time.perf_counter() - started)
 
 
 @pytest.mark.parametrize("family", READING)
@@ -224,7 +254,7 @@ def test_each_option_scores_as_its_own_graph_encoded_alone_and_one_step_trains_e
         parts = parted(held, chosen, cfg)
         b = pack_batch(held, chosen, cfg, "cpu")
         values = net(b)
-        with torch.no_grad():
+        with forks.Forks(held), torch.no_grad():
             alone = torch.cat([net(pack_parts(held, [part], cfg, "cpu")) for part in parts])
         assert len(parts) > 2 and len(b["options"]["row"]) == len(parts) and len(alone) == len(values) > 0
         largest[bank] = float((alone - values.detach()).abs().max())
@@ -246,7 +276,8 @@ def test_every_guard_holds_for_an_edit_and_one_refuses_a_field_whose_facts_the_f
         torch.manual_seed(5)
         net = network(cfg, held.fitted(cfg)).eval()
         guard = Forked(held, cfg, net, 5, "cpu")
-        guard.checked(pack_batch(held, last(held, cfg, 1), cfg, "cpu"))
+        with forks.Forks(held):
+            guard.checked(pack_batch(held, last(held, cfg, 1), cfg, "cpu"))
         try:
             found[spatial] = guard.concluded(0.0)
         except ValueError as error:
@@ -283,10 +314,11 @@ def test_the_facts_an_edit_adds_come_from_the_content_of_its_option_alone(banks)
     for held in (stated, flipped):
         cfg = configured(held, "edited", "snapshot")
         made.append([])
-        for part in parted(held, last(held, cfg, 1), cfg):
-            history = forks.trunk(held, cfg, part[0].graph, part[0].step)
-            edit = forks.made(held, cfg, history, part[0], forks.ordered(held, part[0].option))
-            made[-1].append([np.asarray(values) for side in edit.added.values() for values in side.values()])
+        with forks.Forks(held):
+            for part in parted(held, last(held, cfg, 1), cfg):
+                history = forks.trunk(held, cfg, part[0].graph, part[0].step)
+                edit = forks.made(held, cfg, history, part[0], forks.ordered(held, part[0].option))
+                made[-1].append([np.asarray(values) for side in edit.added.values() for values in side.values()])
     assert [len(edit) for edit in made[0]] == [len(edit) for edit in made[1]] and any(len(edit[-4]) for edit in made[0])
     assert all(
         np.array_equal(left, right, equal_nan=left.dtype.kind == "f")

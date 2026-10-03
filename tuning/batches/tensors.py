@@ -6,6 +6,7 @@ import torch
 
 from graphspec.infra.arrays import NUMPY, Bundle, Pending, join_tensors, views
 from graphspec.infra.timing import timed
+from tuning.bank.forks import Forks
 
 LOG = logging.getLogger(__name__)
 
@@ -361,7 +362,8 @@ def keys(value, found):
 
 @timed("resolve")
 def resolve(value, bank, cfg, tensors, device):
-    return Resolver(bank, cfg, tensors, device, list(dict.fromkeys(value["graphs"]))).run(value)
+    with Forks(bank):
+        return Resolver(bank, cfg, tensors, device, list(dict.fromkeys(value["graphs"]))).run(value)
 
 
 def materialise(bank, cfg, tree, device):
