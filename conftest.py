@@ -144,12 +144,12 @@ os.environ["GRAPHSPEC_HOME"] = str(
         os.environ.get("PYTEST_XDIST_WORKER", "serial"),
     )
 )
-linked(Path(os.environ["GRAPHSPEC_HOME"]), Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "numba")
-os.environ["PYTEST_DEBUG_TEMPROOT"] = str(temporary(Path(os.environ["GRAPHSPEC_HOME"])))
 
 
 @pytest.hookimpl(wrapper=True)
 def pytest_sessionstart(session):
+    linked(Path(os.environ["GRAPHSPEC_HOME"]), Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "numba")
+    os.environ["PYTEST_DEBUG_TEMPROOT"] = str(temporary(Path(os.environ["GRAPHSPEC_HOME"])))
     result = yield
     started = time.perf_counter()
     ALIVE.append(
