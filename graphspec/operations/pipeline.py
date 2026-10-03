@@ -475,15 +475,23 @@ def probed(registry, operation, bounded, context):
     if key in held:
         LOG.debug("probed exit operation=%s held seconds=%.4f", operation.name, time.perf_counter() - started)
         return held[key]
-    choices =[parameter.name for parameter in operation.stated(registry) if bounded[parameter.name].options]
+    choices = [parameter.name for parameter in operation.stated(registry) if bounded[parameter.name].options]
+    defaults = {parameter.name: settled(bounded[parameter.name]) for parameter in operation.stated(registry)}
+    drafts, probes = {}, {}
 
     def spec(chosen):
-        return made(
-            operation, registry, context, lambda parameter: chosen.get(parameter.name, settled(bounded[parameter.name]))
-        )
+        key = tuple(chosen.get(name, value) for name, value in defaults.items())
+        if key not in drafts:
+            drafts[key] = made(
+                operation, registry, context, lambda parameter: chosen.get(parameter.name, defaults[parameter.name])
+            )
+        return drafts[key]
 
     def probe(chosen):
-        return operation.roles(registry, dict(context, **spec(chosen)))
+        key = tuple(chosen.get(name, value) for name, value in defaults.items())
+        if key not in probes:
+            probes[key] = operation.roles(registry, dict(context, **spec(chosen)))
+        return probes[key]
 
     origin, found = spec({}), probe({})
     must = dict(hits=roled(found, HITS), removes=roled(found, ("removes",)), fills=roled(found, ("fills",)))

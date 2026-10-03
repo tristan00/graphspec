@@ -11,7 +11,7 @@ from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
 SEED = 0x6772617068
-VERSION = 39
+VERSION = 40
 REMOVES = "references"
 
 

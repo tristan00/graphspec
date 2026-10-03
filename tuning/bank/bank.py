@@ -12,7 +12,7 @@ import pyarrow as pa
 import torch
 from numba import njit
 
-from graphspec import Registry
+from graphspec import Registry, registries
 from graphspec.budgets import GraphLimits
 from graphspec.engine import join, schedule, segments, transform
 from graphspec.engine.edits import sliced
@@ -47,7 +47,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 48
+VIEW = 49
 TOKEN = (1 << 62) - 1
 
 
@@ -350,6 +350,7 @@ class Bank:
         self.scale = np.asarray([scaled[name]["sd"] if name in scaled else 1.0 for name in self.series_names], np.float32)
         self.variants = {}
         self.digests = {}
+        self.choices = {}
         self._groups = {}
         self._viewed = {}
         self._looking = {}
@@ -552,12 +553,18 @@ class Bank:
         LOG.debug("bank labels exit group=%d seconds=%.4f", index, time.perf_counter() - started)
         return result
 
-    def stated(self, cfg):
+    def chosen(self, model):
         from tuning.families.model_spec import derived
 
+        held = self.choices.get(id(model))
+        if held is None or held[0] != model or held[1] != registries.GENERATION:
+            held = self.choices[id(model)] = dict(model), registries.GENERATION, derived(model)
+        return held[2]
+
+    def stated(self, cfg):
         if "pipeline" not in cfg:
             raise KeyError("the configuration states no pipeline")
-        chosen = derived(cfg["model"])
+        chosen = self.chosen(cfg["model"])
         stated = dict(pipeline=cfg["pipeline"], graph=cfg["graph"])
         key = (chosen, self.digested("stated", stated, cfg["pipeline"], cfg["graph"]))
         if key not in self.variants:

@@ -11,10 +11,12 @@ from graphspec.infra.workspace import gathered
 LOG = logging.getLogger(__name__)
 
 
+@timed("periods.lookback")
 def lookback(cfg):
     return cfg["graph"]["time/context"]
 
 
+@timed("periods.enabled")
 def enabled(cfg):
     return lookback(cfg) > 0
 

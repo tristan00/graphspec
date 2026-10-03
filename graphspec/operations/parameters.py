@@ -128,6 +128,7 @@ def equals(name, value):
     return lambda spec: holds(spec, name, value)
 
 
+@timed("parameters.among")
 def among(name, values):
     return lambda spec: name in spec and spec[name] in values
 

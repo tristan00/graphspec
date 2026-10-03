@@ -96,7 +96,7 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     bank.registry = SimpleNamespace(**vars(registry()), fingerprint=lambda: "stated")
     bank.cache = Path(tmp_path)
     bank.variants, bank.roots, bank.device, bank.directory, bank.digests = {}, {}, "cpu", Path(tmp_path), {}
-    bank.source = "source"
+    bank.source, bank.choices = "source", {}
     monkeypatch.setattr(
         specs, "settings", lambda declaration, groups: (specs.number("time/history", 1, 32, 16),)
     )
@@ -140,6 +140,66 @@ def test_a_bank_digests_each_part_of_a_configuration_once_and_again_only_when_it
     assert held.stated(cfg)[0] == (key[0], specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])))
     assert held.stated(cfg)[2]["time/history"] == 5 and held.stated(cfg)[0] != key
     LOG.info("digested once exit seconds=%.4f", time.perf_counter() - started)
+
+
+def recorded(module, name, monkeypatch):
+    started = time.perf_counter()
+    found, original = [], getattr(module, name)
+
+    def wrapped(*arguments):
+        clock = time.perf_counter()
+        result = original(*arguments)
+        found.append((arguments, result))
+        LOG.debug("recorded %s exit seconds=%.6f", name, time.perf_counter() - clock)
+        return result
+
+    monkeypatch.setattr(module, name, wrapped)
+    LOG.debug("recorded exit name=%s seconds=%.4f", name, time.perf_counter() - started)
+    return found
+
+
+def test_a_model_space_is_built_once_and_a_bank_derives_the_representations_of_a_model_once(bank, monkeypatch):
+    from graphspec import registries
+    from tuning.families import model_spec
+
+    started = time.perf_counter()
+    held = Deriver(bank, "cpu", RESIDENT)
+    assert space(held.registry) is space(held.registry) is space(Deriver(bank, "cpu", RESIDENT).registry)
+    cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
+    found = recorded(model_spec, "derived", monkeypatch)
+    chosen = [held.stated(cfg)[0][0] for _ in range(20)]
+    assert len(found) == 1 and chosen == [found[0][1]] * 20
+    cfg["model"]["snapshot/temporal"] = "coupling_edges"
+    assert held.chosen(cfg["model"]) == ("coupling",) and len(found) == 2
+    registries.changed()
+    assert held.chosen(cfg["model"]) == ("coupling",) and len(found) == 3
+    LOG.info("derived once exit seconds=%.4f", time.perf_counter() - started)
+
+
+def test_probing_what_an_operation_does_with_kinds_derives_each_specification_of_its_parameters_once(
+    bank, monkeypatch
+):
+    from support import template
+
+    from graphspec.operations import pipeline
+    from tuning.bank.bank import Bank
+
+    started = time.perf_counter()
+    registry = Bank(bank).registry
+    stated = template()
+    offered = pipeline.Offered(registry, stated, pipeline.space(registry, stated))
+    names = [name for name in offered.names if offered.probes[name] is not None and not offered.reads[name]]
+    assert names
+    for name in names:
+        bounded = {held.name[len(pipeline.NAMED % name) :]: held for held in offered.owned[name]}
+        del pipeline.PROBED[registry]
+        found = recorded(pipeline, "made", monkeypatch)
+        operation = offered.operations[name]
+        assert pipeline.probed(registry, operation, bounded, {}) == offered.probes[name]
+        assigned = [tuple(map(arguments[3], operation.stated(registry))) for arguments, _ in found]
+        assert len(assigned) == len(set(assigned)) > 0
+        monkeypatch.undo()
+    LOG.info("probed once exit seconds=%.4f", time.perf_counter() - started)
 
 
 def test_encoding_and_attention_reject_invalid_parameters_at_construction():

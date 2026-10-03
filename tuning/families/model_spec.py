@@ -1,6 +1,7 @@
 import logging
 import time
 
+from graphspec import registries
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, number, real
@@ -10,6 +11,7 @@ from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 from .heads import reading
 
 LOG = logging.getLogger(__name__)
+SPACES = {}
 DERIVES = "representations/%s"
 VIEWS = (
     "snapshot",
@@ -63,6 +65,7 @@ def views(registry):
     return result
 
 
+@timed("model_spec.view")
 def view(*names):
     return among("view", names)
 
@@ -104,13 +107,16 @@ def reads_dropout(spec):
 
 def space(registry):
     started = time.perf_counter()
-    offered = views(registry)
-    updates = (
-        UPDATES
-        if registry.extras["events"]
-        else tuple(update for update in UPDATES if update != "mutual_rnn")
-    )
-    encoded = reading(registry, "time/encoding")
+    key = (registries.GENERATION, views(registry), registry.extras["events"], reading(registry, "time/encoding"))
+    if key not in SPACES:
+        SPACES[key] = built(*key[1:])
+    LOG.debug("model space exit parameters=%d seconds=%.4f", len(SPACES[key]), time.perf_counter() - started)
+    return SPACES[key]
+
+
+def built(offered, events, encoded):
+    started = time.perf_counter()
+    updates = UPDATES if events else tuple(update for update in UPDATES if update != "mutual_rnn")
     parameters = [
         choice("view", offered, offered[0]),
         number("hidden", 1, 128, 32),
@@ -188,7 +194,7 @@ def space(registry):
     ]
     parameters += [flag(DERIVES % name, False) for name in unread()]
     LOG.debug(
-        "model space exit seconds=%.4f parameters=%d views=%d",
+        "model space built exit seconds=%.4f parameters=%d views=%d",
         time.perf_counter() - started,
         len(parameters),
         len(offered),
@@ -247,23 +253,27 @@ def row_local(spec):
     return spec["view"] in ("tree", "walks", "sequence", "mixed", "event_graph")
 
 
+@timed("model_spec.groups")
 def groups(spec):
     wanted = {REPRESENTATIONS[block] for block in blocks(spec) if block in REPRESENTATIONS}
     return tuple(group for group in GROUPS if group in wanted)
 
 
+@timed("model_spec.unread")
 def unread():
     return tuple(name for name in REGISTERED.names() if name not in GROUPS)
 
 
+@timed("model_spec.derived")
 def derived(spec):
-    lacking = [DERIVES % name for name in unread() if DERIVES % name not in spec]
+    extra = unread()
+    lacking = [DERIVES % name for name in extra if DERIVES % name not in spec]
     if lacking:
         raise KeyError(
             "the model states no %s; a representation registered outside the groups the families read is "
             "derived where the model states it" % ", ".join(lacking)
         )
-    return groups(spec) + tuple(name for name in unread() if spec[DERIVES % name])
+    return groups(spec) + tuple(name for name in extra if spec[DERIVES % name])
 
 
 @timed("model_spec.neighbors")
