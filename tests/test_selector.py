@@ -1,6 +1,7 @@
 import argparse
 import logging
 import re
+import shutil
 import time
 from functools import partial
 from pathlib import Path
@@ -309,6 +310,19 @@ def test_running_again_continues_and_may_change_selector_random_phase_and_bounds
     run(arguments(bank, output, selector="random"))
     assert read_json(output / "plan.json")["selector"] == "random"
 
+    rebuilt = tmp_path / "rebuilt"
+    shutil.copytree(bank, rebuilt)
+    manifest = read_json(rebuilt / "manifest.json")
+    write_json(rebuilt / "manifest.json", dict(manifest, seconds=manifest["seconds"] + 1, database="elsewhere"))
+    run(arguments(rebuilt, output))
+    plan = read_json(output / "plan.json")
+    assert plan["bank"] == str(rebuilt.resolve()) and plan["bank_stored_sha256"] == manifest["stored_sha256"]
+    write_json(rebuilt / "manifest.json", dict(manifest, stored_sha256="0" * 64))
+    differing = "stored %s, and the bank %s stored %s" % (manifest["stored_sha256"], rebuilt, "0" * 64)
+    with pytest.raises(ValueError, match=re.escape(differing)):
+        run(arguments(rebuilt, output))
+    assert read_json(output / "plan.json") == plan
+
     with pytest.raises(ValueError, match="a new search states --selector, --startup-trials, --mix"):
         run(arguments(bank, tmp_path / "fresh"))
     assert not (tmp_path / "fresh").exists()
@@ -435,6 +449,7 @@ def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_fie
         "objective",
         "pipeline",
         "loss",
+        "bank_stored_sha256",
     ],
 )
 def test_a_plan_on_disk_that_lacks_a_field_stops_naming_it(bank, tmp_path, field):
@@ -460,7 +475,7 @@ def test_new_trial_limits_are_frozen_and_epochs_can_reach_five(bank, tmp_path, s
         mix={"random": 100},
         seconds=1200,
         bounds={"epochs": {"low": 1, "high": 5}},
-        bank_manifest_sha256="bank",
+        bank_stored_sha256="bank",
         supervision_sha256="labels",
         version=9,
         bank=str(bank),

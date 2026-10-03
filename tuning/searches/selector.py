@@ -511,7 +511,7 @@ def append_trial(directory, plan, registry, stated):
             selection,
             history=history,
             bounds=bounds,
-            bank_manifest_sha256=plan["bank_manifest_sha256"],
+            bank_stored_sha256=plan["bank_stored_sha256"],
             supervision_sha256=plan["supervision_sha256"],
             spec_sha256=registry.fingerprint(),
             seconds=time.perf_counter() - started,

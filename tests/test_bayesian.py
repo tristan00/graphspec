@@ -198,7 +198,7 @@ def test_startup_counts_tpe_and_failed_trials(bank, tmp_path, monkeypatch, state
         seed=5,
         trials=[],
         bounds={},
-        bank_manifest_sha256="bank",
+        bank_stored_sha256="bank",
         supervision_sha256="labels",
         pipeline=TEMPLATE,
     )
@@ -266,7 +266,7 @@ def test_selector_mix_rolls_each_trial_after_startup(bank, tmp_path, monkeypatch
         seed=5,
         trials=[],
         bounds={},
-        bank_manifest_sha256="bank",
+        bank_stored_sha256="bank",
         supervision_sha256="labels",
         pipeline=TEMPLATE,
     )

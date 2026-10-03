@@ -143,7 +143,7 @@ def test_startup_counts_toward_the_forest_selector(bank, tmp_path, monkeypatch, 
         seed=5,
         trials=[],
         bounds={},
-        bank_manifest_sha256="bank",
+        bank_stored_sha256="bank",
         supervision_sha256="labels",
         pipeline=TEMPLATE,
     )

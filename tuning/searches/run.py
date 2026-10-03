@@ -12,7 +12,7 @@ from pathlib import Path
 from graphspec.infra import files
 from graphspec.infra.code import digest as code_digest
 from graphspec.infra.code import snapshot
-from graphspec.infra.files import JsonCache, read_json, sha256_file, write_json
+from graphspec.infra.files import JsonCache, read_json, write_json
 from graphspec.infra.log import configure, emit
 from graphspec.infra.processes.locks import Lock, exclusive
 from graphspec.infra.processes.processes import WorkerProcess
@@ -222,8 +222,13 @@ def run(args):
         plan = read_json(path)
         if plan.get("version") != VERSION:
             raise ValueError("this run was written by another plan version; choose a new output")
-        if plan["bank_manifest_sha256"] != sha256_file(Path(args.bank) / "manifest.json"):
-            raise ValueError("this run belongs to a different bank")
+        if "bank_stored_sha256" not in plan:
+            raise KeyError("plan.json lacks bank_stored_sha256, the digest of what the build of its bank stored")
+        if plan["bank_stored_sha256"] != bank.source:
+            raise ValueError(
+                "this run searches the bank whose build stored %s, and the bank %s stored %s"
+                % (plan["bank_stored_sha256"], args.bank, bank.source)
+            )
         if "pipeline" not in plan:
             raise KeyError("plan.json lacks pipeline")
         if args.pipeline is not None and read_json(args.pipeline) != plan["pipeline"]:
@@ -267,7 +272,7 @@ def run(args):
             if worker_alive(directory, previous):
                 raise RuntimeError("the previous worker is still running; wait for it before continuing")
         plan.update(
-            bank_manifest_sha256=sha256_file(Path(plan["bank"]) / "manifest.json"),
+            bank_stored_sha256=bank.source,
             budget_policy=policy(stated.preparation_seconds),
             failure_policy=FAILURE_POLICY,
         )
