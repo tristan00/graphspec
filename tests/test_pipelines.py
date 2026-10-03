@@ -287,6 +287,11 @@ def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leav
     assert key["schema"] == opened.manifest["spec_sha256"] and key["seeds"] == dict(derivation=support.SEED)
     assert key["added"] == []
     before = opened.variant(cfg)[0]
+    seen = dict(cfg, splits=dict(SPLITS, sees=dict(train=["without_scored"], validation=[])))
+    assert opened.variant(seen)[0] == Deriver(bank, "cpu", support.SEED, RESIDENT).variant(seen)[0] != before
+    assert opened.holds(seen) - opened.holds(cfg) == {(SEES.label, "without_scored")}
+    rows = [opened.arrays(0, held).read("row_index") for held in (cfg, seen)]
+    assert not identical(*rows) and opened.variant(cfg)[0] == before
     other = Deriver(bank, "cpu", support.SEED + 1, RESIDENT)
     assert other.identity(cfg)["seeds"] == dict(derivation=support.SEED + 1) and other.variant(cfg)[0] != before
     for wrong in (-1, 2**64, 1.5, None):

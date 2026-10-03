@@ -49,7 +49,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 55
+VIEW = 56
 TOKEN = (1 << 62) - 1
 
 
@@ -661,7 +661,7 @@ class Deriver(Bank):
         self.held = GraphLimits(device)
         self.device, self.seed = device, seed
         super().__init__(directory)
-        self.roots, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES, resident)
+        self.store, self.residents = ArrayStore(), Residents(DTYPES, resident)
         self.grown = {}
         LOG.debug("deriver exit device=%s seconds=%.4f", device, time.perf_counter() - started)
 
@@ -805,7 +805,7 @@ class Deriver(Bank):
         _, steps, spec, chosen = self.stated(cfg)
         added, read = self.reads(steps, spec, cfg)
         result = dict(
-            schema=self.registry.fingerprint(),
+            schema=self.manifest["spec_sha256"],
             source=self.source,
             pipeline=[step.keyed() for step in steps],
             added=[dict(entry=name, **held.declaration()) for name, held in added],
@@ -822,16 +822,12 @@ class Deriver(Bank):
 
     @timed("bank.Deriver.variant")
     def variant(self, cfg):
-        key, steps, spec, chosen = self.stated(cfg)
-        if key not in self.roots:
-            identity = self.identity(cfg)
-            self.roots[key] = self.cache / "variants" / specs.digest(identity), holding(identity["entries"], steps)
-        return self.roots[key][0], steps, spec, chosen
+        _, steps, spec, chosen = self.stated(cfg)
+        return self.cache / "variants" / specs.digest(self.identity(cfg)), steps, spec, chosen
 
     @timed("bank.Deriver.holds")
     def holds(self, cfg):
-        self.variant(cfg)
-        return self.roots[self.stated(cfg)[0]][1]
+        return holding(self.identity(cfg)["entries"], self.stated(cfg)[1])
 
     @timed("bank.Deriver.stamp")
     def stamp(self, cfg):
