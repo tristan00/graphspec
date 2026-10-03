@@ -48,6 +48,7 @@ GROUPED = ("graphspec", "tuning")
 REGISTRY = "Names"
 REGISTERED = "REGISTRIES"
 LOOKUP = "graphspec/registries.py"
+GENERATED = "graphspec/build/generators.py"
 WRITTEN = re.compile(r"^[ \t]*del .*$|\.held\.pop\(|\.held\[[^\]\n]*\][ \t]*=(?!=)", re.M)
 LAYERS = {
     INFRA: (),
@@ -186,10 +187,10 @@ RECORDED = {
     "kind of target ranking": (1, "fa3c8c64a1ad8a91d061c8c02961bfe1adb4e20cf894055f7f51af00c891f32f"),
     "kind of target sequence": (1, "b63cf67cf25d2753bfc3e794768fd085e5d285a41e9bba01fa9258076f15ed87"),
     "kind of target survival": (1, "c70b16063d22c5c97f05b65edc196fef6e9264d342a721cfb57c3a6635417d09"),
-    "generator of options changed": (1, "5ef84be2f14edb817713aacffcc7e0efd5e70b65baaae8155793d9212bf37720"),
-    "generator of options nearest": (1, "afab6a84f50ee779f9be060fb0590b28fc1bddaf25fe30226fcdb7b7905f5860"),
-    "generator of options others": (1, "71b1606b253b6c95d1da28ae90e5e5a413e959858fb8785b650fe03a1e2e820e"),
-    "generator of options ruled": (1, "20010619a3ae7fa03c0023276f696f45c00aadb0c919a909f21787974028984d"),
+    "generator of options changed": (1, "533eb0d8450a1e64ffc7f857f0759ca54c7a6713c3b5675b1190698885d6a073"),
+    "generator of options nearest": (1, "61aa6e710d82f5c3324b69e381ce7478e05da5d6e952a33e965faedf860df7cc"),
+    "generator of options others": (1, "47a8071ec36fbe82ae7181c517d1eb8d3ef7f8347cba75abf71bd9f2c1f1078b"),
+    "generator of options ruled": (1, "bf78f4ee456d73964c76b41c93c1792da50d01ee59da5d7b79d4c18365069f02"),
     "distance between states euclidean": (1, "e4e4459504ad3075425ece6c3027f370c629d6294b28762ae56fa38fe4c60211"),
     "column type category": (1,"e242885fbfd05f259fab475426d315185cfb3e691ebe8ddf2361297af9b53221"),
     "column type flag": (1, "35fcdebca490f610d7cfdc1a9aaf9b36e23519328df31803f32bb770a46c3f80"),
@@ -1034,6 +1035,16 @@ def code(entry):
     return found.replace("\r\n", "\n")
 
 
+def digest(name, entry, root):
+    started = time.perf_counter()
+    found = code(entry)
+    if name.startswith("generator of options "):
+        found += "\n" + (root / GENERATED).read_text(encoding="utf-8").replace("\r\n", "\n")
+    result = hashlib.sha256(found.encode()).hexdigest()
+    LOG.debug("digest exit name=%s seconds=%.4f", name, time.perf_counter() - started)
+    return result
+
+
 def shipped():
     from graphspec import OPERATIONS, registries
 
@@ -1116,7 +1127,7 @@ def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_
     assert sorted(set(listed(ROOT, ("graphspec",))) - set(placed)) == []
     entries = shipped()
     digests = {name: digested(ROOT, places) for name, places in VERSIONED.items()}
-    digests.update({name: hashlib.sha256(code(entry).encode()).hexdigest() for name, entry in entries.items()})
+    digests.update({name: digest(name, entry, ROOT) for name, entry in entries.items()})
     held.update({name: entry.version for name, entry in entries.items()})
     assert sorted(digests) == sorted(RECORDED)
     assert unrecorded(digests, RECORDED, held) == []
@@ -1132,3 +1143,9 @@ def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_
     assert unrecorded(edited, RECORDED, dict(held, **{"graphspec.window": version + 1}))[0].startswith(
         "record graphspec.window at version %d with the digest " % (version + 1)
     )
+    write(tmp_path, GENERATED, (ROOT / GENERATED).read_text(encoding="utf-8") + "\nEDITED = 1\n")
+    drawing = sorted(name for name in entries if name.startswith("generator of options "))
+    assert len(drawing) == 4
+    assert unrecorded({name: digest(name, entries[name], tmp_path) for name in drawing}, RECORDED, held) == [
+        "the code of %s changed and its version %d did not; raise it" % (name, held[name]) for name in drawing
+    ]
