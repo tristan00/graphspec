@@ -7,10 +7,13 @@ import numpy as np
 from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from tuning.bank.bank import ROWS
-from tuning.families.heads import FIELD
+from tuning.bank.forks import UNMOVED, Part
+from tuning.bank.options import offered
+from tuning.families.heads import FIELD, realisation
+from tuning.families.model_spec import realised
 from tuning.families.periods import enabled
 
-from .inputs import frame_inputs, recipe
+from .inputs import chosen_points, frame_inputs, recipe
 from .tensors import Frames, Host, joined, length, materialise
 
 LOG = logging.getLogger(__name__)
@@ -222,8 +225,57 @@ def optioned(parts, tasks, members):
     return result
 
 
+def parted(bank, blocks, cfg):
+    started = time.perf_counter()
+    name = realised(cfg["model"], bank.registry.schema)
+    if name is None or not realisation(name).back:
+        LOG.debug("parted exit blocks=%d seconds=%.4f", len(blocks), time.perf_counter() - started)
+        return blocks
+    found, result = offered(bank), []
+    for block in blocks:
+        rows, places = chosen_points(bank, block, cfg)
+        deciding = found.decision[rows] >= 0
+        if not deciding.all():
+            result.append((Part(block[0], -1, -1, -1, UNMOVED),) + tuple(block[1:]))
+        steps = bank.points(block[0], cfg)[1]
+        for place in np.unique(places[deciding]).tolist():
+            decision = int(found.decision[rows[places == place][0]])
+            step = int(steps[place])
+            for option in range(int(found.first[decision]), int(found.first[decision] + found.count[decision])):
+                part = Part(block[0], place, step, option, UNMOVED)
+                result.append((part, block[1], step + 1, step, block[4], place, place + 1))
+    LOG.debug("parted exit blocks=%d parts=%d seconds=%.4f", len(blocks), len(result), time.perf_counter() - started)
+    return result
+
+
+def branched(bank, blocks, offsets):
+    started = time.perf_counter()
+    found, decisions, chosen = offered(bank), {}, []
+    for at, block in enumerate(blocks):
+        if isinstance(block[0], Part) and block[0].option >= 0:
+            chosen.append((at, block[0], decisions.setdefault((block[0].graph, block[0].place), len(decisions))))
+    options = np.asarray([part.option for _, part, _ in chosen], np.int64)
+    result = dict(
+        row=Host(np.asarray([offsets[at] for at, _, _ in chosen], np.int64)),
+        decision=Host(np.asarray([decision for _, _, decision in chosen], np.int64)),
+        option=Host(options),
+        block=Host([tuple(blocks[at]) for at, _, _ in chosen]),
+        sequence=Host(found.option["sequence"][options]),
+        content=Host(found.option["content"][options]),
+        kind=Host(found.option["kind"][options]),
+        left=Host(np.zeros(0, np.int64)),
+    )
+    LOG.debug("branched exit options=%d seconds=%.4f", len(options), time.perf_counter() - started)
+    return result
+
+
 @timed("recipe_batch")
 def recipe_batch(bank, blocks, cfg):
+    return recipe_parts(bank, parted(bank, blocks, cfg), cfg)
+
+
+@timed("recipe_parts")
+def recipe_parts(bank, blocks, cfg):
     started = time.perf_counter()
     if not blocks:
         raise ValueError("a batch requires at least one window")
@@ -341,6 +393,8 @@ def recipe_batch(bank, blocks, cfg):
     b["tasks"] = int(offsets[-1])
     if "options" in parts[0]:
         b["options"] = optioned(parts, offsets, member_offsets)
+    elif isinstance(blocks[0][0], Part):
+        b["options"] = branched(bank, blocks, offsets)
     if "end_steps" in parts[0]:
         b["end_steps"] = moved(parts, "end_steps", [i * t for i in range(size)])
         b["member_end_local"] = moved(parts, "member_end_local", nodes)
@@ -462,3 +516,8 @@ def recipe_batch(bank, blocks, cfg):
 @timed("batching.pack_batch")
 def pack_batch(bank, blocks, cfg, device):
     return materialise(bank, cfg, recipe_batch(bank, blocks, cfg), device)
+
+
+@timed("batching.pack_parts")
+def pack_parts(bank, blocks, cfg, device):
+    return materialise(bank, cfg, recipe_parts(bank, blocks, cfg), device)

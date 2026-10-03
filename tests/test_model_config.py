@@ -192,7 +192,8 @@ def test_a_bank_digests_each_part_of_a_configuration_once_and_again_only_when_it
     held.stated(copied)
     assert len(found) == counts
     cfg["graph"]["time/history"] = 5
-    assert held.stated(cfg)[0] == (key[0], specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"])), key[2])
+    digest = specs.digest(dict(pipeline=cfg["pipeline"], graph=cfg["graph"]))
+    assert held.stated(cfg)[0] == (key[0], digest, key[2], None) and key[3] is None
     assert held.stated(cfg)[2]["time/history"] == 5 and held.stated(cfg)[0] != key
     LOG.info("digested once exit seconds=%.4f", time.perf_counter() - started)
 

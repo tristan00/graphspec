@@ -1,5 +1,6 @@
 import logging
 import time
+from dataclasses import replace
 
 import numpy as np
 import torch
@@ -7,15 +8,28 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 from graphspec.operations.pipeline import emptied
-from tuning.batches.batching import batches, pack_batch
+from tuning.bank.forks import made, trunk
+from tuning.bank.options import offered
+from tuning.batches.batching import batches, pack_batch, pack_parts
 from tuning.families.heads import NONE, REALISATION, coded, fielded, realisation, refused
-from tuning.families.model_spec import realised, unstructured
+from tuning.families.model_spec import NEEDS, edits, ignored, realised, unedited
 from tuning.families.options import slots
 from tuning.families.periods import blocks as windows
 
 LOG = logging.getLogger(__name__)
 CLOSE = 1e-6
 STATE = 1e-5
+EQUAL, BACK = "equal", "back"
+MADE = dict(targets="the end of a fact", kind="the relation of a fact", parameters="a value of a fact")
+
+
+@timed("guards.withheld")
+def withheld(field):
+    if field["sort"] == "kind":
+        return ("kind",)
+    if field["sort"] == "targets":
+        return ("target", field["code"])
+    return ("parameter", field["code"], field["column"])
 
 
 def routed(bank, cfg):
@@ -24,17 +38,12 @@ def routed(bank, cfg):
     if name is None:
         LOG.debug("guards routed exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return
-    entry = realisation(name)
-    if entry.back:
-        raise ValueError(
-            "the realisation of options %s states that messages pass from options back to the state; no family "
-            "gives options a route back to the state, so a fit stating it stops" % name
-        )
-    reason = unstructured(cfg["model"])
-    if entry.structure and reason is not None:
+    back, spec = realisation(name).back, cfg["model"]
+    reason = ignored(spec, name) if not back or not edits(spec) else None
+    if reason is not None:
         raise ValueError(
             "the realisation of options %s puts options into the graph of the family of its model, and the family "
-            "%s reads no option put there: %s" % (name, cfg["model"]["view"], reason)
+            "%s reads no option put there: %s" % (name, spec["view"], reason)
         )
     schema = bank.registry.schema
     reason = refused(name, schema)
@@ -43,11 +52,17 @@ def routed(bank, cfg):
     removed = emptied(bank.registry, bank.stated(cfg)[1])
     for task in schema.decided():
         for field in fielded(schema, task):
+            where = "the field %s of the kind of task %s has no route to the prediction under the realisation of options %s"
+            where %= (field["name"], task, name)
             if field["sort"] == "targets" and field["role"] != "new" and all(kind in removed for kind in field["kinds"]):
                 raise ValueError(
-                    "the field %s of the kind of task %s has no route to the prediction under the realisation of "
-                    "options %s: the pipeline removes every kind of node it may name, %s, the entry %s removing %s"
-                    % (field["name"], task, name, ", ".join(field["kinds"]), removed[field["kinds"][0]], field["kinds"][0])
+                    "%s: the pipeline removes every kind of node it may name, %s, the entry %s removing %s"
+                    % (where, ", ".join(field["kinds"]), removed[field["kinds"][0]], field["kinds"][0])
+                )
+            if back and NEEDS[field["sort"]] not in edits(spec):
+                raise ValueError(
+                    "%s: an edit makes it %s, which the family %s does not read; %s"
+                    % (where, MADE[field["sort"]], spec["view"], unedited(spec))
                 )
     LOG.info("guards routed exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
 
@@ -132,7 +147,7 @@ class Guard:
 
     def state(self, plain, features, b):
         started = time.perf_counter()
-        if self.entry.back or torch.allclose(plain, features, rtol=STATE, atol=STATE):
+        if torch.allclose(plain, features, rtol=STATE, atol=STATE):
             LOG.debug("guard state exit seconds=%.4f", time.perf_counter() - started)
             return
         row = int(torch.nonzero(~torch.isclose(plain, features, rtol=STATE, atol=STATE).all(-1))[0])
@@ -255,7 +270,7 @@ class Guard:
     def alike(self, b, values, mask):
         started = time.perf_counter()
         held = b["options"]
-        decision, content = np.asarray(held["decision"].cpu(), np.int64), np.asarray(held["content"], np.int64)
+        decision, content = np.asarray(torch.as_tensor(held["decision"]).cpu(), np.int64), np.asarray(held["content"], np.int64)
         for chosen in np.split(np.argsort(decision, kind="stable"), np.flatnonzero(np.diff(np.sort(decision))) + 1):
             if len(chosen) < 2:
                 continue
@@ -310,26 +325,169 @@ class Guard:
             alike=self.equal,
             share=share,
             unseen=sorted("%s of %s" % (name, task) for (task, name), moved in self.moved.items() if moved is None),
+            state=BACK if self.entry.back else EQUAL,
         )
         LOG.debug("guard concluded exit pairs=%d seconds=%.4f", self.pairs, time.perf_counter() - started)
         return result
 
 
+class Forked(Guard):
+    @timed("guards.Forked.__init__")
+    def __init__(self, bank, cfg, net, seed, device):
+        super().__init__(bank, cfg, net, seed)
+        self.bank, self.cfg, self.device, self.found = bank, cfg, device, offered(bank)
+        self.roles = coded(self.schema)[1]
+
+    def valued(self, b):
+        started = time.perf_counter()
+        held = b["options"]
+        with torch.no_grad():
+            features = captured(self.net, b)[0]
+            task = self.head.task(features)[torch.as_tensor(held["row"], device=features.device)]
+            series = self.head.series.weight
+            values = task.new_zeros((len(task), len(series)))
+            aimed = self.aims[np.asarray(held["kind"], np.int64)]
+            for code, kind in enumerate(self.head.kinds):
+                chosen = np.flatnonzero(aimed == code)
+                if not len(chosen):
+                    continue
+                rows = torch.as_tensor(np.repeat(chosen, len(series)), device=task.device)
+                columns = torch.arange(len(series), device=task.device).repeat(len(chosen))
+                values = values.index_put((rows, columns), kind(task[rows], series[columns], b, None))
+        LOG.debug("forked guard valued exit options=%d seconds=%.4f", len(task), time.perf_counter() - started)
+        return values.cpu().numpy()
+
+    def holding(self, option, task, field):
+        started = time.perf_counter()
+        found = self.found
+        first, count = int(found.actions[0][option]), int(found.actions[1][option])
+        kinds = found.action["kind"][first : first + count]
+        result = int(found.option["kind"][option]) == self.kinds.index(task) and count > 0
+        if result and field["sort"] == "targets":
+            owner = self.actions.index(self.roles[field["code"]][:2])
+            result = bool((kinds == owner).any())
+        elif result and field["sort"] == "parameters":
+            column = self.schema.parameters().index(field["column"])
+            values = found.action["values"][first : first + count][kinds == field["code"], column]
+            result = bool((~np.isnan(values)).any())
+        LOG.debug("forked guard holding exit option=%d held=%s seconds=%.4f", option, result, time.perf_counter() - started)
+        return result
+
+    def moving(self, block, move):
+        started = time.perf_counter()
+        moved = (replace(block[0], move=move),) + tuple(block[1:])
+        result = self.valued(pack_parts(self.bank, [moved], self.cfg, self.device))
+        LOG.debug("forked guard moving exit option=%d seconds=%.4f", block[0].option, time.perf_counter() - started)
+        return result
+
+    def derived(self, b, values, mask):
+        started = time.perf_counter()
+        held = b["options"]
+        for task, found in self.fields.items():
+            for field in found:
+                key = (task, field["name"])
+                for place in range(len(held["row"])) if not self.moved[key] else ():
+                    if not self.holding(int(held["option"][place]), task, field):
+                        continue
+                    again = self.moving(held["block"][place], withheld(field))[0]
+                    self.moved[key] = bool(((~close(again, values[place])) & mask[place]).any())
+                    if self.moved[key]:
+                        break
+        LOG.debug("forked guard derived exit options=%d seconds=%.4f", len(values), time.perf_counter() - started)
+
+    def apart(self, b, values, mask):
+        started = time.perf_counter()
+        held = b["options"]
+        decision, chosen = np.asarray(held["decision"], np.int64), {}
+        for place in range(len(decision)):
+            if int(decision[place]) not in chosen and int(self.found.actions[1][int(held["option"][place])]) > 0:
+                chosen[int(decision[place])] = place
+        moved = set(chosen.values())
+        others = np.asarray([place not in moved and int(decision[place]) in chosen for place in range(len(decision))])
+        if not others.any():
+            LOG.debug("forked guard apart exit decisions=0 seconds=%.4f", time.perf_counter() - started)
+            return
+        blocks = [
+            (replace(block[0], move=("kind",)),) + tuple(block[1:]) if place in moved else block
+            for place, block in enumerate(held["block"])
+        ]
+        again = self.valued(pack_parts(self.bank, blocks, self.cfg, self.device))
+        differ = others[:, None] & mask & ~close(again, values)
+        if differ.any():
+            kind = self.kinds[int(np.asarray(held["kind"])[np.flatnonzero(differ.any(1))[0]])]
+            raise ValueError(
+                "the score of an option of the kind of task %s changes when the facts of another option of its "
+                "decision are withheld, and the realisation of options %s does not state that it reads the options "
+                "of a decision together" % (kind, self.name)
+            )
+        LOG.debug("forked guard apart exit decisions=%d seconds=%.4f", len(chosen), time.perf_counter() - started)
+
+    def ordered(self, b):
+        started = time.perf_counter()
+        held, found = b["options"], self.found
+        for place, option in enumerate(np.asarray(held["option"], np.int64).tolist()):
+            first, count = int(found.actions[0][option]), int(found.actions[1][option])
+            if bool(held["sequence"][place]) or count < 2:
+                continue
+            part = held["block"][place][0]
+            history = trunk(self.bank, self.cfg, part.graph, part.step)
+            stated = list(range(first, first + count))
+            edits = [made(self.bank, self.cfg, history, part, order) for order in (stated, stated[::-1])]
+            same = all(
+                np.array_equal(edits[0].added[side][name], edits[1].added[side][name], equal_nan=name in ("x", "values"))
+                for side in edits[0].added
+                for name in edits[0].added[side]
+            )
+            self.sets += 1
+            if not same:
+                kind = self.kinds[int(held["kind"][place])]
+                named = [self.actions[code][1] for code in found.action["kind"][first : first + count].tolist()]
+                raise ValueError(
+                    "the facts of an option of the kind of task %s whose actions, %s, are a set change with the order "
+                    "of its actions under the realisation of options %s; a set makes the same facts in any order"
+                    % (kind, ", ".join(named), self.name)
+                )
+        LOG.debug("forked guard ordered exit sets=%d seconds=%.4f", self.sets, time.perf_counter() - started)
+
+    def checked(self, b):
+        started = time.perf_counter()
+        if len(b["options"]["row"]):
+            values = self.valued(b)
+            mask = self.mask(b)
+            self.derived(b, values, mask)
+            self.apart(b, values, mask)
+            self.ordered(b)
+            self.alike(b, values, mask)
+            self.options += len(values)
+        LOG.debug("forked guard checked exit seconds=%.4f", time.perf_counter() - started)
+
+
 def guarded(bank, cfg, net, stated, size):
     started = time.perf_counter()
-    if realised(cfg["model"], bank.registry.schema) is None:
+    name = realised(cfg["model"], bank.registry.schema)
+    if name is None:
         LOG.debug("guards guarded exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return None
-    guard, history = Guard(bank, cfg, net, stated.seed), cfg["graph"]["time/history"]
+    back, history = realisation(name).back, cfg["graph"]["time/history"]
+    guard = Forked(bank, cfg, net, stated.seed, stated.device) if back else Guard(bank, cfg, net, stated.seed)
     plain = dict(cfg, model=dict(cfg["model"], **{REALISATION: NONE}))
     groups = batches(windows(bank, bank.blocks(1, history, cfg), cfg), size, bank.sizes(cfg), None, frame_budget=1024)
     training = net.training
     net.eval()
     try:
         for group in groups:
-            guard.checked(pack_batch(bank, group, cfg, stated.device), pack_batch(bank, group, plain, stated.device))
+            if back:
+                guard.checked(pack_batch(bank, group, cfg, stated.device))
+            else:
+                guard.checked(pack_batch(bank, group, cfg, stated.device), pack_batch(bank, group, plain, stated.device))
     finally:
         net.train(training)
+    if back:
+        LOG.info(
+            "guards guarded state realisation=%s: messages pass from options back to the state, so the state of an "
+            "option is its own fork's and is not compared with the state without options",
+            name,
+        )
     result = dict(guard.concluded(stated.alike), seconds=time.perf_counter() - started)
     LOG.info(
         "guards guarded exit realisation=%s pairs=%d alike=%d seconds=%.3f",

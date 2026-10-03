@@ -42,6 +42,29 @@ STRUCTURE = dict(
     affinity="it reads counts of tasks per node and reads no edge",
     signal="it reads the signals of tasks and the features of members and reads no edge",
 )
+EDITS = ("facts", "relations", "values")
+NEEDS = dict(targets="facts", kind="relations", parameters="values")
+EDITED = dict(
+    mixed=(),
+    event_graph=("facts", "relations"),
+    memory=("facts", "relations"),
+    projection=("facts", "relations"),
+    sequence=("facts", "relations"),
+    tree=("facts", "relations"),
+    walks=("facts", "relations"),
+    affinity=(),
+    signal=(),
+)
+SPATIALLY = dict(
+    none=(),
+    mean=("facts",),
+    normalised=("facts",),
+    relational=EDITS,
+    attention=("facts",),
+    chebyshev=("facts",),
+    relational_attention=("facts", "relations"),
+)
+PARTS = dict(facts="the facts an edit adds", relations="their relations", values="their values")
 SPATIAL = ("none", "mean", "normalised", "relational", "attention", "chebyshev", "relational_attention")
 ENCODINGS = ("log_cosine", "cosine", "log_linear")
 EMBEDDING = ("snapshot", "mixed", "event_graph", "memory", "projection", "sequence", "tree", "walks")
@@ -155,6 +178,12 @@ def realised(spec, schema):
     return None if spec[REALISATION] == NONE else spec[REALISATION]
 
 
+@timed("model_spec.edited")
+def edited(spec, schema):
+    name = realised(spec, schema)
+    return name if name is not None and realisation(name).back else None
+
+
 @timed("model_spec.unstructured")
 def unstructured(spec):
     if spec["view"] == "snapshot" and spec["snapshot/spatial"] == "none":
@@ -162,14 +191,40 @@ def unstructured(spec):
     return STRUCTURE[spec["view"]]
 
 
+@timed("model_spec.edits")
+def edits(spec):
+    return SPATIALLY[spec["snapshot/spatial"]] if spec["view"] == "snapshot" else EDITED[spec["view"]]
+
+
+@timed("model_spec.unedited")
+def unedited(spec):
+    held = edits(spec)
+    if held == EDITS:
+        return None
+    lacking = " nor ".join(PARTS[part] for part in EDITS if part not in held)
+    if not held:
+        return "it reads no edge, so neither %s" % lacking
+    return "it reads %s, and not %s" % (" and ".join(PARTS[part] for part in held), lacking)
+
+
+@timed("model_spec.ignored")
+def ignored(spec, name):
+    if name == NONE:
+        return None
+    entry = realisation(name)
+    if entry.structure:
+        return unstructured(spec)
+    return unedited(spec) if entry.back else None
+
+
 def fitting(parameter, spec):
     started = time.perf_counter()
-    reason = unstructured(spec)
-    kept = tuple(name for name in parameter.options if reason is None or name == NONE or not realisation(name).structure)
+    reasons = (unstructured(spec), unedited(spec))
+    kept = tuple(name for name in parameter.options if reasons == (None, None) or ignored(spec, name) is None)
     if not kept:
         raise ValueError(
             "the realisations of options left to the model of the family %s, %s, each put options into its graph, "
-            "and it reads none put there: %s" % (spec["view"], ", ".join(parameter.options), reason)
+            "and it reads none put there: %s" % (spec["view"], ", ".join(parameter.options), ignored(spec, parameter.options[0]))
         )
     result = parameter if kept == parameter.options else narrow((parameter,), {REALISATION: list(kept)})[0]
     LOG.debug("model fitting exit kept=%d seconds=%.6f", len(kept), time.perf_counter() - started)
@@ -190,15 +245,15 @@ def drawn(parameters, choose):
 def placed(parameters, fixed):
     named = {parameter.name: parameter for parameter in parameters}
     held = named[REALISATION].options if REALISATION in named else ()
-    placing = [name for name in held if name != NONE and realisation(name).structure]
+    placing = [name for name in held if name != NONE and (realisation(name).structure or realisation(name).back)]
     unread = {}
     if placing and (fixed is not None or len(placing) == len(held)):
         for family in named["view"].options:
             for spatial in named["snapshot/spatial"].options:
                 spec = {"view": family, "snapshot/spatial": spatial}
-                reason = unstructured(spec)
-                if reason is not None and named[REALISATION].active(spec):
-                    unread.setdefault(family, reason)
+                reasons = [reason for reason in (ignored(spec, name) for name in placing) if reason is not None]
+                if reasons and (fixed is not None or len(reasons) == len(placing)) and named[REALISATION].active(spec):
+                    unread.setdefault(family, reasons[0])
     if not unread:
         return
     families, reasons = ", ".join(unread), "; ".join("%s: %s" % pair for pair in unread.items())
@@ -435,14 +490,20 @@ def samples(registry):
         and isinstance(parameter.options[0], (str, bool))
         and parameter.name != "view"
     ]
-    result, placing = [], {NONE: False}
+    result, placing = [], {NONE: None}
     for parameter in parameters:
         if parameter.name == REALISATION:
-            placing.update({name: realisation(name).structure for name in parameter.options if name != NONE})
+            placing.update(
+                {
+                    name: unstructured if realisation(name).structure else unedited if realisation(name).back else None
+                    for name in parameter.options
+                    if name != NONE
+                }
+            )
 
     def add(values):
         spec = specs.canonical(parameters, draw(parameters, lambda parameter: parameter.given(values)))
-        if REALISATION in spec and placing[spec[REALISATION]] and unstructured(spec) is not None:
+        if REALISATION in spec and placing[spec[REALISATION]] is not None and placing[spec[REALISATION]](spec) is not None:
             return None
         if spec not in result:
             result.append(spec)

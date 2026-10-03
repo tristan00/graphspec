@@ -133,11 +133,6 @@ class Together(Realised):
     together = True
 
 
-class Backward(Realised):
-    version = 1
-    back = True
-
-
 REALISED = dict(
     whole=Realised(Pooled),
     deaf=Deaf(Pooled),
@@ -146,7 +141,6 @@ REALISED = dict(
     together=Together(Mixing),
     ordered=Realised(Pooled, placed=True),
     flat=Realised(Flat),
-    backward=Backward(Pooled),
     pooling=Realised(Pooling),
 )
 
@@ -351,8 +345,6 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
     removing = "the pipeline removes every kind of node it may name, spot, the entry graphspec.nodes removing spot$"
     with pytest.raises(ValueError, match=where % ("target to of go", "whole") + removing):
         routed(held, removed)
-    with pytest.raises(ValueError, match="the realisation of options backward states that messages pass from options back"):
-        routed(held, configured(held, "backward"))
     routed(held, configured(held, "whole"))
     found = guarded(held, "whole")
     assert found["sets"] > 0 and found["pairs"] > 0 and found["share"] == 0.0 and found["unseen"] == UNSEEN

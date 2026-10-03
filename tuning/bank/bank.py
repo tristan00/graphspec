@@ -34,6 +34,7 @@ from graphspec.operations import pipeline, sets
 from graphspec.operations.pipeline import agreed, resolved
 from graphspec.representations import groups as representations
 from graphspec.representations.registry import REPRESENTATIONS
+from graphspec.schema.added import Added
 from graphspec.schema.decisions import counted
 from graphspec.schema.schema import ENCODERS, WRITTEN, Encoding, fitted
 from graphspec.schema.targets import TARGETS
@@ -41,7 +42,10 @@ from graphspec.schema.time import SEVERAL
 from graphspec.views.graph import Graph
 from graphspec.views.view import STEPS, beside, finished, sampled, sequences, view
 from graphspec.views.visible import SEES, STATEMENT, Looking
+from tuning.families.heads import REALISATION, REALISATIONS, realisation
 from tuning.statement import DERIVATIONS, derivation
+
+from .forks import Part, forked
 
 LOG = logging.getLogger(__name__)
 PACKAGES = (Path(__file__).parents[1], Path(__file__).parents[2] / "graphspec")
@@ -49,7 +53,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 69
+VIEW = 70
 TOKEN = (1 << 62) - 1
 
 
@@ -198,6 +202,11 @@ def written(folder, build):
 @timed("bank.coded")
 def coded():
     return dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION)
+
+
+@timed("bank.editing")
+def editing(name):
+    return "%s=%s" % (REALISATION, name), Added({}, {}, {}, realisation(name).relations, {}, {})
 
 
 def acted(facts, columns, trained):
@@ -597,11 +606,16 @@ class Bank:
         return result
 
     def chosen(self, model):
-        from tuning.families.model_spec import derived
+        from tuning.families.model_spec import derived, edited
 
         held = self.choices.get(id(model))
         if held is None or held[0] != model or held[1] != registries.GENERATION:
-            held = self.choices[id(model)] = dict(model), registries.GENERATION, derived(model)
+            held = self.choices[id(model)] = (
+                dict(model),
+                registries.GENERATION,
+                derived(model),
+                edited(model, self.registry.schema),
+            )
         return held[2]
 
     def stated(self, cfg):
@@ -609,7 +623,12 @@ class Bank:
             raise KeyError("the configuration states no pipeline")
         chosen = self.chosen(cfg["model"])
         stated = dict(pipeline=cfg["pipeline"], graph=cfg["graph"])
-        key = (chosen, self.digested("stated", stated, cfg["pipeline"], cfg["graph"]), registries.GENERATION)
+        key = (
+            chosen,
+            self.digested("stated", stated, cfg["pipeline"], cfg["graph"]),
+            registries.GENERATION,
+            self.choices[id(cfg["model"])][3],
+        )
         if key not in self.variants:
             self.variants[key] = self.settled(cfg, chosen)
         return key, *self.variants[key]
@@ -673,7 +692,8 @@ class Deriver(Bank):
     def fitted(self, cfg):
         viewed, (key, steps, spec, _) = self.viewed(cfg), self.stated(cfg)
         if (viewed.folder, key) not in self.grown:
-            self.grown[viewed.folder, key] = self.growing(viewed, steps, spec, cfg)
+            held = self.growing(viewed, steps, spec, cfg)
+            self.grown[viewed.folder, key] = held if key[3] is None else held.grown(*editing(key[3]), {})
         return self.grown[viewed.folder, key]
 
     def reads(self, steps, spec, cfg):
@@ -681,6 +701,9 @@ class Deriver(Bank):
         storage = sets.chosen(self.registry, spec)
         added, read = pipeline.read(self.registry, steps)
         read = readings(self.registry, spec["time/steps"], self.several(spec), storage, cfg["splits"]["sees"]) + read
+        name = self.stated(cfg)[0][3]
+        if name is not None:
+            added, read = added + [editing(name)], read + [(REALISATIONS, [name])]
         LOG.debug(
             "deriver reads exit added=%d read=%d seconds=%.4f", len(added), len(read), time.perf_counter() - started
         )
@@ -862,6 +885,8 @@ class Deriver(Bank):
 
     @timed("bank.Deriver.resident")
     def resident(self, index, cfg, device):
+        if isinstance(index, Part):
+            return forked(self, index, cfg, device)
         return self.residents.get(
             self.variant(cfg)[0] / ("graph_%04d" % index),
             device,

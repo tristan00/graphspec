@@ -9,7 +9,7 @@ from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
 from graphspec.schema.targets import TARGETS
 
-from .heads import FIELD, HEADS
+from .heads import FIELD, HEADS, realisation
 
 CHUNK = 128
 
@@ -290,7 +290,8 @@ class Head(nn.Module):
         self.named = [TARGETS.named(kind).names is not None for kind in self.targets]
         self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU()) if any(self.named) else None
         name = realised(spec, registry.schema)
-        self.options = None if name is None else Options(name, registry, hidden, nodes, spec)
+        reading = name is not None and not realisation(name).back
+        self.options = Options(name, registry, hidden, nodes, spec) if reading else None
         self.decides = [self.options is not None and isinstance(TARGETS.named(kind), Decision) for kind in self.targets]
 
     def forward(self, features, b, members):

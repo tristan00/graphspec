@@ -1,0 +1,307 @@
+import logging
+import re
+import time
+
+import numpy as np
+import pytest
+import support
+import torch
+from test_decisions import banks, opened, registered
+from test_realisations import PLAIN, modelled, varied
+
+from conftest import SPLITS, inline
+from graphspec.engine.segments import Derivation
+from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
+from tuning import REALISATIONS, Edited
+from tuning.bank import forks
+from tuning.bank.options import READ as OFFERED
+from tuning.batches.batching import pack_batch, pack_parts, parted
+from tuning.families import model_spec
+from tuning.families.heads import REALISATION, realisation, refused
+from tuning.families.model_spec import EDITS, VIEWS, realisable, space
+from tuning.families.models import build as network
+from tuning.families.periods import blocks as windows
+from tuning.fits.guards import BACK, Forked, routed
+from tuning.fits.losses import Summed
+from tuning.fits.training import fit
+from tuning.statement import state
+
+LOG = logging.getLogger(__name__)
+pytestmark = pytest.mark.xdist_group("decisions")
+SHARED = (banks, registered)
+RELATIONS = dict(
+    went=dict(pairs=(("agent", "spot"),), directed=True, columns=("speed",)),
+    cuts=dict(pairs=(("agent", "spot"),), directed=True, columns=("mode",)),
+    made=dict(pairs=(("agent", "mark"),), directed=True, columns=("lit",)),
+)
+ACTED = dict(
+    go=dict(to=dict(relation="went", actor="source")),
+    cut=dict(along=dict(relation="cuts", actor="source")),
+    put=dict(at=dict(relation="base", actor="source"), made=dict(relation="made", actor="source")),
+)
+WENT = dict(go=dict(to=dict(relation="went", actor="source")))
+EDITED = dict(
+    edited=Edited(dict(turn=ACTED, show=ACTED), RELATIONS, 1),
+    moved=Edited(dict(turn=WENT, show=WENT), dict(went=dict(RELATIONS["went"], columns=())), 1),
+)
+READING = [family for family in VIEWS if model_spec.edits({"view": family, "snapshot/spatial": "relational"})]
+ALONE = 1e-5
+UNSEEN = ["parameter lit of put of show", "parameter mode of cut of show", "target along of cut of show"]
+UNSEEN += ["target at of put of show", "target made of put of show"]
+
+
+class Bare:
+    version = 1
+    reads = ("targets",)
+    together = False
+    back = True
+    structure = False
+    actor = True
+
+    @timed("edited.Bare.refusal")
+    def refusal(self, schema):
+        return None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def edits():
+    for name, entry in EDITED.items():
+        REALISATIONS.register(name, entry)
+    yield
+    for name in EDITED:
+        del REALISATIONS.held[name]
+
+
+@timed("edited.configured")
+def configured(held, name, family, **stated):
+    values = dict(modelled(family), **{REALISATION: name}, **stated)
+    return support.configuration(held.registry, values, PLAIN, 5, SPLITS)
+
+
+def last(held, cfg, count):
+    started = time.perf_counter()
+    blocks = sorted(held.blocks(1, 2, cfg))
+    result = windows(held, [block for block in blocks if block[0] == blocks[-1][0]][-count:], cfg)
+    LOG.debug("edited last exit blocks=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def test_an_edit_maps_every_kind_of_action_to_facts_and_is_refused_naming_what_it_leaves_unmapped(banks):
+    started = time.perf_counter()
+    stated, chosen = opened(banks, "stated"), opened(banks, "picked")
+    schema = stated.registry.schema
+    assert refused("edited", schema) is None and refused("moved", chosen.registry.schema) is None
+    assert refused("moved", schema).endswith(
+        "the parameter speed of the kind of action go of the kind of task turn becomes the value of no fact: no "
+        "relation its roles become holds the column speed"
+    )
+    assert Edited(dict(turn=WENT, show=ACTED), RELATIONS, 1).refusal(schema) == (
+        "the mapping of the edit states nothing for the kind of action cut of the kind of task turn, so an option "
+        "holding it cannot be made an edit"
+    )
+    assert refused("edited", chosen.registry.schema).endswith(
+        "the edit adds the relation went between kinds of node or with columns the schema does not state"
+    )
+    assert EDITED["moved"].relations["went"]["columns"] == () and Edited(
+        dict(turn=ACTED, show=WENT), EDITED["moved"].relations, 1
+    ).refusal(chosen.registry.schema) == (
+        "the mapping of the edit states the kind of action cut of the kind of task turn, which it does not state"
+    )
+    went, base = dict(relation="went", actor="source"), schema.mapping()
+    stay = varied(base, "stay", dict(roles=dict(at=dict(sort="node", kinds=["spot"])), parameters=["speed"]), {})
+    where = "the kind of action %s of the kind of task turn"
+    for acted, relations, wrong, message in (
+        (dict(ACTED, put=dict(at=went)), RELATIONS, schema, "the mapping of the edit states for %s the roles at, and it states the roles at, made" % (where % "put")),
+        (dict(ACTED, go=dict(to=dict(went, relation="wings"))), RELATIONS, schema, "the role to of %s becomes wings, neither a relation the edit adds nor one the schema declares" % (where % "go")),
+        (dict(ACTED, go=dict(to=dict(went, relation="made"))), RELATIONS, schema, "the role to of %s becomes facts of made from agent to spot, which made does not join" % (where % "go")),
+        (dict(ACTED, go=dict(to=dict(went, actor="target"))), RELATIONS, schema, "the role to of %s becomes facts of went from spot to agent, which went does not join" % (where % "go")),
+        (ACTED, dict(RELATIONS, went=dict(RELATIONS["went"], columns=())), schema, "the parameter speed of %s becomes the value of no fact: no relation its roles become holds the column speed" % (where % "go")),
+        (ACTED, dict(RELATIONS, near=RELATIONS["went"]), schema, "the edit adds the relation near, a name without a colon the schema does not hold"),
+        (dict(ACTED, stay=dict(at=went)), RELATIONS, stay, "the kinds of action go and stay of the kind of task turn become facts of the same relations, went, carrying the same parameters, so the field kind has no route"),
+    ):
+        assert Edited(dict(turn=acted, show=ACTED), relations, 1).refusal(wrong).startswith(message), message
+    assert Edited(dict(turn=ACTED, show=ACTED, visit=ACTED), RELATIONS, 1).refusal(schema).startswith(
+        "the mapping of the edit states the kind of task visit, which decides nothing in the schema"
+    )
+    for mapping, version in ((dict(turn=dict(go=dict(to=dict(went, actor="side")))), 1), (dict(turn=ACTED), 0)):
+        with pytest.raises(ValueError, match="an edit of the graph states its"):
+            Edited(mapping, RELATIONS, version)
+    REALISATIONS.register("bare", Bare())
+    try:
+        with pytest.raises(ValueError, match="the realisation of options bare states that messages pass from options back to the state, which they do through an edit"):
+            realisation("bare")
+    finally:
+        del REALISATIONS.held["bare"]
+    LOG.info("edit refusals exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_each_family_states_what_of_an_edit_it_reads_and_a_field_it_cannot_read_has_no_route(banks):
+    started = time.perf_counter()
+    stated, chosen = opened(banks, "stated"), opened(banks, "picked")
+    found = {family: model_spec.edits(dict(view=family, **{"snapshot/spatial": "relational"})) for family in VIEWS}
+    assert found["snapshot"] == EDITS and {family for family, held in found.items() if not held} == {"mixed", "affinity", "signal"}
+    assert {family for family, held in found.items() if held == ("facts", "relations")} == set(READING) - {"snapshot"}
+    assert model_spec.edits(dict(view="snapshot", **{"snapshot/spatial": "mean"})) == ("facts",)
+    where = "the field %s of the kind of task turn has no route to the prediction under the realisation of options edited: an edit makes it %s, which the family %s does not read; %s"
+    for family, spatial, field, made in (
+        ("event_graph", "relational", "parameter speed of go", "a value of a fact"),
+        ("snapshot", "mean", "kind", "the relation of a fact"),
+    ):
+        spec = dict(view=family, **{"snapshot/spatial": spatial})
+        with pytest.raises(ValueError, match="^" + re.escape(where % (field, made, family, model_spec.unedited(spec))) + "$"):
+            routed(stated, configured(stated, "edited", family, **({"snapshot/spatial": spatial} if family == "snapshot" else {})))
+    mixed = "the realisation of options edited puts options into the graph of the family of its model, and the family mixed reads no option put there: it reads no edge, so neither the facts an edit adds nor their relations nor their values"
+    with pytest.raises(ValueError, match="^" + re.escape(mixed) + "$"):
+        routed(stated, configured(stated, "edited", "mixed"))
+    routed(stated, configured(stated, "edited", "snapshot"))
+    for family in READING:
+        routed(chosen, configured(chosen, "moved", family))
+    (choosing,) = [parameter for parameter in realisable(stated.registry, space(stated.registry)) if parameter.name == REALISATION]
+    assert "edited" in choosing.options and "moved" not in choosing.options
+    for family in VIEWS:
+        for spatial in ("relational", "mean"):
+            kept = model_spec.fitting(choosing, {"view": family, "snapshot/spatial": spatial}).options
+            assert ("edited" in kept) == (family == "snapshot" and spatial == "relational"), (family, spatial)
+    LOG.info("families reading edits exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_options_of_a_decision_are_forks_of_one_history_each_adding_its_facts_at_its_step_alone(banks, monkeypatch):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    cfg = configured(held, "edited", "snapshot")
+    blocks = sorted(block for block in held.blocks(1, 2, cfg) if block[0] == 0)[-2:]
+    calls, continued = [], Derivation.continued
+
+    @timed("edited.counted")
+    def counted(derivation, high, edit):
+        calls.append((derivation.time, high, edit is None))
+        return continued(derivation, high, edit)
+
+    monkeypatch.setattr(Derivation, "continued", counted)
+    parts = [parted(held, [block], cfg) for block in blocks]
+    for block in blocks:
+        pack_batch(held, [block], cfg, "cpu")
+    steps = [found[0][0].step for found in parts]
+    options = [len(found) for found in parts]
+    assert all(part[0].option >= 0 and part[0].move == () for found in parts for part in found) and options[1] > 2
+    assert calls == [(0, steps[0], True)] + [(steps[0], steps[0] + 1, False)] * options[0] + [
+        (steps[0], steps[1], True)
+    ] + [(steps[1], steps[1] + 1, False)] * options[1]
+    monkeypatch.undo()
+    codes = {held.fitted(cfg).code(name) for name in RELATIONS}
+    whole = held.arrays(0, cfg)
+    assert not np.isin(np.asarray(whole["spatial"])[:, 2], list(codes)).any()
+    trunk = forks.trunk(held, cfg, 0, steps[1]).continued(steps[1] + 1, None).arrays()
+    for part in parts[1]:
+        fork = held.resident(part[0], cfg, "cpu")
+        spatial, step = fork.numpy("spatial"), fork.numpy("spatial_step")
+        entity, kept = fork.numpy("entity"), np.asarray(trunk["entity"])
+        earlier = step < steps[1]
+        assert np.array_equal(entity[spatial[earlier][:, :2]], kept[np.asarray(trunk["spatial"])[np.asarray(trunk["spatial_step"]) < steps[1]][:, :2]])
+        assert not np.isin(spatial[earlier][:, 2], list(codes)).any()
+        assert (step[np.isin(spatial[:, 2], list(codes))] == steps[1]).all()
+    actions = forks.offered(held).actions[1][[part[0].option for part in parts[1]]]
+    assert any(
+        np.isin(held.resident(part[0], cfg, "cpu").numpy("spatial")[:, 2], list(codes)).any()
+        for part, count in zip(parts[1], actions)
+        if count
+    )
+    LOG.info("forks of one history exit seconds=%.3f", time.perf_counter() - started)
+
+
+@pytest.mark.parametrize("family", READING)
+def test_each_option_scores_as_its_own_graph_encoded_alone_and_one_step_trains_every_family_that_reads_an_edit(banks, family):
+    started = time.perf_counter()
+    cases = [("picked", "moved", 1)] + ([("stated", "edited", 1)] if family == "snapshot" else [])
+    largest = {}
+    for bank, name, count in cases:
+        held = opened(banks, bank)
+        cfg = configured(held, name, family)
+        torch.manual_seed(5)
+        net = network(cfg, held.fitted(cfg))
+        chosen = last(held, cfg, count)
+        parts = parted(held, chosen, cfg)
+        b = pack_batch(held, chosen, cfg, "cpu")
+        values = net(b)
+        with torch.no_grad():
+            alone = torch.cat([net(pack_parts(held, [part], cfg, "cpu")) for part in parts])
+        assert len(parts) > 2 and len(b["options"]["row"]) == len(parts) and len(alone) == len(values) > 0
+        largest[bank] = float((alone - values.detach()).abs().max())
+        assert torch.allclose(alone, values.detach(), rtol=ALONE, atol=ALONE), (bank, family)
+        loss = Summed(dict(decision="squared"), held.registry.schema.targets(), name)(values, b, held)
+        loss.backward()
+        torch.optim.SGD(net.parameters(), lr=0.01).step()
+        assert torch.isfinite(loss) and net.head.options is None
+        assert all(parameter.grad is not None for parameter in net.head.kinds.parameters())
+    LOG.info("edits alone family=%s largest=%s exit seconds=%.3f", family, largest, time.perf_counter() - started)
+
+
+def test_every_guard_holds_for_an_edit_and_one_refuses_a_field_whose_facts_the_family_does_not_read(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    found = {}
+    for spatial in ("relational", "mean"):
+        cfg = configured(held, "edited", "snapshot", **{"snapshot/spatial": spatial})
+        torch.manual_seed(5)
+        net = network(cfg, held.fitted(cfg)).eval()
+        guard = Forked(held, cfg, net, 5, "cpu")
+        guard.checked(pack_batch(held, last(held, cfg, 1), cfg, "cpu"))
+        try:
+            found[spatial] = guard.concluded(0.0)
+        except ValueError as error:
+            found[spatial] = str(error)
+    assert found["relational"]["state"] == BACK and found["relational"]["unseen"] == UNSEEN
+    assert found["relational"]["sets"] > 0 and found["relational"]["pairs"] > 0 and found["relational"]["share"] == 0.0
+    assert found["mean"] == (
+        "with the weights drawn by the seed 5, the prediction does not move with the field parameter speed of go of "
+        "the kind of task turn for any option of the splits scored on, under the realisation of options edited"
+    )
+    LOG.info("guards of an edit exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_an_edit_completes_one_fit_whose_guards_record_that_messages_pass_back(banks, tmp_path, statement, monkeypatch):
+    started = time.perf_counter()
+    held = opened(banks, "picked")
+    inline(banks["picked"], (), monkeypatch)
+    cfg = dict(configured(held, "moved", "snapshot"), epochs=1)
+    given = state(dict(statement, loss=dict(decision="squared"), measures=["mse"], alike=0.0))
+    fit(banks["picked"], tmp_path, cfg, held.blocks(0, 2, cfg), 16, time.perf_counter() + statement["seconds"], given)
+    saved = read_json(tmp_path / "result.json")
+    found = saved["options"]
+    assert saved["status"] == "complete" and saved["optimizer_updates"] > 0 and found["realisation"] == "moved"
+    assert found["state"] == BACK and found["options"] > 0 and found["pairs"] > 0 and found["share"] == 0.0
+    assert found["unseen"] == [] and saved["unmeasured"]["turn"] == 0
+    LOG.info("fit of an edit exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_facts_an_edit_adds_come_from_the_content_of_its_option_alone(banks):
+    started = time.perf_counter()
+    stated, flipped = opened(banks, "stated"), opened(banks, "flipped")
+    assert not set(OFFERED) & {"option_" + name for name in ("available", "chosen", "order", "shown", "logged", "origin", "outcome")}
+    made = []
+    for held in (stated, flipped):
+        cfg = configured(held, "edited", "snapshot")
+        made.append([])
+        for part in parted(held, last(held, cfg, 1), cfg):
+            history = forks.trunk(held, cfg, part[0].graph, part[0].step)
+            edit = forks.made(held, cfg, history, part[0], forks.ordered(held, part[0].option))
+            made[-1].append([np.asarray(values) for side in edit.added.values() for values in side.values()])
+    assert [len(edit) for edit in made[0]] == [len(edit) for edit in made[1]] and any(len(edit[-4]) for edit in made[0])
+    assert all(
+        np.array_equal(left, right, equal_nan=left.dtype.kind == "f")
+        for one, two in zip(made[0], made[1], strict=True)
+        for left, right in zip(one, two, strict=True)
+    )
+    cfg = configured(stated, "edited", "snapshot")
+    chosen = last(stated, cfg, 1)
+    targets, fields = stated.targets, stated.fields
+    before = pack_batch(stated, chosen, cfg, "cpu")
+    stated.targets = targets[::-1] + 1
+    stated.fields = dict(fields, chosen=~fields["chosen"])
+    try:
+        after = pack_batch(stated, chosen, cfg, "cpu")
+    finally:
+        stated.targets, stated.fields = targets, fields
+    assert support.same(before, after)
+    LOG.info("edits from content alone exit seconds=%.3f", time.perf_counter() - started)

@@ -16,6 +16,7 @@ from graphspec.operations.rows import counted, keyed_relations
 from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.decisions import ROLES
 from graphspec.schema.references import SORTS
+from tuning.bank.forks import Part, carried
 from tuning.bank.options import offered
 from tuning.families.heads import FIELD, realisation
 from tuning.families.model_spec import realised
@@ -168,11 +169,14 @@ def history_inputs(window, b, count, include_structure, selected):
 
 def chosen_points(bank, block, cfg):
     started = time.perf_counter()
-    graph, _, stop, target_start, partition, row_lo, row_hi = block
+    part, _, stop, target_start, partition, row_lo, row_hi = block
+    graph = part.graph if isinstance(part, Part) else part
     rows, places = bank.labels(graph, cfg)
     steps = bank.points(graph, cfg)[1][places]
     picked = (steps >= target_start) & (steps < stop) & (places >= row_lo) & (places < row_hi)
     picked[picked] = bank.partitions(cfg)[rows[picked]] == partition
+    if isinstance(part, Part):
+        picked[picked] = carried(bank, part, rows[picked])
     LOG.debug(
         "chosen points exit graph=%d points=%d seconds=%.4f",
         graph,
@@ -279,7 +283,7 @@ def frame_inputs_of(window):
         frame_fed=array(np.where(fed >= 0, fed - lo, -1), torch.long),
     )
     LOG.debug(
-        "frame inputs exit graph=%d frames=%d events=%d seconds=%.4f",
+        "frame inputs exit graph=%s frames=%d events=%d seconds=%.4f",
         graph,
         stop - start,
         len(seen),
@@ -324,7 +328,7 @@ def member_inputs(window, first, last):
         whole_x=pooled(held, held.numpy("row_step")[first + whole_row]),
     )
     LOG.debug(
-        "member inputs exit graph=%d members=%d wholes=%d seconds=%.4f",
+        "member inputs exit graph=%s members=%d wholes=%d seconds=%.4f",
         window.graph,
         len(stored),
         len(whole_row),
@@ -398,7 +402,7 @@ def negatives(window, b, owner):
         drawn.append(candidates["target"][drawing_entry][order[np.repeat(low, high - low) + counted(high - low)]])
     result = np.concatenate(link), np.concatenate(drawn)
     LOG.debug(
-        "negatives exit graph=%d drawn=%d seconds=%.4f", window.graph, len(result[0]), time.perf_counter() - started
+        "negatives exit graph=%s drawn=%d seconds=%.4f", window.graph, len(result[0]), time.perf_counter() - started
     )
     return result
 
@@ -424,7 +428,7 @@ def pointed(bank, window, b, rows, owner):
     moments = b["row_steps"][owner[point]] + start
     placed = observing(held, moments, drawn, np.arange(len(held.numpy("entity_kind"))))
     if np.any(placed < 0):
-        raise ValueError("a negative drawn for graph %d is not observed at the step of its task" % window.graph)
+        raise ValueError("a negative drawn for graph %s is not observed at the step of its task" % (window.graph,))
     noted = np.full(len(rows), -1, np.int64)
     noted[named] = observed
     noted, owners = np.r_[noted, placed], np.r_[owner, owner[point]]
@@ -457,7 +461,7 @@ def pointed(bank, window, b, rows, owner):
         point_node=point_node,
     )
     LOG.debug(
-        "pointed exit graph=%d points=%d nodes=%d seconds=%.4f",
+        "pointed exit graph=%s points=%d nodes=%d seconds=%.4f",
         window.graph,
         len(rows),
         len(row),
@@ -474,7 +478,7 @@ def edged(window, moments, ends, relation):
         held.numpy("spatial_step")[low:high].astype(np.int64), entity[spatial[:, 0]], entity[spatial[:, 1]], spatial[:, 2]
     )
     result = np.isin(hashed(moments, entity[ends[:, 0]], entity[ends[:, 1]], relation), shown)
-    LOG.debug("edged exit graph=%d edges=%d seconds=%.4f", window.graph, len(result), time.perf_counter() - started)
+    LOG.debug("edged exit graph=%s edges=%d seconds=%.4f", window.graph, len(result), time.perf_counter() - started)
     return result
 
 
@@ -564,7 +568,7 @@ def optioned(bank, window, b, rows, owner, place):
         left=Host(found.option["kind"][option[left]]),
     )
     LOG.debug(
-        "optioned exit graph=%d decisions=%d options=%d left=%d seconds=%.4f",
+        "optioned exit graph=%s decisions=%d options=%d left=%d seconds=%.4f",
         window.graph,
         len(ids),
         len(kept),
@@ -864,8 +868,9 @@ def base_inputs(bank, block, window):
     moment = row_steps[first:last].astype(np.int64)
     rows, places = chosen_points(bank, block, window.cfg)
     if np.any(places < first) or np.any(places >= last):
-        raise ValueError("a point of graph %d lies outside its window" % graph)
-    selected = np.isin(np.arange(first, last), places)
+        raise ValueError("a point of graph %s lies outside its window" % (graph,))
+    forking = isinstance(graph, Part) and graph.option >= 0
+    selected = np.isin(np.arange(first, last), [graph.place] if forking else places)
     point_row = np.searchsorted(np.flatnonzero(selected) + first, places)
     local = moment - start
     bounds = np.searchsorted(local, np.arange(n + 1))
@@ -899,7 +904,8 @@ def base_inputs(bank, block, window):
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
     b["partner"] = partnered(b["pair"], len(b["member_row"]))
     pointed(bank, window, b, rows, np.flatnonzero(selected)[point_row])
-    if realised(window.cfg["model"], window.registry.schema) is not None:
+    name = realised(window.cfg["model"], window.registry.schema)
+    if name is not None and not realisation(name).back:
         optioned(bank, window, b, rows, np.flatnonzero(selected)[point_row], point_row)
     if tokens is not None:
         b["member_token"] = array(tokens[b["member_entity"]])
@@ -955,7 +961,7 @@ def pooled_frames(window, values):
     np.add.at(total, local, values)
     count = np.maximum(np.bincount(local, minlength=frames), 1).reshape((-1,) + (1,) * (values.ndim - 1))
     LOG.debug(
-        "pooled frames exit graph=%d rows=%d frames=%d seconds=%.4f",
+        "pooled frames exit graph=%s rows=%d frames=%d seconds=%.4f",
         window.graph,
         len(local),
         frames,
@@ -968,7 +974,7 @@ def signal_inputs(b, window):
     started = time.perf_counter()
     first, last = between(window.held.numpy("row_step"), window.start, window.stop)
     b["signal"] = pooled_frames(window, np.asarray(window.held.numpy("signals")[first:last], np.float32))
-    LOG.debug("signal inputs exit graph=%d seconds=%.4f", window.graph, time.perf_counter() - started)
+    LOG.debug("signal inputs exit graph=%s seconds=%.4f", window.graph, time.perf_counter() - started)
 
 
 def affinity_frames(window):
@@ -989,7 +995,7 @@ def affinity_frames(window):
     rows[np.flatnonzero(code >= 0), code[code >= 0]] += 1
     result = pooled_frames(window, rows)
     LOG.debug(
-        "affinity frames exit graph=%d rows=%d seconds=%.4f", window.graph, last - first, time.perf_counter() - started
+        "affinity frames exit graph=%s rows=%d seconds=%.4f", window.graph, last - first, time.perf_counter() - started
     )
     return result
 
@@ -1006,7 +1012,7 @@ def affinity_inputs(b, window):
         frame_affinity=affinity_frames(window),
     )
     LOG.debug(
-        "affinity inputs exit graph=%d members=%d seconds=%.4f",
+        "affinity inputs exit graph=%s members=%d seconds=%.4f",
         window.graph,
         len(b["member_row"]),
         time.perf_counter() - started,
@@ -1131,7 +1137,7 @@ def recipe(bank, block, cfg):
     context_inputs(b, window, blocks, context)
     entity_space(b, window, blocks)
     LOG.debug(
-        "recipe exit graph=%d start=%d stop=%d predictions=%d seconds=%.4f",
+        "recipe exit graph=%s start=%d stop=%d predictions=%d seconds=%.4f",
         window.graph,
         window.start,
         window.stop,
