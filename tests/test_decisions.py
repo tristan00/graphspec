@@ -10,7 +10,7 @@ from conftest import SPLITS, inline, shared
 from graphspec import GENERATORS, RULES
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
-from graphspec.infra.files import read_json, read_pack
+from graphspec.infra.files import read_json, read_pack, write_json
 from graphspec.infra.timing import timed
 from graphspec.schema.decisions import RECORDED, drawn
 from graphspec.schema.schema import Schema
@@ -21,6 +21,8 @@ from tuning.bank.build import build
 from tuning.batches.batching import batches, pack_batch
 from tuning.families.model_spec import VIEWS, views
 from tuning.families.models import build as network
+from tuning.families.periods import blocks as windows
+from tuning.fits.check import check
 from tuning.fits.losses import LOSSES, Summed, outcomes
 from tuning.fits.training import fit
 from tuning.statement import state
@@ -125,6 +127,7 @@ def covered(case):
             found.add(("actors", len(actors)))
             found.add(("concurrent", bool(target["concurrent"])))
             found.add(("outcomes", sum(option["outcome"] is not None for option in target["options"]) > 1))
+            found.add(("chosen outcome", any(option["chosen"] and option["outcome"] for option in target["options"])))
             for option in target["options"]:
                 found.add(("actions", min(len(option["actions"]), 2), option["together"]))
                 found.add(("origin", option["origin"] == RECORDED))
@@ -185,6 +188,8 @@ def test_the_synthetic_decisions_cover_every_case_of_the_check():
         ("concurrent", True),
         ("outcomes", True),
         ("outcomes", False),
+        ("chosen outcome", True),
+        ("chosen outcome", False),
         ("actions", 0, "set"),
         ("actions", 1, "set"),
         ("actions", 2, "set"),
@@ -398,6 +403,25 @@ def test_a_bank_of_decisions_completes_one_fit_reading_the_task_and_the_outcome_
         error = (found["prediction"] - found["target"])[chosen] ** 2
         assert saved["measures"]["mse"]["value"] == pytest.approx(float(error.mean()))
         assert list(saved["measures"]["mse"]["series"]) == ["gain", "cost"]
+
+
+def test_the_check_skips_and_counts_a_window_whose_decisions_hold_no_chosen_outcome_as_training_does(
+    banks, tmp_path, monkeypatch
+):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    cfg = support.configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, SPLITS)
+    monkeypatch.setattr("tuning.fits.check.samples", lambda registry: [cfg["model"]])
+    for name in ("pipeline", "graph"):
+        write_json(tmp_path / (name + ".json"), cfg[name])
+    given = (tmp_path / "check.json", "cpu", 5, support.SEED, SPLITS, dict(decision="squared"))
+    check(banks["stated"], *given, tmp_path / "pipeline.json", tmp_path / "graph.json", 1)
+    found = read_json(tmp_path / "check.json")["results"]
+    candidates = sorted(block for partition in (0, 1) for block in held.blocks(partition, 2, cfg) if block[0] == 1)
+    last = pack_batch(held, windows(held, [candidates[-1]], cfg), cfg, "cpu")
+    assert len(last["rows"]) and not held.counted[last["rows"]].any()
+    assert [(result["skipped"], result["block"], result["ok"]) for result in found] == [(1, list(candidates[-2]), True)]
+    LOG.info("check of decisions exit seconds=%.3f", time.perf_counter() - started)
 
 
 @pytest.mark.parametrize("family", VIEWS)

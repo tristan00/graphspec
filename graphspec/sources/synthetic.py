@@ -1202,6 +1202,7 @@ SPOTS = ("s0", "s1", "s2", "s3", "s4")
 GOALS = ("gain", "cost")
 TURNS = (1, 2, 3, 4, 5, 6)
 MODES = ("slow", "fast")
+BLIND = (1, TURNS[-1])
 
 
 @timed("synthetic.chooser")
@@ -1323,8 +1324,9 @@ def turned(moment, place, actors, generator):
     chosen = (moment + place) % (len(options) - 1)
     options[chosen]["chosen"] = True
     options[2]["available"] = moment % 3 != 0 or chosen == 2
+    blind = (place, moment) == BLIND
     for number, option in enumerate(options):
-        if moment % 2 or number == chosen:
+        if (number != chosen) if blind else (moment % 2 or number == chosen):
             held = worth(moment, place, number)
             option["outcome"] = [held, worth(moment + 1, place, number)] if option["together"] == "sequence" else held
         if moment % 2 and option["origin"] == RECORDED:
@@ -1341,8 +1343,10 @@ def shown(moment, place):
         for at in range(4)
     ]
     for order, at in enumerate(((moment + place) % 4, (moment + place + 1) % 4)):
-        options[at].update(chosen=True, order=order, outcome=worth(moment, place, at + order))
-    for option in options:
+        options[at].update(chosen=True, order=order)
+    for at, option in enumerate(options):
+        if option["chosen"] != ((place, moment) == BLIND):
+            option["outcome"] = worth(moment, place, at + (option["order"] or 0))
         option.update(shown=0.25, logged=0.5 if option["chosen"] else 0.0)
     LOG.debug("shown exit options=%d seconds=%.4f", len(options), time.perf_counter() - started)
     return options

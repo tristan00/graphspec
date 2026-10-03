@@ -152,6 +152,13 @@ def outcomes(bank, batch, device):
     return result
 
 
+@timed("losses.counting")
+def counting(bank, batch):
+    import numpy as np
+
+    return bool((~np.asarray(batch["left"], bool) & bank.counted[np.asarray(batch["rows"], np.int64)]).any())
+
+
 class Summed:
     def __init__(self, stated, kinds):
         started = time.perf_counter()

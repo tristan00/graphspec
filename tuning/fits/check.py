@@ -18,16 +18,27 @@ from tuning.families.model_spec import configuration, describe, groups, samples
 from tuning.families.models import build
 from tuning.statement import paired, seen
 
-from .losses import Summed
+from .losses import Summed, counting
 
 
-@timed("check.probe")
-def probe(bank, block, cfg, device, loss):
+@timed("check.window")
+def window(bank, candidates, cfg, device):
     from tuning.families.periods import blocks as period_blocks
 
     started = time.perf_counter()
-    b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, device)
-    packed = time.perf_counter()
+    for skipped, block in enumerate(reversed(candidates)):
+        b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, device)
+        if counting(bank, b):
+            return block, b, skipped, time.perf_counter() - started
+    raise ValueError(
+        "graph %d holds no window with a point the loss reads; training skips such a window and makes no update"
+        % candidates[0][0]
+    )
+
+
+@timed("check.probe")
+def probe(bank, b, cfg, device, loss, packing):
+    started = time.perf_counter()
     net = build(cfg, bank.fitted(cfg)).to(device)
     if torch.device(device).type == "cuda":
         torch.cuda.reset_peak_memory_stats()
@@ -48,8 +59,8 @@ def probe(bank, block, cfg, device, loss):
         torch.testing.assert_close(before, clone(b))
     return dict(
         rows=len(b["series"]),
-        pack_seconds=packed - started,
-        total_seconds=time.perf_counter() - started,
+        pack_seconds=packing,
+        total_seconds=packing + time.perf_counter() - started,
         parameters=sum(p.numel() for p in net.parameters()),
         unused_parameters=[name for name, p in net.named_parameters() if p.grad is None],
         peak_cuda_bytes=torch.cuda.max_memory_allocated() if torch.device(device).type == "cuda" else 0,
@@ -104,12 +115,17 @@ def check(directory, output, device, seed, derivation_seed, splits, loss, pipeli
         )
         if not candidates:
             raise ValueError("graph %d has no labels to check" % chosen)
-        block = candidates[-1]
-        outcome = probe(bank, block, cfg, device, loss)
+        block, b, skipped, packing = window(bank, candidates, cfg, device)
+        outcome = probe(bank, b, cfg, device, loss, packing)
         if torch.device(device).type == "cuda":
             torch.cuda.empty_cache()
         result = dict(
-            model=describe(model), graph=specs.digest(cfg["graph"]), config=cfg, block=list(block), **outcome
+            model=describe(model),
+            graph=specs.digest(cfg["graph"]),
+            config=cfg,
+            block=list(block),
+            skipped=skipped,
+            **outcome,
         )
         results.append(result)
         emit("check_model", **{k: v for k, v in result.items() if k not in ("config", "unused_parameters")})

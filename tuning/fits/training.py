@@ -21,7 +21,7 @@ from tuning.bank.bank import PACKAGES
 from tuning.families.heads import FIELD
 from tuning.measures.measures import measurable, measured, predicted, scored
 
-from .losses import Summed, admitted
+from .losses import Summed, admitted, counting
 
 if TYPE_CHECKING:
     from torch import Tensor, nn
@@ -129,6 +129,7 @@ class TrainingSession:
             self.packer.close()
             raise
         self.losses: list[float] = []
+        self.skipped = 0
         self.trained_rows: list[int] = []
         self.epoch_losses: list[float] = []
 
@@ -226,9 +227,11 @@ class TrainingSession:
                 raise ValueError("holdout row reached the optimizer")
             self.trained_rows.extend(batch["rows"].tolist())
             epoch_rows.extend(batch["rows"].tolist())
-            if (~np.asarray(batch["left"], bool) & self.bank.counted[batch["rows"]]).any():
+            if counting(self.bank, batch):
                 self.losses.append(self.optimize(batch))
                 epoch_sum += self.losses[-1] * len(batch["rows"])
+            else:
+                self.skipped += 1
             self.budget.check()
             if update + 1 in schedule.ends:
                 epoch_started = self.complete_epoch(epoch, epoch_rows, epoch_sum, epoch_started)
@@ -398,6 +401,7 @@ class TrainingSession:
             parameters=sum(p.numel() for p in self.net.parameters()),
             peak_cuda_bytes=torch.cuda.max_memory_allocated(self.device) if self.cuda else 0,
             optimizer_updates=len(self.losses),
+            skipped=self.skipped,
             epochs=len(self.epoch_losses),
             requested_epochs=self.config["epochs"],
             epoch_seconds=self.budget.epoch_seconds,
