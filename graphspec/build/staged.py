@@ -29,7 +29,7 @@ from graphspec.schema.schema import (
 from .output import manifest
 
 LOG = logging.getLogger(__name__)
-INDEX = 4
+INDEX = 5
 IDS = 32
 
 
@@ -110,15 +110,7 @@ class Staged:
         started = time.perf_counter()
         self.directory, self.stated = Path(directory), stated
         entries = manifest(self.directory)
-        metadata = [
-            (name, (self.directory / name).stat().st_size, (self.directory / name).stat().st_mtime_ns)
-            for entry in entries
-            for name in entry["files"]
-        ]
-        self.index_path = (
-            cache_path("partitions", sha256_json(dict(version=INDEX, entries=entries, files=metadata)))
-            / "partition.npz"
-        )
+        self.index_path = cache_path("partitions", sha256_json(dict(version=INDEX, entries=entries))) / "partition.npz"
         self.units = [Unit(self.directory, entry) for entry in entries]
         self.by_table = {}
         for unit in self.units:

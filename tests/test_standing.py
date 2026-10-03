@@ -155,7 +155,7 @@ RECORDED = {
     "derivation": (42, "1eacff3d40d280a52aee68fc39ef8093c565f12b819b396bd064b374a71dd03f"),
     "views": (53, "ea9eb3c60db1197937d91ac9d591f001045cd9176e9df18ae7b51632c0c5d794"),
     "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
-    "index": (4, "de51fe453ec964424b70224c54bc8f64438a811c8326745daa22a105984f3f36"),
+    "index": (5, "0c2dbace2e5333eb6de3c15286b206fadd7e66a8bfac6d181c8802e891b68cc8"),
     "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
     "sort of reference graph": (1, "24c024a38804e098c970eb76d2c06bb0529d30901259df6aa5e098c9696ca51e"),
     "sort of reference node": (1, "5130e549da2053ab17d7ad3ddb45baaf74b38153c74af98f470f297b7c42489c"),

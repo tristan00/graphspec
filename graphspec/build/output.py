@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -6,11 +7,12 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from graphspec.infra.files import read_json, write_json
+from graphspec.infra.files import read_json, sha256_file, write_json
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 
 LOG = logging.getLogger(__name__)
+DIGEST = re.compile("[0-9a-f]{64}")
 
 
 @timed("output.manifest")
@@ -35,6 +37,16 @@ def manifest(directory):
         for name in names:
             if not (directory / name).resolve().is_relative_to(directory):
                 raise ValueError(f"stage file escapes its directory: {name}")
+        digests = entry["sha256"] if "sha256" in entry else None
+        if (
+            type(digests) is not list
+            or len(digests) != len(names)
+            or not all(type(digest) is str and DIGEST.fullmatch(digest) for digest in digests)
+        ):
+            raise ValueError(
+                f"the staging {directory} records no sha256 of each file of {key}; a staging records the digest "
+                "of every file it writes, and one written before it did is written again"
+            )
     return entries
 
 
@@ -43,6 +55,7 @@ class StageFiles:
     directory: Path
     files: dict
     rows: dict
+    digests: dict
 
     @timed("output.StageFiles.record")
     def record(self):
@@ -52,6 +65,7 @@ class StageFiles:
                 source=key[1],
                 target=key[2],
                 files=[path.relative_to(self.directory).as_posix() for path in paths],
+                sha256=list(self.digests[key]),
                 rows=self.rows[key],
             )
             for key, paths in self.files.items()
@@ -105,7 +119,8 @@ class Stage:
         try:
             self.resources.close()
             if commit:
-                StageFiles(self.directory, self.files, self.rows).record()
+                digests = {key: tuple(sha256_file(path) for path in paths) for key, paths in self.files.items()}
+                StageFiles(self.directory, self.files, self.rows, digests).record()
         finally:
             self.closed = True
         LOG.info(
@@ -119,27 +134,33 @@ class Stage:
     @timed("output.Stage.open")
     def open(directory):
         directory = Path(directory).resolve()
-        files, rows = {}, {}
+        files, rows, digests = {}, {}, {}
         for entry in manifest(directory):
             key = (entry["table"], entry["source"], entry["target"])
             files[key] = tuple(directory / name for name in entry["files"])
-            rows[key] = entry["rows"]
-        return StageFiles(directory, files, rows)
+            rows[key], digests[key] = entry["rows"], tuple(entry["sha256"])
+        return StageFiles(directory, files, rows, digests)
 
     @classmethod
     def merge(cls, directory, shards):
         started = time.perf_counter()
         directory = output_path(directory)
         directory.mkdir(parents=True, exist_ok=True)
-        files, rows = {}, {}
+        files, rows, digests = {}, {}, {}
         for shard in shards:
             stage = cls.open(shard)
             if not stage.directory.is_relative_to(directory):
                 raise ValueError(f"shard must be inside merged stage: {stage.directory}")
             for key, paths in stage.files.items():
                 files.setdefault(key, []).extend(paths)
+                digests.setdefault(key, []).extend(stage.digests[key])
                 rows[key] = rows.get(key, 0) + stage.rows[key]
-        result = StageFiles(directory, {key: tuple(paths) for key, paths in files.items()}, rows)
+        result = StageFiles(
+            directory,
+            {key: tuple(paths) for key, paths in files.items()},
+            rows,
+            {key: tuple(found) for key, found in digests.items()},
+        )
         result.record()
         LOG.info("stage merge tables=%d seconds=%.4f", len(files), time.perf_counter() - started)
         return result

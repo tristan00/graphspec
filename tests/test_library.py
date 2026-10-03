@@ -4,11 +4,13 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 from support import VALUES, asked, stated
 
 from graphspec import GraphTables, Schema, Stage, write_task
 from graphspec.build.staged import Staged
+from graphspec.infra.files import read_json, write_json
 from graphspec.infra.processes.locks import heavy_job
 from graphspec.infra.runtime import output_path
 from tuning.bank.bank import Bank
@@ -68,8 +70,23 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
     assert manifest["split_rows"] == dict(train=2, validation=2)
     assert manifest["spec"]["nodes"] == ["customer", "organization"]
     assert "widths" not in manifest["spec"] and manifest["spec"]["encoding"]["states"] is None
-    Staged(tmp_path / "source", schema)
+    index = Staged(tmp_path / "source", schema).index_path
     assert before == {p.name: p.read_bytes() for p in (tmp_path / "source").iterdir()}
+    first = tmp_path / "source" / "00000.parquet"
+    os.utime(first, ns=(first.stat().st_atime_ns, first.stat().st_mtime_ns + 10**9))
+    with Stage(tmp_path / "restaged") as stage:
+        graph.write(stage)
+    assert Staged(tmp_path / "source", schema).index_path == Staged(tmp_path / "restaged", schema).index_path == index
+    record = read_json(tmp_path / "restaged" / "stage.json")
+    assert [len(entry["sha256"]) for entry in record] == [len(entry["files"]) for entry in record]
+    entry = next(entry for entry in record if entry["rows"])
+    changed = tmp_path / "restaged" / entry["files"][0]
+    pq.write_table(pq.read_table(changed).slice(1), changed)
+    with pytest.raises(ValueError, match="manifest row count does not match Parquet rows for " + entry["table"]):
+        Staged(tmp_path / "restaged", schema)
+    write_json(tmp_path / "restaged" / "stage.json", [dict(entry, sha256=[]) for entry in record])
+    with pytest.raises(ValueError, match="records no sha256 of each file of"):
+        Staged(tmp_path / "restaged", schema)
     again = build(task, tmp_path / "again", 1, ("train",))
     opened = [Bank(tmp_path / name) for name in ("bank", "again")]
     assert opened[0].source == opened[1].source == again["stored_sha256"] and opened[0].cache == opened[1].cache
