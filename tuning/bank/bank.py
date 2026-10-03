@@ -31,7 +31,7 @@ from graphspec.infra.timing import timed
 from graphspec.infra.workspace import MEMORY_BYTES, Workspace
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline, sets
-from graphspec.operations.pipeline import resolved
+from graphspec.operations.pipeline import agreed, resolved
 from graphspec.representations import groups as representations
 from graphspec.representations.registry import REPRESENTATIONS
 from graphspec.schema.schema import ENCODERS, WRITTEN, Encoding, fitted
@@ -48,7 +48,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 57
+VIEW = 58
 TOKEN = (1 << 62) - 1
 
 
@@ -608,6 +608,7 @@ class Bank:
             specs.canonical(specs.settings(self.registry, groups(cfg["model"])), cfg["graph"]),
             chosen,
         )
+        agreed(self.registry, *result[:2])
         LOG.debug("bank stated exit seconds=%.4f", time.perf_counter() - started)
         return result
 

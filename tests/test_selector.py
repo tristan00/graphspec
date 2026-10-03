@@ -278,7 +278,7 @@ def test_a_search_draws_a_reader_before_what_it_reads_with_entries_that_name_kin
         template = support.template(("graphspec.edges", between, "graphspec.derive"))
         space = pipeline.space(registry, template)
         for _ in range(12):
-            flat = pipeline.draw(registry, template, space, partial(present, rng))
+            flat = pipeline.draw(registry, template, space, partial(present, rng), {})
             named.append([step.name for step in pipeline.resolved(registry, pipeline.entries(template, flat))])
     assert named.count(["graphspec.edges", "graphspec.contract", "graphspec.derive"]) == 12
     assert named.count(["graphspec.edges", "graphspec.nodes", "graphspec.derive"]) == 12

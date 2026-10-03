@@ -11,8 +11,9 @@ from graphspec.infra.timing import timed
 from graphspec.schema.schema import ENCODERS, TYPES
 from graphspec.schema.targets import pointed
 
-from .operation import OPERATIONS
+from .operation import OPERATIONS, Stored
 from .parameters import Parameter, flag
+from .sets import PARAMETER, STORAGE
 
 LOG = logging.getLogger(__name__)
 STATED = ("operation", "label", "graph", "parameters")
@@ -328,6 +329,20 @@ def emptied(registry, steps):
     return removed
 
 
+def agreed(registry, steps, settings):
+    started = time.perf_counter()
+    for step in steps:
+        found = step.operation.unstored(registry, step.parameters, settings)
+        if found is not None:
+            parameter, value, kind = found
+            raise ValueError(
+                "the entry %s of the pipeline states %s %s, which needs the set edges of %s stored as nodes, and %s "
+                "states %s, which makes none"
+                % (step.name, parameter, value, kind, PARAMETER % kind, settings[PARAMETER % kind])
+            )
+    LOG.debug("agreed exit steps=%d seconds=%.4f", len(steps), time.perf_counter() - started)
+
+
 def called(step):
     return entered(step.operation, step.label)
 
@@ -554,6 +569,10 @@ class Offered:
         self.reads, self.names = readers(found), [name for name, _, _, _ in found]
         self.place = {name: place for place, name in enumerate(self.names)}
         self.operations = {name: operation for name, operation, _, _ in found}
+        self.housed = {
+            name: {held.parameter for held in operation.requires if isinstance(held, Stored)}
+            for name, operation in self.operations.items()
+        }
         self.flags, self.owned = {}, {name: [] for name in self.names}
         for parameter in parameters:
             parts = parameter.name.split("/", 2)
@@ -605,32 +624,38 @@ class Offered:
                     result.pop(kind, None)
         return result
 
-    def allowed(self, name, parameter, removed, guard):
-        probes, own = self.probes[name], parameter.name[len(NAMED % name) :]
-        if probes is None or not parameter.options or own not in probes[0]:
-            return parameter.options
-        hits, removes = probes[0][own], probes[1][own]
-        return tuple(
-            option
-            for option in parameter.options
-            if not hits.get(option, NONE) & removed.keys() and not removes.get(option, NONE) & guard.keys()
-        )
+    def allowed(self, registry, name, parameter, removed, guard, settings):
+        probes, own, options = self.probes[name], parameter.name[len(NAMED % name) :], parameter.options
+        if probes is not None and options and own in probes[0]:
+            hits, removes = probes[0][own], probes[1][own]
+            options = tuple(
+                option
+                for option in options
+                if not hits.get(option, NONE) & removed.keys() and not removes.get(option, NONE) & guard.keys()
+            )
+        if own in self.housed[name]:
+            unstored = self.operations[name].unstored
+            options = tuple(option for option in options if unstored(registry, {own: option}, settings) is None)
+        return options
 
     @timed("pipeline.Offered.blocked")
-    def blocked(self, name, flat, removed, guard):
-        must = self.probes[name][2]
-        lost = sorted(must["hits"] & removed.keys())
-        if lost:
-            return "names the kind %s, which the entry %s before it removed" % (lost[0], removed[lost[0]])
-        kept = sorted(must["removes"] & guard.keys())
-        if kept:
-            return "removes the kind %s, which %s names" % (kept[0], guard[kept[0]])
+    def blocked(self, registry, name, flat, removed, guard, settings):
+        if self.probes[name] is not None:
+            must = self.probes[name][2]
+            lost = sorted(must["hits"] & removed.keys())
+            if lost:
+                return "names the kind %s, which the entry %s before it removed" % (lost[0], removed[lost[0]])
+            kept = sorted(must["removes"] & guard.keys())
+            if kept:
+                return "removes the kind %s, which %s names" % (kept[0], guard[kept[0]])
         trial = {**flat, self.flags[name].name: True}
         for parameter in self.owned[name]:
             if parameter.active(trial):
-                held = self.allowed(name, parameter, removed, guard)
+                held = self.allowed(registry, name, parameter, removed, guard, settings)
                 if parameter.options and not held:
-                    return "is left no value of %s that names no kind an entry before it removed" % parameter.name
+                    return "is left no value of %s that the entries around it and the forms of storage allow" % (
+                        parameter.name
+                    )
                 trial[parameter.name] = held[0] if parameter.options else parameter.default
         return None
 
@@ -670,6 +695,35 @@ def offered(registry, template, parameters):
     return held[1]
 
 
+def housing(registry, template, parameters, settings):
+    started = time.perf_counter()
+    plan, worst = offered(registry, template, tuple(parameters)), {}
+    for parameter in settings:
+        if parameter.name in [PARAMETER % kind for kind in registry.schema.sets]:
+            bare = [form for form in parameter.options if not STORAGE.named(form).nodes]
+            worst[parameter.name] = (bare + list(parameter.options))[0]
+    for name in plan.names:
+        operation = plan.operations[name]
+        for parameter in plan.owned[name] if plan.flags[name].options == (True,) else ():
+            own = parameter.name[len(NAMED % name) :]
+            if own not in plan.housed[name] or not parameter.options:
+                continue
+            found = [operation.unstored(registry, {own: option}, worst) for option in parameter.options]
+            if None not in found:
+                raise ValueError(
+                    "the bounds hold the entry %s of the template present with %s among %s, each of which needs set "
+                    "edges stored as nodes, and leave %s the form %s, which makes none"
+                    % (
+                        name,
+                        own,
+                        ", ".join(parameter.options),
+                        PARAMETER % found[0][2],
+                        worst[PARAMETER % found[0][2]],
+                    )
+                )
+    LOG.debug("housing exit entries=%d seconds=%.4f", len(plan.names), time.perf_counter() - started)
+
+
 def narrowed(parameter, options):
     if options == parameter.options:
         return parameter
@@ -677,14 +731,14 @@ def narrowed(parameter, options):
     return Parameter(parameter.name, parameter.kind, default, options=options, condition=parameter.condition)
 
 
-def draw(registry, template, parameters, choose):
+def draw(registry, template, parameters, choose, settings):
     started = time.perf_counter()
     plan, flat, roles = offered(registry, template, tuple(parameters)), {}, {}
     for name in plan.order:
         removed, guard, flag = plan.removed(name, roles), plan.protected[name], plan.flags[name]
         options, roles[name] = flag.options, {}
-        if plan.probes[name] is not None and True in options:
-            reason = plan.blocked(name, flat, removed, guard)
+        if (plan.probes[name] is not None or plan.housed[name]) and True in options:
+            reason = plan.blocked(registry, name, flat, removed, guard, settings)
             if reason is not None:
                 options = tuple(option for option in options if not option)
                 if not options:
@@ -694,12 +748,12 @@ def draw(registry, template, parameters, choose):
             continue
         for parameter in plan.owned[name]:
             if parameter.active(flat):
-                held = plan.allowed(name, parameter, removed, guard)
+                held = plan.allowed(registry, name, parameter, removed, guard, settings)
                 if parameter.options and not held:
                     raise ValueError(
                         "the entry %s of the template is left no value of %s that names no kind an entry before it "
-                        "removed and removes none an entry after it, held present, or a target names"
-                        % (name, parameter.name)
+                        "removed, removes none an entry after it, held present, or a target names, and needs no set "
+                        "edges stored as nodes that the forms of storage store otherwise" % (name, parameter.name)
                     )
                 flat[parameter.name] = choose(narrowed(parameter, held))
         if plan.probes[name] is not None:

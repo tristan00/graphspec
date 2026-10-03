@@ -117,14 +117,14 @@ def keyed(prefix, parameter, static):
 
 
 @timed("selector.recorded")
-def recorded(registry, template, parameters, flat, record):
+def recorded(registry, template, parameters, flat, record, settings):
     @timed("selector.recorded.read")
     def read(parameter):
         if parameter.name not in flat:
             raise ValueError("spec lacks the active parameter " + parameter.name)
         return record(parameter, parameter.check(flat[parameter.name]))
 
-    extra = sorted(set(flat) - set(pipeline.draw(registry, template, parameters, read)))
+    extra = sorted(set(flat) - set(pipeline.draw(registry, template, parameters, read, settings)))
     if extra:
         raise ValueError("spec sets inactive or unknown parameters: " + ", ".join(extra))
 
@@ -132,7 +132,7 @@ def recorded(registry, template, parameters, flat, record):
 @timed("selector.refused")
 def refused(registry, config):
     try:
-        pipeline.resolved(registry, config["pipeline"])
+        pipeline.agreed(registry, pipeline.resolved(registry, config["pipeline"]), config["graph"])
     except ValueError:
         return ["pipeline"]
     return []
@@ -181,8 +181,10 @@ def check_bounds(registry, bounds, template):
     if unknown:
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
     specs.narrow(parameters, bounds)
-    stepped(registry, narrow_group(specs.settings(registry, ()), bounds))
-    pipeline.draw(registry, template, pipeline_space(registry, template, bounds), pipeline.settled)
+    graph = stepped(registry, narrow_group(specs.settings(registry, ()), bounds))
+    held = pipeline_space(registry, template, bounds)
+    pipeline.housing(registry, template, held, graph)
+    pipeline.draw(registry, template, held, pipeline.settled, specs.draw(graph, pipeline.settled))
 
 
 @timed("selector.training")
@@ -212,7 +214,7 @@ def observation(registry, config, value, bounds, template, **attrs):
     enter("graph/", graph_space(registry, config["model"], bounds), config["graph"])
     held = pipeline_space(registry, template, bounds)
     static = {parameter.name: parameter.options for parameter in held}
-    recorded(registry, template, held, pipeline.flattened(template, config["pipeline"]), record)
+    recorded(registry, template, held, pipeline.flattened(template, config["pipeline"]), record, config["graph"])
     if "max_seconds" in config:
         enter("", (runtime_parameter(config["max_seconds"]),), {"max_seconds": config["max_seconds"]})
     return tpe.record(value, params, distributions, config=config, **attrs)
@@ -285,7 +287,11 @@ def configuration(registry, choose, training_seed, bounds, seconds, template):
     config["pipeline"] = pipeline.entries(
         template,
         pipeline.draw(
-            registry, template, pipeline_space(registry, template, bounds), lambda parameter: choose("", parameter)
+            registry,
+            template,
+            pipeline_space(registry, template, bounds),
+            lambda parameter: choose("", parameter),
+            config["graph"],
         ),
     )
     config["max_seconds"] = choose("", runtime_parameter(seconds))

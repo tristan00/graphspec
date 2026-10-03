@@ -207,6 +207,7 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
         template,
         pipeline.space(registry, template),
         lambda parameter: parameter.options[-1] if parameter.name.count("/") == 1 else parameter.uniform(rng),
+        {},
     )
     steps = pipeline.resolved(registry, pipeline.entries(template, stated))
     grown = pipeline.grown(registry, steps, None)

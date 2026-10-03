@@ -12,7 +12,7 @@ from graphspec.schema.added import Added
 from graphspec.schema.declaration import membership, paired
 from graphspec.schema.references import SORTS
 
-from .operation import OPERATIONS, Count, Need, Operation, Phase
+from .operation import OPERATIONS, Count, Need, Operation, Phase, Stored
 from .parameters import Parameter, choice, number, registered
 from .rows import counted, fact_bytes
 
@@ -179,6 +179,12 @@ def lacking(registry, value):
     if registry.tables or registry.schema.sets:
         return None
     return "needs a relation or a kind of set edge, and the bank %s states none" % registry.name
+
+
+@timed("negatives.housed")
+def housed(registry, value):
+    form, name, _ = parsed(value)
+    return (name,) if form == SET else ()
 
 
 def named(registry, settings):
@@ -436,13 +442,14 @@ NEGATIVE = OPERATIONS.register(
         splits=("trained", "scored"),
         requires=(
             Need(None, lacking),
+            Stored("negatives/of", housed),
             Count("negatives/degree", "degree", drawing("degree"), "stored", "stored"),
             Count("negatives/hops", "paths", drawing("hops"), "stored", "stored"),
         ),
         changes=(),
         adds=adds,
         kinds=named,
-        version=8,
+        version=9,
         graphs=1,
     ),
 )

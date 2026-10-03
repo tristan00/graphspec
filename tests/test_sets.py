@@ -1,6 +1,8 @@
 import copy
 import logging
+import re
 import time
+from functools import partial
 
 import numpy as np
 import pytest
@@ -27,6 +29,7 @@ from graphspec.views.visible import unstated
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 from tuning.fits.training import fit
+from tuning.searches.selector import check_bounds
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
@@ -46,6 +49,7 @@ STORED = {
     form: {"sets/%s/storage" % kind: name for kind, name in chosen.items()} for form, chosen in FORMS.items()
 }
 VALUE = dict(type="number", encoder="value")
+OFFERED = "pipeline/graphspec.negatives/negatives/of"
 
 
 @timed("sets.held")
@@ -561,6 +565,11 @@ def drawn_members(drawn, codes, step):
     return found
 
 
+@timed("sets.entered")
+def entered(rng, parameter):
+    return True if parameter.name.count("/") == 1 else parameter.uniform(rng)
+
+
 def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_present_set(bank):
     started = time.perf_counter()
     held = Deriver(bank, "cpu", support.SEED, RESIDENT)
@@ -618,6 +627,28 @@ def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_
     flat = Graph.load(held.view(index, paired)).dense()
     with pytest.raises(ValueError, match="draws negative sets of gathering among the sets stored as nodes"):
         segments.whole(flat, {}, grown, steps, support.SEED, GraphLimits("cpu"), None)
+    refused = dict(paired, pipeline=[dict(operation="graphspec.negatives", parameters=stated)])
+    message = (
+        "the entry graphspec.negatives of the pipeline states negatives/of set:gathering, which needs the set edges "
+        "of gathering stored as nodes, and sets/gathering/storage states pairs, which makes none"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        held.stated(refused)
+    template, rng = [dict(operation="graphspec.negatives")], np.random.default_rng(5)
+    space, offered = pipeline.space(held.registry, template), {}
+    for form in FORMS:
+        graph = configuration(held.registry, dict(view="snapshot"), STORED[form], 5, SPLITS)["graph"]
+        for _ in range(12):
+            flat = pipeline.draw(held.registry, template, space, partial(entered, rng), graph)
+            offered.setdefault(form, set()).add(flat[OFFERED].split(":")[0] + ":" + flat[OFFERED].split(":")[1])
+    assert "set:gathering" in offered["node"] and "set:gathering" not in offered["pairs"] and len(offered["pairs"]) > 1
+    message = (
+        "the bounds hold the entry graphspec.negatives of the template present with negatives/of among set:gathering, "
+        "each of which needs set edges stored as nodes, and leave sets/gathering/storage the form pairs, which makes none"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)):
+        check_bounds(held.registry, {"pipeline/graphspec.negatives": True, OFFERED: ["set:gathering"]}, template)
+    check_bounds(held.registry, {"pipeline/graphspec.negatives": True, OFFERED: ["set:gathering"], **STORED["node"]}, template)
     LOG.info("negative sets exit drawn=%d seconds=%.3f", drawn, time.perf_counter() - started)
 
 

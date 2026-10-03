@@ -157,13 +157,14 @@ class Space:
         key = groups(model)
         if key not in self.graphs:
             self.graphs[key] = graph_space(self.registry, model, self.bounds)
+        graph = specs.draw(self.graphs[key], lambda p: choose("graph/", p))
         return dict(
             seed=training_seed,
             model=model,
-            graph=specs.draw(self.graphs[key], lambda p: choose("graph/", p)),
+            graph=graph,
             pipeline=pipeline.entries(
                 self.template,
-                pipeline.draw(self.registry, self.template, self.fixing(fixed), lambda p: choose("", p)),
+                pipeline.draw(self.registry, self.template, self.fixing(fixed), lambda p: choose("", p), graph),
             ),
             **specs.draw(self.training, lambda p: choose("", p)),
             max_seconds=choose("", self.runtime),

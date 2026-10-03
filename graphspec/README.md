@@ -288,7 +288,7 @@ Rules are registered in `graphspec.NEGATIVES` as `graphspec.operations.negatives
 
 | Parameter | Range | Effect |
 |---|---|---|
-| `negatives/of` | `link:<relation>`, `link:<relation>:<reference>`, `set:<kind>`, `set:<kind>:<reference>` | What it draws: absent edges of a relation stated or a table of relations taken from a column, or absent sets of a kind of set edge; with a reference, for the node or the set the reference of a labelled task names, the references offered being those of nodes alone whose kinds the relation starts from, or that hold the kind of set edge. |
+| `negatives/of` | `link:<relation>`, `link:<relation>:<reference>`, `set:<kind>`, `set:<kind>:<reference>` | What it draws: absent edges of a relation stated or a table of relations taken from a column, or absent sets of a kind of set edge, offered where the form of storage of the kind makes its set edges nodes; with a reference, for the node or the set the reference of a labelled task names, the references offered being those of nodes alone whose kinds the relation starts from, or that hold the kind of set edge. |
 | `negatives/rule` | the rules registered | The rule. |
 | `negatives/count` | 1–16 | How many it draws for every present edge, for every set, or for every node a task names. |
 | `negatives/hops/within` | 1–3 | The hops of `hops`. Offered for it. |

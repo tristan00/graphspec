@@ -11,6 +11,8 @@ from graphspec.registries import Names
 from graphspec.schema.added import Added
 from graphspec.views.graph import CHANGES as CHECKED
 
+from .sets import PARAMETER, STORAGE
+
 LOG = logging.getLogger(__name__)
 CHANGES = CHECKED + ("references",)
 SPLITS = ("trained", "scored")
@@ -57,6 +59,23 @@ class Need:
     @timed("operation.Need.declaration")
     def declaration(self):
         return dict(need=self.parameter)
+
+
+class Stored:
+    def __init__(self, parameter, kinds):
+        started = time.perf_counter()
+        if type(parameter) is not str or not parameter or not callable(kinds):
+            raise ValueError(
+                "a need of set edges stored as nodes states the name of the parameter whose values need them and a "
+                "function from a registry and a value of it to the kinds of set edge that value needs stored as "
+                "nodes; found %r and %r" % (parameter, kinds)
+            )
+        self.parameter, self.kinds = parameter, kinds
+        LOG.debug("stored exit parameter=%s seconds=%.4f", parameter, time.perf_counter() - started)
+
+    @timed("operation.Stored.declaration")
+    def declaration(self):
+        return dict(stored=self.parameter)
 
 
 class Settings:
@@ -196,7 +215,7 @@ class Operation:
             parameters=callable(parameters),
             reads=type(reads) is tuple and all(type(read) is str for read in reads),
             splits=type(splits) is tuple and all(split in SPLITS for split in splits),
-            requires=type(requires) is tuple and all(isinstance(held, (Count, Need)) for held in requires),
+            requires=type(requires) is tuple and all(isinstance(held, (Count, Need, Stored)) for held in requires),
             changes=type(changes) is tuple and all(change in CHANGES for change in changes),
             adds=adds is None or callable(adds),
             kinds=kinds is None or callable(kinds),
@@ -210,7 +229,8 @@ class Operation:
                 "least one, of distinct names, the last not run in parts and none run in parts after one that "
                 "is; a function from a registry to its parameters; a tuple of the "
                 "names of the operations whose parameters it reads; a tuple of the splits it may read, among %s; "
-                "a tuple of counts and needs; a tuple of what it changes, among %s; none, or a function from a registry, "
+                "a tuple of counts, needs of a bank and needs of set edges stored as nodes; a tuple of what it "
+                "changes, among %s; none, or a function from a registry, "
                 "settings and the name of its entry to what it adds; none, or a function from a registry and "
                 "settings to what it does with kinds of node, as a mapping from each to one of %s; a whole "
                 "version from 1; the number of graphs it takes, 1, or 2 where it reads a second graph beside the "
@@ -294,6 +314,16 @@ class Operation:
         return tuple(
             option for option in parameter.options if all(need.lacking(registry, option) is None for need in needs)
         )
+
+    @timed("operation.Operation.unstored")
+    def unstored(self, registry, values, settings):
+        found = [
+            (held.parameter, values[held.parameter], kind)
+            for held in self.requires
+            if isinstance(held, Stored) and held.parameter in values
+            for kind in held.kinds(registry, values[held.parameter])
+        ]
+        return next((each for each in found if not STORAGE.named(settings[PARAMETER % each[2]]).nodes), None)
 
     @timed("operation.Operation.refused")
     def refused(self, registry, values):
