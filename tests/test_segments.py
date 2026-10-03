@@ -26,6 +26,7 @@ from graphspec.operations.contract import groupable
 from graphspec.operations.operation import Refused
 from graphspec.views.graph import DENSE, PER_STEP, Graph, verify_dense
 from tuning.bank.bank import Deriver
+from tuning.searches.selector import random_suggest
 
 LOG = logging.getLogger(__name__)
 GROUP = pytest.mark.xdist_group("segments")
@@ -118,6 +119,8 @@ CONTRACTIONS = (
     (("graphspec.merge", {"merge/prefer": "second"}, 1), ("graphspec.contract", CONTRACTED, None)),
     (("graphspec.difference", {"difference/match": "keys"}, 0),),
 )
+PROPOSED = (5, 23)
+UNSCALED = dict(mean=None, sd=None)
 DENSE_READ = dict(obs_ref="x_table", fact_ref="value_table")
 VARIANT_READ = dict(x_ref="x_table")
 
@@ -525,11 +528,34 @@ def test_every_operation_derives_steps_that_hold_nothing_in_segments_as_it_deriv
     LOG.info("steps that hold nothing exit operations=%d seconds=%.3f", len(steps), time.perf_counter() - started)
 
 
+@timed("segments.proposed")
+def proposed(directory, seeds):
+    opened = Deriver(directory, "cpu", support.SEED, RESIDENT)
+    names = [graph["name"] for graph in opened.manifest["graphs"]]
+    shipped = [name for name in sorted(OPERATIONS.names()) if OPERATIONS.named(name).namespace == "graphspec"]
+    found = []
+    for seed in seeds:
+        order = [shipped[place] for place in np.random.default_rng(seed).permutation(len(shipped))]
+        template = [dict(operation=name, **({"graph": names[SECONDS[name]]} if name in SECONDS else {})) for name in order]
+        cfg = dict(random_suggest(opened.registry, seed, seed, {}, 600, template)[0], splits=SPLITS)
+        steps, registry, partitions = opened.stated(cfg)[1], opened.fitted(cfg), opened.partitions(cfg)
+        for graph in opened.viewed(cfg).graphs:
+            view = Graph.load(opened.view(graph["index"], cfg)).dense()
+            beside = {name: held[0].dense() for name, held in opened.seconds(steps, [graph["index"]], cfg, False).items()}
+            verify_dense(segments.whole(view, beside, registry, steps, support.SEED, LIMITS, partitions), registry)
+        flat = [name for name in registry.schema.added_columns() if registry.encoding.states[name] == UNSCALED]
+        found.append((seed, len(steps), flat))
+    return found
+
+
 @GROUP
-def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_equal_whole_and_in_segments(
-    bank, registered
+def test_random_pipelines_and_proposals_of_every_operation_derive_on_every_shared_bank_whole_and_in_segments(
+    bank, path_bank, varied, sets_bank, registered
 ):
     started = time.perf_counter()
+    banks = dict(task=bank, path=path_bank, varied=varied, sets=sets_bank)
+    proposals = {label: proposed(directory, PROPOSED) for label, directory in banks.items()}
+    assert any(flat for held in proposals.values() for _, _, flat in held), proposals
     opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
     shown = [sliced(support.shown(opened, index).dense(), 0, SPAN) for index in range(MEMBERS)]
@@ -615,7 +641,11 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
             registry, [dict(operation="graphspec.contract", parameters=dict(CONTRACTED, **{"contract/grouping": grouping}))]
         )
     LOG.info(
-        "random pipelines exit pipelines=%d refused=%s seconds=%.3f", len(found), refused, time.perf_counter() - started
+        "random pipelines exit pipelines=%d refused=%s proposals=%s seconds=%.3f",
+        len(found),
+        refused,
+        proposals,
+        time.perf_counter() - started,
     )
 
 

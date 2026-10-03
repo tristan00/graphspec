@@ -27,7 +27,6 @@ from graphspec.views.graph import Graph
 from graphspec.views.view import sequences, view
 from graphspec.views.visible import unstated
 from tuning.bank.bank import Deriver
-from tuning.bank.build import build
 from tuning.fits.training import fit
 from tuning.searches.selector import check_bounds
 from tuning.statement import state
@@ -260,12 +259,10 @@ def case():
 
 
 @pytest.fixture(scope="module")
-def bank(tmp_path_factory):
+def bank(sets_bank):
     started = time.perf_counter()
-    root = tmp_path_factory.mktemp("sets")
-    build(synthetic.stage(root, "sets", case()), root / "bank", 1, ("train",))
     LOG.info("bank of sets exit seconds=%.3f", time.perf_counter() - started)
-    return root / "bank"
+    return sets_bank
 
 
 @timed("sets.shown")

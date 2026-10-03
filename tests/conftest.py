@@ -205,6 +205,25 @@ def varied():
     return shared("varied", varied_bank) / "bank"
 
 
+def sets_built(root):
+    from test_sets import case
+
+    from graphspec.sources import synthetic
+    from tuning.bank.build import build
+
+    started = time.perf_counter()
+    build(synthetic.stage(root, "sets", case()), root / "bank", 1, ("train",))
+    LOG.debug("sets built exit seconds=%.4f", time.perf_counter() - started)
+
+
+@pytest.fixture(scope="session")
+def sets_bank():
+    started = time.perf_counter()
+    result = shared("sets", sets_built) / "bank"
+    LOG.debug("sets bank exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
 @pytest.fixture(scope="session")
 def ground():
     place = Path(os.environ["GRAPHSPEC_SUITE_HOME"]) / "ground" / "fixture"
