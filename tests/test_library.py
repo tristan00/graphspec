@@ -11,7 +11,8 @@ from graphspec import GraphTables, Schema, Stage, write_task
 from graphspec.build.staged import Staged
 from graphspec.infra.processes.locks import heavy_job
 from graphspec.infra.runtime import output_path
-from tuning.bank.build import build, open_source
+from tuning.bank.bank import Bank
+from tuning.bank.build import build, open_source, stored
 
 
 def test_output_cannot_be_inside_source_tree():
@@ -69,6 +70,14 @@ def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_pa
     assert "widths" not in manifest["spec"] and manifest["spec"]["encoding"]["states"] is None
     Staged(tmp_path / "source", schema)
     assert before == {p.name: p.read_bytes() for p in (tmp_path / "source").iterdir()}
+    again = build(task, tmp_path / "again", 1, ("train",))
+    opened = [Bank(tmp_path / name) for name in ("bank", "again")]
+    assert opened[0].source == opened[1].source == again["stored_sha256"] and opened[0].cache == opened[1].cache
+    assert stored(tmp_path / "again") == stored(tmp_path / "bank")
+    changed = tmp_path / "again" / "truth" / "graph_0000" / "obs_values.npy"
+    values = np.load(changed)
+    np.save(changed, np.where(np.isnan(values), values, values + 1))
+    assert stored(tmp_path / "again") != stored(tmp_path / "bank")
 
 
 def test_heavy_jobs_are_exclusive_across_processes(monkeypatch):

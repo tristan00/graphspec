@@ -415,7 +415,7 @@ def serving(held, graph, step):
 def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, cases, name):
     held, _ = opened(banks, name)
     schema = held.registry.schema
-    assert held.manifest["version"] == 11 and schema.tasks["grouping"] is None
+    assert held.manifest["version"] == 12 and schema.tasks["grouping"] is None
     found, wanted = support.read_back(held), support.meant(cases[name])
     assert list(found) == list(wanted)
     for graph, read in found.items():

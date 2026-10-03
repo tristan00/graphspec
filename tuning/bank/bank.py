@@ -24,7 +24,6 @@ from graphspec.infra.files import (
     load_arrays,
     read_json,
     read_pack,
-    sha256_file,
     sha256_json,
     write_json,
 )
@@ -50,7 +49,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 51
+VIEW = 52
 TOKEN = (1 << 62) - 1
 
 
@@ -349,8 +348,8 @@ class Bank:
         started = time.perf_counter()
         self.directory = Path(directory)
         self.manifest = admitted(self.directory, read_json(self.directory / "manifest.json"))
-        self.source = sha256_file(self.directory / "manifest.json")
-        self.cache = cache_path("banks", sha256_json(dict(manifest=self.source, version=VIEW)))
+        self.source = self.manifest["stored_sha256"]
+        self.cache = cache_path("banks", sha256_json(dict(stored=self.source, version=VIEW)))
         self.registry = Registry.from_declaration(self.manifest["spec"])
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")

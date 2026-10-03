@@ -15,7 +15,7 @@ from graphspec.build import staged
 from graphspec.build.parse import distinct, parse
 from graphspec.engine.transform import validate
 from graphspec.facts.stored import VERSION
-from graphspec.infra.files import read_json, sha256_file, write_json
+from graphspec.infra.files import read_json, sha256_file, sha256_json, write_json
 from graphspec.infra.log import configure
 from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.processes.processes import pooled
@@ -30,6 +30,7 @@ from graphspec.sources import ladybug
 
 LOG = logging.getLogger(__name__)
 WORKER = {}
+UNSTORED = ("database", "graphs")
 FLOAT32 = float(np.finfo(np.float32).max)
 
 
@@ -402,6 +403,15 @@ def catalogue(output, graphs):
     return int(first.sum())
 
 
+def stored(output):
+    started = time.perf_counter()
+    output = Path(output)
+    files = [output / "supervision.json"] + [path for path in (output / "truth").rglob("*") if path.is_file()]
+    result = sha256_json(sorted([path.relative_to(output).as_posix(), sha256_file(path)] for path in files))
+    LOG.debug("stored exit files=%d seconds=%.4f", len(files), time.perf_counter() - started)
+    return result
+
+
 @exclusive
 def build(task_path, output, workers, trained):
     started = time.perf_counter()
@@ -457,8 +467,15 @@ def build(task_path, output, workers, trained):
         rows=len(rows["rows"]),
         split_rows={name: len(members) for name, members in rows["split"]["indices"].items()},
         supervision_sha256=sha256_file(output / "supervision.json"),
-        seconds=time.perf_counter() - started,
     )
+    manifest["stored_sha256"] = sha256_json(
+        dict(
+            files=stored(output),
+            manifest={name: value for name, value in manifest.items() if name not in UNSTORED},
+            graphs=[{name: value for name, value in graph.items() if name != "seconds"} for graph in metrics],
+        )
+    )
+    manifest["seconds"] = time.perf_counter() - started
     write_json(output / "manifest.json", manifest)
     LOG.info(
         "bank exit seconds=%.3f graphs=%d rows=%d targets=%s",
