@@ -775,3 +775,19 @@ def test_bounds_or_a_random_realisation_that_would_leave_a_family_none_it_reads_
     assert excluded(registry, walks, dict(placing, **readers), template) == ["view", REALISATION]
     LOG.info("structure refused at the start of a search exit seconds=%.3f", time.perf_counter() - started)
 
+
+def test_tpe_records_each_family_under_the_realisations_it_reads_while_the_banks_of_decisions_stay_open(banks):
+    from tuning.searches.selector import observation
+
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    packed(held, "whole", 1)
+    template, keys = support.template(), {}
+    for family, name in (("tree", "set_edge"), ("walks", "vector")):
+        record = observation(held.registry, configured(held, name, modelled(family), PLAIN), 1.0, {}, template)
+        (keys[family],) = [key for key in record.params if key.startswith("model/" + REALISATION)]
+        assert record.params[keys[family]] == name
+    assert keys["tree"] == "model/" + REALISATION and keys["walks"].startswith("model/%s|%s|vector|" % (REALISATION, NONE))
+    assert set(STRUCTURAL).isdisjoint(keys["walks"].split("|"))
+    LOG.info("tpe records realisations exit seconds=%.3f", time.perf_counter() - started)
+

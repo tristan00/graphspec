@@ -1,8 +1,11 @@
 import argparse
+import importlib
 import logging
 import re
 import shutil
+import sys
 import time
+import weakref
 from functools import partial
 from pathlib import Path
 
@@ -39,6 +42,18 @@ FORCED = (
 )
 
 
+DEFERRING = "try:\n    import graphspec_absent_module\nexcept ImportError as error:\n    DEFERRED = error\n"
+
+
+class Owner:
+    pass
+
+
+@timed("selector_tests.reached")
+def reached(importing, name, owner):
+    return importing(name)
+
+
 def random_suggest(*arguments):
     return selector.random_suggest(*arguments, TEMPLATE)
 
@@ -49,6 +64,25 @@ def suggest(*arguments):
 
 def test_the_template_of_the_suite_is_the_seven_in_their_order():
     assert read_json(PIPELINE) == TEMPLATE
+
+
+def test_the_search_imports_optuna_on_a_thread_of_its_own_so_no_frame_of_its_caller_outlives_the_import(tmp_path, monkeypatch):
+    from tuning.searches import tpe
+
+    started, kept, ways = time.perf_counter(), {}, dict(plainly=importlib.import_module, apart=tpe.imported)
+    for way in ways:
+        (tmp_path / ("deferring_" + way + ".py")).write_text(DEFERRING, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for way, importing in ways.items():
+        owner = Owner()
+        held = weakref.ref(owner)
+        assert reached(importing, "deferring_" + way, owner).DEFERRED.name == "graphspec_absent_module"
+        del owner
+        kept[way] = held() is not None
+        sys.modules.pop("deferring_" + way)
+    assert kept == dict(plainly=True, apart=False)
+    assert tpe.imported("optuna") is sys.modules["optuna"]
+    LOG.info("optuna imported apart exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_numeric_parameters_use_full_integer_domains(bank):

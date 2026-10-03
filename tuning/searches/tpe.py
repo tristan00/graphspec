@@ -1,4 +1,7 @@
+import importlib
+import sys
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version
 
 import numpy as np
@@ -8,45 +11,45 @@ from graphspec.infra.timing import timed
 VERSION = version("optuna")
 
 
+@timed("tpe.imported")
+def imported(name):
+    if name in sys.modules:
+        return sys.modules[name]
+    with ThreadPoolExecutor(1) as pool:
+        return pool.submit(importlib.import_module, name).result()
+
+
 @timed("tpe.categorical")
 def categorical(options):
-    from optuna.distributions import CategoricalDistribution
-
-    return CategoricalDistribution(list(options))
+    return imported("optuna").distributions.CategoricalDistribution(list(options))
 
 
 @timed("tpe.integer")
 def integer(low, high):
-    from optuna.distributions import IntDistribution
-
-    return IntDistribution(low, high)
+    return imported("optuna").distributions.IntDistribution(low, high)
 
 
 @timed("tpe.real")
 def real(low, high, log=False):
-    from optuna.distributions import FloatDistribution
-
-    return FloatDistribution(low, high, log=log)
+    return imported("optuna").distributions.FloatDistribution(low, high, log=log)
 
 
 @timed("tpe.propose")
 def propose(trial, name, domain):
-    from optuna.distributions import CategoricalDistribution, IntDistribution
-
-    if isinstance(domain, CategoricalDistribution):
+    distributions = imported("optuna").distributions
+    if isinstance(domain, distributions.CategoricalDistribution):
         return trial.suggest_categorical(name, domain.choices)
-    if isinstance(domain, IntDistribution):
+    if isinstance(domain, distributions.IntDistribution):
         return trial.suggest_int(name, domain.low, domain.high, step=domain.step, log=domain.log)
     return trial.suggest_float(name, domain.low, domain.high, log=domain.log)
 
 
 @timed("tpe.draw")
 def draw(domain, rng):
-    from optuna.distributions import CategoricalDistribution, IntDistribution
-
-    if isinstance(domain, CategoricalDistribution):
+    distributions = imported("optuna").distributions
+    if isinstance(domain, distributions.CategoricalDistribution):
         return domain.choices[int(rng.integers(len(domain.choices)))]
-    if isinstance(domain, IntDistribution):
+    if isinstance(domain, distributions.IntDistribution):
         return int(rng.integers(domain.low, domain.high + 1))
     if domain.log:
         return float(np.exp(rng.uniform(np.log(domain.low), np.log(domain.high))))
@@ -55,17 +58,12 @@ def draw(domain, rng):
 
 @timed("search.record")
 def record(value, params, distributions, **attrs):
-    import optuna
-
-    return optuna.trial.create_trial(
-        value=value, params=params, distributions=distributions, user_attrs=attrs
-    )
+    return imported("optuna").trial.create_trial(value=value, params=params, distributions=distributions, user_attrs=attrs)
 
 
 @timed("search.study")
 def study(seed, settings, records):
-    import optuna
-
+    optuna = imported("optuna")
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", optuna.exceptions.ExperimentalWarning)
