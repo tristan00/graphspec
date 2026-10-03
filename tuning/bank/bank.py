@@ -50,7 +50,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 50
+VIEW = 51
 TOKEN = (1 << 62) - 1
 
 
@@ -194,6 +194,11 @@ def written(folder, build):
                     raise
     LOG.debug("written exit folder=%s seconds=%.4f", folder.name, time.perf_counter() - started)
     return folder
+
+
+@timed("bank.coded")
+def coded():
+    return dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION)
 
 
 def readings(registry, steps, several, storage, sees):
@@ -656,18 +661,34 @@ class Deriver(Bank):
 
     @timed("deriver.fitted")
     def fitted(self, cfg):
-        viewed, (key, steps, _, _) = self.viewed(cfg), self.stated(cfg)
+        viewed, (key, steps, spec, _) = self.viewed(cfg), self.stated(cfg)
         if (viewed.folder, key) not in self.grown:
-            self.grown[viewed.folder, key] = self.growing(viewed, steps, cfg)
+            self.grown[viewed.folder, key] = self.growing(viewed, steps, spec, cfg)
         return self.grown[viewed.folder, key]
 
-    def growing(self, viewed, steps, cfg):
+    def reads(self, steps, spec, cfg):
+        started = time.perf_counter()
+        storage = sets.chosen(self.registry, spec)
+        result = readings(self.registry, spec["time/steps"], self.several(spec), storage, cfg["splits"]["sees"])
+        result += pipeline.read(self.registry, steps)
+        LOG.debug("deriver reads exit read=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
+
+    def growing(self, viewed, steps, spec, cfg):
         started = time.perf_counter()
         provisional = pipeline.grown(viewed.registry, steps, None)
         if not provisional.schema.added_columns():
             LOG.debug("deriver growing exit columns=0 seconds=%.4f", time.perf_counter() - started)
             return provisional
-        named = specs.digest(dict(pipeline=[step.keyed() for step in steps], device=self.device, seed=SEED))
+        named = specs.digest(
+            dict(
+                pipeline=[step.keyed() for step in steps],
+                device=self.device,
+                seed=SEED,
+                versions=coded(),
+                entries=registries.versions(self.reads(steps, spec, cfg)),
+            )
+        )
         path = viewed.folder / "added" / (named + ".json")
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -776,14 +797,8 @@ class Deriver(Bank):
             splits=cfg["splits"],
             device=self.device,
             seeds=dict(derivation=SEED),
-            versions=dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION),
-            entries=registries.versions(
-                readings(
-                    self.registry, spec["time/steps"], self.several(spec), sets.chosen(self.registry, spec), cfg["splits"]["sees"]
-                )
-                + pipeline.read(self.registry, steps)
-                + [(REPRESENTATIONS, chosen)]
-            ),
+            versions=coded(),
+            entries=registries.versions(self.reads(steps, spec, cfg) + [(REPRESENTATIONS, chosen)]),
         )
         LOG.debug("deriver identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
         return result

@@ -13,7 +13,17 @@ import support
 from registered import everything, parities, parity, running, unchecked, uncounted, unlooking
 
 from conftest import SPLITS, Inline
-from graphspec import NEGATIVES, OPERATIONS, REPRESENTATIONS, SEES, SEVERAL, Operation, Phase, Representation
+from graphspec import (
+    ENCODERS,
+    NEGATIVES,
+    OPERATIONS,
+    REPRESENTATIONS,
+    SEES,
+    SEVERAL,
+    Operation,
+    Phase,
+    Representation,
+)
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments, transform
 from graphspec.engine.segments import Derivation
@@ -348,6 +358,35 @@ def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_varian
         } <= entries
     assert found[1][1] != found[2][1] and found[1][2] != found[2][2]
     LOG.info("versioned entries exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_states_of_added_columns_are_fitted_again_when_a_version_the_key_of_a_variant_holds_is_raised(
+    bank, monkeypatch
+):
+    started = time.perf_counter()
+    values = {"measures/degree": True, "measures/encoder": "standard"}
+    names = support.SEVEN + ("graphspec.measures",)
+    fits, trained = [], Deriver.trained
+
+    def counted(*arguments):
+        fits.append(arguments[0])
+        return trained(*arguments)
+
+    monkeypatch.setattr(Deriver, "trained", counted)
+    found, counts = [], []
+    for raised in (None, (transform, "VERSION"), (type(ENCODERS.named("standard")), "version")):
+        if raised is not None:
+            monkeypatch.setattr(*raised, getattr(*raised) + 1)
+        opened = Deriver(bank, "cpu", RESIDENT)
+        cfg = support.configuration(opened.registry, dict(view="snapshot"), values, 5, SPLITS, names)
+        opened.fitted(cfg)
+        Deriver(bank, "cpu", RESIDENT).fitted(cfg)
+        found.append(sorted(path.name for path in (opened.viewed(cfg).folder / "added").glob("*.json")))
+        counts.append(len(fits))
+    assert "standard" not in {column["encoder"] for column in opened.registry.schema.columns.values()}
+    assert counts[1:] == [counts[0] + 1, counts[0] + 2] and len(found[0]) >= 1
+    assert set(found[0]) < set(found[1]) < set(found[2])
+    LOG.info("states of added columns exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_stage_and_the_representation(
