@@ -8,7 +8,7 @@ from graphspec.operations.parameters import GROUPS, among, choice, draw, equals,
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
-from .heads import NONE, REALISATION, REALISATIONS, reading
+from .heads import NONE, REALISATION, REALISATIONS, reading, refused
 
 LOG = logging.getLogger(__name__)
 SPACES = {}
@@ -144,8 +144,6 @@ def realisable(registry, parameters):
     held = [parameter for parameter in parameters if parameter.name == REALISATION]
     result = parameters
     if held:
-        from .options import refused
-
         offered = [name for name in held[0].options if name == NONE or refused(name, registry.schema) is None]
         result = narrow(parameters, {REALISATION: offered})
     LOG.debug("model realisable exit realisations=%d seconds=%.4f", len(held), time.perf_counter() - started)

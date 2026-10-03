@@ -6,70 +6,11 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 
-from .heads import ONE, REALISATIONS
+from .heads import ONE, coded, realisation
 from .layers import padded
 
 LOG = logging.getLogger(__name__)
-FIELDS = ("kind", "targets", "parameters")
 STRUCTURE = ("sequence", "decision", "action_option", "action_place", "role_action", "role_code")
-
-
-def realisation(name):
-    started = time.perf_counter()
-    entry = REALISATIONS.named(name)
-    if (
-        not all(hasattr(entry, part) for part in ("reads", "together", "back", "refusal", "module"))
-        or not isinstance(entry.reads, tuple)
-        or not entry.reads
-        or any(field not in FIELDS for field in entry.reads)
-        or len(set(entry.reads)) != len(entry.reads)
-        or type(entry.together) is not bool
-        or type(entry.back) is not bool
-        or not callable(entry.refusal)
-        or not callable(entry.module)
-    ):
-        raise ValueError(
-            "the realisation of options %s states reads, a tuple of the fields of an option it reads among %s; "
-            "together, whether the score of an option reads the other options of its decision, true or false; "
-            "back, whether messages pass from options back to the state, true or false; refusal, which gives why "
-            "it cannot read the options a schema states, or none; and module, which builds it"
-            % (name, ", ".join(FIELDS))
-        )
-    LOG.debug("options realisation exit name=%s seconds=%.4f", name, time.perf_counter() - started)
-    return entry
-
-
-def refused(name, schema):
-    started = time.perf_counter()
-    entry = realisation(name)
-    found, result = entry.refusal(schema), None
-    unread = [
-        (task, field)
-        for task in schema.decided()
-        for field in fielded(schema, task)
-        if field["sort"] not in entry.reads
-    ]
-    if found is not None:
-        result = "the realisation of options %s cannot read the options of this bank: %s" % (name, found)
-    elif unread:
-        task, field = unread[0]
-        result = (
-            "the field %s of the kind of task %s has no route to the prediction under the realisation of options %s: "
-            "the realisation reads no %s" % (field["name"], task, name, field["sort"])
-        )
-    LOG.debug("options refused exit name=%s refused=%s seconds=%.4f", name, result is not None, time.perf_counter() - started)
-    return result
-
-
-def coded(schema):
-    started = time.perf_counter()
-    actions, roles = [], []
-    for task in schema.decided():
-        for action, entry in schema.tasks["kinds"][task]["target"]["actions"].items():
-            actions.append((task, action))
-            roles += [(task, action, role, held["sort"], tuple(held["kinds"])) for role, held in entry["roles"].items()]
-    LOG.debug("options coded exit actions=%d roles=%d seconds=%.4f", len(actions), len(roles), time.perf_counter() - started)
-    return actions, roles
 
 
 def slots(encoding, columns, name):
@@ -80,24 +21,6 @@ def slots(encoding, columns, name):
     start, flag = sum(size[0] for size in sizes[:place]), values + sum(size[1] for size in sizes[:place])
     result = list(range(start, start + sizes[place][0])) + list(range(flag, flag + sizes[place][1]))
     LOG.debug("options slots exit column=%s slots=%d seconds=%.6f", name, len(result), time.perf_counter() - started)
-    return result
-
-
-def fielded(schema, task):
-    started = time.perf_counter()
-    actions, roles = coded(schema)
-    several = len(schema.tasks["kinds"][task]["target"]["actions"]) > 1
-    result = [dict(name="kind", sort="kind", code=None)] if several else []
-    for code, (owner, action, role, sort, kinds) in enumerate(roles):
-        if owner == task:
-            result.append(
-                dict(name="target %s of %s" % (role, action), sort="targets", code=code, role=sort, kinds=kinds)
-            )
-    for code, (owner, action) in enumerate(actions):
-        if owner == task:
-            for column in schema.tasks["kinds"][task]["target"]["actions"][action]["parameters"]:
-                result.append(dict(name="parameter %s of %s" % (column, action), sort="parameters", code=code, column=column))
-    LOG.debug("options fielded exit task=%s fields=%d seconds=%.4f", task, len(result), time.perf_counter() - started)
     return result
 
 

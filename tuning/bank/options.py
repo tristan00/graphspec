@@ -8,7 +8,7 @@ from graphspec.infra.files import load_arrays
 from graphspec.infra.hashing import hashed
 from graphspec.infra.timing import timed
 from graphspec.schema.decisions import ROLES
-from tuning.families.options import coded
+from tuning.families.heads import coded
 
 LOG = logging.getLogger(__name__)
 TOKEN = (1 << 62) - 1

@@ -21,10 +21,10 @@ from tuning.bank.bank import Bank
 from tuning.batches import inputs
 from tuning.batches.batching import batches, pack_batch
 from tuning.families import model_spec
-from tuning.families.heads import NONE, REALISATION
+from tuning.families.heads import FIELDS, NONE, REALISATION, coded, refused
 from tuning.families.model_spec import VIEWS, realisable, space, views
 from tuning.families.models import build as network
-from tuning.families.options import FIELDS, Node, coded, refused
+from tuning.families.options import Node
 from tuning.families.periods import blocks as windows
 from tuning.fits.guards import Guard, routed
 from tuning.fits.losses import Summed, counting, outcomes

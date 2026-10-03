@@ -8,9 +8,9 @@ from torch import nn
 from graphspec.infra.timing import timed
 from graphspec.operations.pipeline import emptied
 from tuning.batches.batching import batches, pack_batch
-from tuning.families.heads import NONE, REALISATION
+from tuning.families.heads import NONE, REALISATION, coded, fielded, realisation, refused
 from tuning.families.model_spec import realised
-from tuning.families.options import coded, fielded, realisation, refused, slots
+from tuning.families.options import slots
 from tuning.families.periods import blocks as windows
 
 LOG = logging.getLogger(__name__)
