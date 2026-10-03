@@ -48,7 +48,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 60
+VIEW = 61
 TOKEN = (1 << 62) - 1
 
 
@@ -708,9 +708,9 @@ class Deriver(Bank):
             if not len(moments):
                 continue
             bound = int(moments.max()) + 1
-            member = sliced(Graph.load(viewed.path(index)).dense(), 0, bound)
+            member = sliced(Graph.load(viewed.path(index)).dense(), bound)
             beside = {
-                name: sliced(held[0].dense(), 0, bound)
+                name: sliced(held[0].dense(), bound)
                 for name, held in self.seconds(steps, [index], cfg, False).items()
             }
             derived = segments.whole(member, beside, provisional, steps, self.seed, self.limits(), partitions)

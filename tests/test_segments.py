@@ -1,4 +1,5 @@
 import gc
+import inspect
 import logging
 import re
 import time
@@ -92,7 +93,7 @@ ADDED = support.ADDED
 TESTED = (TALLY, HUB)
 SECONDS = {"graphspec.merge": 1, "graphspec.difference": 0}
 ROUNDS, MARGIN = (8, 32), 1.1
-SHOWN, STEPS, BARE, HOLLOW, UNVALUED = 2, 5, 1, 2, 3
+STEPS, BARE, HOLLOW, UNVALUED = 5, 1, 2, 3
 EMPTIED = dict(
     VALUES,
     **{
@@ -235,6 +236,19 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
     found, held = line.arrays(), reference.arrays()
     assert sorted(found) == sorted(held)
     assert unequal(found, held, VARIANT_READ) == []
+
+
+@GROUP
+def test_a_slice_holds_the_steps_before_a_step_and_every_slice_verifies(bank):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
+    graph, registry = support.shown(opened, 0).dense(), support.fitted(opened)
+    assert list(inspect.signature(sliced).parameters) == ["graph", "high"]
+    for high in range(1, graph.steps + 1):
+        held = sliced(graph, high)
+        verify_dense(held, registry)
+        assert held.steps == high and unequal(held.arrays, shortened(graph, high).arrays, DENSE_READ) == [], high
+    LOG.info("slices exit slices=%d seconds=%.3f", graph.steps, time.perf_counter() - started)
 
 
 @timed("segments.renamed")
@@ -512,7 +526,7 @@ def test_no_operation_reads_or_offers_the_relations_negatives_add_as_candidates(
 
 @timed("segments.emptied")
 def emptied(graph):
-    graph = sliced(graph, SHOWN, SHOWN + STEPS)
+    graph = sliced(graph, STEPS)
     moments = np.asarray(graph.task_step)
     tasks = np.flatnonzero(moments != HOLLOW)
     number = np.full(len(moments), -1, np.int64)
@@ -598,10 +612,10 @@ def test_random_pipelines_and_proposals_of_every_operation_derive_on_every_share
     assert any(flat for held in proposals.values() for _, _, flat in held), proposals
     opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
-    shown = [sliced(support.shown(opened, index).dense(), 0, SPAN) for index in range(MEMBERS)]
+    shown = [sliced(support.shown(opened, index).dense(), SPAN) for index in range(MEMBERS)]
     graph = shown[0]
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
-    beside = {name: [sliced(support.beside(opened, 0, name), 0, SPAN)] for name in sorted(set(graphs.values()))}
+    beside = {name: [sliced(support.beside(opened, 0, name), SPAN)] for name in sorted(set(graphs.values()))}
     unsplit = ["link:%s" % table for table in registry.groups]
     bounds = {REWIRING: dict(low=1, high=REWIRES), UNSPLIT: unsplit}
     spec = specs.configured(specs.settings(registry, specs.GROUPS), SETTINGS)
@@ -636,7 +650,7 @@ def test_random_pipelines_and_proposals_of_every_operation_derive_on_every_share
         grown = pipeline.grown(registry, steps, None)
         if together:
             picked = sorted(rng.choice(MEMBERS, int(rng.integers(2, MEMBERS + 1)), replace=False).tolist())
-            members = [sliced(shown[index], 0, int(rng.integers(2, SPAN + 1))) for index in picked]
+            members = [sliced(shown[index], int(rng.integers(2, SPAN + 1))) for index in picked]
             drawn = dict(joined, **{name: bool(rng.integers(2)) for name in joined if name.startswith("graphs/connect/")})
             physical = join.joined(members, registry, drawn, support.SEED)
             whole = begun(physical, {}, grown, steps, dict(drawn, **{"graphs/join": "separate"}), 0)

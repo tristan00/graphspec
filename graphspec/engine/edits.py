@@ -64,8 +64,8 @@ def cut(graph, low, high):
 
 
 @timed("edits.sliced")
-def sliced(graph, low, high):
-    return cut(graph, low, high)[0]
+def sliced(graph, high):
+    return cut(graph, 0, high)[0]
 
 
 @timed("edits.columns")
