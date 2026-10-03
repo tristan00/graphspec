@@ -7,6 +7,7 @@ from pathlib import Path
 from weakref import WeakKeyDictionary
 
 import numpy as np
+import pyarrow as pa
 import torch
 from numba import njit
 
@@ -33,7 +34,7 @@ from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline, sets
 from graphspec.operations.pipeline import resolved
 from graphspec.representations import groups as representations
-from graphspec.schema.schema import ENCODERS, Encoding, fitted
+from graphspec.schema.schema import ENCODERS, WRITTEN, Encoding, fitted
 from graphspec.schema.targets import TARGETS
 from graphspec.views.graph import Graph
 from graphspec.views.view import beside, finished, sampled, sequences, view
@@ -45,7 +46,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 42
+VIEW = 43
 TOKEN = (1 << 62) - 1
 
 
@@ -80,13 +81,15 @@ def pointed(schema, rows):
         if entry["target"] is not None
     }
     aims = np.asarray([code[row["kind"]] for row in rows], np.int64)
-    fields, inputs = {}, {}
+    fields, inputs, columns = {}, {}, schema.target_columns()
     for place, kind in enumerate(targets):
         chosen = np.flatnonzero(aims == place).tolist()
         entry = TARGETS.named(kind)
         for name in entry.inputs + entry.outcomes:
-            held = fields.setdefault(name, np.full(len(rows), np.nan, np.float32))
-            held[chosen] = [rows[row][name] for row in chosen]
+            if name not in fields:
+                stored = pa.array([], WRITTEN[columns[name]]).to_numpy(zero_copy_only=False).dtype
+                fields[name] = np.full(len(rows), np.nan if stored.kind == "f" else 0, stored)
+            fields[name][chosen] = [rows[row][name] for row in chosen]
         for name in entry.inputs:
             inputs.setdefault(name, np.full(len(rows), np.nan, np.float32))[chosen] = fields[name][chosen]
     LOG.debug(

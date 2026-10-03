@@ -95,7 +95,7 @@ class Hazard:
         from torch.nn import functional as F
 
         target, row, tasks = batch["target"], batch["point_row"], batch["tasks"]
-        seen = (batch[FIELD + "tau"] <= batch[FIELD + "duration"]) | (target == 1)
+        seen = (batch[FIELD + "tau"].double() <= batch[FIELD + "duration"]) | (target == 1)
         error = F.binary_cross_entropy_with_logits(predictions, target, reduction="none") * seen
         task = error.new_zeros(tasks).index_add(0, row, error)
         points = error.new_zeros(tasks).index_add(0, row, error.new_ones(len(row)))
@@ -130,13 +130,13 @@ def outcomes(bank, batch, device):
 
     started = time.perf_counter()
     rows, drawn = np.asarray(batch["rows"], np.int64), np.asarray(batch["drawn"], np.int64)
-    placed = np.asarray(batch["placed"], np.int64)
+    placed, every = np.asarray(batch["placed"], np.int64), np.r_[rows, drawn]
     found = dict(
         target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)][placed],
         counted=~np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)][placed],
     )
     for name, values in bank.fields.items():
-        found[FIELD + name] = np.r_[values[rows], np.full(len(drawn), np.nan, values.dtype)][placed]
+        found[FIELD + name] = values[every][placed]
     result = {key: torch.as_tensor(value, device=device) for key, value in found.items()}
     LOG.debug("outcomes exit points=%d seconds=%.4f", len(rows) + len(drawn), time.perf_counter() - started)
     return result
