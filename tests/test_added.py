@@ -887,6 +887,8 @@ def test_a_product_of_relations_and_its_closure_equal_the_walks_enumerated_throu
     assert OPERATIONS.named("graphspec.product").stated(bare) == ()
     with pytest.raises(ValueError, match="graphspec.product, which needs a relation, and the bank bare states none"):
         resolved(bare, [dict(operation="graphspec.product", parameters={})])
+    (count,) = [held for held in OPERATIONS.named("graphspec.product").requires if isinstance(held, operation.Count)]
+    assert count.active(bare, {}) is True
     LOG.info("product exit paths=%d seconds=%.3f", len(found), time.perf_counter() - started)
 
 

@@ -217,14 +217,11 @@ PRODUCT = OPERATIONS.register(
         parameters=stated,
         reads=(),
         splits=(),
-        requires=(
-            Need(None, lacking),
-            Count("product/path", "paths", lambda registry, spec: bool(registry.groups), "stored", "stored"),
-        ),
+        requires=(Need(None, lacking), Count("product/path", "paths", lambda registry, spec: True, "stored", "stored")),
         changes=("facts",),
         adds=adds,
         kinds=None,
-        version=4,
+        version=5,
         graphs=1,
     ),
 )
