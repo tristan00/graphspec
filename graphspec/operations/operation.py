@@ -23,6 +23,12 @@ STATED = WeakKeyDictionary()
 EDGES = dict(
     sets="the edges joining sets of the kind %s", about="the edges of the table %s, which are about edges"
 )
+SEGMENT = dict(
+    glob="its entities",
+    known="what it knows of its entities",
+    x_global="its rows of values of nodes",
+    value_global="its rows of values of facts",
+)
 
 
 class Refused(ValueError):
@@ -194,15 +200,39 @@ class Phase:
             carry.state, carry.part = None, None
         return result, found
 
+    @timed("operation.Phase.apart")
+    def apart(self, graph, registry, settings, seed, limits, carry, held, state, part):
+        before = {name: getattr(carry, name) for name in SEGMENT}
+        drawn, carry.candidates = carry.candidates, []
+        try:
+            result, found = self.once(graph, registry, settings, seed, limits, carry, held, state, part)
+        finally:
+            drawn, carry.candidates = carry.candidates, drawn
+        changed = [SEGMENT[name] for name, value in before.items() if getattr(carry, name) is not value]
+        if changed:
+            raise ValueError(
+                "the part %s of the phase %s of the operation %s changes %s of its segment; a part changes only its "
+                "own state and the candidates it draws, which reach the next phase with the results of every part"
+                % (part, self.name, settings.operation, " and ".join(changed))
+            )
+        return (result, drawn), found
+
     def run(self, graph, registry, settings, seed, limits, carry, held, state):
         if self.parts is None:
             return self.once(graph, registry, settings, seed, limits, carry, held, state, None)
-        results, states = {}, {}
+        made, states = {}, {}
         for part in self.named(registry, settings):
-            results[part], states[part] = self.once(
+            made[part], states[part] = self.apart(
                 graph, registry, settings, seed, limits, carry, held, None if state is None else state[part], part
             )
-        return results, None if state is None else states
+        return gathered(carry, made), None if state is None else states
+
+
+@timed("operation.gathered")
+def gathered(carry, made):
+    for _, drawn in made.values():
+        carry.candidates.extend(drawn)
+    return {part: result for part, (result, _) in made.items()}
 
 
 class Operation:
@@ -382,7 +412,8 @@ class Operation:
         settings = self.settings(registry, spec, graph, partitions, True)
         if place == 0:
             self.check(registry, settings)
-        result = self.phases[place].once(graph, registry, settings, seed, limits, carry, held, state, part)
+        running = self.phases[place].once if part is None else self.phases[place].apart
+        result = running(graph, registry, settings, seed, limits, carry, held, state, part)
         LOG.debug(
             "operation phase exit name=%s phase=%d part=%s seconds=%.4f",
             self.name,

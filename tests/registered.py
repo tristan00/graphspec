@@ -253,6 +253,53 @@ def hubbed(graph, registry, settings, seed, limits, carry, held):
     )
 
 
+@timed("registered.halves")
+def halves(registry, settings):
+    return ("first", "second")
+
+
+@timed("registered.widening")
+def widening(registry):
+    return (flag("test/widen", False),)
+
+
+@timed("registered.drawing")
+def drawing(registry, settings, entry):
+    pairs = tuple((kind, kind) for kind in registry.declared)
+    candidates = {entry + ".parts": dict(pairs=pairs, directed=True), entry + ".widened": dict(pairs=pairs, directed=True)}
+    return Added({}, {}, {}, {}, {}, candidates)
+
+
+@timed("registered.unseen")
+def unseen(registry, settings):
+    return dict(seen=EMPTY)
+
+
+@timed("registered.halved")
+def halved(graph, registry, settings, seed, limits, carry, held):
+    entity, step = np.asarray(graph.obs_entity, np.int64), np.asarray(graph.obs_step, np.int64)
+    chosen = np.flatnonzero((carry.step0 + step) % 2 == halves(registry, settings).index(carry.part))
+    code = registry.by_candidate[carry.entry + ".parts"].code
+    carry.candidate(np.full(len(chosen), code), step[chosen], entity[chosen], entity[chosen])
+    if settings["test/widen"]:
+        carry.widened(graph, np.setdiff1d(np.arange(len(carry.entities)), carry.glob)[:1])
+    return len(chosen)
+
+
+@timed("registered.chained")
+def chained(graph, registry, settings, seed, limits, carry, held):
+    if sorted(held) != list(halves(registry, settings)):
+        raise ValueError("the parts of %s reach its last phase as %r" % (carry.entry, held))
+    graph, position = carry.widened(graph, carry.state["seen"])
+    added = np.setdiff1d(np.arange(len(carry.glob)), position)
+    code = registry.by_candidate[carry.entry + ".widened"].code
+    carry.candidate(np.full(len(added), code), np.zeros(len(added), np.int64), added, added)
+    observed = np.unique(np.asarray(graph.obs_entity, np.int64))
+    lasting = observed[np.asarray(graph.entity_connected, bool)[observed]]
+    carry.state = dict(seen=np.union1d(carry.state["seen"], carry.glob[lasting]))
+    return graph
+
+
 @timed("registered.parities")
 def parities(registry):
     return (flag("negatives/test.parity/odd", True),)
@@ -281,6 +328,20 @@ HUB = Operation(
     (),
     ("observations", "facts"),
     adding,
+    None,
+    1,
+    1,
+)
+DRAWING = Operation(
+    "test",
+    "drawing",
+    (Phase("draw", halved, None, halves), Phase("chain", chained, unseen, None)),
+    widening,
+    (),
+    (),
+    (),
+    (),
+    drawing,
     None,
     1,
     1,

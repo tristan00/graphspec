@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pytest
 import support
-from registered import HUB, RUNNING, TALLY
+from registered import DRAWING, HUB, RUNNING, TALLY
 
 from conftest import SPLITS
 from graphspec import OPERATIONS, REPRESENTATIONS
@@ -24,6 +24,7 @@ from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.operations.contract import groupable
 from graphspec.operations.operation import Refused
+from graphspec.operations.state import EMPTY
 from graphspec.views.graph import DENSE, PER_STEP, Graph, verify_dense
 from tuning.bank.bank import Deriver
 from tuning.searches.selector import random_suggest
@@ -136,10 +137,10 @@ def registered():
     del REPRESENTATIONS.held[RUNNING.name]
 
 
-def every(opened, registry, joined, values):
+def every(opened, registry, joined, values, extra):
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
     assert sorted(graphs) == sorted(name for name in ADDED if OPERATIONS.named(name).graphs == 2)
-    names = support.SEVEN + tuple(entry.name for entry in TESTED) + ADDED
+    names = support.SEVEN + tuple(entry.name for entry in TESTED) + ADDED + extra
     entries, rest = support.pipelined(registry, values, names, None, graphs)
     assert rest == {}
     graph = dict(SETTINGS, **({"graphs/join": "single", "graphs/join_size": 4} if joined else {}))
@@ -387,7 +388,7 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     graph = support.shown(opened, 0).dense()
-    registry, steps, spec = every(opened, support.fitted(opened), False, VALUES)
+    registry, steps, spec = every(opened, support.fitted(opened), False, VALUES, ())
     beside = seconds(opened, steps, [0])
     assert sorted(step.operation.name for step in steps) == sorted(OPERATIONS.names())
     assert sorted(GROUPS) == sorted(REPRESENTATIONS.names())
@@ -422,7 +423,7 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
     missing = made(graph, removed=dict(observations=dict(entity=[len(graph.kinds)], step=[moment])))
     with pytest.raises(ValueError, match="which the graph does not hold"):
         history.continued(graph.steps, missing)
-    _, joined, stated = every(opened, support.fitted(opened), True, VALUES)
+    _, joined, stated = every(opened, support.fitted(opened), True, VALUES, ())
     both = Derivation.begun(
         [graph, graph],
         {name: held * 2 for name, held in beside.items()},
@@ -505,7 +506,7 @@ def test_every_operation_derives_steps_that_hold_nothing_in_segments_as_it_deriv
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     graph = emptied(support.shown(opened, 0).dense())
-    registry, steps, spec = every(opened, support.fitted(opened), False, EMPTIED)
+    registry, steps, spec = every(opened, support.fitted(opened), False, EMPTIED, ())
     beside = {name: [emptied(held[0])] for name, held in seconds(opened, steps, [0]).items()}
     assert sorted(step.operation.name for step in steps) == sorted(OPERATIONS.names())
     for held in [graph] + [held[0] for held in beside.values()]:
@@ -693,7 +694,7 @@ def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_las
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     graph = support.shown(opened, 1).dense()
-    registry, steps, spec = every(opened, support.fitted(opened), False, VALUES)
+    registry, steps, spec = every(opened, support.fitted(opened), False, VALUES, ())
     beside = seconds(opened, steps, [1])
     moment = graph.steps - 1
     changes = edits(graph, moment)
@@ -724,32 +725,77 @@ def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_las
     assert ratio <= MARGIN, (history, last, fork)
 
 
+@pytest.fixture
+def drawing():
+    started = time.perf_counter()
+    OPERATIONS.register(DRAWING.name, DRAWING)
+    yield
+    del OPERATIONS.held[DRAWING.name]
+    LOG.debug("drawing exit seconds=%.4f", time.perf_counter() - started)
+
+
+@GROUP
+def test_a_part_that_changes_its_segment_is_refused_in_one_process_and_by_the_stage_a_worker_runs(bank, drawing):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
+    registry = support.fitted(opened)
+    steps = pipeline.resolved(registry, [dict(operation=DRAWING.name, parameters={"test/widen": True})])
+    grown = pipeline.grown(registry, steps, None)
+    spec = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **{"graphs/join": "single"}))
+    members = [support.shown(opened, 0).dense(), renamed(support.shown(opened, 1).dense(), registry)]
+    line = Derivation.begun(members, {}, grown, steps, spec, specs.GROUPS, support.SEED, LIMITS, None, 0)
+    message = "the part first of the phase draw of the operation test.drawing changes its entities and what it knows "
+    message += "of its entities of its segment; a part changes only its own state and the candidates it draws"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        line.continued(members[0].steps, None)
+    plan = line.source.plan
+    carry, graph, _, _ = segments.opened(plan, 0, members[0], 0, members[0].steps, None, plan.entities, EMPTY)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        steps[0].phase(0, graph, grown, support.SEED, LIMITS, carry, None, None, "first", None)
+    LOG.info("part refused exit seconds=%.3f", time.perf_counter() - started)
+
+
 @pytest.mark.xdist_group("workers")
-def test_the_arrays_of_a_joined_group_are_equal_for_one_and_two_workers(bank, registered, tmp_path):
+def test_the_arrays_of_a_joined_group_are_equal_in_one_process_and_on_one_and_two_workers(
+    bank, registered, drawing, tmp_path
+):
     started = time.perf_counter()
     opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = support.configuration(opened.registry, dict(view="snapshot"), support.several(opened.registry), 5, SPLITS)
-    paths = [opened.view(index, cfg) for index in range(2)]
-    registry, steps, spec = every(opened, support.fitted(opened), True, VALUES)
+    renamed(Graph.load(opened.view(1, cfg)), opened.registry).save(tmp_path / "renamed")
+    paths = [opened.view(0, cfg), tmp_path / "renamed"]
+    registry, steps, spec = every(opened, support.fitted(opened), True, VALUES, (DRAWING.name,))
     seconds = opened.seconds(steps, [0, 1], cfg, True)
-    folders = {name: tmp_path / name for name in ("one", "two", "spill")}
+    folders = {name: tmp_path / str(name) for name in ("process", 1, 2, "spill1", "spill2")}
     for folder in folders.values():
         folder.mkdir()
-    job = dict(
-        members=[Graph.load(path, mapped=True) for path in paths],
-        beside=seconds,
-        paths=paths,
-        spill=folders["spill"],
-        destination=folders["two"],
-    )
-    with ThreadPoolExecutor(1) as aside:
-        both = aside.submit(schedule.variants, [job], registry, steps, spec, GROUPS, support.SEED, 2, LIMITS, None)
+    jobs = {
+        workers: dict(
+            members=[Graph.load(path, mapped=True) for path in paths],
+            beside=seconds,
+            paths=paths,
+            spill=folders["spill%d" % workers],
+            destination=folders[workers],
+        )
+        for workers in (1, 2)
+    }
+    with ThreadPoolExecutor(2) as aside:
+        found = [
+            aside.submit(schedule.variants, [jobs[workers]], registry, steps, spec, GROUPS, support.SEED, workers, LIMITS, None)
+            for workers in (1, 2)
+        ]
         members = [Graph.load(path, mapped=True) for path in paths]
         segments.variant(
-            members, seconds, registry, steps, spec, GROUPS, support.SEED, LIMITS, None, folders["one"]
+            members, seconds, registry, steps, spec, GROUPS, support.SEED, LIMITS, None, folders["process"]
         )
-        both.result()
-    one, two = Arrays(folders["one"]), Arrays(folders["two"])
-    assert sorted(one) == sorted(two) and "running" in one
-    assert [name for name in one if not identical(one[name], two[name])] == []
-    LOG.info("one and two workers exit seconds=%.3f", time.perf_counter() - started)
+        for future in found:
+            future.result()
+    held = Arrays(folders["process"])
+    codes = sorted(registry.by_candidate["drawing." + name].code for name in ("parts", "widened"))
+    drawn = sorted(set(np.asarray(held["candidate_code"]).tolist()))
+    assert sorted(set(drawn) & set(codes)) == codes and "running" in held, (drawn, codes)
+    for workers in (1, 2):
+        made = Arrays(folders[workers])
+        assert sorted(made) == sorted(held)
+        assert [name for name in held if not identical(held[name], made[name])] == [], workers
+    LOG.info("one process and one and two workers exit seconds=%.3f", time.perf_counter() - started)

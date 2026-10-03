@@ -14,6 +14,7 @@ from graphspec.infra.hashing import hashed
 from graphspec.infra.processes.processes import guarded, spawned, worker_threads
 from graphspec.infra.timing import measure, timed
 from graphspec.operations import pipeline
+from graphspec.operations.operation import gathered
 from graphspec.operations.state import EMPTY
 from graphspec.representations import base as representations
 from graphspec.representations.registry import chosen as representing
@@ -185,15 +186,12 @@ def phase_task(job, index, name):
     else:
         graph, carry, held = unpacked(job, taken(job, index, stage.source))
     if stage.gather is not None:
-        held = {PIPE["stages"][part].part: taken(job, index, part) for part in stage.gather}
+        held = gathered(carry, {PIPE["stages"][part].part: taken(job, index, part) for part in stage.gather})
     state = state_of(job, stage, index) if stage.carried else None
-    glob = carry.glob
     result, state = step.phase(
         stage.phase, graph, registry, PIPE["seed"], limits, carry, held, state, stage.part, PIPE["partitions"]
     )
     if stage.part is not None:
-        if carry.glob is not glob:
-            raise ValueError("a phase of the operation %s run in parts widened its segment" % step.operation.name)
         park(job, index, name, result)
     elif stage.last:
         transform.checked(step, graph, result, registry)
