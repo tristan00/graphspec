@@ -272,6 +272,11 @@ def test_every_decision_reads_back_as_stated_with_its_fields_in_the_type_of_thei
         if values is not None
     }
     assert TARGETS.named("decision").read([row for row in rows if row["ticket"] == 10]) == wanted
+    chosen = opened(banks, "picked")
+    back, meant = support.read_back(chosen), support.meant(picked(case))
+    assert list(back) == list(meant) == ["g1"] and support.differing(back["g1"], meant["g1"], chosen.registry.schema) == []
+    truth = Facts.load(chosen.truth(0))
+    assert truth.arrays["action_values"].shape == (len(truth.arrays["action_option"]), 0) and len(truth.option_task) > 20
 
 
 def test_a_target_or_a_generator_that_does_not_resolve_stops_the_build_naming_them(tmp_path):
