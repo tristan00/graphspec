@@ -50,6 +50,8 @@ VARIANT = dict(
     event_member=("event_member",),
     neighbors=("neighbor_ids", "neighbor_offsets"),
     candidates=("candidate_code", "candidate_step", "candidate_source", "candidate_target"),
+    mixed=("mixed_x", "mixed_kind", "mixed_tick", "mixed_entity", "mixed_member_ids", "mixed_member_offsets"),
+    mixed_edges=("mixed_edges",),
 )
 
 
@@ -303,9 +305,34 @@ class Spaces:
                 through(keys.entities, arrays["candidate_source"]),
                 through(keys.entities, arrays["candidate_target"]),
             )
+        if group == "mixed":
+            return rows(self.mixed())
+        if group == "mixed_edges":
+            edges, nodes = arrays["mixed_edges"].astype(np.int64), labelled(self.mixed())
+            return rows(through(nodes, edges[:, 0]), through(nodes, edges[:, 1]), edges[:, 2])
         if group.startswith("attributes_"):
             return rows(arrays[group])
         raise KeyError("no key is stated for the arrays %s" % group)
+
+    def mixed(self):
+        started = time.perf_counter()
+        arrays, keys = self.arrays, self.keys
+        offsets = arrays["mixed_member_offsets"].astype(np.int64)
+        owner = np.repeat(np.arange(len(offsets) - 1), np.diff(offsets))
+        member = through(self.observations, arrays["mixed_member_ids"])
+        held = member[np.lexsort((member, owner))]
+        sets = np.array([held[low:high].tobytes() for low, high in zip(offsets[:-1], offsets[1:])], dtype=object)
+        tick = arrays["mixed_tick"].astype(np.int64)
+        result = table(
+            arrays["mixed_kind"],
+            through(keys.steps, tick // 2),
+            tick % 2,
+            through(keys.entities, arrays["mixed_entity"]),
+            arrays["mixed_x"],
+            np.unique(sets, return_inverse=True)[1].reshape(-1).astype(np.int64),
+        )
+        LOG.debug("mixed keyed exit nodes=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
 
 
 def variant_part(arrays, keys, names):

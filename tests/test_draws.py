@@ -23,7 +23,7 @@ from tuning.batches import inputs
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("draws")
-GROUPS = ("coupling", "events", "neighbors", "walks")
+GROUPS = ("coupling", "events", "mixed", "neighbors", "walks")
 SAMPLED, PAIRED = 2, 8
 LIMITS = GraphLimits("cpu")
 DRAWN = {

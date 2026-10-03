@@ -29,6 +29,7 @@ def carries(registry, spec):
             x=np.zeros((0, width, registry.features), np.float16),
         ),
         action=-1,
+        action_member=-1,
         count=0,
         holders=0,
     )
@@ -112,7 +113,7 @@ def piece(shown, state):
     )
     budget.pairs(wires, "mixed representation edges")
     budget.workspace(limit * (32 + x.shape[1] * 2) + wires * 12 + holders * 4, "mixed representation")
-    kind, tick, owner, mode, fill, member_offset, member_id, source, target, flag, action = kernels.bundled(
+    bundled = kernels.bundled(
         np.ascontiguousarray(entity, np.int64),
         np.ascontiguousarray(offsets, np.int64),
         prior,
@@ -132,7 +133,10 @@ def piece(shown, state):
         trace_row,
         trace_count,
         np.int64(state["action"]),
+        np.asarray(graph.step_graph, np.int64),
+        np.int64(state["action_member"]),
     )
+    kind, tick, owner, mode, fill, member_offset, member_id, source, target, flag, action, member = bundled
     features = mixed_features(
         kind,
         mode,
@@ -173,6 +177,7 @@ def piece(shown, state):
             x=trace_x,
         ),
         action=int(action),
+        action_member=int(member),
         count=state["count"] + len(kind),
         holders=state["holders"] + len(member_id),
     )

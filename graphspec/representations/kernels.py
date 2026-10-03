@@ -432,6 +432,8 @@ def bundled(
     trace_row,
     trace_count,
     previous_action,
+    member,
+    previous_member,
 ):
     kind = np.empty(limit, np.int8)
     tick = np.empty(limit, np.int32)
@@ -545,12 +547,13 @@ def bundled(
                 out_target[held] = action + node_base
                 out_flag[held] = 8
                 held += 1
-            if previous_action >= 0:
+            if previous_action >= 0 and previous_member == member[moment]:
                 out_source[held] = previous_action
                 out_target[held] = action + node_base
                 out_flag[held] = 1
                 held += 1
             previous_action = action + node_base
+            previous_member = member[moment]
     return (
         kind[:total],
         tick[:total],
@@ -563,6 +566,7 @@ def bundled(
         out_target[:held],
         out_flag[:held],
         previous_action,
+        previous_member,
     )
 
 
