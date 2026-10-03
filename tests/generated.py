@@ -29,6 +29,19 @@ STATED = [
 ]
 ORIGIN = "around"
 CASES = ("base", "later", "turned")
+NORTH, SOUTH = "north", "south"
+WATCHED = "a0"
+GAUGE = dict(kind="number", series="level", about=None, utility=synthetic.valued(["level"]))
+SEEN = (
+    ("spot", dict(key="s6", since=1, until=None, load=4.0, known=LATER + 1, replaced=None, observers=None)),
+    ("spot", dict(key="s7", since=0, until=2, load=5.0, known=None, replaced=LATER + 1, observers=None)),
+    ("spot", dict(key="s7", since=1, until=None, load=5.0, known=LATER + 1, replaced=None, observers=None)),
+    ("spot", dict(key="s8", since=0, until=None, load=6.0, known=None, replaced=None, observers=[SOUTH])),
+    ("near", dict(source="s1", target="s3", since=1, until=None, known=LATER + 1, replaced=None, observers=None)),
+    ("near", dict(source="s0", target="s3", since=0, until=2, known=None, replaced=LATER + 1, observers=None)),
+    ("near", dict(source="s0", target="s3", since=1, until=None, known=LATER + 1, replaced=None, observers=None)),
+    ("near", dict(source="s0", target="s2", since=0, until=None, known=None, replaced=None, observers=[SOUTH])),
+)
 
 
 class Spots:
@@ -157,46 +170,92 @@ def load(at, moment, place):
     return 1.0 + at + place + 0.5 * ((start * (at + 1)) % 3)
 
 
+@timed("generated.stated")
+def stated(rows, **values):
+    if not set(values) <= set(rows):
+        raise ValueError("a row states %s, which its table does not" % ", ".join(sorted(set(values) - set(rows))))
+    for name, held in rows.items():
+        held.append(copy.deepcopy(values.get(name)))
+
+
 def agents(place):
     started = time.perf_counter()
-    rows = dict(key=[], since=[], until=[], load=[])
+    rows = dict(key=[], since=[], until=[], load=[], known=[], replaced=[], observers=[])
     for at, key in enumerate(synthetic.AGENTS):
-        for start in range(0, synthetic.TURNS[-1] + 1, SPAN):
-            rows["key"].append(key)
-            rows["since"].append(start)
-            rows["until"].append(None if start + SPAN > synthetic.TURNS[-1] else start + SPAN)
-            rows["load"].append(load(at, start, place))
+        for start in range(0, synthetic.TURNS[-1] + 1, SPAN) if key != WATCHED else ():
+            until = None if start + SPAN > synthetic.TURNS[-1] else start + SPAN
+            stated(rows, key=key, since=start, until=until, load=load(at, start, place))
+    first, second, last = (load(0, start, place) for start in (0, SPAN, 3 * SPAN))
+    for key, since, until, value, seen in (
+        (WATCHED, 0, LATER, first, {}),
+        (WATCHED, LATER, 3 * SPAN, second, dict(replaced=LATER + 1)),
+        (WATCHED, 1, 3 * SPAN, second + 1.5, dict(known=LATER + 1)),
+        (WATCHED, 3 * SPAN, None, last, {}),
+        ("a1", 1, LATER, load(1, 0, place) + 0.75, dict(observers=[SOUTH])),
+    ):
+        stated(rows, key=key, since=since, until=until, load=value, **seen)
     LOG.debug("generated agents exit rows=%d seconds=%.4f", len(rows["key"]), time.perf_counter() - started)
     return rows
+
+
+def watched(graph, place):
+    started = time.perf_counter()
+    tasks = graph["tasks"]
+    tasks["observer"] = [
+        SOUTH if kind == KIND and actors == [WATCHED] and moment % 2 else NORTH
+        for kind, actors, moment in zip(tasks["kind"], tasks["references"]["agents"], tasks["time"])
+    ]
+    for at, (kind, moment) in enumerate(zip(tasks["kind"], tasks["time"])):
+        if kind == "visit":
+            tasks["target"][at] = 2.0 + moment + 0.5 * place
+            tasks["split"][at] = "train" if moment % 2 else "validation"
+            tasks["known"][at] = moment + 1
+    statements = dict(spot=graph["values"][1]["rows"], near=graph["edges"][0]["rows"])
+    for rows in statements.values():
+        rows.update({name: [None] * len(rows["since"]) for name in ("known", "replaced", "observers")})
+    for table, held in SEEN:
+        stated(statements[table], **(dict(held, present=True) if table == "near" else held))
+    graph["nodes"]["spot"] += sorted({held["key"] for table, held in SEEN if table == "spot"})
+    LOG.debug("generated watched exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
+
+
+@timed("generated.unseen")
+def unseen(rows, at):
+    return rows["observers"][at] == [SOUTH] or (rows["known"][at] or 0) > LATER
 
 
 def later(graph):
     started = time.perf_counter()
     rows = graph["values"][0]["rows"]
-    rows["load"] = [value + 10.0 if since > LATER else value for value, since in zip(rows["load"], rows["since"])]
-    spots = graph["values"][1]["rows"]
+    rows["load"] = [
+        value + 10.0 if since > LATER else value + 5.0 if unseen(rows, at) else value
+        for at, (value, since) in enumerate(zip(rows["load"], rows["since"]))
+    ]
+    spots, near = graph["values"][1]["rows"], graph["edges"][0]["rows"]
+    for held in (spots, near):
+        held["since"] = [LATER + 1 if unseen(held, at) else since for at, since in enumerate(held["since"])]
     spots["until"][1] = LATER + 1
-    for name, value in (("key", "s1"), ("since", LATER + 1), ("until", None), ("load", 7.5)):
-        spots[name].append(value)
+    stated(spots, key="s1", since=LATER + 1, until=None, load=7.5)
     graph["nodes"]["spot"].append("s5")
-    for name, value in (("key", "s5"), ("since", LATER + 1), ("until", None), ("load", 3.0)):
-        spots[name].append(value)
-    near = graph["edges"][0]["rows"]
+    stated(spots, key="s5", since=LATER + 1, until=None, load=3.0)
     near["until"][0] = LATER + 2
-    for name, value in (("source", "s4"), ("target", "s5"), ("present", True), ("since", LATER + 1), ("until", None)):
-        near[name].append(value)
+    stated(near, source="s4", target="s5", present=True, since=LATER + 1, until=None)
     tasks = graph["tasks"]
-    for at, (moment, target) in enumerate(zip(tasks["time"], tasks["target"])):
-        if target is None:
+    for at, (kind, moment, target) in enumerate(zip(tasks["kind"], tasks["time"], tasks["target"])):
+        if kind == "visit":
             if moment > LATER:
                 tasks["references"]["at"][at] = "s0"
+            if tasks["split"][at] != "train" or tasks["known"][at] > LATER:
+                tasks["target"][at] += 7.0
+            continue
+        if target is None:
             continue
         for option in target["options"]:
             held = option["outcome"]
             for part in held if isinstance(held, list) else [held]:
                 for name in part or {}:
                     part[name] = 2.0 * part[name] + 1.0
-            if moment <= LATER:
+            if moment <= LATER and tasks["observer"][at] != SOUTH:
                 continue
             for action in option["actions"]:
                 parameters = action["parameters"]
@@ -221,7 +280,7 @@ def turned(graph):
                 held.reverse()
         else:
             values.reverse()
-    for target in filter(None, tasks["target"]):
+    for target in (held for held in tasks["target"] if isinstance(held, dict)):
         target["options"].reverse()
         for option in target["options"]:
             if option["together"] == "set":
@@ -232,9 +291,14 @@ def turned(graph):
 def case(name):
     started = time.perf_counter()
     result = synthetic.decisions(ORIGIN)
-    result["schema"]["tasks"]["kinds"][KIND]["target"].update(generators=copy.deepcopy(STATED), rule=copy.deepcopy(RULE))
+    schema = result["schema"]
+    schema.update(time=dict(schema["time"], model="clocks"), observers=True)
+    kinds = schema["tasks"]["kinds"]
+    kinds[KIND]["target"].update(generators=copy.deepcopy(STATED), rule=copy.deepcopy(RULE))
+    kinds["visit"].update(target=copy.deepcopy(GAUGE), matures=dict(reference="who", column="load"))
     for place, graph in enumerate(result["graphs"]):
         graph["values"][0]["rows"] = agents(place)
+        watched(graph, place)
         if name == "later":
             later(graph)
         if name == "turned":
@@ -252,35 +316,87 @@ def made(root):
     LOG.info("banks of generated options exit seconds=%.3f", time.perf_counter() - started)
 
 
-def holds(rows, key, moment):
-    started = time.perf_counter()
-    result = any(
-        found == key and since <= moment and (until is None or moment < until)
-        for found, since, until in zip(rows["key"], rows["since"], rows["until"])
+@timed("generated.shows")
+def shows(rows, at, moment, observer):
+    since, until, known, replaced = (rows[name][at] for name in ("since", "until", "known", "replaced"))
+    return (
+        max(since, since if known is None else known) <= moment
+        and (until is None or moment < until)
+        and (replaced is None or moment < replaced)
+        and rows["observers"][at] in (None, [observer])
     )
+
+
+def holds(rows, key, moment, observer):
+    started = time.perf_counter()
+    result = any(found == key and shows(rows, at, moment, observer) for at, found in enumerate(rows["key"]))
     LOG.debug("generated holds exit key=%s seconds=%.6f", key, time.perf_counter() - started)
     return result
 
 
-def linked(rows, first, second, moment):
+def linked(rows, first, second, moment, observer):
     started = time.perf_counter()
     result = any(
-        {source, target} == {first, second} and present and since <= moment and (until is None or moment < until)
-        for source, target, present, since, until in zip(*(rows[name] for name in ("source", "target", "present", "since", "until")))
+        {source, target} == {first, second} and present and shows(rows, at, moment, observer)
+        for at, (source, target, present) in enumerate(zip(rows["source"], rows["target"], rows["present"]))
     )
     LOG.debug("generated linked exit seconds=%.6f", time.perf_counter() - started)
     return result
 
 
-def observed(graph, option, moment):
+def observed(graph, option, moment, observer):
     started = time.perf_counter()
     spots, near = graph["values"][1]["rows"], graph["edges"][0]["rows"]
     result = all(
-        holds(spots, aim, moment) if role in ("to", "at") else linked(near, aim[0], aim[2], moment) if role == "along" else True
+        holds(spots, aim, moment, observer)
+        if role in ("to", "at")
+        else linked(near, aim[0], aim[2], moment, observer)
+        if role == "along"
+        else True
         for action in option["actions"]
         for role, aim in action["targets"].items()
     )
     LOG.debug("generated observed exit seconds=%.6f", time.perf_counter() - started)
+    return result
+
+
+def spotted(graph, moment, observer):
+    started = time.perf_counter()
+    spots = graph["values"][1]["rows"]
+    result = sorted({key for key in spots["key"] if holds(spots, key, moment, observer)})
+    LOG.debug("generated spotted exit spots=%d seconds=%.6f", len(result), time.perf_counter() - started)
+    return result
+
+
+def edged(graph, moment, observer):
+    started = time.perf_counter()
+    near = graph["edges"][0]["rows"]
+    result = sorted(
+        {
+            tuple(sorted((source, target)))
+            for at, (source, target, present) in enumerate(zip(near["source"], near["target"], near["present"]))
+            if present and shows(near, at, moment, observer)
+        }
+    )
+    LOG.debug("generated edged exit edges=%d seconds=%.6f", len(result), time.perf_counter() - started)
+    return result
+
+
+def value(graph, key, moment, observer):
+    started = time.perf_counter()
+    tasks, rows = graph["tasks"], graph["values"][0]["rows"]
+    ripe = [
+        (known, since, y)
+        for kind, who, since, y, split, known, seer in zip(
+            tasks["kind"],
+            tasks["references"]["who"],
+            *(tasks[name] for name in ("time", "target", "split", "known", "observer")),
+        )
+        if kind == "visit" and who == key and split == "train" and seer == observer and known <= moment
+    ]
+    (found,) = [load for at, (owner, load) in enumerate(zip(rows["key"], rows["load"])) if owner == key and shows(rows, at, moment, observer)]
+    result = max(ripe)[2] if ripe else found
+    LOG.debug("generated value exit key=%s seconds=%.6f", key, time.perf_counter() - started)
     return result
 
 
@@ -306,6 +422,15 @@ def drawn(back):
             if decision is not None:
                 result[(name, key)] = [option for option in decision["options"] if ours(option["key"])]
     LOG.debug("generated drawn exit decisions=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def retargeted(truth, chosen, shift):
+    started = time.perf_counter()
+    y = np.asarray(truth.target_y, np.float64)
+    arrays = dict(truth.arrays, target_y=np.where(chosen, y + shift, y))
+    result = Facts(truth.name, truth.keys, truth.unit, truth.inner, truth.observers, truth.options, truth.generators, **arrays)
+    LOG.debug("generated retargeted exit targets=%d seconds=%.4f", int(np.sum(chosen)), time.perf_counter() - started)
     return result
 
 

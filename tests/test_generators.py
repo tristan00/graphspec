@@ -3,6 +3,7 @@ import logging
 import time
 
 import generated
+import numpy as np
 import pytest
 import support
 
@@ -62,7 +63,12 @@ def turns(case):
         for at, (kind, key, moment, target) in enumerate(zip(tasks["kind"], tasks["key"], tasks["time"], tasks["target"])):
             if kind == generated.KIND and target is not None:
                 result[(graph["name"], key)] = dict(
-                    graph=graph, place=place, time=moment, actors=tasks["references"]["agents"][at], options=target["options"]
+                    graph=graph,
+                    place=place,
+                    time=moment,
+                    observer=tasks["observer"][at],
+                    actors=tasks["references"]["agents"][at],
+                    options=target["options"],
                 )
     LOG.debug("generators decisions exit decisions=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
@@ -96,7 +102,7 @@ def pool(found, drawn, place, chosen, name):
                 option["origin"] == "recorded"
                 and option["actions"]
                 and all(action["actor"] in own["actors"] and action["kind"] != "put" for action in option["actions"])
-                and generated.observed(graph, option, own["time"])
+                and generated.observed(graph, option, own["time"], own["observer"])
                 and generated.content(option) not in present
             ):
                 result[generated.content(option)] = option
@@ -106,7 +112,12 @@ def pool(found, drawn, place, chosen, name):
 
 @timed("generators.earlier")
 def earlier(found, place):
-    return [other for other, held in found.items() if other != place and other[0] == place[0] and held["time"] <= found[place]["time"]]
+    own = found[place]
+    return [
+        other
+        for other, held in found.items()
+        if other != place and other[0] == place[0] and held["observer"] == own["observer"] and held["time"] <= own["time"]
+    ]
 
 
 def nearest(found, place):
@@ -114,7 +125,7 @@ def nearest(found, place):
 
     @timed("generators.nearest.state")
     def state(held):
-        return sum(generated.load(generated.synthetic.AGENTS.index(actor), held["time"], held["place"]) for actor in held["actors"]) / len(held["actors"])
+        return sum(generated.value(held["graph"], actor, held["time"], held["observer"]) for actor in held["actors"]) / len(held["actors"])
 
     others = earlier(found, place)
     result = sorted(others, key=lambda other: (abs(state(found[other]) - state(found[place])), other[1]))[:2]
@@ -127,7 +138,8 @@ def checked(found, drawn, place, name, candidates, count):
     options = of(drawn[place], name)
     assert len(options) == min(count, len(candidates)), (place, name)
     for option in options:
-        assert generated.content(option) in candidates and generated.observed(found[place]["graph"], option, found[place]["time"])
+        own = found[place]
+        assert generated.content(option) in candidates and generated.observed(own["graph"], option, own["time"], own["observer"])
         assert option["origin"]["drawn"] == len(options) / len(candidates)
     LOG.debug("generators checked exit drawn=%d seconds=%.4f", len(options), time.perf_counter() - started)
     return len(options)
@@ -142,7 +154,8 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
         for name in ("others", "nearest"):
             chosen = earlier(found, place) if name == "others" else nearest(found, place)
             counts[name] += checked(found, drawn, place, name, pool(found, drawn, place, chosen, name), 2)
-        spots = [dict(actions=[dict(kind="go", actor=actor, targets=dict(to=spot), parameters=dict(speed=1.25))], together="set") for actor in own["actors"] for spot in generated.synthetic.SPOTS]
+        spotted = generated.spotted(own["graph"], own["time"], own["observer"])
+        spots = [dict(actions=[dict(kind="go", actor=actor, targets=dict(to=spot), parameters=dict(speed=1.25))], together="set") for actor in own["actors"] for spot in spotted]
         counts["ruled"] += checked(found, drawn, place, "ruled", {generated.content(option): option for option in spots}, 2)
         changed, recorded = of(drawn[place], "changed"), [option for option in own["options"] if option["chosen"] and any(action["parameters"].get("speed") is not None for action in option["actions"])]
         assert len(changed) == len(recorded)
@@ -155,9 +168,14 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
                 if old["parameters"].get("speed") is not None:
                     assert abs(new["parameters"]["speed"] - old["parameters"]["speed"]) <= 0.5 + 1e-6
         counts["changed"] += len(changed)
+        pairs, crossed = generated.edged(own["graph"], own["time"], own["observer"]), of(drawn[place], "crossings")
+        assert len(crossed) == min(1, len(pairs))
+        for option in crossed:
+            assert tuple(sorted(option["actions"][0]["targets"]["along"][::2])) in pairs and option["origin"]["drawn"] == 1 / len(pairs)
         for name in ("around", "crossings"):
             for option in of(drawn[place], name):
-                assert generated.observed(own["graph"], option, own["time"]) and option["origin"]["drawn"] in (1.0, 0.5, 0.25)
+                assert generated.observed(own["graph"], option, own["time"], own["observer"])
+                assert option["origin"]["drawn"] in {1 / count for count in range(1, 10)}
                 counts[name] += 1
         present = [generated.content(option) for option in own["options"]]
         for option in drawn[place]:
@@ -184,21 +202,57 @@ def test_a_drawn_option_reads_back_as_drawn_and_nothing_else_of_the_bank_changes
     case = generated.case("base")
     for graph in case["graphs"]:
         for key, target in zip(graph["tasks"]["key"], graph["tasks"]["target"]):
-            if target is not None:
+            if isinstance(target, dict):
                 target["options"] += copy.deepcopy(generated.drawn(held.back).get((graph["name"], key), []))
     meant = support.meant(case)
     for name, found in held.back.items():
         assert support.differing(found, meant[name], held.registry.schema) == [], name
 
 
-def test_no_drawn_option_depends_on_anything_after_its_decision(banks):
+@timed("generators.aims")
+def aims(options):
+    return {
+        aim if isinstance(aim, str) else tuple(sorted(aim[::2]))
+        for option in options
+        for action in option["actions"]
+        for aim in action["targets"].values()
+    }
+
+
+def test_no_drawn_option_depends_on_anything_known_after_its_decision_or_seen_by_another_observer(banks):
     started = time.perf_counter()
     base, later = (generated.drawn(opened(banks, name).back) for name in ("base", "later"))
-    times = {place: held["time"] for place, held in turns(generated.case("base")).items()}
-    assert sorted(base) == sorted(later)
-    assert all(base[place] == later[place] for place in base if times.get(place, 0) <= generated.LATER)
-    assert any(base[place] != later[place] for place in base if times.get(place, 0) > generated.LATER)
+    found = turns(generated.case("base"))
+    assert sorted(base) == sorted(later) and set(found) <= set(base)
+    early = [place for place in found if found[place]["time"] <= generated.LATER]
+    north = [place for place in early if found[place]["observer"] == generated.NORTH]
+    assert north and all(base[place] == later[place] for place in north)
+    assert any(base[place] != later[place] for place in early if found[place]["observer"] == generated.SOUTH)
+    assert any(base[place] != later[place] for place in found if found[place]["time"] > generated.LATER)
+    for place, own in found.items():
+        unseen = {"s6", ("s1", "s3")} if own["time"] <= generated.LATER else set()
+        unseen |= {"s7", ("s0", "s3")} if 2 <= own["time"] <= generated.LATER else set()
+        unseen |= {"s8", ("s0", "s2")} if own["observer"] == generated.NORTH else set()
+        assert not aims(base[place]) & unseen, place
     LOG.info("causality of generators exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_drawn_options_read_the_matured_targets_of_the_splits_trained_on_alone(banks):
+    started = time.perf_counter()
+    held = opened(banks, "base")
+    seen, changed = looking(held.splits, held.manifest["trained"]), dict(train=False, validation=False)
+    visit = list(held.registry.schema.tasks["kinds"]).index("visit")
+    for entry in held.manifest["graphs"]:
+        truth = generated.undrawn(Facts.load(held.truth(entry["index"])))
+        drawn = regenerated(truth, held.registry, shown(truth, held.registry, seen)[1])
+        owner = np.asarray(truth.target_task, np.int64)
+        for split in changed:
+            chosen = (np.asarray(truth.task_kind)[owner] == visit) & (np.asarray(truth.task_split)[owner] == held.splits.index(split))
+            assert chosen.any()
+            moved = generated.retargeted(truth, chosen, -3.0)
+            changed[split] |= regenerated(moved, held.registry, shown(moved, held.registry, seen)[1]) != drawn
+    assert changed == dict(train=True, validation=False)
+    LOG.info("matured targets of generators exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_statement_refuses_stops_naming_it(banks):
@@ -207,10 +261,10 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
     truth = Facts.load(held.truth(0))
     where = "the generator of options faulty "
     faults = (
-        ("unread", where + "reads the state of the decision 10 of the kind turn of graph g0, which it does not state among what it reads: chosen"),
+        ("unread", where + "reads the state of the decision 11 of the kind turn of graph g0, which it does not state among what it reads: chosen"),
         ("unobserved", "names in its action 0 under the role along the edge \\['s0', 'near', 's4'\\], which does not hold at the step of its decision"),
         ("probability", "states the probability of its draw as 0.5, and faulty states none, having none"),
-        ("repeated", "the option 0 the generator of options faulty drew for the decision 10 of the kind turn of graph g0 equals an option already present"),
+        ("repeated", "the option 0 the generator of options faulty drew for the decision 11 of the kind turn of graph g0 equals an option already present"),
     )
     trained = tuple(held.splits.index(name) for name in held.manifest["trained"])
     assert held.manifest["trained"] == ["train"] and set(held.splits) == {"train", "validation"}
