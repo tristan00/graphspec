@@ -1342,11 +1342,12 @@ def shown(moment, place):
         offered("show%d" % at, [acting("go", "a2", dict(to=SPOTS[at]), dict(speed=1.0))], "set", RECORDED)
         for at in range(4)
     ]
+    blind = (place, moment) == BLIND
     for order, at in enumerate(((moment + place) % 4, (moment + place + 1) % 4)):
-        options[at].update(chosen=True, order=order)
+        options[at].update(chosen=True, order=order, outcome=None if blind else worth(moment, place, at + order))
     for at, option in enumerate(options):
-        if option["chosen"] != ((place, moment) == BLIND):
-            option["outcome"] = worth(moment, place, at + (option["order"] or 0))
+        if blind and not option["chosen"]:
+            option["outcome"] = worth(moment, place, at)
         option.update(shown=0.25, logged=0.5 if option["chosen"] else 0.0)
     LOG.debug("shown exit options=%d seconds=%.4f", len(options), time.perf_counter() - started)
     return options
