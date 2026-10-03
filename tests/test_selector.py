@@ -144,6 +144,7 @@ def arguments(bank, output, **overrides):
         sees=["train=", "validation="],
         loss=["number=squared"],
         measures=["mse", "r2"],
+        alike=1.0,
     )
     values.update(overrides)
     return argparse.Namespace(**values)

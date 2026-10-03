@@ -8,7 +8,8 @@ from graphspec.operations.parameters import GROUPS, among, choice, draw, equals,
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
-from .heads import reading
+from .heads import NONE, REALISATION, reading
+from .options import REALISATIONS
 
 LOG = logging.getLogger(__name__)
 SPACES = {}
@@ -25,6 +26,7 @@ VIEWS = (
     "affinity",
     "signal",
 )
+OPTIONED = VIEWS
 SPATIAL = ("none", "mean", "normalised", "relational", "attention", "chebyshev", "relational_attention")
 ENCODINGS = ("log_cosine", "cosine", "log_linear")
 EMBEDDING = ("snapshot", "mixed", "event_graph", "memory", "projection", "sequence", "tree", "walks")
@@ -107,14 +109,26 @@ def reads_dropout(spec):
 
 def space(registry):
     started = time.perf_counter()
-    key = (registries.GENERATION, views(registry), registry.extras["events"], reading(registry, "time/encoding"))
+    key = (
+        registries.GENERATION,
+        views(registry),
+        registry.extras["events"],
+        reading(registry, "time/encoding"),
+        bool(registry.schema.decided()),
+        OPTIONED,
+    )
     if key not in SPACES:
         SPACES[key] = built(*key[1:])
     LOG.debug("model space exit parameters=%d seconds=%.4f", len(SPACES[key]), time.perf_counter() - started)
     return SPACES[key]
 
 
-def built(offered, events, encoded):
+@timed("model_spec.optioned")
+def optioned(spec, families):
+    return spec["view"] in families
+
+
+def built(offered, events, encoded, decides, families):
     started = time.perf_counter()
     updates = UPDATES if events else tuple(update for update in UPDATES if update != "mutual_rnn")
     parameters = [
@@ -193,6 +207,10 @@ def built(offered, events, encoded):
         number("keys/table", 4096, 65536, 16384, lambda spec: spec.get("keys/embedding") is True),
     ]
     parameters += [flag(DERIVES % name, False) for name in unread()]
+    if decides:
+        parameters.append(
+            choice(REALISATION, (NONE,) + REALISATIONS.names(), None, lambda spec: optioned(spec, families))
+        )
     LOG.debug(
         "model space built exit seconds=%.4f parameters=%d views=%d",
         time.perf_counter() - started,
@@ -321,11 +339,15 @@ def samples(registry):
     ]
     result = []
 
+    @timed("model_spec.samples.chosen")
+    def chosen(values, parameter):
+        if parameter.name in values:
+            return values[parameter.name]
+        return parameter.options[0] if parameter.default is None else parameter.default
+
     @timed("model_spec.samples.add")
     def add(values):
-        spec = specs.canonical(
-            parameters, draw(parameters, lambda parameter: values.get(parameter.name, parameter.default))
-        )
+        spec = specs.canonical(parameters, draw(parameters, lambda parameter: chosen(values, parameter)))
         if spec not in result:
             result.append(spec)
         return spec

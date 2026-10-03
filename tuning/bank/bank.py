@@ -49,7 +49,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 67
+VIEW = 68
 TOKEN = (1 << 62) - 1
 
 
@@ -200,6 +200,15 @@ def coded():
     return dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION)
 
 
+def acted(facts, columns, trained):
+    started = time.perf_counter()
+    task = np.asarray(facts.option_task, np.int64)[np.asarray(facts.action_option, np.int64)]
+    values = np.asarray(facts.action_values, np.float32)[np.isin(np.asarray(facts.task_split)[task], trained)]
+    result = {name: values[:, place][~np.isnan(values[:, place])] for place, name in enumerate(columns)}
+    LOG.debug("acted exit actions=%d seconds=%.4f", len(values), time.perf_counter() - started)
+    return result
+
+
 def readings(registry, steps, several, storage, sees):
     started = time.perf_counter()
     result = registry.schema.read() + [
@@ -296,8 +305,10 @@ class Viewed:
     def build(self, bank, steps, several, storage, looking):
         started = time.perf_counter()
         registry, entries = bank.registry, []
-        columns = sets.shown(registry, storage)
-        samples = {name: [] if name in columns else None for name in registry.schema.columns}
+        columns, parameters = sets.shown(registry, storage), registry.schema.parameters()
+        samples = {
+            name: [] if name in columns or name in parameters else None for name in registry.schema.columns
+        }
         rows = [row for code in looking.trained for row in bank.split["indices"][looking.splits[code]]]
         trained = {bank.rows[row]["graph"] for row in rows}
         for stored in (graph for graph in bank.manifest["graphs"] if graph["name"] in trained):
@@ -306,6 +317,8 @@ class Viewed:
                 found = sampled(facts, registry, held, several)
                 for name in columns:
                     samples[name] += found[name]
+            for name, found in acted(facts, parameters, looking.trained).items():
+                samples[name].append(found)
         encoding = fitted(registry.encoding, samples)
         self.folder.mkdir(parents=True, exist_ok=True)
         write_json(self.folder / "encoders.json", dict(states=encoding.states))

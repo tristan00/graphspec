@@ -8,7 +8,7 @@ from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 
 LOG = logging.getLogger(__name__)
-VERSION = 4
+VERSION = 5
 SEEDS = 2**32
 DERIVATIONS = 2**64
 
@@ -65,6 +65,11 @@ def named(value):
 @timed("statement.splits")
 def splits(value):
     return named(value) and len(value) > 0
+
+
+@timed("statement.share")
+def share(value):
+    return type(value) in (int, float) and 0 <= value <= 1
 
 
 @timed("statement.word")
@@ -131,6 +136,11 @@ class Statement:
         splits,
         "a list of the distinct names of the registered measures computed, at least one, each reading a kind of "
         "target of the bank, and every kind of target of the bank read by one of them",
+    )
+    alike: float = held(
+        share,
+        "a number from 0 to 1, the share of the pairs of options of different content of the splits scored on with "
+        "equal predictions above which a fit that states a realisation of options stops before it trains",
     )
 
     def __init__(self, **mapping):

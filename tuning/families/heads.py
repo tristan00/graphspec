@@ -8,6 +8,8 @@ from graphspec.schema.targets import TARGETS, Sequence
 LOG = logging.getLogger(__name__)
 HEADS = Names("head of a kind of target", False)
 FIELD = "field/"
+REALISATION = "options/realisation"
+NONE = "none"
 
 
 class Attached:
@@ -62,6 +64,14 @@ def nodes(hidden, spec, registry):
     return NodeHead(hidden)
 
 
+@timed("heads.decision")
+def decision(hidden, spec, registry):
+    from .layers import NodeHead, NumberHead
+    from .options import realised
+
+    return NumberHead(hidden) if realised(spec) is None else NodeHead(hidden)
+
+
 def reading(registry, name):
     started = time.perf_counter()
     result = any(name in HEADS.named(kind).reads for kind in registry.schema.targets())
@@ -79,5 +89,5 @@ HEADS.register("survival", Attached(("time/encoding",), path))
 HEADS.register("ranking", Attached((), nodes))
 HEADS.register("nodes", Attached((), nodes))
 HEADS.register("link", Attached((), nodes))
-HEADS.register("decision", Attached((), number))
+HEADS.register("decision", Attached((REALISATION,), decision))
 ship([HEADS])

@@ -21,6 +21,7 @@ from tuning.bank.bank import PACKAGES
 from tuning.families.heads import FIELD
 from tuning.measures.measures import measurable, measured, predicted, scored
 
+from .guards import guarded, routed
 from .losses import Summed, admitted, counting
 
 if TYPE_CHECKING:
@@ -129,6 +130,7 @@ class TrainingSession:
             self.packer.close()
             raise
         self.losses: list[float] = []
+        self.guards = None
         self.skipped = 0
         self.trained_rows: list[int] = []
         self.epoch_losses: list[float] = []
@@ -297,7 +299,7 @@ class TrainingSession:
         from tuning.batches.batching import batches
         from tuning.families.periods import blocks as period_blocks
 
-        values, indices, drawn, owners = [], [], [], []
+        values, indices, drawn, owners, left, lost = [], [], [], [], [], []
         with measure("validation_schedule"):
             validation = batches(
                 period_blocks(self.bank, self.bank.blocks(1, self.history, self.config), self.config),
@@ -327,6 +329,9 @@ class TrainingSession:
                         indices.extend(batch["rows"].tolist())
                         drawn.extend(ordered[len(batch["rows"]) :].tolist())
                         owners.extend(batch["drawn"].tolist())
+                        left.extend(np.asarray(batch["left"], bool).tolist())
+                        if "options" in batch:
+                            lost.extend(batch["options"]["left"].tolist())
                 if (index + 1) % 256 == 0:
                     emit(
                         "validation_progress",
@@ -341,6 +346,8 @@ class TrainingSession:
             np.asarray(values, np.float64),
             np.asarray(owners, np.int64),
             np.asarray(drawn, np.float64),
+            np.asarray(left, bool),
+            np.asarray(lost, np.int64),
         )
 
     @timed("score_and_save")
@@ -350,9 +357,9 @@ class TrainingSession:
         from .budget import policy
 
         self.budget.pulse("scoring")
-        indices, values, owners, drawn = found
+        indices, values, owners, drawn, left, lost = found
         ordering = np.argsort(indices)
-        indices, values = indices[ordering], values[ordering]
+        indices, values, left = indices[ordering], values[ordering], left[ordering]
         if not np.array_equal(indices, self.scored):
             raise ValueError("holdout predictions do not exactly cover the frozen partition")
         with measure("metrics"):
@@ -363,7 +370,10 @@ class TrainingSession:
             )
             values, drawn = both[: len(indices)], both[len(indices) :]
             kept, unmeasured = shortened(self.bank, self.config["pipeline"], every)
-            kept &= self.bank.counted[every]
+            kept &= self.bank.counted[every] & ~np.r_[left, np.zeros(len(owners), bool)]
+            if self.guards is not None:
+                kinds = list(schema.tasks["kinds"])
+                unmeasured.update({kind: int((lost == kinds.index(kind)).sum()) for kind in schema.decided()})
             held = scored(
                 np.r_[self.bank.targets[indices], np.zeros(len(owners))][kept],
                 both[kept],
@@ -396,6 +406,7 @@ class TrainingSession:
             loss=self.stated.loss,
             measures=metrics,
             unmeasured=unmeasured,
+            options=self.guards,
             seconds=time.perf_counter() - self.entered,
             timings=self.timing,
             parameters=sum(p.numel() for p in self.net.parameters()),
@@ -469,10 +480,14 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
     drawing(bank.registry.schema, config["pipeline"])
     measurable(stated.measures, bank, stated.scored)
+    routed(bank, config)
     with FitBudget(directory, deadline, stated.preparation_seconds) as budget:
         with budget.measure("prepare"):
             session = TrainingSession(bank, bank_directory, directory, config, budget, stated)
         try:
+            budget.pulse("guards")
+            with measure("guards"):
+                session.guards = guarded(bank, config, session.net, stated, batch_size)
             budget.pulse("scheduling")
             schedule = session.schedule(training_blocks, batch_size)
             session.net.train()

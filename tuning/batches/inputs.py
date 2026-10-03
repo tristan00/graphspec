@@ -14,8 +14,11 @@ from graphspec.infra.timing import timed
 from graphspec.operations.negatives import needed
 from graphspec.operations.rows import counted, keyed_relations
 from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
+from graphspec.schema.decisions import ROLES
 from graphspec.schema.references import SORTS
+from tuning.bank.options import offered
 from tuning.families.heads import FIELD
+from tuning.families.options import realised
 
 from . import gather
 from .tensors import Frames, Host, array, features, features_at, gathered, joined
@@ -462,6 +465,108 @@ def pointed(bank, window, b, rows, owner):
     )
 
 
+def edged(window, moments, ends, relation):
+    started = time.perf_counter()
+    held = window.held
+    low, high = between(held.numpy("spatial_step"), window.start, window.stop)
+    spatial, entity = held.numpy("spatial")[low:high].astype(np.int64), held.numpy("entity").astype(np.int64)
+    shown = hashed(
+        held.numpy("spatial_step")[low:high].astype(np.int64), entity[spatial[:, 0]], entity[spatial[:, 1]], spatial[:, 2]
+    )
+    result = np.isin(hashed(moments, entity[ends[:, 0]], entity[ends[:, 1]], relation), shown)
+    LOG.debug("edged exit graph=%d edges=%d seconds=%.4f", window.graph, len(result), time.perf_counter() - started)
+    return result
+
+
+def optioned(bank, window, b, rows, owner, place):
+    started = time.perf_counter()
+    held, registry, found = window.held, window.registry, offered(bank)
+    decision = found.decision[rows]
+    chosen = np.flatnonzero(decision >= 0)
+    ids, first = np.unique(decision[chosen], return_index=True)
+    task, row = owner[chosen[first]], place[chosen[first]]
+    option = np.repeat(found.first[ids], found.count[ids]) + counted(found.count[ids])
+    decided = np.repeat(np.arange(len(ids)), found.count[ids])
+    action = np.repeat(found.actions[0][option], found.actions[1][option]) + counted(found.actions[1][option])
+    acting = np.repeat(np.arange(len(option)), found.actions[1][option])
+    role = np.repeat(found.roles[0][action], found.roles[1][action]) + counted(found.roles[1][action])
+    roling = np.repeat(np.arange(len(action)), found.roles[1][action])
+    sort = found.sorts[found.role["code"][role]]
+    moments = b["row_steps"][task[decided[acting[roling]]]].astype(np.int64) + window.start
+    ends = np.stack((found.role["source"][role], found.role["target"][role]), 1)
+    observed = np.full(ends.shape, -1, np.int64)
+    for column, sorts in enumerate(((ROLES.index("node"), ROLES.index("edge")), (ROLES.index("edge"),))):
+        wanted = np.flatnonzero(np.isin(sort, sorts))
+        observed[wanted, column] = observing(held, moments[wanted], ends[wanted, column], held.numpy("entity_token"))
+    edge = np.flatnonzero(sort == ROLES.index("edge"))
+    unheld = (observed[:, 0] < 0) & (sort != ROLES.index("new"))
+    whole = edge[(observed[edge] >= 0).all(1)]
+    unheld[edge] |= observed[edge, 1] < 0
+    unheld[whole] |= ~edged(window, moments[whole], observed[whole], found.role["relation"][role[whole]])
+    left = np.zeros(len(option), bool)
+    np.logical_or.at(left, acting[roling], unheld)
+    kept = np.flatnonzero(~left)
+    acts = np.flatnonzero(~left[acting])
+    roles = np.flatnonzero(~left[acting[roling]])
+    local = np.full(len(option), -1, np.int64)
+    local[kept] = np.arange(len(kept))
+    taken = np.full(len(action), -1, np.int64)
+    taken[acts] = np.arange(len(acts))
+    ends = np.where(sort[roles, None] == ROLES.index("new"), -1, observed[roles])
+    ends[:, 1] = np.where(sort[roles] == ROLES.index("edge"), ends[:, 1], -1)
+    shown = ends >= 0
+    members = ends[shown]
+    member = np.full(ends.shape, -1, np.int64)
+    member[shown] = len(b["member_row"]) + np.arange(len(members))
+    owners = np.broadcast_to(task[decided[acting[roling[roles]]]][:, None], ends.shape)[shown]
+    b.update(
+        member_row=np.concatenate((b["member_row"], owners)),
+        member_name=np.concatenate((b["member_name"], np.full(len(members), len(registry.references) + 1, np.int64))),
+        member_entity=np.concatenate((b["member_entity"], held.numpy("entity")[members].astype(np.int64))),
+        member_index=np.concatenate((b["member_index"], members - window.lo)),
+        member_place=np.concatenate((b["member_place"], np.zeros(len(members), np.int64))),
+        member_stored=np.concatenate((b["member_stored"], np.full(len(members), -1, np.int64))),
+        member_x=joined([b["member_x"], features(window.graph, (len(members),), ("x", members, 1.0))]),
+        partner=np.concatenate((b["partner"], np.full(len(members), -1, np.int64))),
+    )
+    order = np.asarray(b["placed"].value, np.int64)
+    source = np.where(order < len(rows), rows[np.minimum(order, len(rows) - 1)], -1)
+    pointing = np.where(source >= 0, found.row_option[np.maximum(source, 0)], -1)
+    acted = np.where(source >= 0, found.row_action[np.maximum(source, 0)], -1)
+    globally, places = np.argsort(option, kind="stable"), np.argsort(action, kind="stable")
+    point_option = local[globally[np.minimum(np.searchsorted(option[globally], pointing), len(option) - 1)]]
+    point_action = taken[places[np.minimum(np.searchsorted(action[places], acted), len(action) - 1)]]
+    lost = np.isin(found.row_option[rows], option[left])
+    b["left"] = Host(np.asarray(b["left"].value, bool) | lost)
+    columns = registry.schema.parameters()
+    b["options"] = dict(
+        row=row[decided[kept]],
+        decision=decided[kept],
+        sequence=found.option["sequence"][option[kept]],
+        action_option=local[acting[acts]],
+        action_kind=found.action["kind"][action[acts]],
+        action_place=found.action["place"][action[acts]],
+        action_values=registry.encoding.vectors(columns, found.action["values"][action[acts]]),
+        role_action=taken[roling[roles]],
+        role_code=found.role["code"][role[roles]],
+        role_member=member,
+        role_relation=np.where(sort[roles] == ROLES.index("edge"), found.role["relation"][role[roles]], -1),
+        point_option=np.where(pointing >= 0, point_option, -1),
+        point_action=np.where((acted >= 0) & (pointing >= 0) & (point_option >= 0), point_action, -1),
+        content=Host(found.option["content"][option[kept]]),
+        kind=Host(found.option["kind"][option[kept]]),
+        left=Host(found.option["kind"][option[left]]),
+    )
+    LOG.debug(
+        "optioned exit graph=%d decisions=%d options=%d left=%d seconds=%.4f",
+        window.graph,
+        len(ids),
+        len(kept),
+        int(left.sum()),
+        time.perf_counter() - started,
+    )
+
+
 def couples(registry):
     started = time.perf_counter()
     names, result = list(registry.references), {}
@@ -788,6 +893,8 @@ def base_inputs(bank, block, window):
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
     b["partner"] = partnered(b["pair"], len(b["member_row"]))
     pointed(bank, window, b, rows, np.flatnonzero(selected)[point_row])
+    if realised(window.cfg["model"]) is not None:
+        optioned(bank, window, b, rows, np.flatnonzero(selected)[point_row], point_row)
     if tokens is not None:
         b["member_token"] = array(tokens[b["member_entity"]])
     return b

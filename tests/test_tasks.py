@@ -607,7 +607,7 @@ def test_a_fit_or_a_search_that_cannot_be_measured_stops_when_it_starts_naming_t
         batch_sequences=8, continuous=False, trials=None, seconds=10, selector="random", random_trials=10,
         random_params=[], mix=["random=100"], objective=None, bounds=None, workers=1, variant_gb=1,
         pipeline=str(Path(__file__).parent / "pipeline.json"), trained=["north", "south"], scored=["east"],
-        sees=["north=", "south=", "east="], loss=["number=squared"], measures=["mse", "r2"],
+        sees=["north=", "south=", "east="], loss=["number=squared"], measures=["mse", "r2"], alike=1.0,
     )
     with pytest.raises(ValueError, match=lacking):
         run(argparse.Namespace(**searched))

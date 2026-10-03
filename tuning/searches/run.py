@@ -53,6 +53,7 @@ COPIES = dict(
     sees="sees",
     loss="loss",
     measures="measures",
+    alike="alike",
 )
 
 
@@ -185,6 +186,7 @@ def opened(stated, given, bank_path, manifest, limit):
         sees=stated.splits()["sees"],
         loss=stated.loss,
         measures=list(stated.measures),
+        alike=stated.alike,
         train_rows=counted(manifest, stated.trained),
         holdout_rows=counted(manifest, stated.scored),
         supervision_sha256=manifest["supervision_sha256"],
@@ -301,6 +303,7 @@ def flags(args):
         sees=statements.seen(args.sees),
         loss=statements.paired(args.loss),
         measures=args.measures,
+        alike=args.alike,
     )
     result = {name: value for name, value in given.items() if value is not None}
     emit("statement_flags", fields=sorted(result), seconds=time.perf_counter() - started)
@@ -605,6 +608,13 @@ def main():
         nargs="+",
         required=True,
         help="the registered measures every trial records; the first, lower being better, ranks the trials",
+    )
+    run_parser.add_argument(
+        "--alike",
+        type=float,
+        required=True,
+        help="the share of pairs of options of different content with equal predictions above which a trial that "
+        "states a realisation of options stops before it trains",
     )
     run_parser.add_argument("--bounds")
     run_parser.add_argument(

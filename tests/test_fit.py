@@ -47,6 +47,7 @@ def arguments(bank, output, statement):
         bounds=None,
         loss=["%s=%s" % pair for pair in statement["loss"].items()],
         measures=statement["measures"],
+        alike=statement["alike"],
     )
 
 
@@ -209,6 +210,10 @@ def test_fit_with_a_field_absent_stops_naming_the_field(tmp_path, statement, nam
         ("measures", []),
         ("measures", "mse"),
         ("measures", ["mse", "mse"]),
+        ("alike", -0.1),
+        ("alike", 1.5),
+        ("alike", True),
+        ("alike", None),
     ],
 )
 def test_a_statement_with_a_value_outside_its_meaning_stops_naming_it(monkeypatch, statement, name, value):

@@ -19,6 +19,7 @@ from graphspec.sources import synthetic
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 from tuning.batches.batching import batches, pack_batch
+from tuning.families.heads import NONE, REALISATION
 from tuning.families.model_spec import VIEWS, views
 from tuning.families.models import build as network
 from tuning.families.periods import blocks as windows
@@ -30,6 +31,7 @@ from tuning.statement import state
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("decisions")
 GENERATOR = "nearby"
+UNREALISED = {REALISATION: NONE}
 OPENED, READ = {}, []
 
 
@@ -337,7 +339,7 @@ def packed(held, cfg):
 
 def test_no_option_without_an_outcome_and_no_option_not_chosen_reaches_a_loss_as_a_target(banks):
     held = opened(banks, "stated")
-    cfg = support.configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, SPLITS)
+    cfg = support.configuration(held.registry, dict(view="snapshot", **UNREALISED), {"time/history": 2}, 5, SPLITS)
     loss, code, read = Summed(dict(decision="recorded"), held.registry.schema.targets()), 0, []
     READ.clear()
     for b in packed(held, cfg):
@@ -370,7 +372,7 @@ def test_availability_and_what_happened_never_reach_a_models_input(banks):
     first, second = (Facts.load(held.truth(0)) for held in (stated, changed))
     assert np.array_equal(first.option_available, ~second.option_available)
     assert read_json(banks["stated"] / "supervision.json") == read_json(banks["flipped"] / "supervision.json")
-    cfg = support.configuration(stated.registry, dict(view="snapshot"), {"time/history": 2}, 5, SPLITS)
+    cfg = support.configuration(stated.registry, dict(view="snapshot", **UNREALISED), {"time/history": 2}, 5, SPLITS)
     for index in range(len(stated.viewed(cfg).graphs)):
         views = [read_pack(held.view(index, cfg) / "arrays.pack", False) for held in (stated, changed)]
         assert sorted(views[0]) == sorted(views[1])
@@ -384,8 +386,11 @@ def test_a_bank_of_decisions_completes_one_fit_reading_the_task_and_the_outcome_
     banks, tmp_path, statement, monkeypatch
 ):
     bank = banks["stated"]
-    cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
+    inline(bank, (), monkeypatch)
     held = opened(banks, "stated")
+    stated = dict(view="snapshot", **UNREALISED)
+    cfg = support.configuration(held.registry, stated, {"time/history": 4, **support.several(held.registry)}, 5, SPLITS)
+    cfg = dict(cfg, epochs=1)
     given = dict(statement, loss=dict(decision="recorded"), measures=["mse", "r2"])
     READ.clear()
     started = time.perf_counter()
@@ -410,7 +415,7 @@ def test_the_check_skips_and_counts_a_window_whose_decisions_hold_no_chosen_outc
 ):
     started = time.perf_counter()
     held = opened(banks, "stated")
-    cfg = support.configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, SPLITS)
+    cfg = support.configuration(held.registry, dict(view="snapshot", **UNREALISED), {"time/history": 2}, 5, SPLITS)
     monkeypatch.setattr("tuning.fits.check.samples", lambda registry: [cfg["model"]])
     for name in ("pipeline", "graph"):
         write_json(tmp_path / (name + ".json"), cfg[name])
@@ -431,7 +436,7 @@ def test_every_family_trains_on_the_outcome_of_the_chosen_option(banks, family):
     started = time.perf_counter()
     held = opened(banks, "stated")
     assert family in views(held.registry)
-    cfg = support.configuration(held.registry, dict(view=family), {"time/history": 2}, 5, SPLITS)
+    cfg = support.configuration(held.registry, dict(view=family, **UNREALISED), {"time/history": 2}, 5, SPLITS)
     torch.manual_seed(5)
     net = network(cfg, held.fitted(cfg))
     loss = Summed(dict(decision="squared"), held.registry.schema.targets())

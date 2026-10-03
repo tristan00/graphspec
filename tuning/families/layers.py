@@ -177,13 +177,11 @@ class References(nn.Module):
         self.place = nn.Linear(1, width, bias=False)
         bound = 1 / math.sqrt(width)
         self.project = nn.Parameter(torch.empty(self.names, width, output).uniform_(-bound, bound))
-        self.pointing = any(TARGETS.named(kind).names is not None for kind in registry.schema.targets())
 
     def forward(self, b, members, whole):
         name, place, row = b["member_name"], b["member_place"], b["member_row"]
-        if self.pointing:
-            referred = name < self.names
-            members, name, place, row = members[referred], name[referred], place[referred], row[referred]
+        referred = name < self.names
+        members, name, place, row = members[referred], name[referred], place[referred], row[referred]
         place = self.place(torch.log1p(place.float())[:, None])
         members = members + place * self.ordered[name][:, None]
         keys = torch.cat((row * self.names + name, b["whole_row"] * self.names + b["whole_name"]))
@@ -283,20 +281,31 @@ class Head(nn.Module):
         self.targets = registry.schema.targets()
         self.task = nn.Sequential(nn.Linear(width, hidden), nn.SiLU())
         self.series = nn.Embedding(len(registry.schema.series()), hidden)
+        from graphspec.schema.decisions import Decision
+
+        from .options import Options, realised
+
         self.kinds = nn.ModuleList(HEADS.named(kind).module(hidden, spec, registry) for kind in self.targets)
         self.named = [TARGETS.named(kind).names is not None for kind in self.targets]
         self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU()) if any(self.named) else None
+        name = realised(spec)
+        self.options = None if name is None else Options(name, registry, hidden, nodes, spec)
+        self.decides = [self.options is not None and isinstance(TARGETS.named(kind), Decision) for kind in self.targets]
 
     def forward(self, features, b, members):
         h, series = self.task(features)[b["point_row"]], self.series(b["series"])
         node = None if self.node is None else padded(self.node(members), b["point_node"])
+        content = None if self.options is None else self.options(b, members)
         if len(self.kinds) == 1:
-            given = h if node is None else torch.cat((h, node), -1)
+            held = [part for part in (node, content) if part is not None]
+            given = torch.cat([h] + held, -1) if held else h
             return self.kinds[0](given, series, b, torch.arange(len(h), device=h.device))
         outputs, places = [], []
         for code, kind in enumerate(self.kinds):
             points = (b["aim"] == code).nonzero().flatten()
             given = torch.cat((h[points], node[points]), -1) if self.named[code] else h[points]
+            if self.decides[code]:
+                given = torch.cat((given, content[points]), -1)
             outputs.append(kind(given, series[points], b, points))
             places.append(points)
         values = torch.cat(outputs)

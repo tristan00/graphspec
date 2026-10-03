@@ -195,6 +195,33 @@ def moved(parts, key, offsets):
     )
 
 
+def optioned(parts, tasks, members):
+    started = time.perf_counter()
+    held = [p["options"] for p in parts]
+    sizes = {
+        name: np.r_[0, np.cumsum([len(found[key]) for found in held])]
+        for name, key in (("option", "sequence"), ("action", "action_option"))
+    }
+    sizes["decision"] = np.r_[0, np.cumsum([int(found["decision"].max()) + 1 if len(found["decision"]) else 0 for found in held])]
+    shifts = dict(
+        row=tasks,
+        decision=sizes["decision"],
+        action_option=sizes["option"],
+        role_action=sizes["action"],
+        role_member=members,
+        point_option=sizes["option"],
+        point_action=sizes["action"],
+    )
+    result = {
+        key: moved(held, key, shifts[key]) if key in shifts else joined([found[key] for found in held])
+        for key in held[0]
+        if key not in ("content", "kind", "left")
+    }
+    result.update({key: Host(np.concatenate([found[key].value for found in held])) for key in ("content", "kind", "left")})
+    LOG.debug("optioned exit parts=%d options=%d seconds=%.4f", len(parts), int(sizes["option"][-1]), time.perf_counter() - started)
+    return result
+
+
 @timed("recipe_batch")
 def recipe_batch(bank, blocks, cfg):
     started = time.perf_counter()
@@ -312,6 +339,8 @@ def recipe_batch(bank, blocks, cfg):
         )
     )
     b["tasks"] = int(offsets[-1])
+    if "options" in parts[0]:
+        b["options"] = optioned(parts, offsets, member_offsets)
     if "end_steps" in parts[0]:
         b["end_steps"] = moved(parts, "end_steps", [i * t for i in range(size)])
         b["member_end_local"] = moved(parts, "member_end_local", nodes)

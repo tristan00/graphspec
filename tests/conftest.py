@@ -350,6 +350,7 @@ def statement():
         **SPLITS,
         loss=dict(number="squared"),
         measures=["mse", "r2"],
+        alike=1.0,
     )
 
 

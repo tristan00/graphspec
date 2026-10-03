@@ -30,7 +30,9 @@ def registry(events=True, signals=2):
         name="stated",
         extras=dict(events=events, signals=signals),
         schema=SimpleNamespace(
-            tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node"))), targets=lambda: ("number",)
+            tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node"))),
+            targets=lambda: ("number",),
+            decided=lambda: (),
         ),
     )
 

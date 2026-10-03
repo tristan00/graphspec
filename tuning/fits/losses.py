@@ -134,6 +134,11 @@ def chosen(batch, points):
     return held
 
 
+@timed("losses.taken")
+def taken(bank, batch, rows):
+    return bank.counted[rows] | ("options" in batch)
+
+
 def outcomes(bank, batch, device):
     import numpy as np
     import torch
@@ -143,7 +148,7 @@ def outcomes(bank, batch, device):
     placed, every = np.asarray(batch["placed"], np.int64), np.r_[rows, drawn]
     found = dict(
         target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)][placed],
-        counted=(~np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)] & bank.counted[every])[placed],
+        counted=(~np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)] & taken(bank, batch, every))[placed],
     )
     for name, values in bank.fields.items():
         found[FIELD + name] = values[every][placed]
@@ -156,7 +161,8 @@ def outcomes(bank, batch, device):
 def counting(bank, batch):
     import numpy as np
 
-    return bool((~np.asarray(batch["left"], bool) & bank.counted[np.asarray(batch["rows"], np.int64)]).any())
+    rows = np.asarray(batch["rows"], np.int64)
+    return bool((~np.asarray(batch["left"], bool) & taken(bank, batch, rows)).any())
 
 
 class Summed:
