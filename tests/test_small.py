@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 import pytest
-from support import configuration
+from support import SEED, configuration
 
 from conftest import Inline
 from graphspec.facts.stored import Facts, inputs
@@ -159,7 +159,7 @@ def packed(monkeypatch):
 @pytest.mark.parametrize("name", ["bare", "edged"])
 def test_a_view_without_any_edge_completes_one_fit_on_cpu(banks, packed, tmp_path, statement, name):
     splits = copy.deepcopy(HIDDEN)
-    held = Deriver(banks[name], "cpu", RESIDENT)
+    held = Deriver(banks[name], "cpu", SEED, RESIDENT)
     cfg = dict(configuration(held.registry, dict(view="snapshot"), {"time/history": 4}, 5, splits), epochs=1)
     trained = [entry for entry in held.viewed(cfg).graphs if entry["split"] == held.splits.index("train")]
     assert trained and all(entry["facts"] == 0 for entry in trained)
@@ -176,7 +176,7 @@ def test_a_view_without_any_edge_completes_one_fit_on_cpu(banks, packed, tmp_pat
 
 
 def test_a_value_beyond_sixteen_bits_stops_the_view_naming_the_node_the_column_and_the_encoder(banks):
-    held = Deriver(banks["edged"], "cpu", RESIDENT)
+    held = Deriver(banks["edged"], "cpu", SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), {}, 5, copy.deepcopy(HIDDEN))
     registry, facts = held.fitted(cfg), Facts.load(held.truth(1))
     values = np.array(facts.obs_values)

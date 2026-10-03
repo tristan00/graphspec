@@ -7,7 +7,6 @@ import torch
 
 from graphspec import Registry
 from graphspec.budgets import GraphBudget
-from graphspec.engine.transform import SEED
 from graphspec.infra import workspace
 from graphspec.infra.arrays import Resident, between
 from graphspec.infra.hashing import hashed, salted
@@ -101,7 +100,7 @@ def history_inputs(window, b, count, include_structure, selected):
         held.numpy("neighbor_offsets"),
         held.column("events", 2),
     )
-    sampled = (start, count, mode, decay, salted(SEED, NEIGHBOURS), keyed(held))
+    sampled = (start, count, mode, decay, salted(window.seed, NEIGHBOURS), keyed(held))
     observed, interaction, task_row, mask, gap, ids, relation, structural = gather.history(
         *shared,
         entity,
@@ -194,6 +193,7 @@ class Window:
     cfg: dict
     tokens: np.ndarray | None
     compact: bool
+    seed: int
 
     @classmethod
     @timed("inputs.Window.open")
@@ -214,7 +214,7 @@ class Window:
                 first, last = int(places.min()), int(places.max()) + 1
         tokens = bank.tokens(held) if cfg["model"].get("keys/embedding") else None
         return cls(
-            graph, start, stop, first, last, lo, hi, held, bank.fitted(cfg), cfg, tokens, bank.joining(cfg)
+            graph, start, stop, first, last, lo, hi, held, bank.fitted(cfg), cfg, tokens, bank.joining(cfg), bank.seed
         )
 
 
@@ -687,7 +687,7 @@ def walked(bank, window, roots, moments):
         starts[prior.clip(0)].astype(np.int64),
         ends[prior.clip(0)].astype(np.int64),
         window.cfg["graph"],
-        SEED,
+        window.seed,
         GraphBudget(bank.limits()),
     )
     LOG.debug("walked exit roots=%d seconds=%.4f", len(roots), time.perf_counter() - started)
@@ -810,7 +810,7 @@ def tree_inputs(b, window):
         cfg["model"]["tree/depth"],
         registry,
         cfg["graph"],
-        SEED,
+        window.seed,
         tokens,
     )
 

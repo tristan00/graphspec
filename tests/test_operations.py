@@ -10,7 +10,7 @@ import support
 
 from graphspec import OPERATIONS, Operation, Phase
 from graphspec.budgets import GraphLimits
-from graphspec.engine import segments, transform
+from graphspec.engine import segments
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
 from graphspec.operations.nodes import NODES
@@ -94,7 +94,7 @@ def registered():
 
 def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_reads_no_other(bank, registered):
     started = time.perf_counter()
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(held)
     found = {entry["name"]: entry for entry in listed(held.registry)}
     assert found["test.shift"] == dict(
@@ -130,17 +130,17 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         made("a.b", shifted)
     dense = support.shown(held, 0).dense()
     steps = resolved(registry, [dict(operation="test.shift", parameters={"test/shift": 3})])
-    moved = segments.whole(dense, {}, registry, steps, transform.SEED, GraphLimits("cpu"), None)
+    moved = segments.whole(dense, {}, registry, steps, support.SEED, GraphLimits("cpu"), None)
     assert np.array_equal(moved.period, dense.period + 3) and moved.obs_step is dense.obs_step
     carry, opened = segments.opening(dense, {}, registry)
     with pytest.raises(KeyError, match="the operation test.stray reads time/window, which is none of the parameters"):
         OPERATIONS.named("test.stray")(
-            opened, registry, {"test/shift": 3}, transform.SEED, GraphLimits("cpu"), carry, {}, None
+            opened, registry, {"test/shift": 3}, support.SEED, GraphLimits("cpu"), carry, {}, None
         )
     lacking = {"time/scheme": "window", "time/unit": "step"}
     with pytest.raises(KeyError, match="the operation graphspec.window reads time/window, which the spec does not"):
         WINDOW(
-            opened, registry, lacking, transform.SEED, GraphLimits("cpu"), carry, WINDOW.initial(registry, lacking), None
+            opened, registry, lacking, support.SEED, GraphLimits("cpu"), carry, WINDOW.initial(registry, lacking), None
         )
     kind = registry.nodes[0]
     nodes = support.pipelined(registry, {}, ("graphspec.nodes",))[0][0]["parameters"]
@@ -150,7 +150,7 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
         match="the parameter nodes/%s/filter, read by the operation graphspec.nodes, is inactive under its "
         "condition and stated by the spec" % kind,
     ):
-        NODES(opened, registry, idle, transform.SEED, GraphLimits("cpu"), carry, NODES.initial(registry, nodes), None)
+        NODES(opened, registry, idle, support.SEED, GraphLimits("cpu"), carry, NODES.initial(registry, nodes), None)
     LOG.info("registered operation exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -163,7 +163,7 @@ def test_each_operation_called_alone_on_the_fixture_gives_the_arrays_of_its_stag
     started = time.perf_counter()
     held, _ = fixture.configurations(ground)
     entry, labels = held[place], fixture.labels(ground)
-    opened = Deriver(grounded[entry["source"]["name"]] / "bank", "cpu", RESIDENT)
+    opened = Deriver(grounded[entry["source"]["name"]] / "bank", "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
     steps = resolved(registry, fixture.pipeline(opened.registry, entry)[0])
     names = [step.name for step in steps]
@@ -182,7 +182,7 @@ def test_each_operation_called_alone_on_the_fixture_gives_the_arrays_of_its_stag
                 given = carried[name]
             carry, given = segments.opening(given, {}, registry)
             before = {key: np.array(value) for key, value in given.arrays.items()}
-            result, _ = step(given, registry, transform.SEED, GraphLimits("cpu"), carry, step.initial(registry), None)
+            result, _ = step(given, registry, support.SEED, GraphLimits("cpu"), carry, step.initial(registry), None)
             assert all(identical(before[key], given.arrays[key]) for key in DENSE), (label, name)
             if fixture.holds(names, index + 1):
                 assert set(fixture.differing(result.arrays, stored[index + 1][name])) <= set(replaced), (label, name)

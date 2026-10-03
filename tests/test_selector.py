@@ -121,6 +121,7 @@ def arguments(bank, output, **overrides):
         output=str(output),
         device="cpu",
         seed=3,
+        derivation_seed=support.SEED,
         preparation_seconds=300,
         batch_sequences=8,
         continuous=False,
@@ -394,6 +395,7 @@ def test_seconds_of_a_trial_outside_their_meaning_are_refused(seconds):
     "flag,value,field",
     [
         ("seed", 4, "seed"),
+        ("derivation_seed", 4, "derivation_seed"),
         ("seconds", 1800, "seconds"),
         ("workers", 2, "workers"),
         ("variant_gb", 2, "variant_bytes"),
@@ -420,6 +422,7 @@ def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_fie
     "field",
     [
         "seed",
+        "derivation_seed",
         "seconds",
         "workers",
         "variant_bytes",

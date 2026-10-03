@@ -6,13 +6,13 @@ import numpy as np
 import pytest
 import support
 from registered import HUB, KEPT, LINKED, PARITY, RUNNING, Halved
+from support import SEED
 
 from conftest import SPLITS
 from graphspec import NEGATIVES, OPERATIONS, REPRESENTATIONS, Representation
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments
 from graphspec.engine.edits import Edit, edited, sliced
-from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
@@ -52,7 +52,7 @@ SCORED, DRAWS = 10, 20000
 
 @pytest.fixture(scope="module")
 def opened(bank):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", SEED, RESIDENT)
     names = [graph["name"] for graph in held.manifest["graphs"]]
     return held, support.fitted(held), support.shown(held, 0).dense(), names
 
@@ -111,7 +111,7 @@ def counted(view, place, bound):
 
 def test_an_operation_adds_a_kind_a_relation_and_a_column_encoded_from_the_trained_views_alone(bank, hubbed):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", SEED, RESIDENT)
     cfg = support.configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS, (HUB.name,))
     registry, count, inward = opened.fitted(cfg), "hub.count", "hub.in"
     assert {entry["name"]: entry["adds"] for entry in operation.listed(opened.registry)}[HUB.name] is True
@@ -175,7 +175,7 @@ def test_a_representation_registered_in_each_family_completes_one_fit_on_cpu(
     }
     with pytest.raises(ValueError, match="states its family as one of structure, sample, encode, found 'drawn'"):
         Representation("test.drawn", "drawn", *(lambda *arguments: None,) * 3, None, None, lambda *arguments: None, 1)
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", SEED, RESIDENT)
     stated = {DERIVES % entry.name: True for entry in ADDED}
     with pytest.raises(KeyError, match="the model states no %s" % (DERIVES % LINKED.name)):
         derived(dict(view="snapshot"))

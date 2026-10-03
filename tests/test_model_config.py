@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from support import configuration
+from support import SEED, configuration
 
 from conftest import SPLITS
 from graphspec.infra.arrays import RESIDENT
@@ -37,7 +37,7 @@ def registry(events=True, signals=2):
 
 @pytest.fixture(scope="module")
 def opened(bank):
-    return Deriver(bank, "cpu", RESIDENT)
+    return Deriver(bank, "cpu", SEED, RESIDENT)
 
 
 @pytest.mark.parametrize(
@@ -100,7 +100,7 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
     bank.registry = SimpleNamespace(**vars(stated), fingerprint=lambda: "stated")
     bank.cache = Path(tmp_path)
     bank.variants, bank.roots, bank.device, bank.directory, bank.digests = {}, {}, "cpu", Path(tmp_path), {}
-    bank.source, bank.choices = "source", {}
+    bank.source, bank.choices, bank.seed = "source", {}, SEED
     monkeypatch.setattr(
         specs,
         "settings",
@@ -135,7 +135,7 @@ def counted(monkeypatch):
 
 def test_a_bank_digests_each_part_of_a_configuration_once_and_again_only_when_it_changes(bank, monkeypatch):
     started = time.perf_counter()
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
     key, _, spec, _ = held.stated(cfg)
     folder, labels = held.viewed(cfg).folder, held.labels(0, cfg)
@@ -177,8 +177,8 @@ def test_a_model_space_is_built_once_and_a_bank_derives_the_representations_of_a
     from tuning.families import model_spec
 
     started = time.perf_counter()
-    held = Deriver(bank, "cpu", RESIDENT)
-    assert space(held.registry) is space(held.registry) is space(Deriver(bank, "cpu", RESIDENT).registry)
+    held = Deriver(bank, "cpu", SEED, RESIDENT)
+    assert space(held.registry) is space(held.registry) is space(Deriver(bank, "cpu", SEED, RESIDENT).registry)
     cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
     found = recorded(model_spec, "derived", monkeypatch)
     chosen = [held.stated(cfg)[0][0] for _ in range(20)]

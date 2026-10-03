@@ -184,7 +184,7 @@ def banks(tmp_path_factory):
 
 @timed("leakage.opened")
 def opened(bank, **values):
-    held, given = Deriver(bank, "cpu", RESIDENT), dict(CHANGES, **values)
+    held, given = Deriver(bank, "cpu", support.SEED, RESIDENT), dict(CHANGES, **values)
     return held, configuration(held.registry, dict(view="snapshot"), given, 5, copy.deepcopy(SPLITS))
 
 
@@ -382,7 +382,7 @@ def test_the_scored_tasks_a_trained_split_hides_shape_neither_its_steps_nor_its_
     started, steps, found, net = time.perf_counter(), {}, {}, None
     splits = dict(trained=["train"], scored=["test"], sees=dict(train=["without_scored"], test=[]))
     for late, bank in ((late, moved[late]) for late in (4, 7)):
-        held = Deriver(bank, "cpu", RESIDENT)
+        held = Deriver(bank, "cpu", support.SEED, RESIDENT)
         values = {"time/history": 2, "time/steps": "tasks", "time/several": "last"}
         cfg = configuration(held.registry, dict(view="snapshot"), values, 5, splits)
         (entry,) = [entry for entry in held.viewed(cfg).graphs if entry["split"] == held.splits.index("train")]
@@ -402,7 +402,7 @@ def test_the_scored_tasks_a_trained_split_hides_shape_neither_its_steps_nor_its_
 
 
 def test_several_facts_are_a_choice_of_the_bank_where_the_coarser_steps_of_a_split_with_rules_show_them(moved):
-    started, held = time.perf_counter(), Deriver(moved["crowded"], "cpu", RESIDENT)
+    started, held = time.perf_counter(), Deriver(moved["crowded"], "cpu", support.SEED, RESIDENT)
     assert held.registry.extras["several"] is True
     splits = dict(trained=["train"], scored=["test"], sees=dict(train=["without_scored"], test=[]))
     with pytest.raises(ValueError, match=r"the pipeline states no time/several, which has no default"):
@@ -431,7 +431,7 @@ def test_a_search_offers_a_choice_of_steps_only_where_it_shows_every_graph_of_th
     from tuning.searches.selector import check_bounds, graph_space, random_suggest
     from tuning.searches.space import Space
 
-    registry = Deriver(banks["seen"], "cpu", RESIDENT).registry
+    registry = Deriver(banks["seen"], "cpu", support.SEED, RESIDENT).registry
     found = {p.name: p for p in graph_space(registry, configured(registry, dict(view="snapshot")), {})}
     assert found["time/steps"].options == ("changes",)
     template = support.template()

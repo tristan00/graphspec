@@ -68,7 +68,7 @@ ADDING = [
 @pytest.fixture(scope="module")
 def held(bank):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     result = dict(
         bank=opened,
         space=space(opened.registry),

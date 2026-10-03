@@ -236,7 +236,7 @@ def bank(registered, tmp_path_factory):
 
 @timed("tasks.opened")
 def opened(bank, **values):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     return held, configuration(held.registry, dict(view="snapshot"), values, 5, copy.deepcopy(SPLITS))
 
 
@@ -550,7 +550,7 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
     found = {}
     for choice in ("keep", "remove"):
         steps = support.steps(held.registry, {"nodes/site/keep": False, "nodes/referenced": choice})[0]
-        derived = segments.whole(dense, {}, held.fitted(cfg), steps, transform.SEED, GraphLimits("cpu"), None)
+        derived = segments.whole(dense, {}, held.fitted(cfg), steps, held.seed, GraphLimits("cpu"), None)
         kept = derived.obs_entity[np.isin(derived.obs_entity, sites)]
         found[choice] = sorted({dense.keys[entity] for entity in kept.tolist()})
         assert not np.isin(derived.fact_source, sites).any() and not np.isin(derived.fact_target, sites).any()
@@ -563,7 +563,7 @@ def test_an_operation_states_that_it_may_remove_a_referenced_node_and_does(bank,
         "(link|group|route|part|couple) of the task "
         r"\d+ of the kind (wide|joint) of graph one and does not state that it may remove a referenced node",
     ):
-        segments.whole(dense, {}, held.fitted(cfg), steps, transform.SEED, GraphLimits("cpu"), None)
+        segments.whole(dense, {}, held.fitted(cfg), steps, held.seed, GraphLimits("cpu"), None)
     strict = support.registry("strict", ["maker"], [])
     assert strict.stops.all()
     names = {parameter.name: parameter for parameter in support.parameters(strict, ())}
@@ -596,13 +596,14 @@ def test_a_fit_or_a_search_that_cannot_be_measured_stops_when_it_starts_naming_t
 
     started = time.perf_counter()
     east = dict(trained=["north", "south"], scored=["east"], sees=dict(north=[], south=[], east=[]))
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, copy.deepcopy(east))
     lacking = "the splits scored on, east, hold no point of the series wide, which the measure mse reads$"
     with pytest.raises(ValueError, match=lacking):
         fit(bank, tmp_path / "fit", cfg, [], 16, time.perf_counter() + 30, state(dict(statement, **east)))
     searched = dict(
-        bank=str(bank), output=str(tmp_path / "search"), device="cpu", seed=3, preparation_seconds=300,
+        bank=str(bank), output=str(tmp_path / "search"), device="cpu", seed=3, derivation_seed=support.SEED,
+        preparation_seconds=300,
         batch_sequences=8, continuous=False, trials=None, seconds=10, selector="random", random_trials=10,
         random_params=[], mix=["random=100"], objective=None, bounds=None, workers=1, variant_gb=1,
         pipeline=str(Path(__file__).parent / "pipeline.json"), trained=["north", "south"], scored=["east"],
@@ -633,7 +634,7 @@ def packed(bank, monkeypatch):
 def test_a_bank_of_four_splits_with_targets_on_nodes_and_on_graphs_completes_one_fit(
     bank, packed, tmp_path, statement
 ):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     given = dict(statement, **copy.deepcopy(SPLITS))
     cfg = dict(
         configuration(

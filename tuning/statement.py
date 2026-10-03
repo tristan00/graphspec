@@ -8,8 +8,9 @@ from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 
 LOG = logging.getLogger(__name__)
-VERSION = 3
+VERSION = 4
 SEEDS = 2**32
+DERIVATIONS = 2**64
 
 
 @timed("statement.current")
@@ -35,6 +36,11 @@ def device(value):
 @timed("statement.seed")
 def seed(value):
     return type(value) is int and 0 <= value < SEEDS
+
+
+@timed("statement.derivation")
+def derivation(value):
+    return type(value) is int and 0 <= value < DERIVATIONS
 
 
 @timed("statement.positive")
@@ -99,6 +105,11 @@ class Statement:
     version: int = held(current, "the version of the statement, %d" % VERSION)
     device: str = held(device, "cpu, cuda or cuda:N, where N is below the number of GPUs present")
     seed: int = held(seed, "an integer from 0 to %d" % (SEEDS - 1))
+    derivation_seed: int = held(
+        derivation,
+        "an integer from 0 to %d, the seed of every draw of the derivation of a variant, shared by the trials of "
+        "a search" % (DERIVATIONS - 1),
+    )
     seconds: int = held(positive, "a positive integer")
     preparation_seconds: int = held(positive, "a positive integer")
     workers: int = held(processors, "an integer from 1 to the number of logical processors")

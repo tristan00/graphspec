@@ -140,7 +140,7 @@ def banks():
 @timed("composition.opened")
 def opened(banks, name):
     if name not in OPENED:
-        OPENED[name] = Deriver(banks[name], "cpu", RESIDENT)
+        OPENED[name] = Deriver(banks[name], "cpu", support.SEED, RESIDENT)
     return OPENED[name]
 
 

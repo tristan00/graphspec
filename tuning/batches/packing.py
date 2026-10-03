@@ -26,24 +26,24 @@ LOG = logging.getLogger(__name__)
 
 
 @timed("packing.serve")
-def serve(bank_directory, cfg, threads, resident, device, jobs, results, entries, timing_directory=None):
+def serve(bank_directory, cfg, threads, resident, device, seed, jobs, results, entries, timing_directory=None):
     path = None if timing_directory is None else Path(timing_directory) / ("packing-%s.json" % os.getpid())
     with Timeline(path), measure("packing_worker"):
-        serve_batches(bank_directory, cfg, threads, resident, device, jobs, results, entries)
+        serve_batches(bank_directory, cfg, threads, resident, device, seed, jobs, results, entries)
     results.close()
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)
 
 
-def serve_batches(bank_directory, cfg, threads, resident, device, jobs, results, entries):
+def serve_batches(bank_directory, cfg, threads, resident, device, seed, jobs, results, entries):
     configure(json_lines=True)
     numba.set_num_threads(threads)
     torch.set_num_threads(1)
     failure = None
     try:
         restored(entries)
-        bank = Deriver(bank_directory, device, resident)
+        bank = Deriver(bank_directory, device, seed, resident)
     except Exception:
         failure = traceback.format_exc()
     slots = {}
@@ -119,6 +119,7 @@ class Packer:
                         threads,
                         resident,
                         bank.device,
+                        bank.seed,
                         self.jobs,
                         writer,
                         entries,

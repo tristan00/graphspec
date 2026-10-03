@@ -1,7 +1,7 @@
 import numpy as np
 import pyarrow as pa
 import pytest
-from support import configuration
+from support import SEED, configuration
 
 from conftest import SPLITS
 from graphspec.build.output import Stage
@@ -32,7 +32,7 @@ def test_path_bank_records_one_row_per_point_and_splits_by_task(path_bank):
     supervision = read_json(path_bank / "supervision.json")
     rows = supervision["rows"]
     assert all(row["tau"] >= 1 for row in rows)
-    opened = Deriver(path_bank, "cpu", RESIDENT)
+    opened = Deriver(path_bank, "cpu", SEED, RESIDENT)
     assert opened.aims.tolist() == [0] * 208 and len(opened.fields["tau"]) == 208
     assert opened.series_names == list(opened.registry.schema.series()) == ["level", "trend"]
     assert np.bincount(opened.series).tolist() == [104, 104]
@@ -88,7 +88,7 @@ def test_path_targets_require_a_series(tmp_path):
 
 def test_targets_without_tau_stay_scalar(bank):
     assert Schema(read_json(bank / "manifest.json")["spec"]["schema"]).targets() == ("number",)
-    assert Deriver(bank, "cpu", RESIDENT).fields == {}
+    assert Deriver(bank, "cpu", SEED, RESIDENT).fields == {}
 
 
 def expected_points(opened, block):
@@ -105,7 +105,7 @@ def test_path_windows_carry_every_point_of_their_step(path_bank):
     from tuning.batches.batching import recipe_batch
     from tuning.batches.inputs import recipe
 
-    opened = Deriver(path_bank, "cpu", RESIDENT)
+    opened = Deriver(path_bank, "cpu", SEED, RESIDENT)
     cfg = configuration(opened.registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
     for partition, indices in ((0, "train"), (1, "validation")):
         blocks = opened.blocks(partition, 4, cfg)
@@ -130,7 +130,7 @@ def test_path_windows_join_like_the_windows_of_numbers(path_bank):
     from tuning.bank.variants import prepare
     from tuning.batches.inputs import recipe
 
-    opened = Deriver(path_bank, "cpu", RESIDENT)
+    opened = Deriver(path_bank, "cpu", SEED, RESIDENT)
     single = configuration(
         opened.registry,
         dict(view="snapshot"),
@@ -138,8 +138,8 @@ def test_path_windows_join_like_the_windows_of_numbers(path_bank):
         5,
         SPLITS,
     )
-    prepare(path_bank, single, 1, "cpu")
-    opened = Deriver(path_bank, "cpu", RESIDENT)
+    prepare(path_bank, single, 1, "cpu", SEED)
+    opened = Deriver(path_bank, "cpu", SEED, RESIDENT)
     assert opened.groups(single) == [[0, 2], [1, 3]]
     for partition in (0, 1):
         blocks = opened.blocks(partition, 4, single)
@@ -244,7 +244,7 @@ def test_validation_loss_matches_the_training_loss_on_the_same_points():
 def test_objective_ranks_by_the_first_measure_and_blends_its_series_by_their_weights(path_bank):
     from tuning.measures import objective
 
-    names = Deriver(path_bank, "cpu", RESIDENT).series_names
+    names = Deriver(path_bank, "cpu", SEED, RESIDENT).series_names
     assert objective.weights(names, None) is None
     assert objective.weights(names, ["trend=2"]) == {"level": 0.0, "trend": 2.0}
     chosen = objective.weights(names, ["trend=3", "level=1"])
@@ -299,7 +299,7 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     from tuning.families.periods import blocks as period_blocks
     from tuning.fits.losses import Summed
 
-    opened = Deriver(path_bank, "cpu", RESIDENT)
+    opened = Deriver(path_bank, "cpu", SEED, RESIDENT)
     loss = Summed(dict(path="balanced"), opened.registry.schema.targets())
     cfg = configuration(opened.registry, dict(model, hidden=8), {"time/history": 2}, 11, SPLITS)
     assert cfg["model"]["time/encoding"] == "log_cosine"

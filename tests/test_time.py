@@ -373,7 +373,7 @@ def banks(cases, tmp_path_factory):
 
 @clocked("time.opened")
 def opened(banks, name, **values):
-    held = Deriver(banks[name], "cpu", RESIDENT)
+    held = Deriver(banks[name], "cpu", support.SEED, RESIDENT)
     stated = dict(support.several(held.registry), **values)
     return held, configuration(held.registry, dict(view="snapshot"), stated, 5, SPLITS)
 
@@ -769,7 +769,7 @@ def test_an_event_between_two_steps_is_shown_at_the_first_step_at_or_after_its_t
 def test_two_events_about_one_node_between_two_task_times_are_shown_by_the_rule_stated_for_several_facts(
     banks,
 ):
-    held = Deriver(banks["spaced"], "cpu", RESIDENT)
+    held = Deriver(banks["spaced"], "cpu", support.SEED, RESIDENT)
     truth = truths(held)["spaced"]
     rows = np.flatnonzero(np.asarray(truth.obs_entity) == truth.keys.index("s3"))
     assert truth.obs_since[rows].tolist() == [5, 6] and truth.obs_until[rows].tolist() == [6, 7]
@@ -806,7 +806,7 @@ def test_the_rule_for_several_facts_is_stated_where_a_bank_holds_them_and_valida
 ):
     from graphspec.engine.transform import validate
 
-    seen, forms_bank = Deriver(banks["seen"], "cpu", RESIDENT), Deriver(banks["forms"], "cpu", RESIDENT)
+    seen, forms_bank = Deriver(banks["seen"], "cpu", support.SEED, RESIDENT), Deriver(banks["forms"], "cpu", support.SEED, RESIDENT)
     assert seen.registry.extras["several"] is True and forms_bank.registry.extras["several"] is False
     with pytest.raises(
         ValueError, match=r"the pipeline states no time/several, which has no default; it is one of \['first'"
@@ -838,13 +838,14 @@ def test_periods_are_a_view_and_need_not_increase(banks):
     assert dense.period.tolist() == [3, 3, 1, 1, 2, 2]
     from graphspec.budgets import GraphLimits
     from graphspec.engine import segments
-    from graphspec.engine.transform import SEED
 
     every = support.steps(held.registry, {"time/periods": "every", "time/period_length": 4})[0]
-    derived = segments.whole(dense, {}, support.fitted(held), every, SEED, GraphLimits("cpu"), None)
+    derived = segments.whole(dense, {}, support.fitted(held), every, support.SEED, GraphLimits("cpu"), None)
     assert derived.period.tolist() == [0, 0, 0, 0, 1, 1]
     kept = support.steps(held.registry, {})[0]
-    assert segments.whole(dense, {}, support.fitted(held), kept, SEED, GraphLimits("cpu"), None).period.tolist() == [
+    assert segments.whole(
+        dense, {}, support.fitted(held), kept, support.SEED, GraphLimits("cpu"), None
+    ).period.tolist() == [
         3,
         3,
         1,
@@ -858,7 +859,7 @@ def test_periods_are_a_view_and_need_not_increase(banks):
 def prepared(banks, monkeypatch, request):
     started = time.perf_counter()
     cfg = inline(banks[request.param], ("snapshot",), monkeypatch)["snapshot"]
-    held = Deriver(banks[request.param], "cpu", RESIDENT)
+    held = Deriver(banks[request.param], "cpu", support.SEED, RESIDENT)
     blocks = held.blocks(0, 4, cfg)
     LOG.info("prepared exit case=%s seconds=%.3f", request.param, time.perf_counter() - started)
     return banks[request.param], held, cfg, blocks
@@ -922,7 +923,7 @@ def test_the_steps_of_a_view_may_be_the_times_of_change(tmp_path):
     task = write_task(tmp_path / "task.json", "plain", tmp_path / "source", schema)
     manifest = build(task, tmp_path / "bank", 1, ("train",))
     assert Schema(manifest["spec"]["schema"]).targets() == ("number",) and manifest["graphs"][0]["tasks"] == 4
-    held = Deriver(tmp_path / "bank", "cpu", RESIDENT)
+    held = Deriver(tmp_path / "bank", "cpu", support.SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), {"time/steps": "changes"}, 5, SPLITS)
     assert cfg["pipeline"][0] == dict(operation="graphspec.periods", parameters={"time/periods": "steps"})
     truth = Facts.load(held.truth(0))

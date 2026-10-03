@@ -16,7 +16,6 @@ from graphspec import Registry, registries
 from graphspec.budgets import GraphLimits
 from graphspec.engine import join, schedule, segments, transform
 from graphspec.engine.edits import sliced
-from graphspec.engine.transform import SEED
 from graphspec.facts.stored import PACKED, Facts, admitted, inputs
 from graphspec.infra.arrays import Residents, between
 from graphspec.infra.files import (
@@ -42,6 +41,7 @@ from graphspec.schema.time import ABOUT, SEVERAL, TIES
 from graphspec.views.graph import Graph
 from graphspec.views.view import STEPS, beside, finished, sampled, sequences, view
 from graphspec.views.visible import SEES, STATEMENT, Looking
+from tuning.statement import DERIVATIONS, derivation
 
 LOG = logging.getLogger(__name__)
 PACKAGES = (Path(__file__).parents[1], Path(__file__).parents[2] / "graphspec")
@@ -49,7 +49,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 52
+VIEW = 53
 TOKEN = (1 << 62) - 1
 
 
@@ -645,10 +645,14 @@ class Bank:
 
 
 class Deriver(Bank):
-    def __init__(self, directory, device, resident):
+    def __init__(self, directory, device, seed, resident):
         started = time.perf_counter()
+        if not derivation(seed):
+            raise ValueError(
+                "the seed of derivation is a whole number from 0 to %d, found %r" % (DERIVATIONS - 1, seed)
+            )
         self.held = GraphLimits(device)
-        self.device = device
+        self.device, self.seed = device, seed
         super().__init__(directory)
         self.roots, self.store, self.residents = {}, ArrayStore(), Residents(DTYPES, resident)
         self.grown = {}
@@ -683,7 +687,7 @@ class Deriver(Bank):
             dict(
                 pipeline=[step.keyed() for step in steps],
                 device=self.device,
-                seed=SEED,
+                seed=self.seed,
                 versions=coded(),
                 entries=registries.versions(self.reads(steps, spec, cfg)),
             )
@@ -715,7 +719,7 @@ class Deriver(Bank):
                 name: sliced(held[0].dense(), 0, bound)
                 for name, held in self.seconds(steps, [index], cfg, False).items()
             }
-            derived = segments.whole(member, beside, provisional, steps, SEED, self.limits(), partitions)
+            derived = segments.whole(member, beside, provisional, steps, self.seed, self.limits(), partitions)
             for name, codes in pipeline.sampled(derived, provisional).items():
                 samples[name].append(codes)
         result = {
@@ -751,7 +755,7 @@ class Deriver(Bank):
                 beside = self.seconds(steps, self.groups(cfg)[index], cfg, True)
                 jobs.append(dict(members=members, beside=beside, paths=paths, spill=spill, destination=temporary))
             schedule.variants(
-                jobs, self.fitted(cfg), steps, spec, chosen, SEED, workers, self.limits(), self.partitions(cfg)
+                jobs, self.fitted(cfg), steps, spec, chosen, self.seed, workers, self.limits(), self.partitions(cfg)
             )
             for (temporary, final), job in zip(folders, jobs):
                 shutil.rmtree(job["spill"])
@@ -795,7 +799,7 @@ class Deriver(Bank):
             groups=list(chosen),
             splits=cfg["splits"],
             device=self.device,
-            seeds=dict(derivation=SEED),
+            seeds=dict(derivation=self.seed),
             versions=coded(),
             entries=registries.versions(self.reads(steps, spec, cfg) + [(REPRESENTATIONS, chosen)]),
         )
@@ -836,7 +840,7 @@ class Deriver(Bank):
                         steps,
                         spec,
                         chosen,
-                        SEED,
+                        self.seed,
                         self.limits(),
                         self.partitions(cfg),
                         destination,

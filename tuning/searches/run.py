@@ -42,6 +42,7 @@ FLAGS = dict(
 )
 COPIES = dict(
     seed="seed",
+    derivation_seed="derivation_seed",
     seconds="seconds",
     workers="workers",
     variant_bytes="variant_cache_bytes",
@@ -163,6 +164,7 @@ def opened(stated, given, bank_path, manifest, limit):
     plan = dict(
         version=VERSION,
         seed=stated.seed,
+        derivation_seed=stated.derivation_seed,
         bank=bank_path,
         selector=given["selector"],
         pipeline=given["pipeline"],
@@ -281,6 +283,7 @@ def flags(args):
         version=statements.VERSION,
         device=args.device,
         seed=args.seed,
+        derivation_seed=args.derivation_seed,
         seconds=args.seconds,
         preparation_seconds=args.preparation_seconds,
         workers=args.workers,
@@ -517,7 +520,7 @@ def execute(directory, plan, continuous, registry, stated):
             stage = time.perf_counter()
             with Timeline(directory / item["directory"] / "maintenance_timing.json"), measure("maintenance"):
                 with measure("cache_prune"):
-                    keep = Deriver(plan["bank"], stated.device, RESIDENT).stamp(config)
+                    keep = Deriver(plan["bank"], stated.device, stated.derivation_seed, RESIDENT).stamp(config)
                     prune(plan["bank"], stated.variant_cache_bytes, keep)
                 emit("trial_prune", seconds=time.perf_counter() - stage)
                 with measure("report"):
@@ -547,6 +550,9 @@ def main():
     run_parser.add_argument("--output", required=True)
     run_parser.add_argument("--device", required=True)
     run_parser.add_argument("--seed", type=int, required=True)
+    run_parser.add_argument(
+        "--derivation-seed", type=int, required=True, help="the seed of every draw of the derivation, shared by every trial"
+    )
     run_parser.add_argument("--preparation-seconds", type=int, required=True)
     run_parser.add_argument("--batch-sequences", type=int, required=True)
     run_parser.add_argument("--continuous", action="store_true")

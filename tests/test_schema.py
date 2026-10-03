@@ -11,7 +11,7 @@ import support
 
 from graphspec import ENCODERS, TYPES, inspect
 from graphspec.build.parse import distinct
-from graphspec.engine import join, transform
+from graphspec.engine import join
 from graphspec.facts.stored import VERSION, Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -278,7 +278,7 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
     assert declared["encoding"]["relations"]["links"] == taken
     assert all(edges[name]["origin"] == ["base", "links"] for name in taken)
     assert declared["extras"]["base"] == ["visits", "owns", "member", "near", "located"] + taken
-    opened = Deriver(varied, "cpu", RESIDENT)
+    opened = Deriver(varied, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
     assert registry.widths == dict(person=11, place=2, item=7, team=2) and registry.encoding.width(["season"]) == 4
     assert registry.encoding.table == ("size", "speed", "colour", "open", "season") and registry.features == 15
@@ -366,7 +366,7 @@ def stated(tmp_path_factory):
 
 def test_a_graph_of_the_varied_schema_reads_back_from_the_bank_equal_to_what_was_stated(stated):
     bank, case = stated
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     assert set(opened.rows[0]) == {"graph", "kind", "time", "ticket", "week", "series", "y"}
     assert {row["series"] for row in opened.rows} == {synthetic.OUTCOME}
     assert opened.split["series"][0]["name"] == synthetic.OUTCOME and len(opened.split["series"]) == 1
@@ -384,7 +384,7 @@ def test_a_graph_of_the_varied_schema_reads_back_from_the_bank_equal_to_what_was
 
 
 def test_the_varied_graph_completes_one_fit_on_cpu(varied, varied_packed, tmp_path, statement):
-    opened, cfg = Deriver(varied, "cpu", RESIDENT), varied_packed["snapshot"]
+    opened, cfg = Deriver(varied, "cpu", support.SEED, RESIDENT), varied_packed["snapshot"]
     assert cfg["model"]["snapshot/spatial"] == "relational"
     blocks = opened.blocks(0, 4, cfg)
     started = time.perf_counter()
@@ -397,7 +397,7 @@ def test_the_varied_graph_completes_one_fit_on_cpu(varied, varied_packed, tmp_pa
 
 
 def test_a_schema_is_checked_after_an_operation_for_what_the_operation_changes(varied):
-    opened = Deriver(varied, "cpu", RESIDENT)
+    opened = Deriver(varied, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
     dense = support.shown(opened, 0).dense()
     conforms(dense, registry, ("time", "observations", "facts"))
@@ -440,7 +440,7 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
 def test_a_bank_of_version_7_is_refused_with_an_error_naming_its_version(ground):
     old = ground / "01_plain" / "bank"
     with pytest.raises(ValueError, match="has version 7; this code reads version 12"):
-        Deriver(old, "cpu", RESIDENT)
+        Deriver(old, "cpu", support.SEED, RESIDENT)
     with pytest.raises(ValueError, match="has version 7; this code reads version 12"):
         inspect(old)
 
@@ -459,7 +459,7 @@ def test_the_inputs_of_a_configuration_of_the_fixture_are_equal_under_the_names_
     for key, table in old.items():
         assert support.sorted_by_key(table).equals(support.sorted_by_key(new[key])), key
     held = fixture.arrays(ground / entry["folder"] / entry["files"]["input"], level)
-    opened = Deriver(root / "bank", "cpu", RESIDENT)
+    opened = Deriver(root / "bank", "cpu", support.SEED, RESIDENT)
     assert [graph["name"] for graph in opened.manifest["graphs"]] == entry["graphs"]
     for graph in opened.manifest["graphs"]:
         dense = support.shown(opened, graph["index"]).dense()
@@ -475,7 +475,7 @@ def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(g
     entries, joined = fixture.configurations(ground)
     entry = joined[place]
     source = {held["name"]: held for held in entries}[entry["configuration"]]["source"]
-    opened = Deriver(grounded[source["name"]] / "bank", "cpu", RESIDENT)
+    opened = Deriver(grounded[source["name"]] / "bank", "cpu", support.SEED, RESIDENT)
     started = time.perf_counter()
     rest = fixture.pipeline(opened.registry, entry)[1]
     spec = specs.configured(specs.settings(opened.registry, tuple(entry["groups"])), rest)
@@ -485,6 +485,6 @@ def test_the_joined_input_of_the_fixture_is_equal_under_the_names_of_version_8(g
     }
     members = [support.shown(opened, graph["index"]).dense() for graph in opened.manifest["graphs"]]
     held = fixture.joined(ground / entry["folder"] / entry["files"]["input"], source["level"], entry["members"])
-    joined = join.joined(members, support.fitted(opened), spec, transform.SEED)
+    joined = join.joined(members, support.fitted(opened), spec, support.SEED)
     assert fixture.differing(joined.arrays, held) == []
     LOG.info("fixture joined exit name=%s seconds=%.3f", entry["name"], time.perf_counter() - started)

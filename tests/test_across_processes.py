@@ -7,7 +7,7 @@ from functools import partial
 import numpy as np
 import pytest
 import registered
-from support import configuration
+from support import SEED, configuration
 
 from graphspec import (
     ABOUT,
@@ -208,11 +208,11 @@ def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_an
 ):
     bank, pools = spread
     assert [pool["max_workers"] for pool in pools] == [2]
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", SEED, RESIDENT)
     assert held.manifest["spec"]["encoding"]["states"] is None
     splits = copy.deepcopy(SPLITS)
     cfg = dict(configuration(held.registry, dict(view="snapshot"), GRAPH, 5, splits), epochs=1)
-    prepare(bank, cfg, 1, "cpu")
+    prepare(bank, cfg, 1, "cpu", SEED)
     assert held.fitted(cfg).encoding.states["size"] == dict(most=5.0)
     blocks = held.blocks(0, 4, cfg)
     given = state(dict(statement, workers=2, **splits))

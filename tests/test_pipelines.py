@@ -147,7 +147,7 @@ def listed(found):
 
 def test_a_pipeline_is_stated_as_its_operations_in_order_and_read_back_as_stated(bank, tmp_path, statement):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = opened.registry
     cfg = support.configuration(registry, dict(view="snapshot"), {"time/window": 2}, 5, SPLITS)
     assert [entry["operation"] for entry in cfg["pipeline"]] == list(support.SEVEN)
@@ -191,7 +191,7 @@ def test_a_pipeline_is_stated_as_its_operations_in_order_and_read_back_as_stated
 
 def test_a_search_draws_which_operations_are_present_and_their_parameters_never_their_order(bank):
     started = time.perf_counter()
-    registry = Deriver(bank, "cpu", RESIDENT).registry
+    registry = Deriver(bank, "cpu", support.SEED, RESIDENT).registry
     template = support.template()
     names = [parameter.name for parameter in pipeline.space(registry, template)]
     assert "pipeline/graphspec.window" in names and "pipeline/graphspec.window/time/window" in names
@@ -258,7 +258,7 @@ def sighted():
 
 
 def test_an_operation_receives_only_the_splits_it_states_it_may_read(bank, sighted):
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = support.configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS)
     registry, partitions = opened.fitted(cfg), opened.partitions(cfg)
     dense = support.shown(opened, 0).dense()
@@ -267,31 +267,36 @@ def test_an_operation_receives_only_the_splits_it_states_it_may_read(bank, sight
         KeyError, match="the operation test.blind reads the split trained, which it does not state it may read; "
         "it states none"
     ):
-        segments.whole(dense, {}, registry, blind, transform.SEED, GraphLimits("cpu"), partitions)
+        segments.whole(dense, {}, registry, blind, support.SEED, GraphLimits("cpu"), partitions)
     looking = pipeline.resolved(registry, [dict(operation="test.looking", parameters={})])
     with pytest.raises(KeyError, match="the operation test.looking reads the split scored, which it does not"):
-        segments.whole(dense, {}, registry, looking, transform.SEED, GraphLimits("cpu"), partitions)
+        segments.whole(dense, {}, registry, looking, support.SEED, GraphLimits("cpu"), partitions)
     rows = np.asarray(dense.label_row, np.int64)
     wanted = np.unique(np.asarray(dense.label_task)[partitions[rows] == 0])
     assert len(wanted) and np.array_equal(sighted["trained"], wanted)
 
 
 def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leaves_it(bank, tmp_path, monkeypatch):
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = support.configuration(opened.registry, dict(view="snapshot"), {}, 5, SPLITS)
     key = opened.identity(cfg)
     assert sorted(key) == [
         "added", "device", "entries", "groups", "pipeline", "schema", "seeds", "settings", "source", "splits",
         "versions",
     ]
-    assert key["schema"] == opened.manifest["spec_sha256"] and key["seeds"] == dict(derivation=transform.SEED)
+    assert key["schema"] == opened.manifest["spec_sha256"] and key["seeds"] == dict(derivation=support.SEED)
     assert key["added"] == []
     before = opened.variant(cfg)[0]
+    other = Deriver(bank, "cpu", support.SEED + 1, RESIDENT)
+    assert other.identity(cfg)["seeds"] == dict(derivation=support.SEED + 1) and other.variant(cfg)[0] != before
+    for wrong in (-1, 2**64, 1.5, None):
+        with pytest.raises(ValueError, match="the seed of derivation is a whole number from 0 to %d" % (2**64 - 1)):
+            Deriver(bank, "cpu", wrong, RESIDENT)
     edges = OPERATIONS.named("graphspec.edges")
     monkeypatch.setattr(edges, "version", edges.version + 1)
-    assert Deriver(bank, "cpu", RESIDENT).variant(cfg)[0] != before
+    assert Deriver(bank, "cpu", support.SEED, RESIDENT).variant(cfg)[0] != before
     monkeypatch.undo()
-    assert Deriver(bank, "cpu", RESIDENT).variant(cfg)[0] == before
+    assert Deriver(bank, "cpu", support.SEED, RESIDENT).variant(cfg)[0] == before
     module = tmp_path / "edited_probe.py"
     monkeypatch.syspath_prepend(str(tmp_path))
     stated = dict(cfg, pipeline=cfg["pipeline"] + [dict(operation="probe.edited", parameters={})])
@@ -304,7 +309,7 @@ def test_the_key_of_a_variant_holds_versions_and_no_file_and_editing_a_file_leav
                 importlib.reload(sys.modules["edited_probe"])
             else:
                 importlib.import_module("edited_probe")
-            roots.append(Deriver(bank, "cpu", RESIDENT).variant(stated)[0])
+            roots.append(Deriver(bank, "cpu", support.SEED, RESIDENT).variant(stated)[0])
     finally:
         OPERATIONS.held.pop("probe.edited", None)
         sys.modules.pop("edited_probe", None)
@@ -336,7 +341,7 @@ def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_varian
         NEGATIVES.register("test.parity", Rule(parities, parity, version))
         SEES.register("test.sees", seeing)
         try:
-            opened = Deriver(bank, "cpu", RESIDENT)
+            opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
             splits = dict(SPLITS, sees=dict(train=["test.sees"], validation=[]))
             values = {"negatives/of": "link:visits", "negatives/rule": "test.parity", "negatives/count": 2}
             model = {"view": "snapshot", "representations/test.probe": True}
@@ -377,10 +382,10 @@ def test_the_states_of_added_columns_are_fitted_again_when_a_version_the_key_of_
     for raised in (None, (transform, "VERSION"), (type(ENCODERS.named("standard")), "version")):
         if raised is not None:
             monkeypatch.setattr(*raised, getattr(*raised) + 1)
-        opened = Deriver(bank, "cpu", RESIDENT)
+        opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
         cfg = support.configuration(opened.registry, dict(view="snapshot"), values, 5, SPLITS, names)
         opened.fitted(cfg)
-        Deriver(bank, "cpu", RESIDENT).fitted(cfg)
+        Deriver(bank, "cpu", support.SEED, RESIDENT).fitted(cfg)
         found.append(sorted(path.name for path in (opened.viewed(cfg).folder / "added").glob("*.json")))
         counts.append(len(fits))
     assert "standard" not in {column["encoder"] for column in opened.registry.schema.columns.values()}
@@ -396,7 +401,7 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
     held, _ = fixture.configurations(ground)
     labels, pins = fixture.labels(ground), {}
     for entry in held:
-        opened = Deriver(grounded[entry["source"]["name"]] / "bank", "cpu", RESIDENT)
+        opened = Deriver(grounded[entry["source"]["name"]] / "bank", "cpu", support.SEED, RESIDENT)
         registry = support.fitted(opened)
         stated, rest = fixture.pipeline(opened.registry, entry)
         recorded = fixture.spec(entry["spec"])
@@ -416,7 +421,7 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
         for name in entry["graphs"]:
             graph = Dense(name, [], len(stored[0][name]["period"]), **stored[0][name])
             for index, step in enumerate(steps):
-                graph = segments.whole(graph, {}, registry, (step,), transform.SEED, GraphLimits("cpu"), None)
+                graph = segments.whole(graph, {}, registry, (step,), support.SEED, GraphLimits("cpu"), None)
                 if fixture.holds(names, index + 1):
                     stage = Path(entry["files"]["stages"][index]).stem
                     replaced = fixture.drawn(entry, stage)
@@ -427,7 +432,7 @@ def test_the_seven_in_todays_order_give_the_arrays_of_the_fixture_after_each_sta
                     if replaced:
                         found.setdefault(stage, []).append(keyed.pinned(graph, registry, replaced))
             derivation = Derivation.begun(
-                [graph], {}, registry, (), spec, chosen, transform.SEED, GraphLimits("cpu"), None, 0
+                [graph], {}, registry, (), spec, chosen, support.SEED, GraphLimits("cpu"), None, 0
             )
             arrays = derivation.continued(graph.steps, None).arrays()
             now, then = listed(fixture.content(arrays)), listed(fixture.content(represented[name]))
@@ -470,7 +475,7 @@ def test_a_pipeline_in_another_order_or_with_an_operation_twice_completes_one_fi
     from tuning.families.model_spec import configuration, configured, groups
 
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = opened.registry
     values = {"time/window": 2, "derive/hops": 2, "edges/visits/persistence": 2, "time/history": 4}
     stated, rest = support.pipelined(registry, values, names, labels)

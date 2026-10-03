@@ -12,7 +12,7 @@ from registered import HUB, RUNNING, TALLY
 from conftest import SPLITS
 from graphspec import OPERATIONS, REPRESENTATIONS
 from graphspec.budgets import GraphLimits
-from graphspec.engine import join, schedule, segments, transform
+from graphspec.engine import join, schedule, segments
 from graphspec.engine.edits import Edit, edited, sliced
 from graphspec.engine.segments import Derivation
 from graphspec.engine.stitch import Appender
@@ -198,7 +198,7 @@ def shortened(graph, stop):
 @GROUP
 @pytest.mark.parametrize("draw", range(4))
 def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_join(bank, draw):
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
     rng = np.random.default_rng(draw)
     template = [dict(operation=name) for name in support.SEVEN]
@@ -216,12 +216,12 @@ def test_a_joined_group_derived_in_segments_at_any_times_equals_its_physical_joi
     )
     graphs = [support.shown(opened, index).dense() for index in range(4)]
     graphs = [shortened(graph, int(rng.integers(1, graph.steps + 1))) for graph in graphs]
-    physical = join.joined(graphs, registry, spec, transform.SEED)
+    physical = join.joined(graphs, registry, spec, support.SEED)
     whole = dict(spec, **{"graphs/join": "separate"})
     limits = GraphLimits("cpu")
-    reference = Derivation.begun([physical], {}, grown, steps, whole, specs.GROUPS, transform.SEED, limits, None, 0)
+    reference = Derivation.begun([physical], {}, grown, steps, whole, specs.GROUPS, support.SEED, limits, None, 0)
     reference = reference.continued(physical.steps, None)
-    line = Derivation.begun(graphs, {}, grown, steps, spec, specs.GROUPS, transform.SEED, limits, None, 0)
+    line = Derivation.begun(graphs, {}, grown, steps, spec, specs.GROUPS, support.SEED, limits, None, 0)
     for high in sorted(set(rng.integers(1, physical.steps, 3).tolist())) + [physical.steps]:
         line = line.continued(high, None)
     derived, expected = line.derived(), reference.derived()
@@ -242,12 +242,12 @@ def renamed(second, registry):
 @GROUP
 def test_contraction_merge_and_difference_in_a_joined_group_equal_the_physical_join_of_its_graphs(bank):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
     graphs = [support.shown(opened, index).dense() for index in range(MEMBERS)]
     names = [graph["name"] for graph in opened.manifest["graphs"]]
     spec = specs.configured(specs.settings(registry, specs.GROUPS), dict(SETTINGS, **JOINED))
-    physical = join.joined(graphs, registry, spec, transform.SEED)
+    physical = join.joined(graphs, registry, spec, support.SEED)
     bounds = np.cumsum([member.steps for member in graphs])
     cuts = sorted(set(bounds[:-1].tolist()) | set((bounds[:-1] + 1).tolist())) + [physical.steps]
     separate, counts, shared = dict(spec, **{"graphs/join": "separate"}), [], []
@@ -263,12 +263,12 @@ def test_contraction_merge_and_difference_in_a_joined_group_equal_the_physical_j
             for entry in entries
             if "graph" in entry
         }
-        whole = {name: [join.joined(held, registry, spec, transform.SEED)] for name, held in beside.items()}
+        whole = {name: [join.joined(held, registry, spec, support.SEED)] for name, held in beside.items()}
         reference = Derivation.begun(
-            [physical], whole, grown, steps, separate, specs.GROUPS, transform.SEED, LIMITS, None, 0
+            [physical], whole, grown, steps, separate, specs.GROUPS, support.SEED, LIMITS, None, 0
         )
         reference = reference.continued(physical.steps, None)
-        line = Derivation.begun(graphs, beside, grown, steps, spec, specs.GROUPS, transform.SEED, LIMITS, None, 0)
+        line = Derivation.begun(graphs, beside, grown, steps, spec, specs.GROUPS, support.SEED, LIMITS, None, 0)
         for high in cuts:
             line = line.continued(high, None)
         derived, expected = line.derived(), reference.derived()
@@ -374,22 +374,22 @@ def edits(graph, moment):
 
 
 def begun(graph, beside, registry, steps, spec, room):
-    return Derivation.begun([graph], beside, registry, steps, spec, GROUPS, transform.SEED, LIMITS, None, room)
+    return Derivation.begun([graph], beside, registry, steps, spec, GROUPS, support.SEED, LIMITS, None, room)
 
 
 @GROUP
 def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_separately(bank, registered):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     graph = support.shown(opened, 0).dense()
     registry, steps, spec = every(opened, support.fitted(opened), False, VALUES)
     beside = seconds(opened, steps, [0])
     assert sorted(step.operation.name for step in steps) == sorted(OPERATIONS.names())
     assert sorted(GROUPS) == sorted(REPRESENTATIONS.names())
-    widened = segments.whole(graph, {}, registry, (), transform.SEED, LIMITS, None)
+    widened = segments.whole(graph, {}, registry, (), support.SEED, LIMITS, None)
     for step in steps:
         given = {name: held[0] for name, held in beside.items() if name == step.graph}
-        alone, drawn = segments.apart(graph, given, registry, (step,), transform.SEED, LIMITS, None)
+        alone, drawn = segments.apart(graph, given, registry, (step,), support.SEED, LIMITS, None)
         changed = [name for name in DENSE if not identical(alone.arrays[name], widened.arrays[name])]
         assert changed or len(drawn["step"]), step.name
     moment = graph.steps - 1
@@ -425,7 +425,7 @@ def test_a_fork_its_sibling_forks_and_the_trunk_equal_the_whole_graphs_derived_s
         joined,
         stated,
         GROUPS,
-        transform.SEED,
+        support.SEED,
         LIMITS,
         None,
         0,
@@ -444,7 +444,7 @@ def tokened(derived, drawn):
 @GROUP
 def test_no_operation_reads_or_offers_the_relations_negatives_add_as_candidates(bank, registered):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     graph, registry = support.shown(opened, 0).dense(), support.fitted(opened)
     graphs = {operation: opened.manifest["graphs"][index]["name"] for operation, index in SECONDS.items()}
     drawing = support.pipelined(registry, VALUES, ("graphspec.negatives",))[0]
@@ -452,14 +452,14 @@ def test_no_operation_reads_or_offers_the_relations_negatives_add_as_candidates(
     grown = pipeline.grown(registry, first, None)
     assert grown.candidates and [edge.name for edge in grown.edges] == [edge.name for edge in registry.edges]
     assert support.unoffered(registry, grown) == []
-    drawn = tokened(*segments.apart(graph, {}, grown, first, transform.SEED, LIMITS, None))
+    drawn = tokened(*segments.apart(graph, {}, grown, first, support.SEED, LIMITS, None))
     assert len(drawn["step"])
     for name in sorted(set(OPERATIONS.names()) - {"graphspec.negatives"}):
         entry = support.pipelined(registry, VALUES, (name,), None, graphs)[0]
         given = {graphs[name]: support.beside(opened, 0, graphs[name])} if name in graphs else {}
         alone, after = pipeline.resolved(registry, entry), pipeline.resolved(registry, drawing + entry)
-        plain = segments.whole(graph, given, pipeline.grown(registry, alone, None), alone, transform.SEED, LIMITS, None)
-        found, held = segments.apart(graph, given, pipeline.grown(registry, after, None), after, transform.SEED, LIMITS, None)
+        plain = segments.whole(graph, given, pipeline.grown(registry, alone, None), alone, support.SEED, LIMITS, None)
+        found, held = segments.apart(graph, given, pipeline.grown(registry, after, None), after, support.SEED, LIMITS, None)
         assert unequal(found.arrays, plain.arrays, DENSE_READ) == [], name
         assert unequal(tokened(found, held), drawn, {}) == [] and unequal(plain.arrays, graph.arrays, DENSE_READ), name
     LOG.info("candidates unread exit operations=%d seconds=%.3f", len(OPERATIONS.names()), time.perf_counter() - started)
@@ -498,7 +498,7 @@ def emptied(graph):
 @GROUP
 def test_every_operation_derives_steps_that_hold_nothing_in_segments_as_it_derives_them_whole(bank, registered):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     graph = emptied(support.shown(opened, 0).dense())
     registry, steps, spec = every(opened, support.fitted(opened), False, EMPTIED)
     beside = {name: [emptied(held[0])] for name, held in seconds(opened, steps, [0]).items()}
@@ -545,7 +545,7 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     bank, registered
 ):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = support.fitted(opened)
     shown = [sliced(support.shown(opened, index).dense(), 0, SPAN) for index in range(MEMBERS)]
     graph = shown[0]
@@ -588,10 +588,10 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
             picked = sorted(rng.choice(MEMBERS, int(rng.integers(2, MEMBERS + 1)), replace=False).tolist())
             members = [sliced(shown[index], 0, int(rng.integers(2, SPAN + 1))) for index in picked]
             drawn = dict(joined, **{name: bool(rng.integers(2)) for name in joined if name.startswith("graphs/connect/")})
-            physical = join.joined(members, registry, drawn, transform.SEED)
+            physical = join.joined(members, registry, drawn, support.SEED)
             whole = begun(physical, {}, grown, steps, dict(drawn, **{"graphs/join": "separate"}), 0)
             whole = whole.continued(physical.steps, None)
-            line = Derivation.begun(members, {}, grown, steps, drawn, GROUPS, transform.SEED, LIMITS, None, 0)
+            line = Derivation.begun(members, {}, grown, steps, drawn, GROUPS, support.SEED, LIMITS, None, 0)
             total = physical.steps
         else:
             given = {name: held for name, held in beside.items() if name in {step.graph for step in steps}}
@@ -656,7 +656,7 @@ def estimated(found, count):
 @GROUP
 def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_last_step(bank, registered):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     graph = support.shown(opened, 1).dense()
     registry, steps, spec = every(opened, support.fitted(opened), False, VALUES)
     beside = seconds(opened, steps, [1])
@@ -692,7 +692,7 @@ def test_n_edits_at_one_time_take_one_derivation_of_the_history_and_n_of_the_las
 @pytest.mark.xdist_group("workers")
 def test_the_arrays_of_a_joined_group_are_equal_for_one_and_two_workers(bank, registered, tmp_path):
     started = time.perf_counter()
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = support.configuration(opened.registry, dict(view="snapshot"), support.several(opened.registry), 5, SPLITS)
     paths = [opened.view(index, cfg) for index in range(2)]
     registry, steps, spec = every(opened, support.fitted(opened), True, VALUES)
@@ -708,10 +708,10 @@ def test_the_arrays_of_a_joined_group_are_equal_for_one_and_two_workers(bank, re
         destination=folders["two"],
     )
     with ThreadPoolExecutor(1) as aside:
-        both = aside.submit(schedule.variants, [job], registry, steps, spec, GROUPS, transform.SEED, 2, LIMITS, None)
+        both = aside.submit(schedule.variants, [job], registry, steps, spec, GROUPS, support.SEED, 2, LIMITS, None)
         members = [Graph.load(path, mapped=True) for path in paths]
         segments.variant(
-            members, seconds, registry, steps, spec, GROUPS, transform.SEED, LIMITS, None, folders["one"]
+            members, seconds, registry, steps, spec, GROUPS, support.SEED, LIMITS, None, folders["one"]
         )
         both.result()
     one, two = Arrays(folders["one"]), Arrays(folders["two"])

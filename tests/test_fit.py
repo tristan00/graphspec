@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from support import SEED
 
 from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
@@ -27,6 +28,7 @@ def arguments(bank, output, statement):
         output=str(output),
         device=statement["device"],
         seed=statement["seed"],
+        derivation_seed=statement["derivation_seed"],
         seconds=statement["seconds"],
         preparation_seconds=statement["preparation_seconds"],
         workers=statement["workers"],
@@ -49,7 +51,7 @@ def arguments(bank, output, statement):
 
 
 def test_synthetic_fit_completes_on_cpu(bank, packed, tmp_path, statement):
-    opened, cfg = Deriver(bank, "cpu", RESIDENT), packed["snapshot"]
+    opened, cfg = Deriver(bank, "cpu", SEED, RESIDENT), packed["snapshot"]
     blocks = opened.blocks(0, 4, cfg)
     started = time.perf_counter()
     result = fit(bank, tmp_path, cfg, blocks, 16, started + statement["seconds"], state(statement))
@@ -102,9 +104,11 @@ def test_a_bank_opened_to_read_cannot_derive_and_deriving_states_its_device(bank
         assert not hasattr(opened, name) and hasattr(Deriver, name)
     with pytest.raises(TypeError, match="device"):
         Deriver(bank)
+    with pytest.raises(TypeError, match="seed"):
+        Deriver(bank, "cpu", resident=RESIDENT)
     for device in (None, "gpu", 0):
         with pytest.raises(ValueError, match="the device of graph limits is %r" % (device,)):
-            Deriver(bank, device, RESIDENT)
+            Deriver(bank, device, SEED, RESIDENT)
 
 
 def test_the_key_of_a_variant_holds_the_device(bank):
@@ -113,7 +117,7 @@ def test_the_key_of_a_variant_holds_the_device(bank):
     from conftest import SPLITS
 
     cfg = configuration(Bank(bank).registry, dict(view="snapshot"), {"time/history": 4}, 5, SPLITS)
-    central, graphic = Deriver(bank, "cpu", RESIDENT), Deriver(bank, "cuda", RESIDENT)
+    central, graphic = Deriver(bank, "cpu", SEED, RESIDENT), Deriver(bank, "cuda", SEED, RESIDENT)
     left, right = central.identity(cfg), graphic.identity(cfg)
     assert {name for name in left if left[name] != right[name]} == {"device"}
     assert sorted(left) == [
@@ -131,9 +135,9 @@ def test_the_key_of_a_variant_holds_the_device(bank):
     ]
     assert central.variant(cfg)[0].parent == central.cache / "variants"
     assert central.variant(cfg)[0] != graphic.variant(cfg)[0]
-    assert central.variant(cfg)[0] == Deriver(bank, "cpu", RESIDENT).variant(cfg)[0]
+    assert central.variant(cfg)[0] == Deriver(bank, "cpu", SEED, RESIDENT).variant(cfg)[0]
     with pytest.raises(ValueError, match="the device of graph limits is None"):
-        Deriver(bank, None, RESIDENT)
+        Deriver(bank, None, SEED, RESIDENT)
     assert Bank(bank).joining(cfg) is False
 
 
@@ -175,6 +179,10 @@ def test_fit_with_a_field_absent_stops_naming_the_field(tmp_path, statement, nam
         ("seed", 2**32),
         ("seed", 1.5),
         ("seed", True),
+        ("derivation_seed", -1),
+        ("derivation_seed", 2**64),
+        ("derivation_seed", 1.5),
+        ("derivation_seed", True),
         ("workers", 0),
         ("workers", os.cpu_count() + 1),
         ("workers", 1.0),

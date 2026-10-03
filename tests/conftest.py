@@ -252,6 +252,8 @@ def stated(directory, view):
 
 
 def running(directory, view):
+    from support import SEED
+
     from graphspec.infra.arrays import RESIDENT
     from tuning.bank.bank import Deriver
     from tuning.bank.variants import prepare
@@ -259,8 +261,8 @@ def running(directory, view):
 
     started = time.perf_counter()
     cfg = stated(directory, view)
-    packer = Packer(Deriver(directory, "cpu", RESIDENT), cfg, "cpu", 1)
-    prepare(directory, cfg, 1, "cpu")
+    packer = Packer(Deriver(directory, "cpu", SEED, RESIDENT), cfg, "cpu", 1)
+    prepare(directory, cfg, 1, "cpu", SEED)
     LOG.debug("running exit view=%s seconds=%.4f", view, time.perf_counter() - started)
     return cfg, packer
 
@@ -300,12 +302,15 @@ def packers(bank):
 
 @pytest.fixture
 def statement():
+    from support import SEED
+
     from tuning.statement import VERSION
 
     return dict(
         version=VERSION,
         device="cpu",
         seed=5,
+        derivation_seed=SEED,
         seconds=30,
         preparation_seconds=300,
         workers=1,

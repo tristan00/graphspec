@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 import pytest
+from support import SEED
 
 from graphspec.infra.files import JsonCache, read_json, sha256_json, write_json
 from tuning.fits.budget import FitBudget
@@ -150,8 +151,8 @@ def patch_execution(monkeypatch, directory, events, cleanup_error=False):
                 raise RuntimeError("OS refused process termination")
 
     class Deriver:
-        def __init__(self, path, device, resident):
-            assert device == "cpu"
+        def __init__(self, path, device, seed, resident):
+            assert device == "cpu" and seed == SEED
 
         def stamp(self, config):
             return directory

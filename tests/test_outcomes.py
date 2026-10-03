@@ -145,7 +145,7 @@ def banks():
 @timed("outcomes.opened")
 def opened(banks, name):
     if name not in OPENED:
-        OPENED[name] = Deriver(banks[name], "cpu", RESIDENT)
+        OPENED[name] = Deriver(banks[name], "cpu", support.SEED, RESIDENT)
     return OPENED[name]
 
 
@@ -501,7 +501,7 @@ def test_concordance_without_a_comparable_pair_among_the_tasks_scored_stops_a_fi
     from tuning.measures.measures import measurable
 
     started = time.perf_counter()
-    held = Deriver(banks["stated"], "cpu", RESIDENT)
+    held = Deriver(banks["stated"], "cpu", support.SEED, RESIDENT)
     measurable(MEASURES, held, ["validation"])
     held.fields["happened"][held.split["indices"]["validation"]] = False
     with pytest.raises(

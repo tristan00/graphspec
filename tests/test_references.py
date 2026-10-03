@@ -6,10 +6,10 @@ import time
 import pytest
 import support
 import torch
+from support import SEED
 
 from conftest import shared
 from graphspec.engine.segments import Derivation
-from graphspec.engine.transform import SEED
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
@@ -213,7 +213,7 @@ def banks():
 @timed("references.opened")
 def opened(banks, name):
     if name not in OPENED:
-        OPENED[name] = Deriver(banks[name], "cpu", RESIDENT)
+        OPENED[name] = Deriver(banks[name], "cpu", SEED, RESIDENT)
     return OPENED[name]
 
 

@@ -76,11 +76,11 @@ def settled(registry, model, given):
 
 @exclusive
 @timed("check.check")
-def check(directory, output, device, seed, splits, loss, pipeline_path, settings_path, graph=None):
+def check(directory, output, device, seed, derivation_seed, splits, loss, pipeline_path, settings_path, graph=None):
     entered = time.perf_counter()
     output = output_path(output)
     compute.reserve(device)
-    bank = Deriver(directory, device, RESIDENT)
+    bank = Deriver(directory, device, derivation_seed, RESIDENT)
     loss = Summed(loss, bank.registry.schema.targets())
     pipeline, given = read_json(pipeline_path), read_json(settings_path)
     models = samples(bank.registry)
@@ -124,6 +124,7 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--derivation-seed", type=int, required=True, help="the seed of every draw of the derivation")
     parser.add_argument("--trained", nargs="+", required=True)
     parser.add_argument("--scored", nargs="+", required=True)
     parser.add_argument("--sees", nargs="+", required=True)
@@ -145,6 +146,7 @@ def main():
         args.output,
         args.device,
         args.seed,
+        args.derivation_seed,
         splits,
         paired(args.loss),
         args.pipeline,

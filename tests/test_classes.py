@@ -140,7 +140,7 @@ def read(held):
 
 def test_every_kind_over_classes_reads_back_as_stated_with_its_classes_as_its_series(classes):
     bank, case = classes
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     schema = held.registry.schema
     assert schema.targets() == tuple(kind for kind, _, _ in KINDS.values())
     assert schema.series() == ("size", *GRADES, *TAGS, *TREES) and schema.target_columns() == dict(series="STRING")
@@ -290,7 +290,7 @@ def test_what_matures_of_a_kind_over_classes_is_a_column_or_a_column_per_class_o
 def test_a_bank_of_a_number_and_kinds_over_classes_completes_one_fit(classes, tmp_path, statement, monkeypatch):
     bank = classes[0]
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     losses = {"number": "squared", "class": "entropy", "classes": "binary", "proportions": "entropy"}
     given = dict(statement, loss=losses, measures=["entropy", "accuracy", "mse", "binary", "divergence"])
     started = time.perf_counter()
@@ -329,7 +329,7 @@ def observed(held, cfg, name, moment, key, columns):
 def test_every_kind_over_classes_matures_into_its_own_form_once_known(classes, monkeypatch):
     bank, case = classes
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     tiers = held.registry.encoding.dictionaries["tier"]
     assert tiers == sorted(GRADES)
     for place, graph in enumerate(case["graphs"]):
@@ -345,7 +345,7 @@ def test_every_kind_over_classes_matures_into_its_own_form_once_known(classes, m
 
 def test_the_batch_a_model_reads_holds_no_outcome_of_a_number_or_a_kind_over_classes(classes, monkeypatch):
     started = time.perf_counter()
-    held = Deriver(classes[0], "cpu", RESIDENT)
+    held = Deriver(classes[0], "cpu", support.SEED, RESIDENT)
     assert held.registry.schema.targets() == ("number", "class", "classes", "proportions")
     assert support.outcomeless(held, inline(classes[0], ("snapshot",), monkeypatch)["snapshot"]) == ([], True)
     LOG.info("outcomes of classes exit seconds=%.3f", time.perf_counter() - started)
@@ -359,7 +359,7 @@ def test_a_memory_reads_a_window_alone_that_holds_no_event(classes):
     from tuning.families.models import build as network
 
     started = time.perf_counter()
-    held = Deriver(classes[0], "cpu", RESIDENT)
+    held = Deriver(classes[0], "cpu", support.SEED, RESIDENT)
     values = {"view": "memory", "memory/embedding": "state", "hidden": 4}
     cfg = support.configuration(held.registry, values, {"time/history": 2}, 5, SPLITS)
     blocks = [block for partition in (0, 1) for block in held.blocks(partition, 2, cfg)]

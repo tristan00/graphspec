@@ -9,7 +9,7 @@ import support
 from conftest import SPLITS, Inline
 from graphspec import ABOUT, HELD, STORAGE, inspect
 from graphspec.budgets import GraphLimits
-from graphspec.engine import segments, transform
+from graphspec.engine import segments
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -284,7 +284,7 @@ def present(held, graph, relation):
 
 
 def test_sets_edges_about_edges_and_held_graphs_read_back_from_the_bank_equal_to_what_was_stated(bank):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     schema = held.registry.schema
     assert held.manifest["version"] == 12 and schema.mapping() == stated()
     found, wanted = support.read_back(held), support.meant(case())
@@ -355,7 +355,7 @@ def test_the_schema_states_sets_edges_about_edges_and_held_graphs_and_refuses_wh
 
 
 def test_a_set_edge_and_an_edge_about_it_are_nodes_and_edges_under_the_node_form(bank):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = held.registry
     facts = Facts.load(held.truth(0))
     graph = shown(held, facts, "node")
@@ -390,7 +390,7 @@ def test_a_set_edge_and_an_edge_about_it_are_nodes_and_edges_under_the_node_form
 
 
 def test_a_set_edge_is_one_edge_per_pair_of_members_under_the_pairs_form(bank):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     registry = held.registry
     facts = Facts.load(held.truth(1))
     graph = shown(held, facts, "pairs")
@@ -421,7 +421,7 @@ def test_a_set_edge_is_one_edge_per_pair_of_members_under_the_pairs_form(bank):
 
 def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, monkeypatch):
     monkeypatch.setattr(HELD, "held", dict(HELD.held))
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), STORED["node"], 5, SPLITS)
     registry = held.fitted(cfg)
     encoding = registry.encoding
@@ -477,7 +477,7 @@ def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, 
 
 
 def test_a_column_no_view_of_the_statement_shows_is_not_encoded_and_a_shown_one_without_values_stops(bank):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     for form, width in (("node", 2), ("pairs", 0)):
         cfg = configuration(held.registry, dict(view="snapshot"), STORED[form], 5, SPLITS)
         registry = held.fitted(cfg)
@@ -493,14 +493,14 @@ def test_a_column_no_view_of_the_statement_shows_is_not_encoded_and_a_shown_one_
 
 
 def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edges(bank, monkeypatch):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), STORED["node"], 5, SPLITS)
     registry = held.fitted(cfg)
     (index,) = [entry["index"] for entry in held.viewed(cfg).graphs if entry["source"] == 0]
     dense = Graph.load(held.view(index, cfg)).dense()
     values = {"nodes/point/filter": "degree", "nodes/point/min_degree": 2, **STORED["node"]}
     steps = support.steps(registry, values)[0]
-    derived = segments.whole(dense, {}, registry, steps, transform.SEED, GraphLimits("cpu"), None)
+    derived = segments.whole(dense, {}, registry, steps, support.SEED, GraphLimits("cpu"), None)
     points = registry.kind("point")
     before = int((np.asarray(dense.kinds)[dense.obs_entity] == points).sum())
     after = int((np.asarray(derived.kinds)[derived.obs_entity] == points).sum())
@@ -521,14 +521,14 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
         match="the count nodes/degree of the operation graphspec.nodes counts degree and refuses the edges "
         "joining sets of the kind gathering",
     ):
-        segments.whole(dense, {}, registry, steps, transform.SEED, GraphLimits("cpu"), None)
+        segments.whole(dense, {}, registry, steps, support.SEED, GraphLimits("cpu"), None)
     monkeypatch.setattr(NODES, "requires", (Count("nodes/degree", "degree", degree.active, "stored", "refuses"),))
     with pytest.raises(
         ValueError,
         match="nodes/degree of the operation graphspec.nodes counts degree and refuses the edges of the table "
         "note, which are about edges",
     ):
-        segments.whole(dense, {}, registry, steps, transform.SEED, GraphLimits("cpu"), None)
+        segments.whole(dense, {}, registry, steps, support.SEED, GraphLimits("cpu"), None)
 
 
 @timed("sets.members_of")
@@ -551,7 +551,7 @@ def drawn_members(drawn, codes, step):
 
 def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_present_set(bank):
     started = time.perf_counter()
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = configuration(held.registry, dict(view="snapshot"), STORED["node"], 5, SPLITS)
     registry = held.fitted(cfg)
     (index,) = [entry["index"] for entry in held.viewed(cfg).graphs if entry["source"] == 0]
@@ -562,7 +562,7 @@ def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_
     lead = grown.by_candidate["negatives.lead"]
     assert grown.nodes[-1] == "negatives" and lead.pairs == (("negatives", "point"), ("negatives", "place"))
     assert "negatives.lead" not in grown.by_name and support.unoffered(registry, grown) == []
-    derived, candidates = segments.apart(dense, {}, grown, steps, transform.SEED, GraphLimits("cpu"), None)
+    derived, candidates = segments.apart(dense, {}, grown, steps, support.SEED, GraphLimits("cpu"), None)
     roles = ("lead", "other")
     stored = {grown.code("gathering." + role): role for role in roles}
     made = {grown.by_candidate["negatives." + role].code: role for role in roles}
@@ -605,7 +605,7 @@ def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_
     (index,) = [entry["index"] for entry in held.viewed(paired).graphs if entry["source"] == 0]
     flat = Graph.load(held.view(index, paired)).dense()
     with pytest.raises(ValueError, match="draws negative sets of gathering among the sets stored as nodes"):
-        segments.whole(flat, {}, grown, steps, transform.SEED, GraphLimits("cpu"), None)
+        segments.whole(flat, {}, grown, steps, support.SEED, GraphLimits("cpu"), None)
     LOG.info("negative sets exit drawn=%d seconds=%.3f", drawn, time.perf_counter() - started)
 
 
@@ -621,7 +621,7 @@ def packed(monkeypatch):
 
 @pytest.mark.parametrize("form", sorted(FORMS))
 def test_each_form_of_storage_completes_one_fit_on_cpu(bank, packed, tmp_path, statement, form):
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     cfg = dict(
         configuration(held.registry, dict(view="snapshot"), {"time/history": 4, **STORED[form]}, 5, SPLITS),
         epochs=1,

@@ -265,7 +265,7 @@ def banks():
 @timed("nodes.opened")
 def opened(banks, name):
     if name not in OPENED:
-        OPENED[name] = Deriver(banks[name], "cpu", RESIDENT)
+        OPENED[name] = Deriver(banks[name], "cpu", support.SEED, RESIDENT)
     return OPENED[name]
 
 
@@ -532,7 +532,6 @@ def test_a_link_from_or_to_a_node_not_observed_at_its_task_is_refused_when_the_b
 @timed("nodes.passed")
 def passed(held, cfg):
     from graphspec.engine import segments
-    from graphspec.engine.transform import SEED
     from graphspec.operations.rows import select
     from graphspec.schema.references import MEMBERS
 
@@ -540,7 +539,7 @@ def passed(held, cfg):
     for entry in held.viewed(cfg).graphs:
         dense = Graph.load(held.view(entry["index"], cfg)).dense()
         dense = select(dense, MEMBERS, np.asarray(dense.member_name) < len(registry.references))
-        derived = segments.whole(dense, {}, registry, steps, SEED, held.limits(), held.partitions(cfg))
+        derived = segments.whole(dense, {}, registry, steps, held.seed, held.limits(), held.partitions(cfg))
         structural = ~np.asarray(derived.obs_anchor, bool)
         tokens = (np.asarray(derived.entity_token, np.uint64) & np.uint64(MASK)).astype(np.int64)
         result[entry["index"]] = set(

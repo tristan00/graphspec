@@ -26,6 +26,7 @@ from graphspec.schema.schema import (
 from graphspec.schema.targets import TARGETS
 
 LOG = logging.getLogger(__name__)
+SEED = 0x6772617068
 SEVEN = (
     "graphspec.periods",
     "graphspec.window",

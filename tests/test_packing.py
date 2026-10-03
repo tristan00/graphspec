@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from support import SEED
 
 from graphspec.infra.arrays import Bundle, Slot, shared, slot_bytes, views
 from tuning.batches.batching import Shuffle, batches, identities, recipe_batch
@@ -181,7 +182,7 @@ def test_mixed_nodes_without_an_entity_carry_no_token(bank):
     from tuning.bank.bank import Deriver
     from tuning.batches.inputs import recipe
 
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", SEED, RESIDENT)
     cfg = configuration(
         opened.registry, {"view": "mixed", "keys/embedding": True}, {"time/history": 4}, 5, SPLITS
     )

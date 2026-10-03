@@ -275,7 +275,7 @@ def test_a_statement_names_a_loss_for_every_kind_of_target_of_the_bank_and_measu
 
 def test_a_number_and_a_path_in_one_bank_read_back_as_stated_and_are_scaled_per_series(numbered):
     bank, stated = numbered
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     schema = held.registry.schema
     assert schema.targets() == ("number", "path") and schema.series() == ("size", "near", "far")
     assert schema.measured() == dict(size="number", near="path", far="path")
@@ -332,7 +332,7 @@ def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_t
 ):
     bank, stated = numbered
     cfg = inline(bank, ("snapshot",), monkeypatch)["snapshot"]
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     given = dict(statement, loss=dict(number="balanced", path="balanced"), measures=["balanced", "mse"])
     started = time.perf_counter()
     fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
@@ -358,7 +358,7 @@ def test_the_batch_a_model_reads_holds_the_inputs_of_a_path_and_of_a_registered_
 ):
     started = time.perf_counter()
     for (bank, _), kinds, read in ((numbered, ("number", "path"), ["field/tau"]), (shared, ("share",), ["field/trials"])):
-        held = Deriver(bank, "cpu", RESIDENT)
+        held = Deriver(bank, "cpu", support.SEED, RESIDENT)
         assert held.registry.schema.targets() == kinds
         assert support.outcomeless(held, inline(bank, ("snapshot",), monkeypatch)["snapshot"]) == (read, True)
     LOG.info("outcomes of numbers, paths and shares exit seconds=%.3f", time.perf_counter() - started)
@@ -368,7 +368,7 @@ def test_a_kind_of_target_registered_by_a_test_builds_reads_back_and_completes_o
     shared, tmp_path, statement, monkeypatch
 ):
     bank, stated = shared
-    held = Deriver(bank, "cpu", RESIDENT)
+    held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     schema = held.registry.schema
     assert schema.targets() == ("share",) and schema.target_columns() == dict(trials="FLOAT")
     tasks = stated["graphs"][0]["tasks"]

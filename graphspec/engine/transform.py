@@ -10,8 +10,7 @@ from graphspec.views.graph import conforms, referring, unobserved, unresolved, v
 from graphspec.views.visible import unstated
 
 LOG = logging.getLogger(__name__)
-SEED = 0x6772617068
-VERSION = 41
+VERSION = 42
 REMOVES = "references"
 
 

@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 
-from graphspec.engine.transform import SEED
 from graphspec.infra.timing import timed
 from graphspec.representations.groups import tick_span
 from tuning.families.periods import lookback
@@ -173,7 +172,7 @@ def history_tokens(b, window):
             cfg["model"]["tree/depth"],
             window.registry,
             cfg["graph"],
-            SEED,
+            window.seed,
             window.tokens,
         )
         return

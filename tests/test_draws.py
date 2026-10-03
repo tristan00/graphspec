@@ -10,7 +10,6 @@ from keyed import Keys, Spaces, dense_keyed, differing, labelled, rows, through,
 
 from conftest import SPLITS
 from graphspec.budgets import GraphLimits
-from graphspec.engine import transform
 from graphspec.engine.segments import Derivation
 from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
@@ -220,7 +219,7 @@ def components(graph, registry):
 
 def variant(members, registry, steps, spec, cuts, limits):
     started = time.perf_counter()
-    derivation = Derivation.begun(members, {}, registry, steps, spec, GROUPS, transform.SEED, limits, None, 0)
+    derivation = Derivation.begun(members, {}, registry, steps, spec, GROUPS, support.SEED, limits, None, 0)
     for high in cuts + [sum(member.steps for member in members)]:
         derivation = derivation.continued(high, None)
     result = derivation.derived(), derivation.arrays()
@@ -262,7 +261,7 @@ def sampled(found, registry, order):
     keys = Keys(dense, registry)
     spaces, held = Spaces(arrays, keys), Held(arrays)
     spec = {"neighbors/order": order, "neighbors/decay": 0.5}
-    window = SimpleNamespace(graph=0, held=held, start=0, registry=registry, cfg=dict(graph=spec))
+    window = SimpleNamespace(graph=0, held=held, start=0, registry=registry, cfg=dict(graph=spec), seed=support.SEED)
     owner, kinds = arrays["member_row"], arrays["row_kind"]
     pair = inputs.paired(registry, kinds, owner, arrays["member_name"])
     b = dict(
@@ -276,7 +275,7 @@ def sampled(found, registry, order):
     history = inputs.history_inputs(window, b, SAMPLED, True, None)
     cutoffs = b["row_steps"][owner] * 2 + 1
     tree = inputs.tree(
-        0, held, b["member_entity"].astype(np.int64), cutoffs, 0, SAMPLED, 2, registry, spec, transform.SEED
+        0, held, b["member_entity"].astype(np.int64), cutoffs, 0, SAMPLED, 2, registry, spec, support.SEED
     )
     x, task = (piece[1] for piece in history["history_x"].segments[0][2])
     paired = inputs.history_inputs(window, b, PAIRED, False, None)
@@ -310,7 +309,7 @@ def sampled(found, registry, order):
 
 @pytest.fixture(scope="module")
 def drawn(bank):
-    opened = Deriver(bank, "cpu", RESIDENT)
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
     fitted = support.fitted(opened)
     registry = pipeline.grown(fitted, stated(fitted, DRAWN, {})[0], None)
     views = [support.shown(opened, index).dense() for index in range(4)]

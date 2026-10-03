@@ -75,7 +75,14 @@ class TrainingSession:
         self.cuda = compute.require(self.device).type == "cuda"
         self.budget: FitBudget = budget
         with self.budget.measure("graph_prepare"):
-            prepare(bank_directory, config, stated.workers, self.device, self.directory / "timing_workers")
+            prepare(
+                bank_directory,
+                config,
+                stated.workers,
+                self.device,
+                stated.derivation_seed,
+                self.directory / "timing_workers",
+            )
         self.budget.check()
         with measure("source_digest"):
             self.revision = code_digest(PACKAGES)
@@ -451,7 +458,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     if "pipeline" not in config:
         raise KeyError("the configuration states no pipeline")
     with measure("bank_load"):
-        bank = Deriver(bank_directory, stated.device, RESIDENT)
+        bank = Deriver(bank_directory, stated.device, stated.derivation_seed, RESIDENT)
     admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
     drawing(bank.registry.schema, config["pipeline"])
     measurable(stated.measures, bank, stated.scored)
