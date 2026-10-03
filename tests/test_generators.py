@@ -1,6 +1,7 @@
 import copy
 import logging
 import time
+from collections import Counter
 
 import generated
 import numpy as np
@@ -9,7 +10,7 @@ import support
 
 from conftest import shared
 from graphspec import GENERATORS, Registry
-from graphspec.build.generators import looking, regenerated
+from graphspec.build.generators import World, looking, regenerated
 from graphspec.engine.transform import shown, validate
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
@@ -185,11 +186,11 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=1, probabilities=False),
+        changed=dict(version=2, probabilities=False),
         crossings=dict(version=1, probabilities=True),
-        nearest=dict(version=1, probabilities=True),
-        others=dict(version=1, probabilities=True),
-        ruled=dict(version=1, probabilities=True),
+        nearest=dict(version=2, probabilities=True),
+        others=dict(version=2, probabilities=True),
+        ruled=dict(version=2, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -253,6 +254,26 @@ def test_drawn_options_read_the_matured_targets_of_the_splits_trained_on_alone(b
             changed[split] |= regenerated(moved, held.registry, shown(moved, held.registry, seen)[1]) != drawn
     assert changed == dict(train=True, validation=False)
     LOG.info("matured targets of generators exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_an_option_recorded_is_made_canonical_at_most_twice_per_graph_however_many_decisions_read_it(banks, monkeypatch):
+    started = time.perf_counter()
+    held, calls, canonical = opened(banks, "base"), Counter(), World.canonical
+
+    @timed("generators.counted")
+    def counted(self, option):
+        calls["recorded" if "origin" in option else "read" if "chosen" in option else "drawn", id(option)] += 1
+        return canonical(self, option)
+
+    monkeypatch.setattr(World, "canonical", counted)
+    seen = looking(held.splits, held.manifest["trained"])
+    for entry in held.manifest["graphs"]:
+        calls.clear()
+        truth = generated.undrawn(Facts.load(held.truth(entry["index"])))
+        assert regenerated(truth, held.registry, shown(truth, held.registry, seen)[1])
+        assert {sort for sort, _ in calls} == {"recorded", "drawn"}
+        assert max(count for (sort, _), count in calls.items() if sort == "recorded") <= 2
+    LOG.info("canonical options exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_statement_refuses_stops_naming_it(banks):

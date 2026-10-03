@@ -14,7 +14,7 @@ import numpy as np
 from graphspec import Registry
 from graphspec.build import staged
 from graphspec.build.generators import appended, looking, recorded, regenerated
-from graphspec.build.parse import distinct, parse
+from graphspec.build.parse import distinct, parse, parsed
 from graphspec.engine.transform import shown as viewed
 from graphspec.engine.transform import validate
 from graphspec.facts.stored import VERSION
@@ -382,11 +382,11 @@ def graph(context, job):
     position = np.searchsorted(ids, found)
     if len(found) != len(ids) or np.any(position >= len(ids)) or not np.array_equal(ids[position], found):
         raise ValueError("graph %s reads different targets than its supervision" % name)
-    truth = parse(registry, splits, observers, tables, rows[position], series[position], name)
+    parts = parsed(registry, splits, observers, tables, rows[position], series[position], name)
+    truth = parse(registry, tables, parts)
     if generating(registry.schema):
         drawn = regenerated(truth, registry, viewed(truth, registry, looking(splits, trained))[1])
-        tables = dict(tables, decisions=appended(registry, tables, drawn))
-        truth = parse(registry, splits, observers, tables, rows[position], series[position], name)
+        truth = parse(registry, dict(tables, decisions=appended(registry, tables, drawn)), parts)
     shown = validate(truth, registry, splits)
     truth.save(WORKER["output"] / "truth" / ("graph_%04d" % index))
     metrics = dict(

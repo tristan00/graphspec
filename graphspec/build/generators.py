@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+import pickle
 import time
 
 import numpy as np
@@ -40,7 +41,7 @@ class World:
     def __init__(self, truth, registry):
         started = time.perf_counter()
         schema = registry.schema
-        self.truth, self.registry, self.schema = truth, registry, schema
+        self.truth, self.registry, self.schema, self.held = truth, registry, schema, {}
         self.listed = list(schema.tasks["kinds"])
         self.decided = truth.decided(registry)
         kinds = np.asarray(truth.kinds).tolist()
@@ -68,17 +69,21 @@ class World:
 
     def shown(self, task):
         started = time.perf_counter()
-        result = dict(
-            key=int(self.truth.task_key[task]),
-            kind=self.listed[int(self.truth.task_kind[task])],
-            time=int(self.truth.task_time[task]),
-            actors=dict(self.acting[task]),
-            options=[
-                dict(key=option["key"], chosen=option["chosen"], **self.canonical(option))
-                for option in self.decided[task]["options"]
-                if option["origin"] == RECORDED
-            ],
-        )
+        if task not in self.held:
+            self.held[task] = pickle.dumps(
+                dict(
+                    key=int(self.truth.task_key[task]),
+                    kind=self.listed[int(self.truth.task_kind[task])],
+                    time=int(self.truth.task_time[task]),
+                    actors=dict(self.acting[task]),
+                    options=[
+                        dict(key=option["key"], chosen=option["chosen"], **self.canonical(option))
+                        for option in self.decided[task]["options"]
+                        if option["origin"] == RECORDED
+                    ],
+                )
+            )
+        result = pickle.loads(self.held[task])
         LOG.debug("world shown exit options=%d seconds=%.6f", len(result["options"]), time.perf_counter() - started)
         return result
 
@@ -388,7 +393,11 @@ class Seen:
 
     @timed("generators.Seen.fresh")
     def fresh(self, option):
-        return self.statement["repeats"] or self.world.content(option) not in self.present
+        return self.novel(self.world.content(option))
+
+    @timed("generators.Seen.novel")
+    def novel(self, content):
+        return self.statement["repeats"] or content not in self.present
 
     def taken(self, drawn):
         started = time.perf_counter()
@@ -415,10 +424,12 @@ class Seen:
                         "the probability of each draw, above 0 and at most 1" if entry.probable else "none, having none",
                     )
                 )
-            if not self.fresh(option):
+            held = self.world.canonical(option)
+            content = json.dumps(held, sort_keys=True)
+            if not self.novel(content):
                 raise ValueError("%s equals an option already present, which its statement does not allow" % where)
-            self.present.append(self.world.content(option))
-            result.append(dict(self.world.canonical(option), drawn=None if probability is None else float(probability)))
+            self.present.append(content)
+            result.append(dict(held, drawn=None if probability is None else float(probability)))
         LOG.debug("seen taken exit generator=%s drawn=%d seconds=%.4f", name, len(result), time.perf_counter() - started)
         return result
 
@@ -517,8 +528,10 @@ class Pooled:
         started = time.perf_counter()
         pool = {}
         for option in candidates:
-            if seen.closed(option) is None and seen.fresh(option):
-                pool.setdefault(seen.world.content(option), seen.world.canonical(option))
+            held = dict(actions=option["actions"], together=option["together"])
+            content = json.dumps(held, sort_keys=True)
+            if content not in pool and seen.closed(option) is None and seen.novel(content):
+                pool[content] = held
         contents = sorted(pool)
         tokens = np.asarray([token(content) for content in contents], np.uint64)
         order = np.lexsort((tokens, seen.unit(tokens)))[:count].tolist()
@@ -547,7 +560,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 1
+    version = 2
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -570,7 +583,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 1
+    version = 2
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -631,7 +644,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 1
+    version = 2
     reads = ("chosen",)
     probable = False
 
@@ -689,7 +702,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 1
+    version = 2
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")
@@ -710,7 +723,7 @@ class Ruled(Pooled):
             raise ValueError("the rule of options %s gives for %s a list of options, found %r" % (rule["name"], seen.where, found))
         for place, option in enumerate(found):
             seen.formed(option, ("actions", "together"), "the option %d the rule %s gives %s" % (place, rule["name"], seen.where))
-        return self.drawn(seen, found, parameters["count"])
+        return self.drawn(seen, [seen.world.canonical(option) for option in found], parameters["count"])
 
 
 GENERATORS.register("others", Others())

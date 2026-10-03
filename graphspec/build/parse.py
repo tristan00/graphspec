@@ -419,7 +419,7 @@ def noded(registry, tasks, members, keys, kinds, owner, nodes, name):
     return result
 
 
-def parse(registry, splits, observers, tables, rows, series, name):
+def parsed(registry, splits, observers, tables, rows, series, name):
     started = time.perf_counter()
     schema, encoding = registry.schema, registry.encoding
     unit = None
@@ -519,23 +519,48 @@ def parse(registry, splits, observers, tables, rows, series, name):
     targets, aims = aimed(registry, tables, tasks, place, rows, series, members, keys, kinds, name)
     joined = belonging(registry, tables, kinds, local, name)
     inner, held = holding(registry, tables, kinds, local, name)
-    choices, options, generators = undecided(tasks, aims), [], []
-    if schema.decided():
+    result = dict(
+        name=name,
+        splits=splits,
+        observers=observers,
+        unit=unit,
+        keys=keys,
+        kinds=kinds,
+        inner=inner,
+        seen=seen,
+        facts=facts,
+        tasks=tasks,
+        place=place,
+        members=members,
+        targets=targets,
+        aims=aims,
+        joined=joined,
+        held=held,
+    )
+    LOG.info("parsed exit graph=%s seconds=%.3f", name, time.perf_counter() - started)
+    return result
+
+
+def parse(registry, tables, parts):
+    started = time.perf_counter()
+    name, keys, kinds, tasks, seen, facts = (parts[part] for part in ("name", "keys", "kinds", "tasks", "seen", "facts"))
+    choices, options, generators = undecided(tasks, parts["aims"]), [], []
+    if registry.schema.decided():
         choices, keys, kinds, options, generators = decided(
-            registry, tables["decisions"], tasks, place, members, keys, kinds, seen, aims, name
+            registry, tables["decisions"], tasks, parts["place"], parts["members"], keys, kinds, seen, parts["aims"], name
         )
     graph = Facts(
         name,
         keys,
-        unit,
-        inner,
-        observers,
+        parts["unit"],
+        parts["inner"],
+        parts["observers"],
         options,
         generators,
         kinds=kinds,
         entity_token=tokens(registry, kinds, keys),
-        **joined,
-        **held,
+        **parts["joined"],
+        **parts["held"],
         obs_entity=seen["entity"].astype(np.int32),
         obs_since=seen["since"],
         obs_until=seen["until"],
@@ -552,14 +577,14 @@ def parse(registry, splits, observers, tables, rows, series, name):
         fact_values=facts["values"],
         **sparse("fact", facts, facts["watched"], facts["watchers"]),
         graph_values=codes(
-            registry, tables["graph"], schema.graph, range(len(schema.graph)), len(schema.graph)
+            registry, tables["graph"], registry.schema.graph, range(len(registry.schema.graph)), len(registry.schema.graph)
         )[0],
         **tasks,
-        **members,
-        **targets,
+        **parts["members"],
+        **parts["targets"],
         **choices,
     )
-    check(graph, registry, splits, observers)
+    check(graph, registry, parts["splits"], parts["observers"])
     LOG.info(
         "truth exit graph=%s seconds=%.3f observations=%d facts=%d tasks=%d labels=%d",
         name,
