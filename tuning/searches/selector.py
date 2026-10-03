@@ -12,7 +12,7 @@ from graphspec.operations import pipeline
 from graphspec.operations.negatives import needed
 from graphspec.operations.operation import Refused
 from graphspec.views.view import STEPS
-from tuning.families.model_spec import TRAINING, describe, drawn, groups, realisable
+from tuning.families.model_spec import TRAINING, describe, drawn, groups, placed, realisable
 from tuning.families.model_spec import space as model_space
 from tuning.measures import objective
 
@@ -182,6 +182,7 @@ def check_bounds(registry, bounds, template):
     if unknown:
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
     specs.narrow(parameters, bounds)
+    placed(spaces(registry, bounds)[0], None)
     graph = stepped(registry, narrow_group(specs.settings(registry, ()), bounds))
     held = pipeline_space(registry, template, bounds)
     pipeline.housing(registry, template, held, graph)
@@ -261,7 +262,7 @@ def excluded(registry, config, bounds, template):
     models, trainings = spaces(registry, bounds)
     flat = pipeline.flattened(template, config["pipeline"])
     return (
-        outside(models, config["model"], drawn)
+        (outside(models, config["model"], specs.draw) or outside(models, config["model"], drawn))
         + outside(trainings, training(config), specs.draw)
         + outside(graph_space(registry, config["model"], bounds), config["graph"], specs.draw)
         + outside(pipeline_space(registry, template, bounds), flat, specs.draw)

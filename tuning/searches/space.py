@@ -16,7 +16,8 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.registries import carried, restored
-from tuning.families.model_spec import TRAINING, drawn, groups
+from tuning.families.heads import REALISATION
+from tuning.families.model_spec import TRAINING, drawn, groups, placed
 from tuning.families.model_spec import space as model_space
 
 from .selector import (
@@ -116,7 +117,10 @@ class Space:
         unknown = [p for p in patterns if not any(fnmatch.fnmatchcase(n, p) for n in self.parameters)]
         if unknown:
             raise ValueError("random parameter names unknown parameters: " + ", ".join(unknown))
-        return [n for n in self.parameters if any(fnmatch.fnmatchcase(n, p) for p in patterns)]
+        names = [n for n in self.parameters if any(fnmatch.fnmatchcase(n, p) for p in patterns)]
+        if "model/" + REALISATION in names:
+            placed(self.models, "model/" + REALISATION)
+        return names
 
     @timed("space.Space.encode")
     def encode(self, configs):

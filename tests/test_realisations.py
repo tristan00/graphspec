@@ -44,6 +44,7 @@ UNREAD = ("available", "chosen", "order", "shown", "logged", "generator", "seed"
 PACKED, BUILT, SHOWN = {}, {}, {}
 SHARED = (banks, registered)
 STRUCTURAL = ("action_nodes", "actor_edge", "set_edge")
+READERS = ["snapshot", "mixed", "event_graph", "tree"]
 SHIPPED = dict(node=("picked", []), vector=("stated", UNSEEN), **{name: ("stated", UNSEEN) for name in STRUCTURAL})
 LAST = dict(node=1, vector=2, **{name: 2 for name in STRUCTURAL})
 ALONE = 1e-5
@@ -743,4 +744,34 @@ def test_a_family_that_passes_no_message_over_a_graph_reads_no_structural_realis
         assert (set(STRUCTURAL) <= set(fitted.options)) == reads and set(STRUCTURAL).isdisjoint(fitted.options) != reads
         assert keyed("model/", fitted, static) == "model/" + REALISATION + ("" if reads else "|" + "|".join(fitted.options))
     LOG.info("structure read by families exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_bounds_or_a_random_realisation_that_would_leave_a_family_none_it_reads_are_refused_when_the_search_starts(banks):
+    from tuning.searches.selector import check_bounds, excluded, random_suggest
+    from tuning.searches.space import Space
+
+    started = time.perf_counter()
+    registry, template, fixed = opened(banks, "stated").registry, support.template(), "model/" + REALISATION
+    unread = {"snapshot": model_spec.unstructured({"view": "snapshot", "snapshot/spatial": "none"})}
+    unread.update((family, reason) for family, reason in model_spec.STRUCTURE.items() if reason is not None)
+    families, reasons = ", ".join(unread), "; ".join("%s: %s" % pair for pair in unread.items())
+    placing, readers = {REALISATION: ["action_nodes", "set_edge"]}, {"view": READERS, "snapshot/spatial": ["mean", "relational"]}
+    bounded = "the bounds leave the model the realisations of options action_nodes, set_edge alone, each putting options into "
+    bounded += "the graph of its family, and leave it the families %s, which read no option put there: %s" % (families, reasons)
+    with pytest.raises(ValueError, match="^" + re.escape(bounded) + "$"):
+        check_bounds(registry, placing, template)
+    random = "the random parameter %s fixes one realisation of options for every model of a proposal, and its bounds let it "
+    random += "fix action_nodes, actor_edge, set_edge, each putting options into the graph of its family, while they leave the "
+    random += "model the families %s, which read no option put there: %s"
+    with pytest.raises(ValueError, match="^" + re.escape(random % (fixed, families, reasons)) + "$"):
+        Space(registry, {}, 60, (), template).random_names(["model/*"])
+    check_bounds(registry, dict(placing, **readers), template)
+    assert Space(registry, {REALISATION: [NONE, "vector"]}, 60, (), template).random_names([fixed]) == [fixed]
+    space, rng = Space(registry, readers, 60, (), template), np.random.default_rng(5)
+    assert space.random_names([fixed]) == [fixed]
+    drawn = [(name, space.draw(rng, 7, {fixed: name})["model"]) for name in STRUCTURAL * 8]
+    assert all(spec[REALISATION] == name for name, spec in drawn) and {spec["view"] for _, spec in drawn} == set(READERS)
+    walks = random_suggest(registry, 3, 7, {"view": ["walks"]}, 60, template)[0]
+    assert excluded(registry, walks, dict(placing, **readers), template) == ["view", REALISATION]
+    LOG.info("structure refused at the start of a search exit seconds=%.3f", time.perf_counter() - started)
 

@@ -186,6 +186,35 @@ def drawn(parameters, choose):
     return spec
 
 
+@timed("model_spec.placed")
+def placed(parameters, fixed):
+    named = {parameter.name: parameter for parameter in parameters}
+    held = named[REALISATION].options if REALISATION in named else ()
+    placing = [name for name in held if name != NONE and realisation(name).structure]
+    unread = {}
+    if placing and (fixed is not None or len(placing) == len(held)):
+        for family in named["view"].options:
+            for spatial in named["snapshot/spatial"].options:
+                spec = {"view": family, "snapshot/spatial": spatial}
+                reason = unstructured(spec)
+                if reason is not None and named[REALISATION].active(spec):
+                    unread.setdefault(family, reason)
+    if not unread:
+        return
+    families, reasons = ", ".join(unread), "; ".join("%s: %s" % pair for pair in unread.items())
+    if fixed is None:
+        raise ValueError(
+            "the bounds leave the model the realisations of options %s alone, each putting options into the graph of "
+            "its family, and leave it the families %s, which read no option put there: %s"
+            % (", ".join(placing), families, reasons)
+        )
+    raise ValueError(
+        "the random parameter %s fixes one realisation of options for every model of a proposal, and its bounds let it "
+        "fix %s, each putting options into the graph of its family, while they leave the model the families %s, which "
+        "read no option put there: %s" % (fixed, ", ".join(placing), families, reasons)
+    )
+
+
 def realisable(registry, parameters):
     started = time.perf_counter()
     held = [parameter for parameter in parameters if parameter.name == REALISATION]
