@@ -242,6 +242,74 @@ def test_compiled_code_is_saved_only_once_the_lock_of_its_index_is_free(tmp_path
     LOG.info("lock test exit seconds=%.4f", time.perf_counter() - started)
 
 
+def test_a_lock_that_cannot_be_taken_for_a_reason_other_than_a_holder_stops_at_once_naming_the_file_and_the_error(
+    tmp_path, monkeypatch
+):
+    import ctypes
+    import errno
+
+    from graphspec.infra.processes import locks
+
+    started = time.perf_counter()
+    path, folder = tmp_path / "denied.lock", tmp_path / "folder.lock"
+
+    def denied(*arguments):
+        clock = time.perf_counter()
+        if os.name == "nt":
+            ctypes.set_last_error(5)
+            LOG.debug("denied exit seconds=%.6f", time.perf_counter() - clock)
+            return 0
+        LOG.debug("denied exit seconds=%.6f", time.perf_counter() - clock)
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    if os.name == "nt":
+        monkeypatch.setattr(locks.KERNEL, "LockFile", denied)
+    else:
+        monkeypatch.setattr(locks.fcntl, "flock", denied)
+    with pytest.raises(PermissionError) as refused:
+        locks.Lock(path).__enter__()
+    assert refused.value.filename == str(path)
+    with pytest.raises(PermissionError) as refused:
+        with runtime.held(path):
+            pass
+    assert refused.value.filename == str(path)
+    folder.mkdir()
+    with pytest.raises(OSError) as refused:
+        with runtime.held(folder):
+            pass
+    assert refused.value.filename == str(folder) and not isinstance(refused.value, locks.LockBusy)
+    LOG.info("denied lock test exit seconds=%.4f", time.perf_counter() - started)
+
+
+def test_a_lock_names_its_holder_and_a_wait_stops_naming_the_lock_the_holder_and_the_seconds_once_the_holder_ended(
+    tmp_path,
+):
+    import re
+    import subprocess
+    import sys
+
+    from graphspec.infra.processes.locks import Lock, holder
+
+    started = time.perf_counter()
+    ended = subprocess.Popen([sys.executable, "-B", "-V"], stdout=subprocess.DEVNULL)
+    ended.wait()
+    path = tmp_path / "kept.lock"
+    lock = Lock(path).__enter__()
+    try:
+        assert holder(path) == os.getpid()
+        path.write_bytes(b"%d" % ended.pid)
+        named = "the lock %s is held by the process %d, which has ended; waited " % (path, ended.pid)
+        with pytest.raises(RuntimeError, match=re.escape(named) + r"0\.\d{3} seconds$"):
+            with runtime.held(path):
+                pass
+    finally:
+        lock.__exit__(None, None, None)
+    assert path.read_bytes() == b""
+    with runtime.held(path):
+        assert holder(path) == os.getpid()
+    LOG.info("ended holder test exit seconds=%.4f", time.perf_counter() - started)
+
+
 def test_json_write_failure_preserves_prior_record_and_removes_temporary(tmp_path):
     path = tmp_path / "record.json"
     files.write_json(path, {"value": 1})

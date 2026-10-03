@@ -9,7 +9,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 
-from .processes.locks import Lock, LockBusy
+import psutil
+
+from .processes.locks import Lock, LockBusy, holder
 from .timing import timed
 
 LOG = logging.getLogger(__name__)
@@ -96,12 +98,19 @@ def identities():
 
 @contextmanager
 def held(path):
-    started = time.perf_counter()
+    started, ended = time.perf_counter(), None
     while True:
         try:
             lock = Lock(path).__enter__()
             break
         except LockBusy:
+            found = holder(path)
+            if found is not None and found == ended:
+                raise RuntimeError(
+                    "the lock %s is held by the process %d, which has ended; waited %.3f seconds"
+                    % (path, found, time.perf_counter() - started)
+                )
+            ended = found if found is not None and not psutil.pid_exists(found) else None
             time.sleep(0.001)
     try:
         yield lock

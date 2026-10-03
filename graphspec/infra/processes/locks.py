@@ -1,4 +1,3 @@
-import errno
 import logging
 import os
 import threading
@@ -9,8 +8,18 @@ from pathlib import Path
 
 from ..timing import timed
 
+RECORD = 32
 if os.name == "nt":
+    import ctypes
     import msvcrt
+    from ctypes import wintypes
+
+    KERNEL = ctypes.WinDLL("kernel32", use_last_error=True)
+    for name in ("LockFile", "UnlockFile"):
+        getattr(KERNEL, name).argtypes = (wintypes.HANDLE,) + (wintypes.DWORD,) * 4
+        getattr(KERNEL, name).restype = wintypes.BOOL
+    VIOLATION = 33
+    PLACE = (2 * RECORD, 0, 1, 0)
 else:
     import fcntl
 
@@ -23,6 +32,47 @@ class LockBusy(OSError):
     pass
 
 
+if os.name == "nt":
+
+    @timed("locks.claimed")
+    def claimed(stream, path):
+        if KERNEL.LockFile(msvcrt.get_osfhandle(stream.fileno()), *PLACE):
+            return True
+        code = ctypes.get_last_error()
+        if code != VIOLATION:
+            raise OSError(0, ctypes.FormatError(code), str(path), code)
+        return False
+
+    @timed("locks.released")
+    def released(stream, path):
+        if not KERNEL.UnlockFile(msvcrt.get_osfhandle(stream.fileno()), *PLACE):
+            code = ctypes.get_last_error()
+            raise OSError(0, ctypes.FormatError(code), str(path), code)
+
+else:
+
+    @timed("locks.claimed")
+    def claimed(stream, path):
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        except OSError as error:
+            raise OSError(error.errno, error.strerror, str(path)) from error
+        return True
+
+    @timed("locks.released")
+    def released(stream, path):
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+@timed("locks.holder")
+def holder(path):
+    with open(path, "rb", buffering=0) as stream:
+        text = stream.read(RECORD)
+    return int(text) if text.isdigit() else None
+
+
 class Lock:
     @timed("locks.Lock.__init__")
     def __init__(self, path):
@@ -31,27 +81,24 @@ class Lock:
     @timed("locks.Lock.__enter__")
     def __enter__(self):
         self.stream = self.path.open("a+b")
-        self.stream.seek(0)
         try:
-            if os.name == "nt":
-                msvcrt.locking(self.stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
+            if not claimed(self.stream, self.path):
+                raise LockBusy(str(self.path))
+            self.stream.truncate(0)
+            self.stream.write(b"%d" % os.getpid())
+            self.stream.flush()
+        except BaseException:
             self.stream.close()
-            if error.errno in (errno.EACCES, errno.EAGAIN):
-                raise LockBusy(str(self.path)) from error
             raise
         return self
 
     @timed("locks.Lock.__exit__")
     def __exit__(self, *exception):
-        self.stream.seek(0)
-        if os.name == "nt":
-            msvcrt.locking(self.stream.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            fcntl.flock(self.stream.fileno(), fcntl.LOCK_UN)
-        self.stream.close()
+        try:
+            self.stream.truncate(0)
+            released(self.stream, self.path)
+        finally:
+            self.stream.close()
 
 
 @contextmanager
