@@ -445,6 +445,16 @@ def test_the_states_of_added_columns_are_fitted_again_when_a_version_the_key_of_
     assert "standard" not in {column["encoder"] for column in opened.registry.schema.columns.values()}
     assert counts[1:] == [counts[0] + 1, counts[0] + 2] and len(found[0]) >= 1
     assert set(found[0]) < set(found[1]) < set(found[2])
+    steps, calls, added = opened.stated(cfg)[1], [], Operation.added
+
+    @timed("pipelines.walked")
+    def walked(self, *arguments):
+        calls.append(self.name)
+        return added(self, *arguments)
+
+    monkeypatch.setattr(Operation, "added", walked)
+    key = opened.identity(cfg)
+    assert sorted(calls) == sorted(step.operation.name for step in steps) and key["added"]
     LOG.info("states of added columns exit seconds=%.3f", time.perf_counter() - started)
 
 

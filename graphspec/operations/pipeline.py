@@ -326,21 +326,9 @@ def called(step):
     return entered(step.operation, step.label)
 
 
-def additions(registry, steps):
-    started = time.perf_counter()
-    held, result = registry, []
-    for step in steps:
-        added = step.operation.added(held, step.spec, called(step))
-        if added is not None and added.holds():
-            held = held.grown(called(step), added, None)
-            result.append((called(step), added))
-    LOG.debug("additions exit steps=%d added=%d seconds=%.4f", len(steps), len(result), time.perf_counter() - started)
-    return result
-
-
 def read(registry, steps):
     started = time.perf_counter()
-    held, result = registry, []
+    held, additions, result = registry, [], []
     for step in steps:
         for parameter in step.operation.stated(held):
             if parameter.registry is not None and parameter.name in step.parameters:
@@ -350,8 +338,15 @@ def read(registry, steps):
             columns = added.columns.values()
             result += [(TYPES, [column["type"] for column in columns]), (ENCODERS, [column["encoder"] for column in columns])]
             held = held.grown(called(step), added, None)
-    LOG.debug("read exit steps=%d read=%d seconds=%.4f", len(steps), len(result), time.perf_counter() - started)
-    return result
+            additions.append((called(step), added))
+    LOG.debug(
+        "read exit steps=%d added=%d read=%d seconds=%.4f",
+        len(steps),
+        len(additions),
+        len(result),
+        time.perf_counter() - started,
+    )
+    return additions, result
 
 
 def grown(registry, steps, states):

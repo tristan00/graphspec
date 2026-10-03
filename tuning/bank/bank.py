@@ -49,7 +49,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 54
+VIEW = 55
 TOKEN = (1 << 62) - 1
 
 
@@ -679,10 +679,12 @@ class Deriver(Bank):
     def reads(self, steps, spec, cfg):
         started = time.perf_counter()
         storage = sets.chosen(self.registry, spec)
-        result = readings(self.registry, spec["time/steps"], self.several(spec), storage, cfg["splits"]["sees"])
-        result += pipeline.read(self.registry, steps)
-        LOG.debug("deriver reads exit read=%d seconds=%.4f", len(result), time.perf_counter() - started)
-        return result
+        added, read = pipeline.read(self.registry, steps)
+        read = readings(self.registry, spec["time/steps"], self.several(spec), storage, cfg["splits"]["sees"]) + read
+        LOG.debug(
+            "deriver reads exit added=%d read=%d seconds=%.4f", len(added), len(read), time.perf_counter() - started
+        )
+        return added, read
 
     def growing(self, viewed, steps, spec, cfg):
         started = time.perf_counter()
@@ -690,7 +692,7 @@ class Deriver(Bank):
         if not provisional.schema.added_columns():
             LOG.debug("deriver growing exit columns=0 seconds=%.4f", time.perf_counter() - started)
             return provisional
-        entries = registries.versions(self.reads(steps, spec, cfg))
+        entries = registries.versions(self.reads(steps, spec, cfg)[1])
         named = specs.digest(
             dict(
                 pipeline=[step.keyed() for step in steps],
@@ -714,7 +716,7 @@ class Deriver(Bank):
         started = time.perf_counter()
         partitions = self.partitions(cfg)
         stated = {
-            name: held for _, added in pipeline.additions(viewed.registry, steps) for name, held in added.columns.items()
+            name: held for _, added in pipeline.read(viewed.registry, steps)[0] for name, held in added.columns.items()
         }
         samples = {name: [] for name in stated}
         for graph in viewed.graphs:
@@ -801,18 +803,19 @@ class Deriver(Bank):
     def identity(self, cfg):
         started = time.perf_counter()
         _, steps, spec, chosen = self.stated(cfg)
+        added, read = self.reads(steps, spec, cfg)
         result = dict(
             schema=self.registry.fingerprint(),
             source=self.source,
             pipeline=[step.keyed() for step in steps],
-            added=[dict(entry=name, **added.declaration()) for name, added in pipeline.additions(self.registry, steps)],
+            added=[dict(entry=name, **held.declaration()) for name, held in added],
             settings=specs.materialized(spec),
             groups=list(chosen),
             splits=cfg["splits"],
             device=self.device,
             seeds=dict(derivation=self.seed),
             versions=coded(),
-            entries=registries.versions(self.reads(steps, spec, cfg) + [(REPRESENTATIONS, chosen)]),
+            entries=registries.versions(read + [(REPRESENTATIONS, chosen)]),
         )
         LOG.debug("deriver identity exit device=%s seconds=%.4f", self.device, time.perf_counter() - started)
         return result
