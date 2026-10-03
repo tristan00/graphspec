@@ -1,11 +1,42 @@
+import logging
 import os
 import subprocess
 import sys
+import time
 import uuid
 
 import pytest
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows kernel mutexes")
+LOG = logging.getLogger(__name__)
+
+
+def started(code, name, directory):
+    clock = time.perf_counter()
+    process = subprocess.Popen(
+        [sys.executable, "-B", "-c", code, name],
+        env=dict(os.environ, GRAPHSPEC_HOME=str(directory), PYTHONDONTWRITEBYTECODE="1"),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    LOG.debug("started exit seconds=%.4f", time.perf_counter() - clock)
+    return process
+
+
+def answered(process):
+    clock = time.perf_counter()
+    try:
+        out, err = process.communicate("go\n", timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        raise
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, process.args, out, err)
+    LOG.debug("answered exit seconds=%.4f", time.perf_counter() - clock)
+    return out.strip()
 
 
 def child(code, name, directory):
@@ -44,15 +75,18 @@ def test_singleton_excludes_other_home_and_releases(tmp_path, monkeypatch):
     code = """
 import sys
 from graphspec.infra.processes.locks import singleton
+sys.stdin.readline()
 try:
     with singleton(sys.argv[1], "busy"):
         print("acquired")
 except RuntimeError:
     print("busy")
 """
-    with singleton(name, "busy"):
-        assert child(code, name, tmp_path / "second").stdout.strip() == "busy"
-    assert child(code, name, tmp_path / "second").stdout.strip() == "acquired"
+    home = tmp_path / "second"
+    with started(code, name, home) as first, started(code, name, home) as second:
+        with singleton(name, "busy"):
+            assert answered(first) == "busy"
+        assert answered(second) == "acquired"
 
 
 def test_abandoned_mutex_is_owned_and_released(tmp_path, monkeypatch):
