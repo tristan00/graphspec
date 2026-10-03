@@ -9,12 +9,13 @@ from graphspec.infra.hashing import token
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.schema import time as clock
+from graphspec.schema.decisions import RECORDED
 from graphspec.schema.references import MEMBERS
 from graphspec.schema.schema import VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 13
+VERSION = 14
 PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
 HELD = ("inner_owner", "inner_kind", "inner_values")
@@ -22,6 +23,13 @@ WITHIN = ("within_source", "within_target", "within_code", "within_values")
 HALF = int(np.finfo(np.float16).max)
 GROUPS = ("obs", "fact")
 SPARSE = ("known_row", "known_time", "replaced_row", "replaced_time", "seen_row", "seen_observer")
+DECIDED = (
+    ("next_task", "next_actor", "next_other", "concurrent_task", "concurrent_other")
+    + ("option_task", "option_sequence", "option_available", "option_chosen", "option_order")
+    + ("option_shown", "option_logged", "option_generator", "option_seed", "option_drawn")
+    + ("action_option", "action_kind", "action_actor", "action_values")
+    + ("role_action", "role_name", "role_source", "role_target", "role_code")
+)
 STORED = (
     ("kinds", "entity_token")
     + ("obs_entity", "obs_since", "obs_until", "obs_seq", "obs_values")
@@ -29,13 +37,15 @@ STORED = (
     + ("fact_since", "fact_until", "fact_seq", "fact_values")
     + tuple(group + "_" + name for group in GROUPS for name in SPARSE)
     + ("task_time", "task_observer", "task_grouping", "task_key", "task_kind", "task_split")
-    + ("task_weight", "task_values", "task_signals")
+    + ("task_weight", "task_values", "task_signals", "task_ended", "task_discount")
     + MEMBERS
     + ("target_task", "target_row", "target_known", "target_y", "target_series", "target_node")
+    + ("target_option", "target_part")
     + ("graph_values",)
     + JOINED
     + HELD
     + WITHIN
+    + DECIDED
 )
 
 
@@ -95,11 +105,16 @@ def moment(value):
     return None if value <= ALWAYS or value >= NEVER else value
 
 
+@timed("stored.known")
+def known(value):
+    return None if np.isnan(value) else float(value)
+
+
 class Facts:
     NAMES = STORED
 
     @timed("truth.facts")
-    def __init__(self, name, keys, unit, inner, observers, **arrays):
+    def __init__(self, name, keys, unit, inner, observers, options, generators, **arrays):
         missing = sorted(set(self.NAMES) - set(arrays))
         if missing:
             raise ValueError("graph %s lacks arrays: %s" % (name, ", ".join(missing)))
@@ -112,13 +127,22 @@ class Facts:
             unit=unit,
             inner=list(inner),
             observers=list(observers),
+            options=list(options),
+            generators=list(generators),
             arrays={key: arrays[key] for key in self.NAMES},
         )
 
     @timed("truth.facts.replace")
     def replace(self, **changes):
         return Facts(
-            self.name, self.keys, self.unit, self.inner, self.observers, **dict(self.arrays, **changes)
+            self.name,
+            self.keys,
+            self.unit,
+            self.inner,
+            self.observers,
+            self.options,
+            self.generators,
+            **dict(self.arrays, **changes),
         )
 
     def __getattr__(self, key):
@@ -133,7 +157,15 @@ class Facts:
         save_arrays(directory, self.arrays)
         write_json(
             directory / "graph.json",
-            dict(name=self.name, keys=self.keys, unit=self.unit, inner=self.inner, observers=self.observers),
+            dict(
+                name=self.name,
+                keys=self.keys,
+                unit=self.unit,
+                inner=self.inner,
+                observers=self.observers,
+                options=self.options,
+                generators=self.generators,
+            ),
         )
         LOG.debug("facts save exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
@@ -148,6 +180,8 @@ class Facts:
             meta["unit"],
             meta["inner"],
             meta["observers"],
+            meta["options"],
+            meta["generators"],
             **load_arrays(directory, cls.NAMES),
         )
         LOG.debug("facts load exit graph=%s seconds=%.4f", result.name, time.perf_counter() - started)
@@ -305,8 +339,96 @@ class Facts:
             held=self.held(registry),
             tasks=tasks,
             targets=targets,
+            decisions=self.decided(registry),
         )
         LOG.debug("stated exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
+        return result
+
+    def decided(self, registry):
+        started = time.perf_counter()
+        schema, keys, names = registry.schema, self.keys, [edge.name for edge in registry.edges]
+        kinds, columns, series = list(schema.tasks["kinds"]), schema.parameters(), schema.series()
+        task_keys, task_kinds = np.asarray(self.task_key).tolist(), np.asarray(self.task_kind).tolist()
+        ended, discount = np.asarray(self.task_ended).tolist(), np.asarray(self.task_discount, np.float64)
+        result, options, actions = [None] * len(task_keys), [], []
+        for at, task in enumerate(np.asarray(self.option_task).tolist()):
+            generator = int(self.option_generator[at])
+            entry = dict(
+                key=self.options[at],
+                actions=[],
+                together="sequence" if self.option_sequence[at] else "set",
+                available=bool(self.option_available[at]),
+                chosen=bool(self.option_chosen[at]),
+                order=None if self.option_order[at] < 0 else int(self.option_order[at]),
+                shown=known(self.option_shown[at]),
+                logged=known(self.option_logged[at]),
+                origin=RECORDED
+                if generator < 0
+                else dict(
+                    generator=self.generators[generator],
+                    seed=int(self.option_seed[at]),
+                    drawn=known(self.option_drawn[at]),
+                ),
+                outcome=None,
+            )
+            if result[task] is None:
+                result[task] = dict(
+                    options=[],
+                    concurrent=[],
+                    next={},
+                    ended=None if ended[task] < 0 else bool(ended[task]),
+                    discount=known(discount[task]),
+                )
+            result[task]["options"].append(entry)
+            options.append(entry)
+        values = stated(registry, columns, np.asarray(self.action_values))
+        for at, (owner, kind, actor) in enumerate(
+            zip(*(np.asarray(self.arrays[name]).tolist() for name in ("action_option", "action_kind", "action_actor")))
+        ):
+            target = schema.tasks["kinds"][kinds[task_kinds[int(self.option_task[owner])]]]["target"]
+            name = list(target["actions"])[kind]
+            declared = target["actions"][name]
+            entry = dict(
+                kind=name,
+                actor=keys[actor],
+                targets={},
+                parameters={column: values[column][at] for column in declared["parameters"]},
+            )
+            options[owner]["actions"].append(entry)
+            actions.append((entry, declared))
+        for action, role, source, other, code in zip(
+            *(
+                np.asarray(self.arrays["role_" + name]).tolist()
+                for name in ("action", "name", "source", "target", "code")
+            )
+        ):
+            entry, declared = actions[action]
+            name = list(declared["roles"])[role]
+            edged = declared["roles"][name]["sort"] == "edge"
+            entry["targets"][name] = [keys[source], names[code], keys[other]] if edged else keys[source]
+        for owner, part, code, y in zip(
+            *(np.asarray(self.arrays[name]).tolist() for name in ("target_option", "target_part", "target_series", "target_y"))
+        ):
+            if owner < 0:
+                continue
+            entry = options[owner]
+            if part < 0:
+                entry["outcome"] = entry["outcome"] or {}
+                entry["outcome"][series[code]] = float(y)
+                continue
+            entry["outcome"] = entry["outcome"] or [None] * len(entry["actions"])
+            entry["outcome"][part] = entry["outcome"][part] or {}
+            entry["outcome"][part][series[code]] = float(y)
+        for task, other in zip(np.asarray(self.concurrent_task).tolist(), np.asarray(self.concurrent_other).tolist()):
+            result[task]["concurrent"].append(task_keys[other])
+        for task, actor, other in zip(
+            *(np.asarray(self.arrays["next_" + name]).tolist() for name in ("task", "actor", "other"))
+        ):
+            result[task]["next"][keys[actor]] = task_keys[other]
+        for held in result:
+            if held is not None:
+                held["concurrent"].sort()
+        LOG.debug("facts decided exit graph=%s options=%d seconds=%.4f", self.name, len(options), time.perf_counter() - started)
         return result
 
     def joined(self, registry):

@@ -63,11 +63,16 @@ def placed(found, ids, name, where):
 class Database:
     def __init__(self, path, stated, buffer_pool_size=4 << 30):
         started = time.perf_counter()
-        if stated.sets or stated.holds:
+        if stated.sets or stated.holds or stated.decided():
             raise ValueError(
-                "a database source is read with no edges joining sets and no held graphs, and the schema states "
-                "the kinds of set edge %s and the kinds that hold graphs %s; stage the source instead"
-                % (", ".join(stated.sets) or "none", ", ".join(stated.holds) or "none")
+                "a database source is read with no edges joining sets, no held graphs and no decisions, and the "
+                "schema states the kinds of set edge %s, the kinds that hold graphs %s and the kinds of task that "
+                "decide %s; stage the source instead"
+                % (
+                    ", ".join(stated.sets) or "none",
+                    ", ".join(stated.holds) or "none",
+                    ", ".join(stated.decided()) or "none",
+                )
             )
         self.location, self.stated = str(path), stated
         self.store, self.connection = connect(path, read_only=True, buffer_pool_size=buffer_pool_size)

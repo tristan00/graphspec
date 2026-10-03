@@ -34,6 +34,7 @@ from graphspec.operations import pipeline, sets
 from graphspec.operations.pipeline import agreed, resolved
 from graphspec.representations import groups as representations
 from graphspec.representations.registry import REPRESENTATIONS
+from graphspec.schema.decisions import counted
 from graphspec.schema.schema import ENCODERS, WRITTEN, Encoding, fitted
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import SEVERAL
@@ -48,7 +49,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 62
+VIEW = 63
 TOKEN = (1 << 62) - 1
 
 
@@ -370,6 +371,7 @@ class Bank:
         keys = np.asarray([(owners[row["graph"]], row[asked]) for row in self.rows], np.int64).reshape(-1, 2)
         self.task_of = np.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
         self.aims, self.fields, self.inputs = pointed(schema, self.rows)
+        self.counted = counted(schema, self.rows)
         self.nodes = self.named()
         self.center = np.asarray(
             [scaled[name]["mean"] if name in scaled else 0.0 for name in self.series_names], np.float32

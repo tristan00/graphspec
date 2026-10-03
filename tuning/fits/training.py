@@ -16,6 +16,7 @@ from graphspec.infra.log import emit
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import measure, timed
 from graphspec.operations.parameters import digest
+from graphspec.schema.decisions import drawn
 from tuning.bank.bank import PACKAGES
 from tuning.families.heads import FIELD
 from tuning.measures.measures import measurable, measured, predicted, scored
@@ -225,7 +226,7 @@ class TrainingSession:
                 raise ValueError("holdout row reached the optimizer")
             self.trained_rows.extend(batch["rows"].tolist())
             epoch_rows.extend(batch["rows"].tolist())
-            if not np.asarray(batch["left"]).all():
+            if (~np.asarray(batch["left"], bool) & self.bank.counted[batch["rows"]]).any():
                 self.losses.append(self.optimize(batch))
                 epoch_sum += self.losses[-1] * len(batch["rows"])
             self.budget.check()
@@ -359,6 +360,7 @@ class TrainingSession:
             )
             values, drawn = both[: len(indices)], both[len(indices) :]
             kept, unmeasured = shortened(self.bank, self.config["pipeline"], every)
+            kept &= self.bank.counted[every]
             held = scored(
                 np.r_[self.bank.targets[indices], np.zeros(len(owners))][kept],
                 both[kept],
@@ -459,6 +461,7 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
         raise KeyError("the configuration states no pipeline")
     with measure("bank_load"):
         bank = Deriver(bank_directory, stated.device, stated.derivation_seed, RESIDENT)
+    drawn(bank.registry.schema)
     admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
     drawing(bank.registry.schema, config["pipeline"])
     measurable(stated.measures, bank, stated.scored)

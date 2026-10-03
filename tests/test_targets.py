@@ -399,8 +399,8 @@ def test_a_kind_of_target_registered_by_a_test_builds_reads_back_and_completes_o
         ),
         (
             dict(loss=given["loss"], measures=["absolute", "mse"]),
-            "names the measure mse, which reads targets of the kinds number, path and no kind of target of the bank, "
-            "which holds share$",
+            "names the measure mse, which reads targets of the kinds number, path, decision and no kind of target of "
+            "the bank, which holds share$",
         ),
     )
     for changes, message in refused:

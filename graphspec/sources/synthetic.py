@@ -12,16 +12,23 @@ from graphspec.infra.log import configure
 from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
+from graphspec.schema.decisions import RECORDED, decision
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import (
+    ACTIONS,
     DECLARED,
     EDGE,
+    FOLLOWS,
     INNER,
     LINK,
     MEMBER,
     OBSERVED,
+    OF,
+    OPTIONS,
+    ROLED,
     TARGET,
     TASK,
+    TOGETHER,
     VERSION,
     WITHIN,
     WRITTEN,
@@ -908,6 +915,18 @@ def case_tasks(schema, index, tasks, counter, lookup, where):
     )
     if asked["signals"]:
         held.update(signal=fixed(tasks["signal"]), signal_observed=fixed(tasks["signal_observed"]))
+    deciding = schema.decided()
+    if deciding:
+        stated = [
+            decision(target, asked["kinds"][kind]["target"], "%s, the task %r" % (where, key))
+            if kind in deciding and target is not None
+            else dict(ended=None, discount=None)
+            for kind, key, target in zip(tasks["kind"], tasks["key"], tasks["target"])
+        ]
+        held.update(
+            ended=pa.array([target["ended"] for target in stated], pa.bool_()),
+            discount=pa.array([target["discount"] for target in stated], pa.float64()),
+        )
     tables = {("task", None, None): table_of(schema, held)}
     for name, entry in asked["references"].items():
         sort = SORTS.named(entry["sort"])
@@ -959,7 +978,121 @@ def case_tasks(schema, index, tasks, counter, lookup, where):
     tables[(LINK, TARGET, "task")] = pa.table(
         {"from": pa.array(numbers), "to": pa.array(aimed["task"], pa.int64())}
     )
+    if deciding:
+        tables.update(case_decisions(schema, index, tasks, ids, counter, where))
     LOG.debug("case tasks exit tasks=%d seconds=%.4f", count, time.perf_counter() - started)
+    return tables
+
+
+@timed("synthetic.linked")
+def linked(source, target):
+    return pa.table({"from": pa.array(source, pa.int64()), "to": pa.array(target, pa.int64())})
+
+
+def case_decisions(schema, index, tasks, ids, counter, where):
+    started = time.perf_counter()
+    deciding, columns = schema.decided(), schema.parameters()
+    keyed = {key: int(ids[at]) for at, key in enumerate(tasks["key"])}
+    found = dict(
+        next=dict(task=[], other=[], actor=[]),
+        concurrent=dict(task=[], other=[]),
+        option=dict(owner=[], key=[], sequence=[], available=[], chosen=[], order=[], shown=[], logged=[]),
+        action=dict(owner=[], kind=[], actor=[], **{name: [] for name in columns}),
+        role=dict(owner=[], role=[], key=[], relation=[], to_key=[]),
+    )
+    found["option"].update(generator=[], seed=[], drawn=[])
+    for at, (kind, stated) in enumerate(zip(tasks["kind"], tasks["target"])):
+        if kind not in deciding or stated is None:
+            continue
+        task, inner = int(ids[at]), "%s, the decision %r" % (where, tasks["key"][at])
+        strangers = sorted(key for key in stated["concurrent"] + list(stated["next"].values()) if key not in keyed)
+        if strangers:
+            raise ValueError("%s names tasks the graph does not hold: %s" % (inner, strangers))
+        for actor, key in stated["next"].items():
+            found["next"]["task"].append(task)
+            found["next"]["other"].append(keyed[key])
+            found["next"]["actor"].append(actor)
+        found["concurrent"]["task"] += [task] * len(stated["concurrent"])
+        found["concurrent"]["other"] += [keyed[key] for key in stated["concurrent"]]
+        actions = schema.tasks["kinds"][kind]["target"]["actions"]
+        for option in stated["options"]:
+            origin = option["origin"]
+            held = found["option"]
+            held["owner"].append(task)
+            held["sequence"].append(option["together"] == "sequence")
+            held["generator"].append(None if origin == RECORDED else origin["generator"])
+            held["seed"].append(None if origin == RECORDED else origin["seed"])
+            held["drawn"].append(None if origin == RECORDED else origin["drawn"])
+            for name in ("key", "available", "chosen", "order", "shown", "logged"):
+                held[name].append(option[name])
+            for action in option["actions"]:
+                if action["kind"] not in actions or set(action["parameters"]) != set(actions[action["kind"]]["parameters"]):
+                    raise ValueError(
+                        "%s states an action of the kind %s with the parameters %s; a kind of action of its kind of "
+                        "task states every parameter it lists"
+                        % (inner, action["kind"], ", ".join(sorted(action["parameters"])) or "none")
+                    )
+                found["action"]["owner"].append(len(held["owner"]) - 1)
+                found["action"]["kind"].append(action["kind"])
+                found["action"]["actor"].append(action["actor"])
+                for name in columns:
+                    found["action"][name].append(action["parameters"][name] if name in action["parameters"] else None)
+                for role, target in action["targets"].items():
+                    edged = isinstance(target, list)
+                    found["role"]["owner"].append(len(found["action"]["owner"]) - 1)
+                    found["role"]["role"].append(role)
+                    found["role"]["key"].append(target[0] if edged else target)
+                    found["role"]["relation"].append(target[1] if edged else None)
+                    found["role"]["to_key"].append(target[2] if edged else None)
+    numbers = {name: counter.take(table, len(found[name]["owner"])) for name, table in (
+        ("option", OPTIONS), ("action", ACTIONS), ("role", ROLED)
+    )}
+    graphs = {name: pa.array(np.full(len(found[name]["owner"]), index), pa.int32()) for name in numbers}
+    option, action, role = found["option"], found["action"], found["role"]
+    kinds = dict(order=pa.int32(), shown=pa.float64(), logged=pa.float64(), seed=pa.int64(), drawn=pa.float64())
+    tables = {
+        (FOLLOWS, "task", "task"): linked(found["next"]["task"], found["next"]["other"]).append_column(
+            "actor", pa.array(found["next"]["actor"], pa.string())
+        ),
+        (TOGETHER, "task", "task"): linked(found["concurrent"]["task"], found["concurrent"]["other"]),
+        (OPTIONS, None, None): pa.table(
+            dict(
+                id=pa.array(numbers["option"]),
+                graph=graphs["option"],
+                key=pa.array(option["key"], pa.string()),
+                **{name: pa.array(option[name], pa.bool_()) for name in ("sequence", "available", "chosen")},
+                generator=pa.array(option["generator"], pa.string()),
+                **{name: pa.array(option[name], kind) for name, kind in kinds.items()},
+            )
+        ),
+        (OPTIONS + OF, OPTIONS, "task"): linked(numbers["option"], option["owner"]),
+        (ACTIONS, None, None): pa.table(
+            dict(
+                id=pa.array(numbers["action"]),
+                graph=graphs["action"],
+                kind=pa.array(action["kind"], pa.string()),
+                actor=pa.array(action["actor"], pa.string()),
+                **{name: pa.array(action[name], schema.kind(name).written) for name in columns},
+            )
+        ),
+        (ACTIONS + OF, ACTIONS, OPTIONS): linked(
+            numbers["action"], numbers["option"][np.asarray(action["owner"], np.int64)]
+        ),
+        (ROLED, None, None): pa.table(
+            dict(
+                id=pa.array(numbers["role"]),
+                graph=graphs["role"],
+                **{name: pa.array(role[name], pa.string()) for name in ("role", "key", "relation", "to_key")},
+            )
+        ),
+        (ROLED + OF, ROLED, ACTIONS): linked(numbers["role"], numbers["action"][np.asarray(role["owner"], np.int64)]),
+    }
+    LOG.debug(
+        "case decisions exit options=%d actions=%d seconds=%.4f",
+        len(option["owner"]),
+        len(action["owner"]),
+        time.perf_counter() - started,
+    )
     return tables
 
 
@@ -1062,6 +1195,243 @@ def stage(output, name, case):
         len(case["graphs"]),
     )
     return output / (name + ".task.json")
+
+
+AGENTS = ("a0", "a1", "a2")
+SPOTS = ("s0", "s1", "s2", "s3", "s4")
+GOALS = ("gain", "cost")
+TURNS = (1, 2, 3, 4, 5, 6)
+MODES = ("slow", "fast")
+
+
+@timed("synthetic.chooser")
+def chooser(nothing):
+    actions = dict(
+        go=dict(roles=dict(to=dict(sort="node", kinds=["spot"])), parameters=["speed"]),
+        cut=dict(roles=dict(along=dict(sort="edge", kinds=["spot"])), parameters=["mode"]),
+        put=dict(
+            roles=dict(at=dict(sort="node", kinds=["spot"]), made=dict(sort="new", kinds=["mark"])),
+            parameters=["lit"],
+        ),
+    )
+    target = dict(
+        kind="decision",
+        series=list(GOALS),
+        about=None,
+        utility=dict(name="weighted", better="higher", weights=dict(gain=1.0, cost=-1.0)),
+        actors="agents",
+        actions=actions,
+        nothing=nothing,
+        rule=None,
+    )
+    return dict(references=["agents"], columns=[], target=target, weight=False, absent="stop", event=None, matures=None)
+
+
+@timed("synthetic.decision_schema")
+def decision_schema():
+    number = dict(type="number", encoder="value")
+    return dict(
+        version=VERSION,
+        time=dict(model="clock", units=["tick"], ties="key"),
+        observers=False,
+        columns=dict(load=number, speed=number, mode=dict(type="category", encoder="onehot"), lit=dict(type="flag", encoder="value")),
+        graph=dict(columns=[]),
+        nodes=dict(
+            agent=dict(columns=["load"], holds=None),
+            spot=dict(columns=["load"], holds=None),
+            mark=dict(columns=[], holds=None),
+        ),
+        sets={},
+        edges=dict(near=edge("spot", "spot", [], directed=False), base=edge("agent", "spot", [])),
+        tasks=dict(
+            key="ticket",
+            grouping=None,
+            signals=1,
+            references=dict(
+                agents=dict(sort="nodes", kinds=["agent"]),
+                who=dict(sort="node", kinds=["agent"]),
+                at=dict(sort="node", kinds=["spot"]),
+            ),
+            kinds=dict(turn=chooser("wait"), show=chooser(None), visit=kind(["at", "who"], [], None, ["at", "who"])),
+        ),
+    )
+
+
+@timed("synthetic.acting")
+def acting(kind, actor, targets, parameters):
+    return dict(kind=kind, actor=actor, targets=targets, parameters=parameters)
+
+
+@timed("synthetic.offered")
+def offered(key, actions, together, origin):
+    return dict(
+        key=key,
+        actions=actions,
+        together=together,
+        available=True,
+        chosen=False,
+        order=None,
+        shown=None,
+        logged=None,
+        origin=origin,
+        outcome=None,
+    )
+
+
+@timed("synthetic.worth")
+def worth(moment, place, number):
+    return dict(gain=0.5 * moment + 0.25 * number - place, cost=0.1 * ((moment * 3 + number + place) % 5))
+
+
+def turned(moment, place, actors, generator):
+    started = time.perf_counter()
+    spot, edge_at = SPOTS[(moment + place) % 5], (moment + place) % 4
+    along = [SPOTS[edge_at], "near", SPOTS[edge_at + 1]]
+    actor = actors[0]
+    made = "m0" if (place, moment, actor) == (0, 3, "a0") else "m%d_%d_%s" % (place, moment, actor)
+    options = [
+        offered("wait", [], "set", RECORDED),
+        offered("go", [acting("go", actor, dict(to=spot), dict(speed=0.5 * moment + place))], "set", RECORDED),
+        offered(
+            "cut",
+            [acting("cut", actor, dict(along=along[::-1] if moment % 2 else along), dict(mode=MODES[moment % 2]))],
+            "set",
+            RECORDED,
+        ),
+        offered(
+            "put",
+            [
+                acting("go", actor, dict(to=spot), dict(speed=1.5)),
+                acting("put", actor, dict(at=spot, made=made), dict(lit=moment % 2 == 0)),
+            ],
+            "sequence",
+            RECORDED,
+        ),
+    ]
+    if len(actors) > 1:
+        pair = [acting("go", other, dict(to=SPOTS[(moment + at) % 5]), dict(speed=None)) for at, other in enumerate(actors)]
+        options.append(offered("pair", pair, "set", RECORDED))
+    drawn = 0.25 if moment % 2 else None
+    options.append(
+        offered(
+            "drawn",
+            [acting("go", actor, dict(to=SPOTS[(moment + place + 2) % 5]), dict(speed=2.0))],
+            "set",
+            dict(generator=generator, seed=7 * moment + place, drawn=drawn),
+        )
+    )
+    chosen = (moment + place) % (len(options) - 1)
+    options[chosen]["chosen"] = True
+    options[2]["available"] = moment % 3 != 0 or chosen == 2
+    for number, option in enumerate(options):
+        if moment % 2 or number == chosen:
+            held = worth(moment, place, number)
+            option["outcome"] = [held, worth(moment + 1, place, number)] if option["together"] == "sequence" else held
+        if moment % 2 and option["origin"] == RECORDED:
+            option["shown"] = 1.0 / (len(options) - 1)
+            option["logged"] = 0.5 if number == chosen else 0.5 / (len(options) - 2)
+    LOG.debug("turned exit options=%d seconds=%.4f", len(options), time.perf_counter() - started)
+    return options
+
+
+def shown(moment, place):
+    started = time.perf_counter()
+    options = [
+        offered("show%d" % at, [acting("go", "a2", dict(to=SPOTS[at]), dict(speed=1.0))], "set", RECORDED)
+        for at in range(4)
+    ]
+    for order, at in enumerate(((moment + place) % 4, (moment + place + 1) % 4)):
+        options[at].update(chosen=True, order=order, outcome=worth(moment, place, at + order))
+    for option in options:
+        option.update(shown=0.25, logged=0.5 if option["chosen"] else 0.0)
+    LOG.debug("shown exit options=%d seconds=%.4f", len(options), time.perf_counter() - started)
+    return options
+
+
+def decision_graph(place, generator):
+    started = time.perf_counter()
+    tasks = dict(key=[], kind=[], time=[], split=[], weight=[], target=[], known=[])
+    tasks.update(references=dict(agents=[], who=[], at=[]), signal=[], signal_observed=[])
+    for moment in TURNS:
+        last = moment == TURNS[-1]
+        actors = [["a0", "a1"]] if last else [["a0"], ["a1"]]
+        keys = [10 * moment + at for at in range(len(actors))]
+        shows = moment % 2 == 0
+        together = keys + ([10 * moment + 2] if shows else [])
+        for actors_of, key in zip(actors, keys):
+            following = {} if last else {actor: 10 * (moment + 1) + (0 if moment + 1 == TURNS[-1] else int(actor[1])) for actor in actors_of}
+            target = dict(
+                options=turned(moment, place, actors_of, generator),
+                concurrent=[other for other in together if other != key],
+                next=following,
+                ended=last,
+                discount=0.9,
+            )
+            tasks["key"].append(key)
+            tasks["kind"].append("turn")
+            tasks["references"]["agents"].append(actors_of)
+            tasks["target"].append(target)
+        if shows:
+            tasks["key"].append(10 * moment + 2)
+            tasks["kind"].append("show")
+            tasks["references"]["agents"].append(["a2"])
+            following = {} if last else {"a2": 10 * (moment + 2) + 2}
+            tasks["target"].append(
+                dict(
+                    options=shown(moment, place),
+                    concurrent=keys,
+                    next=following,
+                    ended=last,
+                    discount=None,
+                )
+            )
+        added = len(tasks["key"]) - len(tasks["time"])
+        tasks["references"]["who"] += [None] * added
+        tasks["references"]["at"] += [None] * added
+        tasks["split"] += ["train" if moment <= 3 else "validation"] * added
+        tasks["known"] += [moment + 1] * added
+        tasks["key"].append(10 * moment + 9)
+        tasks["kind"].append("visit")
+        tasks["references"]["agents"].append(None)
+        tasks["references"]["who"].append(AGENTS[(moment + place) % 3])
+        tasks["references"]["at"].append(SPOTS[moment % 5])
+        tasks["target"].append(None)
+        tasks["split"].append(None)
+        tasks["known"].append(None)
+        added += 1
+        tasks["time"] += [moment] * added
+        tasks["weight"] += [None] * added
+        tasks["signal"] += [[0.1 * moment + place + 0.01 * at] for at in range(added)]
+        tasks["signal_observed"] += [[True]] * added
+    agents = dict(key=list(AGENTS), since=[0] * 3, until=[None] * 3, load=[1.0 + at + place for at in range(3)])
+    spots = dict(key=list(SPOTS), since=[0] * 5, until=[None] * 5, load=[2.0 * at - place for at in range(5)])
+    near = dict(
+        source=list(SPOTS[:-1]), target=list(SPOTS[1:]), present=[True] * 4, since=[0] * 4, until=[None] * 4
+    )
+    base = dict(source=list(AGENTS), target=["s0", "s2", "s4"], present=[True] * 3, since=[0] * 3, until=[None] * 3)
+    result = dict(
+        name="g%d" % place,
+        unit="tick",
+        columns={},
+        nodes=dict(agent=list(AGENTS), spot=list(SPOTS), mark=["m0"]),
+        values=[
+            dict(form="state", parameters={}, rows=agents, kind="agent"),
+            dict(form="state", parameters={}, rows=spots, kind="spot"),
+            dict(form="state", parameters={}, rows=dict(key=["m0"], since=[5], until=[None]), kind="mark"),
+        ],
+        edges=[
+            dict(form="state", parameters={}, rows=near, table="near", ends=("spot", "spot")),
+            dict(form="state", parameters={}, rows=base, table="base", ends=("agent", "spot")),
+        ],
+        tasks=tasks,
+    )
+    LOG.debug("decision graph exit graph=%d tasks=%d seconds=%.4f", place, len(tasks["key"]), time.perf_counter() - started)
+    return result
+
+
+@timed("synthetic.decisions")
+def decisions(generator):
+    return dict(schema=decision_schema(), graphs=[decision_graph(place, generator) for place in range(2)])
 
 
 def main():

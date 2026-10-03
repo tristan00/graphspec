@@ -18,7 +18,7 @@ def standardised(predictions, batch, bank):
 
 
 class Squared:
-    reads = ("number", "path")
+    reads = ("number", "path", "decision")
 
     @timed("losses.Squared.__call__")
     def __call__(self, predictions, batch, bank):
@@ -27,7 +27,7 @@ class Squared:
 
 
 class Balanced:
-    reads = ("number", "path")
+    reads = ("number", "path", "decision")
 
     @timed("losses.Balanced.__call__")
     def __call__(self, predictions, batch, bank):
@@ -143,7 +143,7 @@ def outcomes(bank, batch, device):
     placed, every = np.asarray(batch["placed"], np.int64), np.r_[rows, drawn]
     found = dict(
         target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)][placed],
-        counted=~np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)][placed],
+        counted=(~np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)] & bank.counted[every])[placed],
     )
     for name, values in bank.fields.items():
         found[FIELD + name] = values[every][placed]

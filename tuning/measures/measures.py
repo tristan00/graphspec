@@ -50,7 +50,7 @@ def determined(target, prediction):
 
 
 class Squared:
-    reads = ("number", "path")
+    reads = ("number", "path", "decision")
     better = "lower"
     label, short = "Validation MSE", "MSE"
     refusal = staticmethod(needless)
@@ -65,7 +65,7 @@ class Squared:
 
 
 class Determination:
-    reads = ("number",)
+    reads = ("number", "decision")
     better = "higher"
     label, short = "Validation R²", "R²"
 
@@ -90,7 +90,7 @@ class Determination:
 
 
 class Balanced:
-    reads = ("number", "path")
+    reads = ("number", "path", "decision")
     better = "lower"
     label, short = "Validation loss", "Loss"
     refusal = staticmethod(needless)
@@ -541,6 +541,7 @@ def measurable(names, bank, scored):
             % (", ".join(strangers), ", ".join(sorted(bank.split["indices"])))
         )
     rows = np.sort(np.concatenate([np.asarray(bank.split["indices"][name], np.int64) for name in scored]))
+    rows = rows[bank.counted[rows]]
     held = Scored(
         bank.targets[rows],
         np.full(len(rows), np.nan),

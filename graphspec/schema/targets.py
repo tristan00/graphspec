@@ -786,7 +786,19 @@ class Link(Pointed):
 
 
 class Weighted:
-    reads = ("number", "path", "class", "classes", "proportions", "sequence", "survival", "ranking", "nodes", "link")
+    reads = (
+        "number",
+        "path",
+        "class",
+        "classes",
+        "proportions",
+        "sequence",
+        "survival",
+        "ranking",
+        "nodes",
+        "link",
+        "decision",
+    )
     parameters = ("weights",)
 
     @timed("targets.weighted.checked")

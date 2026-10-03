@@ -334,6 +334,73 @@ def aimed_of(schema, graph, order, row):
     return result, row
 
 
+def made(schema, graph):
+    started = time.perf_counter()
+    result = {kind: set() for kind in schema.entities()}
+    for kind, target in zip(graph["tasks"]["kind"], graph["tasks"]["target"]):
+        if kind not in schema.decided() or target is None:
+            continue
+        roles = {name: entry["roles"] for name, entry in schema.tasks["kinds"][kind]["target"]["actions"].items()}
+        for option in target["options"]:
+            for action in option["actions"]:
+                for role, key in action["targets"].items():
+                    declared = roles[action["kind"]][role]
+                    if declared["sort"] == "new" and key not in graph["nodes"][declared["kinds"][0]]:
+                        result[declared["kinds"][0]].add(key)
+    LOG.debug("made exit graph=%s seconds=%.6f", graph["name"], time.perf_counter() - started)
+    return {kind: sorted(keys) for kind, keys in result.items()}
+
+
+@timed("support.probable")
+def probable(value):
+    return None if value is None else float(value)
+
+
+def chosen_of(schema, graph, entity, decision, stated):
+    started = time.perf_counter()
+    options = []
+    for option in stated["options"]:
+        actions = []
+        for action in option["actions"]:
+            roles = decision["actions"][action["kind"]]["roles"]
+            targets = {
+                role: list(ended(schema, graph, entity, roles[role]["kinds"], tuple(key))) if isinstance(key, list) else key
+                for role, key in action["targets"].items()
+            }
+            parameters = {name: stored_as(schema, name, [value])[0] for name, value in action["parameters"].items()}
+            actions.append(dict(action, targets=targets, parameters=parameters))
+        outcome = option["outcome"]
+        valued = [outcome] if isinstance(outcome, dict) else outcome or []
+        valued = [None if held is None else {name: float(value) for name, value in held.items()} for held in valued]
+        origin = option["origin"]
+        options.append(
+            dict(
+                option,
+                actions=actions,
+                shown=probable(option["shown"]),
+                logged=probable(option["logged"]),
+                origin=origin if isinstance(origin, str) else dict(origin, drawn=probable(origin["drawn"])),
+                outcome=valued[0] if isinstance(outcome, dict) else valued if outcome is not None else None,
+            )
+        )
+    result = dict(stated, options=options, concurrent=sorted(stated["concurrent"]), discount=probable(stated["discount"]))
+    LOG.debug("chosen of exit options=%d seconds=%.6f", len(options), time.perf_counter() - started)
+    return result
+
+
+def decided_of(schema, graph, entity, order):
+    started = time.perf_counter()
+    tasks, kinds = graph["tasks"], schema.tasks["kinds"]
+    result = [
+        chosen_of(schema, graph, entity, kinds[tasks["kind"][at]]["target"], tasks["target"][at])
+        if tasks["kind"][at] in schema.decided() and tasks["target"][at] is not None
+        else None
+        for at in order
+    ]
+    LOG.debug("decided of exit graph=%s tasks=%d seconds=%.4f", graph["name"], len(result), time.perf_counter() - started)
+    return result
+
+
 def meant(case):
     started = time.perf_counter()
     schema, result, row = Schema(case["schema"]), {}, 0
@@ -342,18 +409,20 @@ def meant(case):
         entity = {pair: at for at, pair in enumerate(listed)}
         tasks, order = asked_of(schema, graph, entity)
         targets, row = aimed_of(schema, graph, order, row)
+        created = made(schema, graph)
         result[graph["name"]] = dict(
             graph=dict(
                 unit=graph["unit"],
                 **{name: stored_as(schema, name, [graph["columns"][name]])[0] for name in schema.graph},
             ),
-            nodes={kind: list(graph["nodes"][kind]) for kind in schema.entities()},
+            nodes={kind: list(graph["nodes"][kind]) + created[kind] for kind in schema.entities()},
             observations=observed(schema, graph),
             edges=edged(schema, graph, entity),
             sets=joined(schema, graph),
             held=holding(schema, graph),
             tasks=tasks,
             targets=targets,
+            decisions=decided_of(schema, graph, entity, order),
         )
     LOG.debug("meant exit graphs=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
@@ -373,7 +442,7 @@ def read_back(held):
 
 def differing(found, wanted, schema):
     started = time.perf_counter()
-    result = [part for part in ("graph", "nodes", "targets") if found[part] != wanted[part]]
+    result = [part for part in ("graph", "nodes", "targets", "decisions") if found[part] != wanted[part]]
     result += [part for part in ("observations", "edges", "sets", "held") if not alike(found[part], wanted[part])]
     if normal(found["tasks"], schema) != wanted["tasks"]:
         result.append("tasks")

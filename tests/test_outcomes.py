@@ -428,7 +428,9 @@ def test_times_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_measures
     rounded = np.asarray(tau, np.float32).tolist()
     assert inputs["tau"].dtype == np.float32 and inputs["tau"][:15].tolist() == rounded != tau
     assert np.isnan(inputs["tau"][15]) and fields["place"].tolist() == [0] * 15 + [1] and np.isnan(inputs["place"][:15]).all()
-    held = SimpleNamespace(targets=np.asarray([row["y"] for row in rows], np.float64), fields=fields)
+    held = SimpleNamespace(
+        targets=np.asarray([row["y"] for row in rows], np.float64), fields=fields, counted=np.ones(len(rows), bool)
+    )
     batch = dict(rows=np.arange(15), drawn=np.zeros(2, np.int64), placed=np.arange(17), left=np.zeros(15, bool))
     found = outcomes(held, batch, "cpu")
     assert found["field/duration"].dtype == torch.int64 and found["field/duration"].tolist() == lasted + lasted[:1] * 2

@@ -13,6 +13,7 @@ from .operations.operation import OPERATIONS, Operation, Phase
 from .operations.sets import STORAGE
 from .registries import REGISTRIES, ship
 from .representations.registry import REPRESENTATIONS, Representation
+from .schema.decisions import GENERATORS, RULES
 from .schema.declaration import EdgeType, Registry
 from .schema.references import SORTS
 from .schema.schema import ENCODERS, HELD, TYPES, Schema
@@ -27,10 +28,12 @@ __all__ = [
     "ABOUT",
     "ENCODERS",
     "FORMS",
+    "GENERATORS",
     "HELD",
     "NEGATIVES",
     "OPERATIONS",
     "REPRESENTATIONS",
+    "RULES",
     "SEES",
     "SEVERAL",
     "SORTS",

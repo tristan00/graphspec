@@ -20,6 +20,7 @@ from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import Timeline, measure, timed
 from graphspec.operations.parameters import digest
 from graphspec.registries import carried, restored
+from graphspec.schema.decisions import drawn
 from tuning import statement as statements
 from tuning.bank.bank import PACKAGES
 from tuning.fits.budget import TIMEOUT_EXIT_CODE
@@ -210,6 +211,7 @@ def run(args):
         if value is not None and (type(value) is not int or value < 0):
             raise ValueError(name + " must be a nonnegative integer")
     bank = Bank(args.bank)
+    drawn(bank.registry.schema)
     admitted(bank.registry.schema.targets(), stated.loss, stated.measures)
     measurable(stated.measures, bank, stated.scored)
     objective.ranking(stated.measures)

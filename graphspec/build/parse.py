@@ -7,10 +7,13 @@ from graphspec.facts.check import check
 from graphspec.facts.stored import Facts, codes, column, matrix, sparse, tokens
 from graphspec.infra.timing import timed
 from graphspec.schema import time as clock
+from graphspec.schema.decisions import WHOLE
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import VALUE, absent, inward, outward
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER
+
+from .decisions import decided, undecided
 
 LOG = logging.getLogger(__name__)
 
@@ -28,6 +31,8 @@ def distinct(schema, tables):
         ]
     if "tasks" in tables:
         places.append((tables["tasks"], schema.asked_columns()))
+    if schema.decided():
+        places.append((tables["decisions"]["action"], schema.parameters()))
     result = {name: set() for name in schema.symbolic()}
     for table, columns in places:
         for name in columns:
@@ -141,7 +146,14 @@ def asked(registry, splits, observers, tables, name):
                     "a task of graph %s of the kind %s states the column %s, which its kind does not"
                     % (name, kind, other)
                 )
+    ended, discount = np.full(count, -1, np.int8), np.full(count, np.nan, np.float64)
+    if schema.decided():
+        given = tasks.column("ended")
+        ended = np.where(absent(given), -1, np.asarray(given.fill_null(False).to_numpy(zero_copy_only=False), np.int8))
+        discount = np.asarray(tasks.column("discount").to_numpy(zero_copy_only=False), np.float64)
     result = dict(
+        task_ended=ended.astype(np.int8)[order],
+        task_discount=discount[order],
         task_time=moments[order],
         task_observer=looking[order],
         task_grouping=column(tasks, "period", np.int32)[order]
@@ -325,8 +337,15 @@ def aimed(registry, tables, tasks, place, rows, series, referred, keys, kinds, n
         target_series=series[order],
         target_node=node[order].astype(np.int32),
     )
+    aims = dict(task=owner[order], option=np.full(len(order), WHOLE), part=np.full(len(order), WHOLE))
+    aims["chosen"] = np.zeros(len(order), bool)
+    if registry.schema.decided():
+        for part in ("option", "part"):
+            given = found.column(part)
+            aims[part] = np.where(absent(given), WHOLE, np.asarray(given.fill_null(0).to_numpy(), np.int64))[order]
+        aims["chosen"] = np.asarray(found.column("chosen").fill_null(False).to_numpy(zero_copy_only=False), bool)[order]
     LOG.debug("aimed exit graph=%s targets=%d seconds=%.4f", name, len(order), time.perf_counter() - started)
-    return result
+    return result, aims
 
 
 def noded(registry, tasks, members, keys, kinds, owner, nodes, name):
@@ -497,15 +516,22 @@ def parse(registry, splits, observers, tables, rows, series, name):
         raise ValueError("fact codes must fit 0..%d" % np.iinfo(np.int16).max)
     tasks, place = asked(registry, splits, observers, tables, name)
     members = referred(registry, tables, tasks, place, local, kinds, name)
-    targets = aimed(registry, tables, tasks, place, rows, series, members, keys, kinds, name)
+    targets, aims = aimed(registry, tables, tasks, place, rows, series, members, keys, kinds, name)
     joined = belonging(registry, tables, kinds, local, name)
     inner, held = holding(registry, tables, kinds, local, name)
+    choices, options, generators = undecided(tasks, aims), [], []
+    if schema.decided():
+        choices, keys, kinds, options, generators = decided(
+            registry, tables["decisions"], tasks, place, members, keys, kinds, seen, aims, name
+        )
     graph = Facts(
         name,
         keys,
         unit,
         inner,
         observers,
+        options,
+        generators,
         kinds=kinds,
         entity_token=tokens(registry, kinds, keys),
         **joined,
@@ -531,6 +557,7 @@ def parse(registry, splits, observers, tables, rows, series, name):
         **tasks,
         **members,
         **targets,
+        **choices,
     )
     check(graph, registry, splits, observers)
     LOG.info(

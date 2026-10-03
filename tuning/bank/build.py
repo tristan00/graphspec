@@ -24,6 +24,7 @@ from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.registries import carried, restored
 from graphspec.schema import declaration
+from graphspec.schema.decisions import counted
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import VALUE, Encoding, Schema
 from graphspec.schema.targets import TARGETS
@@ -299,7 +300,7 @@ def supervision(source, trained, names):
             "the splits trained on name %s, and the source holds the splits %s"
             % (", ".join(map(str, strangers)), ", ".join(found_splits))
         )
-    chosen = np.isin(held, list(trained))
+    chosen = np.isin(held, list(trained)) & counted(stated, rows)
     statistics = []
     measured = stated.measured()
     for name in stated.series():

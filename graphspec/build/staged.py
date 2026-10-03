@@ -11,14 +11,20 @@ from graphspec.infra.runtime import cache_path
 from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import (
+    ACTIONS,
     EDGE,
     FACTS,
+    FOLLOWS,
     INNER,
     LINK,
     MEMBER,
     OBSERVED,
+    OF,
+    OPTIONS,
+    ROLED,
     TARGET,
     TASK,
+    TOGETHER,
     VALUE,
     WITHIN,
     inward,
@@ -29,8 +35,9 @@ from graphspec.schema.schema import (
 from .output import manifest
 
 LOG = logging.getLogger(__name__)
-INDEX = 5
+INDEX = 6
 IDS = 32
+DECIDING = (OPTIONS, ACTIONS, ROLED)
 
 
 def numbers(table, name):
@@ -209,7 +216,8 @@ class Staged:
         count = len(graphs)
         graph_unit.bounds = np.arange(count + 1)
         self.graph_of["graph"] = graphs
-        for table in list(self.nodes) + ["task"] + [INNER + kind for kind in self.stated.holds]:
+        decided = list(DECIDING) if self.stated.decided() else []
+        for table in list(self.nodes) + ["task"] + [INNER + kind for kind in self.stated.holds] + decided:
             (unit,) = self.by_table[table]
             self.graph_of[table] = numbers(unit.read(columns=["graph"]), "graph")
             if table in self.nodes:
@@ -401,6 +409,8 @@ class Reader:
             references=self.references(index, nodes),
             targets=self.targets(index),
         )
+        if stated.decided():
+            tables["decisions"] = self.decisions(index)
         LOG.info(
             "read graph exit graph=%d seconds=%.3f observations=%d",
             index,
@@ -546,8 +556,66 @@ class Reader:
         columns.update(valued(rows, source.stated.asked_columns()))
         if stated["signals"]:
             columns.update(signal=rows.column("signal"), signal_observed=rows.column("signal_observed"))
+        if source.stated.decided():
+            columns.update(ended=rows.column("ended"), discount=rows.column("discount"))
         LOG.debug("read tasks exit graph=%d seconds=%.4f", index, time.perf_counter() - started)
         return pa.table(columns)
+
+    def linked(self, index, table, target):
+        started = time.perf_counter()
+        source = self.source
+        (rows,) = source.by_table[table]
+        (link,) = source.by_table[table + OF]
+        (owner,) = source.by_table[target]
+        found = link.graph_rows(index)
+        start = int(rows.bounds[index])
+        position = source.positions(table, numbers(found, "from")) - start
+        owners = np.full(int(rows.bounds[index + 1]) - start, -1, np.int64)
+        unique_positions(position, owners, table + OF)
+        owners[position] = source.positions(target, numbers(found, "to")) - int(owner.bounds[index])
+        if (owners < 0).any():
+            raise ValueError("graph %d has rows of %s that belong to none of %s" % (index, table, target))
+        LOG.debug("read linked exit graph=%d table=%s seconds=%.4f", index, table, time.perf_counter() - started)
+        return rows.graph_rows(index), owners
+
+    def paired(self, index, table):
+        started = time.perf_counter()
+        source = self.source
+        (unit,) = source.by_table[table]
+        (task,) = source.by_table["task"]
+        links, start = unit.graph_rows(index), int(task.bounds[index])
+        columns = {
+            end: pa.array(source.positions("task", numbers(links, name)) - start, pa.int64())
+            for end, name in (("task", "from"), ("other", "to"))
+        }
+        columns.update({name: links.column(name) for name in links.column_names if name not in ("from", "to")})
+        LOG.debug("read paired exit graph=%d table=%s seconds=%.4f", index, table, time.perf_counter() - started)
+        return pa.table(columns)
+
+    def decisions(self, index):
+        started = time.perf_counter()
+        stated = self.source.stated
+        options, task = self.linked(index, OPTIONS, "task")
+        actions, option = self.linked(index, ACTIONS, OPTIONS)
+        roles, action = self.linked(index, ROLED, ACTIONS)
+        result = dict(
+            next=self.paired(index, FOLLOWS),
+            concurrent=self.paired(index, TOGETHER),
+            option=options.drop_columns(["id", "graph"]).append_column("task", pa.array(task, pa.int64())),
+            action=pa.table(
+                dict(
+                    option=pa.array(option, pa.int64()),
+                    kind=actions.column("kind"),
+                    actor=actions.column("actor"),
+                    **valued(actions, stated.parameters()),
+                )
+            ),
+            role=roles.drop_columns(["id", "graph"]).append_column("action", pa.array(action, pa.int64())),
+        )
+        LOG.debug(
+            "read decisions exit graph=%d options=%d seconds=%.4f", index, len(task), time.perf_counter() - started
+        )
+        return result
 
     def references(self, index, nodes):
         started = time.perf_counter()

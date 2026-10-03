@@ -44,8 +44,8 @@ class GraphTables:
                 "graph tables state tasks without a grouping and without signals, whose references are one node "
                 "each or the graph"
             )
-        if schema.sets or schema.holds:
-            raise ValueError("graph tables state no edges joining sets and no held graphs")
+        if schema.sets or schema.holds or schema.decided():
+            raise ValueError("graph tables state no edges joining sets, no held graphs and no decisions")
         if not isinstance(index, Integral) or index < 0 or index >= 1 << 31:
             raise ValueError("graph index must be a nonnegative int32")
         if (unit is not None) != (schema.model in UNITED) or (unit is not None and unit not in schema.units):

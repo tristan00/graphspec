@@ -9,6 +9,7 @@ from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
+from .decisions import deciding
 from .references import ABSENT, SORTS
 from .targets import BETTER, TARGETS, UTILITIES, UTILITY
 from .time import ABOUT, MODELS, STAMPS, TIES, UNITED
@@ -23,6 +24,13 @@ INNER = "held_"
 WITHIN = "held_edge_"
 TARGET = "target"
 LINK = "target_of"
+DECIDED = "decision_"
+OPTIONS = DECIDED + "option"
+ACTIONS = DECIDED + "action"
+ROLED = DECIDED + "role"
+FOLLOWS = DECIDED + "next"
+TOGETHER = DECIDED + "concurrent"
+OF = "_of"
 FACTS = ("present",)
 STAMP = "INT64"
 SEQUENCE = dict(seq="INT32")
@@ -38,7 +46,7 @@ WRITTEN = {
 }
 NAMED = {kind: name for name, kind in WRITTEN.items()}
 TABLES = ("graph", "observation", "task", TARGET, LINK)
-PREFIXES = (EDGE, OBSERVED, TASK, MEMBER, INNER)
+PREFIXES = (EDGE, OBSERVED, TASK, MEMBER, INNER, DECIDED)
 FIELDS =("version", "time", "observers", "columns", "graph", "nodes", "sets", "edges", "tasks")
 TIMED = ("model", "units", "ties")
 KINDED = ("columns", "holds")
@@ -54,7 +62,7 @@ KIND = ("references", "columns", "target", "weight", "absent", "event", "matures
 AIMED = ("kind", "series", "about", "utility")
 OWNED_TARGET = ("id", "y", "known", "task", "owner")
 MATURED = ("reference", "column")
-GIVEN = ("id", "graph", "time", "observer", "kind", "split", "weight", "signal", "signal_observed")
+GIVEN = ("id", "graph", "time", "observer", "kind", "split", "weight", "signal", "signal_observed", "ended", "discount")
 VALUE = "column:"
 ENDS = ("from", "to")
 FITTED = ("sizes", "values", "held", "inner", "features")
@@ -525,13 +533,13 @@ class Schema:
                 "its graph in the same places as its own" % ", ".join(both)
             )
         used = set(self.graph) | set(self.layout()) | set(self.member_columns())
-        used |= set(self.inner_columns()) | set(self.within_columns())
+        used |= set(self.inner_columns()) | set(self.within_columns()) | set(self.parameters())
         used |= {name for entry in self.edges.values() for name in entry["columns"]}
         unused = [name for name in self.columns if name not in used]
         if unused:
             raise ValueError(
                 "the columns %s are declared and used by no kind of node or of set edge, no edge table, no "
-                "graph held by a node, no kind of task and not by the graph" % ", ".join(unused)
+                "graph held by a node, no kind of task, no kind of action and not by the graph" % ", ".join(unused)
             )
         LOG.debug(
             "schema exit kinds=%d sets=%d edges=%d columns=%d seconds=%.4f",
@@ -777,7 +785,7 @@ class Schema:
             series=series,
             about=stated["about"],
             utility=self.valued(stated["utility"], stated["kind"], series, where),
-            **kind.checked(stated, self, references, where),
+            **kind.checked(stated, self, {name: references[name] for name in names}, where),
         )
 
     @timed("schema.valued")
@@ -969,6 +977,21 @@ class Schema:
             dict.fromkeys(name for entry in self.tasks["kinds"].values() for name in entry["columns"])
         )
 
+    @timed("schema.decided")
+    def decided(self):
+        return tuple(kind for kind, entry in self.tasks["kinds"].items() if deciding(entry["target"]))
+
+    @timed("schema.parameters")
+    def parameters(self):
+        return tuple(
+            dict.fromkeys(
+                name
+                for kind in self.decided()
+                for action in self.tasks["kinds"][kind]["target"]["actions"].values()
+                for name in action["parameters"]
+            )
+        )
+
     @timed("schema.series")
     def series(self):
         return tuple(
@@ -1107,6 +1130,9 @@ class Schema:
         if asked["signals"]:
             vector = "FLOAT[%d]" % asked["signals"]
             required.update(signal=vector, signal_observed=vector)
+        if self.decided():
+            required.update(ended="BOOL", discount="DOUBLE")
+            result.update(self.decision_tables())
         result["task"] = dict(kind="NODE", required=required, columns=self.asked_columns())
         for name, entry in asked["references"].items():
             stored = SORTS.named(entry["sort"]).columns()
@@ -1125,6 +1151,40 @@ class Schema:
         result[LINK] = dict(kind="REL", required={}, columns=(), pairs=((TARGET, "task"),))
         LOG.debug("schema tables exit tables=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result
+
+    @timed("schema.Schema.decision_tables")
+    def decision_tables(self):
+        keys = dict(id="INT64", graph="INT32")
+        return {
+            FOLLOWS: dict(kind="REL", required=dict(actor="STRING"), columns=(), pairs=(("task", "task"),)),
+            TOGETHER: dict(kind="REL", required={}, columns=(), pairs=(("task", "task"),)),
+            OPTIONS: dict(
+                kind="NODE",
+                required=dict(
+                    keys,
+                    key="STRING",
+                    sequence="BOOL",
+                    available="BOOL",
+                    chosen="BOOL",
+                    order="INT32",
+                    shown="DOUBLE",
+                    logged="DOUBLE",
+                    generator="STRING",
+                    seed=STAMP,
+                    drawn="DOUBLE",
+                ),
+                columns=(),
+            ),
+            OPTIONS + OF: dict(kind="REL", required={}, columns=(), pairs=((OPTIONS, "task"),)),
+            ACTIONS: dict(kind="NODE", required=dict(keys, kind="STRING", actor="STRING"), columns=self.parameters()),
+            ACTIONS + OF: dict(kind="REL", required={}, columns=(), pairs=((ACTIONS, OPTIONS),)),
+            ROLED: dict(
+                kind="NODE",
+                required=dict(keys, role="STRING", key="STRING", relation="STRING", to_key="STRING"),
+                columns=(),
+            ),
+            ROLED + OF: dict(kind="REL", required={}, columns=(), pairs=((ROLED, ACTIONS),)),
+        }
 
     def conform(self, source):
         started = time.perf_counter()

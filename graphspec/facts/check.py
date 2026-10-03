@@ -23,6 +23,11 @@ def check(graph, registry, splits, observers):
         set=len(graph.set_edge),
         inner=len(graph.inner_owner),
         within=len(graph.within_source),
+        next=len(graph.next_task),
+        concurrent=len(graph.concurrent_task),
+        option=len(graph.option_task),
+        action=len(graph.action_option),
+        role=len(graph.role_action),
     )
     dimensions = dict(
         obs_values=2,
@@ -32,8 +37,10 @@ def check(graph, registry, splits, observers):
         set_values=2,
         inner_values=2,
         within_values=2,
+        action_values=2,
     )
-    real = ("fact_present", "graph_values", "task_weight", "target_y")
+    real = ("fact_present", "graph_values", "task_weight", "target_y", "task_discount")
+    real += tuple("option_" + name for name in ("sequence", "available", "chosen", "shown", "logged", "drawn"))
     loose = tuple(group + "_" + part for group in GROUPS for part in SPARSE)
     for key, values in graph.arrays.items():
         if not isinstance(values, np.ndarray) or values.ndim != dimensions.get(key, 1):
@@ -76,6 +83,10 @@ def check(graph, registry, splits, observers):
         ("set edge", graph.set_edge),
         ("member of a set edge", graph.set_member),
         ("holder of a graph", graph.inner_owner),
+        ("actor of an action", graph.action_actor),
+        ("actor of a decision", graph.next_actor),
+        ("target of an action", graph.role_source),
+        ("target of an action", np.maximum(graph.role_target, 0)),
     ):
         if np.any(values < 0) or np.any(values >= entities):
             raise ValueError("a %s of graph %s names an entity outside 0..%d" % (label, name, entities - 1))
@@ -99,9 +110,26 @@ def check(graph, registry, splits, observers):
     tasks = len(graph.task_key)
     if np.any(graph.task_kind < 0) or np.any(graph.task_kind >= len(schema.tasks["kinds"])):
         raise ValueError("a task of graph %s is of a kind the schema does not state" % name)
-    for label, values in (("reference", graph.member_task), ("target", graph.target_task)):
+    for label, values in (
+        ("reference", graph.member_task),
+        ("target", graph.target_task),
+        ("option", graph.option_task),
+        ("following decision", graph.next_task),
+        ("following decision", graph.next_other),
+        ("concurrent decision", graph.concurrent_task),
+        ("concurrent decision", graph.concurrent_other),
+    ):
         if np.any(values < 0) or np.any(values >= tasks):
             raise ValueError("a %s of graph %s names a task outside the graph" % (label, name))
+    for label, values, count in (
+        ("action", graph.action_option, lengths["option"]),
+        ("target of an action", graph.role_action, lengths["action"]),
+        ("target", np.maximum(graph.target_option, 0), max(lengths["option"], 1)),
+    ):
+        if np.any(values < 0) or np.any(values >= count):
+            raise ValueError("a %s of graph %s names an option or an action outside the graph" % (label, name))
+    if len(graph.options) != lengths["option"] or np.any(graph.option_generator >= len(graph.generators)):
+        raise ValueError("graph %s names its options or their generators other than it holds them" % name)
     if np.any(graph.target_series < 0) or np.any(graph.target_series >= len(schema.series())):
         raise ValueError("a target of graph %s names a series its schema does not state" % name)
     if np.any(graph.target_node < -1) or np.any(graph.target_node >= len(graph.kinds)):
