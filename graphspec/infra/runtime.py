@@ -13,6 +13,7 @@ from .processes.locks import Lock, LockBusy
 from .timing import timed
 
 LOG = logging.getLogger(__name__)
+TEMPORARY = 260
 
 
 @timed("runtime.configured_home")
@@ -39,10 +40,22 @@ def home():
     return output_path(configured_home())
 
 
+@timed("runtime.temporary_folder")
+def temporary_folder(root):
+    found = output_path(root / "tmp")
+    if os.name == "nt" and len(str(found)) > TEMPORARY:
+        raise ValueError(
+            "GRAPHSPEC_HOME %s holds %d characters, and its temporary folder %s holds %d; Windows hands libraries "
+            "a temporary folder of at most %d characters, and pyarrow and torch hang while loading on a longer one"
+            % (root, len(str(root)), found, len(str(found)), TEMPORARY)
+        )
+    return found
+
+
 def initialize_storage():
     started = time.perf_counter()
     root = home()
-    temporary = output_path(root / "tmp")
+    temporary = temporary_folder(root)
     temporary.mkdir(parents=True, exist_ok=True)
     directories = {
         "TMP": temporary,

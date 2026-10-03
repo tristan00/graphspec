@@ -37,6 +37,50 @@ def rooted(request):
     return named[0]
 
 
+def lengthened(root, length):
+    started = time.perf_counter()
+    remaining, parts = length - len(str(root)) - 1, []
+    while remaining > 0:
+        size = min(40, remaining)
+        if remaining - size == 1:
+            size -= 1
+        parts.append("x" * size)
+        remaining -= size + 1
+    result = root.joinpath(*parts)
+    LOG.debug("lengthened exit length=%d seconds=%.4f", len(str(result)), time.perf_counter() - started)
+    return result
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the limit is of the temporary folder Windows hands to libraries")
+def test_a_home_whose_temporary_folder_is_longer_than_windows_hands_to_libraries_stops_the_import_naming_it(
+    tmp_path,
+):
+    import subprocess
+    import sys
+
+    started = time.perf_counter()
+    longest = lengthened(tmp_path, runtime.TEMPORARY - len("/tmp"))
+    assert len(str(runtime.temporary_folder(longest))) == runtime.TEMPORARY
+    longer = lengthened(tmp_path, runtime.TEMPORARY - len("/tmp") + 1)
+    named = "GRAPHSPEC_HOME %s holds %d characters" % (longer, runtime.TEMPORARY - len("/tmp") + 1)
+    with pytest.raises(ValueError) as refused:
+        runtime.temporary_folder(longer)
+    assert str(refused.value).startswith(named)
+    longer.mkdir(parents=True)
+    (tmp_path / "importing.py").write_text("import graphspec\n")
+    root = Path(__file__).parent.parent
+    done = subprocess.run(
+        [sys.executable, "-B", str(tmp_path / "importing.py")],
+        env=dict(os.environ, GRAPHSPEC_HOME=str(longer), PYTHONPATH=str(root)),
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 1 and "ValueError: " + named in done.stderr
+    LOG.info("long home test exit seconds=%.4f", time.perf_counter() - started)
+
+
 def test_the_identities_of_compiled_functions_start_far_from_one_and_differ_between_seedings():
     from numba.core.bytecode import FunctionIdentity
 
