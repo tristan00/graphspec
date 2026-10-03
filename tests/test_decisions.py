@@ -340,11 +340,11 @@ def packed(held, cfg):
 def test_no_option_without_an_outcome_and_no_option_not_chosen_reaches_a_loss_as_a_target(banks):
     held = opened(banks, "stated")
     cfg = support.configuration(held.registry, dict(view="snapshot", **UNREALISED), {"time/history": 2}, 5, SPLITS)
-    loss, code, read = Summed(dict(decision="recorded"), held.registry.schema.targets()), 0, []
+    loss, code, read = Summed(dict(decision="recorded"), held.registry.schema.targets(), None), 0, []
     READ.clear()
     for b in packed(held, cfg):
         assert "target" not in b and not any(key.startswith("field/") for key in b)
-        known = outcomes(held, b, "cpu")
+        known = outcomes(held, b, "cpu", None)
         rows = np.r_[b["rows"], b["drawn"]][b["placed"]]
         counted = ((b["aim"] == code) & known["counted"]).numpy()
         read += rows[counted].tolist()
@@ -439,7 +439,7 @@ def test_every_family_trains_on_the_outcome_of_the_chosen_option(banks, family):
     cfg = support.configuration(held.registry, dict(view=family, **UNREALISED), {"time/history": 2}, 5, SPLITS)
     torch.manual_seed(5)
     net = network(cfg, held.fitted(cfg))
-    loss = Summed(dict(decision="squared"), held.registry.schema.targets())
+    loss = Summed(dict(decision="squared"), held.registry.schema.targets(), None)
     blocks = held.blocks(0, 2, cfg)
     chosen = [block for block in blocks if block[0] == blocks[0][0]]
     b = pack_batch(held, batches(chosen, len(chosen), held.sizes(cfg), None, frame_budget=1024)[0], cfg, "cpu")

@@ -452,7 +452,7 @@ def test_a_link_withholds_its_target_edge_from_its_split_and_is_scored_among_the
     for partition in (0, 1):
         for block in held.blocks(partition, 2, cfg):
             b = pack_batch(held, [block], cfg, "cpu")
-            target = outcomes(held, b, "cpu")["target"]
+            target = outcomes(held, b, "cpu", None)["target"]
             variant = held.arrays(block[0], cfg)
             tokens, rows, placed = variant["entity_token"], b["rows"], np.asarray(b["placed"])
             named = b["member_entity"][b["point_node"]].numpy()
@@ -587,7 +587,7 @@ def test_a_link_whose_nodes_the_pipeline_does_not_keep_is_left_out_and_its_kept_
                 held_out.append((b, lefts, np.isin(rows, owner[lefts])))
         assert counts["kept"] > 0 and counts["left"] > 0, values
         for b, lefts, rows in held_out:
-            assert np.array_equal(outcomes(held, b, "cpu")["counted"].numpy(), ~lefts)
+            assert np.array_equal(outcomes(held, b, "cpu", None)["counted"].numpy(), ~lefts)
             assert np.array_equal(np.asarray(b["left"]), rows)
         assert shortened(held, cfg["pipeline"], np.concatenate(every))[1]["next"] >= counts["left"]
     LOG.info("links left out exit seconds=%.3f", time.perf_counter() - started)

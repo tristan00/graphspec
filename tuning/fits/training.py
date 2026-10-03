@@ -19,6 +19,7 @@ from graphspec.operations.parameters import digest
 from graphspec.schema.decisions import drawn
 from tuning.bank.bank import PACKAGES
 from tuning.families.heads import FIELD
+from tuning.families.model_spec import realised
 from tuning.measures.measures import measurable, measured, predicted, scored
 
 from .guards import guarded, routed
@@ -101,7 +102,8 @@ class TrainingSession:
             self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
-        self.loss = Summed(stated.loss, self.bank.registry.schema.targets())
+        self.realisation = realised(config["model"], self.bank.registry.schema)
+        self.loss = Summed(stated.loss, self.bank.registry.schema.targets(), self.realisation)
         self.timing = self.budget.timings
         self.timing.update(
             packer=0.0,
@@ -229,7 +231,7 @@ class TrainingSession:
                 raise ValueError("holdout row reached the optimizer")
             self.trained_rows.extend(batch["rows"].tolist())
             epoch_rows.extend(batch["rows"].tolist())
-            if counting(self.bank, batch):
+            if counting(self.bank, batch, self.realisation):
                 self.losses.append(self.optimize(batch))
                 epoch_sum += self.losses[-1] * len(batch["rows"])
             else:
@@ -330,7 +332,7 @@ class TrainingSession:
                         drawn.extend(ordered[len(batch["rows"]) :].tolist())
                         owners.extend(batch["drawn"].tolist())
                         left.extend(np.asarray(batch["left"], bool).tolist())
-                        if "options" in batch:
+                        if self.realisation is not None:
                             lost.extend(batch["options"]["left"].tolist())
                 if (index + 1) % 256 == 0:
                     emit(
@@ -371,7 +373,7 @@ class TrainingSession:
             values, drawn = both[: len(indices)], both[len(indices) :]
             kept, unmeasured = shortened(self.bank, self.config["pipeline"], every)
             kept &= self.bank.counted[every] & ~np.r_[left, np.zeros(len(owners), bool)]
-            if self.guards is not None:
+            if self.realisation is not None:
                 kinds = list(schema.tasks["kinds"])
                 unmeasured.update({kind: int((lost == kinds.index(kind)).sum()) for kind in schema.decided()})
             held = scored(

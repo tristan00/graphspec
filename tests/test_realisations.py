@@ -24,7 +24,7 @@ from tuning.families.models import build as network
 from tuning.families.options import FIELDS, coded
 from tuning.families.periods import blocks as windows
 from tuning.fits.guards import Guard, routed
-from tuning.fits.losses import Summed
+from tuning.fits.losses import Summed, counting, outcomes
 from tuning.fits.training import fit
 from tuning.statement import state
 
@@ -338,18 +338,44 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
 
 
 def test_a_search_offers_a_realisation_where_the_bank_decides_and_only_to_a_family_that_reads_options(banks, bank, monkeypatch):
+    started = time.perf_counter()
     held = opened(banks, "stated")
     (offering,) = [parameter for parameter in space(held.registry) if parameter.name == REALISATION]
     assert offering.options == (NONE,) + REALISATIONS.names() and offering.default is None
     assert all(offering.active(dict(view=family)) for family in VIEWS) and model_spec.OPTIONED == VIEWS
     with pytest.raises(ValueError, match="states no options/realisation, which has no default"):
         support.configuration(held.registry, dict(view="snapshot"), {"time/history": 2}, 5, SPLITS)
-    assert REALISATION not in [parameter.name for parameter in space(Bank(bank).registry)]
+    cfg = configured(held, "whole", graph=PLAIN)
+    lacking = dict(cfg, model={name: value for name, value in cfg["model"].items() if name != REALISATION})
+    stops = "the model of the family snapshot states no options/realisation, which a model of a family that reads options"
+    with pytest.raises(ValueError, match=stops):
+        routed(held, lacking)
+    with pytest.raises(ValueError, match=stops):
+        pack_batch(held, grouped(held, lacking, 1)[0], lacking, "cpu")
+    plain = Bank(bank).registry
+    assert REALISATION not in [parameter.name for parameter in space(plain)]
+    assert model_spec.realised(lacking["model"], plain.schema) is None
     monkeypatch.setattr(model_spec, "OPTIONED", tuple(family for family in VIEWS if family != "signal"))
     (narrowed,) = [parameter for parameter in space(held.registry) if parameter.name == REALISATION]
     assert narrowed.active(dict(view="snapshot")) and not narrowed.active(dict(view="signal"))
+    assert model_spec.realised(dict(view="signal", hidden=8), held.registry.schema) is None
     with pytest.raises(ValueError, match="spec sets inactive or unknown parameters: options/realisation"):
         configured(held, "whole", values={"view": "signal", "hidden": 8})
+    LOG.info("realisation stated or absent exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_loss_reads_the_points_of_the_realisation_its_model_states_whatever_the_batch_holds(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    for name in (NONE, "whole"):
+        for b in packed(held, name, 1, graph=PLAIN):
+            placed = np.asarray(b["placed"])
+            rows = np.r_[np.asarray(b["rows"]), np.asarray(b["drawn"])][placed]
+            kept = ~np.r_[np.asarray(b["left"], bool), np.zeros(len(b["drawn"]), bool)][placed]
+            assert np.array_equal(outcomes(held, b, "cpu", None)["counted"].numpy(), held.counted[rows] & kept)
+            assert np.array_equal(outcomes(held, b, "cpu", "whole")["counted"].numpy(), kept)
+            assert counting(held, b, "whole") == bool(kept.any())
+    LOG.info("loss reads the stated realisation exit seconds=%.3f", time.perf_counter() - started)
 
 
 @pytest.mark.parametrize("family", VIEWS)
@@ -363,7 +389,7 @@ def test_every_family_reads_the_options_through_a_realisation_and_its_state_read
     guard.checked(b, packed(held, NONE, 1, family, PLAIN)[0])
     found = guard.concluded(1.0)
     assert found["options"] == len(b["options"]["sequence"]) > 0 and found["sets"] > 0 and found["pairs"] > 0
-    loss = Summed(dict(decision="squared"), held.registry.schema.targets())
+    loss = Summed(dict(decision="squared"), held.registry.schema.targets(), "whole")
     value = loss(net(b), b, held)
     value.backward()
     assert torch.isfinite(value) and all(

@@ -14,21 +14,21 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
-from tuning.families.model_spec import configuration, describe, groups, samples
+from tuning.families.model_spec import configuration, describe, groups, realised, samples
 from tuning.families.models import build
 from tuning.statement import paired, seen
 
-from .losses import Summed, counting
+from .losses import Summed, checked, counting
 
 
 @timed("check.window")
 def window(bank, candidates, cfg, device):
     from tuning.families.periods import blocks as period_blocks
 
-    started = time.perf_counter()
+    started, realisation = time.perf_counter(), realised(cfg["model"], bank.registry.schema)
     for skipped, block in enumerate(reversed(candidates)):
         b = pack_batch(bank, period_blocks(bank, [block], cfg), cfg, device)
-        if counting(bank, b):
+        if counting(bank, b, realisation):
             return block, b, skipped, time.perf_counter() - started
     raise ValueError(
         "graph %d holds no window with a point the loss reads; training skips such a window and makes no update"
@@ -92,7 +92,8 @@ def check(directory, output, device, seed, derivation_seed, splits, loss, pipeli
     output = output_path(output)
     compute.reserve(device)
     bank = Deriver(directory, device, derivation_seed, RESIDENT)
-    loss = Summed(loss, bank.registry.schema.targets())
+    kinds = bank.registry.schema.targets()
+    checked(loss, kinds)
     pipeline, given = read_json(pipeline_path), read_json(settings_path)
     models = samples(bank.registry)
     unknown = sorted(
@@ -116,7 +117,8 @@ def check(directory, output, device, seed, derivation_seed, splits, loss, pipeli
         if not candidates:
             raise ValueError("graph %d has no labels to check" % chosen)
         block, b, skipped, packing = window(bank, candidates, cfg, device)
-        outcome = probe(bank, b, cfg, device, loss, packing)
+        summed = Summed(loss, kinds, realised(cfg["model"], bank.registry.schema))
+        outcome = probe(bank, b, cfg, device, summed, packing)
         if torch.device(device).type == "cuda":
             torch.cuda.empty_cache()
         result = dict(

@@ -300,7 +300,7 @@ def test_path_heads_emit_one_value_per_point(path_bank, model):
     from tuning.fits.losses import Summed
 
     opened = Deriver(path_bank, "cpu", SEED, RESIDENT)
-    loss = Summed(dict(path="balanced"), opened.registry.schema.targets())
+    loss = Summed(dict(path="balanced"), opened.registry.schema.targets(), None)
     cfg = configuration(opened.registry, dict(model, hidden=8), {"time/history": 2}, 11, SPLITS)
     assert cfg["model"]["time/encoding"] == "log_cosine"
     full = [block for block in opened.blocks(0, 2, cfg) if block[2] - block[1] == 2]

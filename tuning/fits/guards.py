@@ -9,8 +9,8 @@ from graphspec.infra.timing import timed
 from graphspec.operations.pipeline import emptied
 from tuning.batches.batching import batches, pack_batch
 from tuning.families.heads import NONE, REALISATION
-from tuning.families.model_spec import OPTIONED
-from tuning.families.options import FIELDS, coded, fielded, realisation, realised, slots
+from tuning.families.model_spec import realised
+from tuning.families.options import FIELDS, coded, fielded, realisation, slots
 from tuning.families.periods import blocks as windows
 
 LOG = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def unrouted(field, entry, removed):
 
 def routed(bank, cfg):
     started = time.perf_counter()
-    name = realised(cfg["model"])
+    name = realised(cfg["model"], bank.registry.schema)
     if name is None:
         LOG.debug("guards routed exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return
@@ -45,8 +45,6 @@ def routed(bank, cfg):
             "the realisation of options %s states that messages pass from options back to the state; no family "
             "gives options a route back to the state, so a fit stating it stops" % name
         )
-    if cfg["model"]["view"] not in OPTIONED:
-        raise ValueError("the family %s reads no options and the model states the realisation %s" % (cfg["model"]["view"], name))
     schema, removed = bank.registry.schema, emptied(bank.registry, bank.stated(cfg)[1])
     for task in schema.decided():
         for field in fielded(schema, task):
@@ -92,7 +90,7 @@ class Guard:
     @timed("guards.Guard.__init__")
     def __init__(self, bank, cfg, net, seed):
         self.registry, self.schema = bank.fitted(cfg), bank.registry.schema
-        self.name, self.net, self.head, self.seed = realised(cfg["model"]), net, net.head, seed
+        self.name, self.net, self.head, self.seed = realised(cfg["model"], self.schema), net, net.head, seed
         self.entry = realisation(self.name)
         self.kinds = list(self.schema.tasks["kinds"])
         self.aims = np.asarray(
@@ -313,7 +311,7 @@ class Guard:
 
 def guarded(bank, cfg, net, stated, size):
     started = time.perf_counter()
-    if realised(cfg["model"]) is None:
+    if realised(cfg["model"], bank.registry.schema) is None:
         LOG.debug("guards guarded exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return None
     guard, history = Guard(bank, cfg, net, stated.seed), cfg["graph"]["time/history"]

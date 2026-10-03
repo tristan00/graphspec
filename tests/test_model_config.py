@@ -15,6 +15,7 @@ from graphspec.operations import parameters as specs
 from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
 from tuning.batches.packing import Packer
+from tuning.families.heads import NONE, REALISATION, REALISATIONS
 from tuning.families.layers import CausalAttention, TimeEncoding
 from tuning.families.model_spec import configured, samples, space, views
 from tuning.families.models import build
@@ -24,7 +25,11 @@ LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("model_config")
 
 
-def registry(events=True, signals=2):
+class Stated:
+    version = 1
+
+
+def registry(events=True, signals=2, decided=()):
     kinds = dict(ask=dict(target=dict(kind="number"), references=("unit",), absent="stop"))
     return SimpleNamespace(
         name="stated",
@@ -32,7 +37,7 @@ def registry(events=True, signals=2):
         schema=SimpleNamespace(
             tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node"))),
             targets=lambda: ("number",),
-            decided=lambda: (),
+            decided=lambda: decided,
         ),
     )
 
@@ -78,6 +83,21 @@ def test_all_model_samples_are_canonical_and_cover_each_available_view():
         "transformer",
         "ssm",
     }
+
+
+def test_the_check_states_every_value_of_a_choice_without_a_default_and_starts_its_switches_from_each():
+    started = time.perf_counter()
+    REALISATIONS.register("stated", Stated())
+    try:
+        offered = samples(registry(decided=("ask",)))
+    finally:
+        del REALISATIONS.held["stated"]
+    starts = {}
+    for model in offered:
+        rest = tuple(sorted((name, value) for name, value in model.items() if name != REALISATION))
+        starts.setdefault(model[REALISATION], set()).add(rest)
+    assert sorted(starts) == [NONE, "stated"] and starts[NONE] == starts["stated"]
+    LOG.info("samples of a choice without a default exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_signal_is_offered_where_tasks_carry_signals_and_affinity_where_tasks_are_seen_as_events():

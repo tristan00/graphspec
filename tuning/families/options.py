@@ -6,18 +6,12 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 
-from .heads import NONE, REALISATION, REALISATIONS
+from .heads import REALISATIONS
 from .layers import padded
 
 LOG = logging.getLogger(__name__)
 FIELDS = ("kind", "targets", "parameters")
 STRUCTURE = ("sequence", "decision", "action_option", "action_place", "role_action", "role_code")
-
-
-@timed("options.realised")
-def realised(spec):
-    found = spec.get(REALISATION, NONE)
-    return None if found == NONE else found
 
 
 def realisation(name):

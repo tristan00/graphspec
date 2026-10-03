@@ -154,7 +154,7 @@ def passed(held, model, graph, pipeline):
     bank = held["bank"]
     cfg, b, net = read(held, model, graph, pipeline)
     predicted = net(b)
-    lost = Summed(dict(number="squared"), bank.registry.schema.targets())(predicted, b, bank)
+    lost = Summed(dict(number="squared"), bank.registry.schema.targets(), None)(predicted, b, bank)
     lost.backward()
     gradients = [parameter.grad for parameter in net.parameters() if parameter.grad is not None]
     if predicted.shape != b["series"].shape or not torch.isfinite(predicted).all():

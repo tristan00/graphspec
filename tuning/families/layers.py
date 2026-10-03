@@ -283,12 +283,13 @@ class Head(nn.Module):
         self.series = nn.Embedding(len(registry.schema.series()), hidden)
         from graphspec.schema.decisions import Decision
 
-        from .options import Options, realised
+        from .model_spec import realised
+        from .options import Options
 
         self.kinds = nn.ModuleList(HEADS.named(kind).module(hidden, spec, registry) for kind in self.targets)
         self.named = [TARGETS.named(kind).names is not None for kind in self.targets]
         self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU()) if any(self.named) else None
-        name = realised(spec)
+        name = realised(spec, registry.schema)
         self.options = None if name is None else Options(name, registry, hidden, nodes, spec)
         self.decides = [self.options is not None and isinstance(TARGETS.named(kind), Decision) for kind in self.targets]
 

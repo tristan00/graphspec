@@ -135,20 +135,21 @@ def chosen(batch, points):
 
 
 @timed("losses.taken")
-def taken(bank, batch, rows):
-    return bank.counted[rows] | ("options" in batch)
+def taken(bank, rows, realisation):
+    return bank.counted[rows] | (realisation is not None)
 
 
-def outcomes(bank, batch, device):
+def outcomes(bank, batch, device, realisation):
     import numpy as np
     import torch
 
     started = time.perf_counter()
     rows, drawn = np.asarray(batch["rows"], np.int64), np.asarray(batch["drawn"], np.int64)
     placed, every = np.asarray(batch["placed"], np.int64), np.r_[rows, drawn]
+    left = np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)]
     found = dict(
         target=np.r_[bank.targets[rows], np.zeros(len(drawn), bank.targets.dtype)][placed],
-        counted=(~np.r_[np.asarray(batch["left"], bool), np.zeros(len(drawn), bool)] & taken(bank, batch, every))[placed],
+        counted=(~left & taken(bank, every, realisation))[placed],
     )
     for name, values in bank.fields.items():
         found[FIELD + name] = values[every][placed]
@@ -158,42 +159,48 @@ def outcomes(bank, batch, device):
 
 
 @timed("losses.counting")
-def counting(bank, batch):
+def counting(bank, batch, realisation):
     import numpy as np
 
     rows = np.asarray(batch["rows"], np.int64)
-    return bool((~np.asarray(batch["left"], bool) & taken(bank, batch, rows)).any())
+    return bool((~np.asarray(batch["left"], bool) & taken(bank, rows, realisation)).any())
+
+
+def checked(stated, kinds):
+    started = time.perf_counter()
+    lacking = [kind for kind in kinds if kind not in stated]
+    if lacking:
+        raise ValueError(
+            "the statement names no loss for the kind of target %s of the bank; the losses that read it are %s"
+            % (lacking[0], ", ".join(readers(LOSSES, lacking[0])) or "none")
+        )
+    strangers = sorted(kind for kind in stated if kind not in kinds)
+    if strangers:
+        raise ValueError(
+            "the statement names a loss for the kind of target %s, which the bank does not hold; it holds %s"
+            % (strangers[0], ", ".join(kinds))
+        )
+    for kind in kinds:
+        if kind not in LOSSES.named(stated[kind]).reads:
+            raise ValueError(
+                "the statement names the loss %s for the kind of target %s, which it does not read; the losses "
+                "that read it are %s" % (stated[kind], kind, ", ".join(readers(LOSSES, kind)) or "none")
+            )
+    result = [LOSSES.named(stated[kind]) for kind in kinds]
+    LOG.debug("losses checked exit kinds=%d seconds=%.4f", len(kinds), time.perf_counter() - started)
+    return result
 
 
 class Summed:
-    def __init__(self, stated, kinds):
-        started = time.perf_counter()
-        lacking = [kind for kind in kinds if kind not in stated]
-        if lacking:
-            raise ValueError(
-                "the statement names no loss for the kind of target %s of the bank; the losses that read it are %s"
-                % (lacking[0], ", ".join(readers(LOSSES, lacking[0])) or "none")
-            )
-        strangers = sorted(kind for kind in stated if kind not in kinds)
-        if strangers:
-            raise ValueError(
-                "the statement names a loss for the kind of target %s, which the bank does not hold; it holds %s"
-                % (strangers[0], ", ".join(kinds))
-            )
-        for kind in kinds:
-            if kind not in LOSSES.named(stated[kind]).reads:
-                raise ValueError(
-                    "the statement names the loss %s for the kind of target %s, which it does not read; the losses "
-                    "that read it are %s" % (stated[kind], kind, ", ".join(readers(LOSSES, kind)) or "none")
-                )
-        self.losses = [LOSSES.named(stated[kind]) for kind in kinds]
-        LOG.debug("summed exit kinds=%d seconds=%.4f", len(kinds), time.perf_counter() - started)
+    @timed("losses.Summed.__init__")
+    def __init__(self, stated, kinds, realisation):
+        self.losses, self.realisation = checked(stated, kinds), realisation
 
     @timed("losses.Summed.__call__")
     def __call__(self, predictions, batch, bank):
         import torch
 
-        known, values = dict(batch, **outcomes(bank, batch, predictions.device)), []
+        known, values = dict(batch, **outcomes(bank, batch, predictions.device, self.realisation)), []
         known["target"] = known["target"].to(predictions.dtype)
         for code, loss in enumerate(self.losses):
             points = ((known["aim"] == code) & known["counted"]).nonzero().flatten()
@@ -204,7 +211,7 @@ class Summed:
 
 def admitted(kinds, loss, measures):
     started = time.perf_counter()
-    Summed(loss, kinds)
+    checked(loss, kinds)
     for name in measures:
         entry = MEASURES.named(name)
         if not set(entry.reads) & set(kinds):

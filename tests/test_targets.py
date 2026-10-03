@@ -309,7 +309,7 @@ def test_a_head_gives_every_point_the_prediction_of_the_head_of_its_kind_of_targ
 
     from tuning.families.layers import Head
 
-    schema = SimpleNamespace(targets=lambda: ("number", "path"), series=lambda: ("size", "near", "far"))
+    schema = SimpleNamespace(targets=lambda: ("number", "path"), series=lambda: ("size", "near", "far"), decided=lambda: ())
     torch.manual_seed(3)
     head = Head(5, {"hidden": 4, "time/encoding": "log_cosine"}, SimpleNamespace(schema=schema), 2)
     features = torch.randn(3, 5)

@@ -18,7 +18,7 @@ from graphspec.schema.decisions import ROLES
 from graphspec.schema.references import SORTS
 from tuning.bank.options import offered
 from tuning.families.heads import FIELD
-from tuning.families.options import realised
+from tuning.families.model_spec import realised
 
 from . import gather
 from .tensors import Frames, Host, array, features, features_at, gathered, joined
@@ -893,7 +893,7 @@ def base_inputs(bank, block, window):
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
     b["partner"] = partnered(b["pair"], len(b["member_row"]))
     pointed(bank, window, b, rows, np.flatnonzero(selected)[point_row])
-    if realised(window.cfg["model"]) is not None:
+    if realised(window.cfg["model"], window.registry.schema) is not None:
         optioned(bank, window, b, rows, np.flatnonzero(selected)[point_row], point_row)
     if tokens is not None:
         b["member_token"] = array(tokens[b["member_entity"]])

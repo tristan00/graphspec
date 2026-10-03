@@ -127,6 +127,18 @@ def optioned(spec, families):
     return spec["view"] in families
 
 
+@timed("model_spec.realised")
+def realised(spec, schema):
+    if not schema.decided() or not optioned(spec, OPTIONED):
+        return None
+    if REALISATION not in spec:
+        raise ValueError(
+            "the model of the family %s states no %s, which a model of a family that reads options states on a bank "
+            "that decides: %s or a realisation registered in tuning.REALISATIONS" % (spec["view"], REALISATION, NONE)
+        )
+    return None if spec[REALISATION] == NONE else spec[REALISATION]
+
+
 def built(offered, events, encoded, decides, families):
     started = time.perf_counter()
     updates = UPDATES if events else tuple(update for update in UPDATES if update != "mutual_rnn")
@@ -338,31 +350,37 @@ def samples(registry):
     ]
     result = []
 
-    @timed("model_spec.samples.chosen")
-    def chosen(values, parameter):
-        if parameter.name in values:
-            return values[parameter.name]
-        return parameter.options[0] if parameter.default is None else parameter.default
-
     @timed("model_spec.samples.add")
     def add(values):
-        spec = specs.canonical(parameters, draw(parameters, lambda parameter: chosen(values, parameter)))
+        spec = specs.canonical(parameters, draw(parameters, lambda parameter: parameter.given(values)))
         if spec not in result:
             result.append(spec)
         return spec
 
+    @timed("model_spec.samples.starts")
+    def starts(values):
+        spec = {}
+        for parameter in parameters:
+            if parameter.active(spec):
+                if parameter.default is None and parameter.name not in values:
+                    return [
+                        found for option in parameter.options for found in starts(dict(values, **{parameter.name: option}))
+                    ]
+                spec[parameter.name] = parameter.given(values)
+        return [values]
+
     for name in views(registry):
-        base = add(dict(view=name))
-        first = [
-            add(dict(base, **{parameter.name: option}))
-            for parameter in switches
-            if parameter.active(base)
-            for option in parameter.options
-        ]
-        for spec in first:
-            for parameter in switches:
-                if parameter.name in spec:
-                    for option in parameter.options:
-                        add(dict(spec, **{parameter.name: option}))
+        for base in [add(values) for values in starts(dict(view=name))]:
+            first = [
+                add(dict(base, **{parameter.name: option}))
+                for parameter in switches
+                if parameter.active(base)
+                for option in parameter.options
+            ]
+            for spec in first:
+                for parameter in switches:
+                    if parameter.name in spec:
+                        for option in parameter.options:
+                            add(dict(spec, **{parameter.name: option}))
     LOG.debug("model samples exit seconds=%.4f samples=%d", time.perf_counter() - started, len(result))
     return result

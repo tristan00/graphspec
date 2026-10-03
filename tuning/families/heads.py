@@ -68,9 +68,9 @@ def nodes(hidden, spec, registry):
 @timed("heads.decision")
 def decision(hidden, spec, registry):
     from .layers import NodeHead, NumberHead
-    from .options import realised
+    from .model_spec import realised
 
-    return NumberHead(hidden) if realised(spec) is None else NodeHead(hidden)
+    return NumberHead(hidden) if realised(spec, registry.schema) is None else NodeHead(hidden)
 
 
 def reading(registry, name):

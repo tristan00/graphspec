@@ -53,7 +53,10 @@ def test_walks_accept_every_hidden_width_with_finite_gradients():
         references=("unit",),
         tasks=("ask",),
         schema=SimpleNamespace(
-            tasks=dict(references=dict(unit=dict(sort="node"))), targets=lambda: ("number",), series=lambda: ("out",)
+            tasks=dict(references=dict(unit=dict(sort="node"))),
+            targets=lambda: ("number",),
+            series=lambda: ("out",),
+            decided=lambda: (),
         ),
     )
     for hidden in range(1, 129):
