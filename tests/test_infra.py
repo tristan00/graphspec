@@ -108,8 +108,6 @@ def test_a_home_of_the_suite_is_named_by_its_run_and_worker_and_shares_the_compi
 
 
 def test_a_run_of_the_suite_removes_its_own_homes_and_leaves_other_runs_and_the_compiled_code(request, tmp_path):
-    from conftest import cleared
-
     started = time.perf_counter()
     compiled = tmp_path / "checkout" / "numba"
     for run in ("this", "other"):
@@ -118,9 +116,10 @@ def test_a_run_of_the_suite_removes_its_own_homes_and_leaves_other_runs_and_the_
             for place in ("tmp/pytest", "cache/banks/one", "cache/partitions/two"):
                 (tmp_path / run / worker / place).mkdir(parents=True)
             (tmp_path / run / worker / "stray.txt").write_text("")
+            (tmp_path / run / (worker + ".alive")).write_text("")
     (compiled / "graphspec_1").mkdir()
     (compiled / "graphspec_1" / "kernel.nbi").write_text("")
-    removed = cleared(tmp_path / "this")
+    removed = rooted(request).cleared(tmp_path / "this")
     assert len(removed) == 6
     assert sorted(path.name for path in tmp_path.iterdir()) == ["checkout", "other"]
     for worker in ("gw0", "serial"):
@@ -130,6 +129,40 @@ def test_a_run_of_the_suite_removes_its_own_homes_and_leaves_other_runs_and_the_
     with pytest.raises(FileExistsError):
         rooted(request).linked(tmp_path / "other" / "gw0", compiled)
     LOG.info("cleared test exit seconds=%.4f", time.perf_counter() - started)
+
+
+def test_a_run_removes_at_its_start_the_homes_of_runs_whose_processes_all_ended_and_never_those_of_a_run_going(
+    request, tmp_path
+):
+    from graphspec.infra.processes.locks import Lock, LockBusy
+
+    started = time.perf_counter()
+    held, workers = rooted(request), tmp_path / "workers"
+    for run in ("killed", "going", "orphaned"):
+        for worker in ("serial", "gw0"):
+            (workers / run / worker / "tmp").mkdir(parents=True)
+            (workers / run / (worker + ".alive")).write_text("")
+        (tmp_path / "tmp" / "suite" / run / "bank").mkdir(parents=True)
+    for place in ("gw3/tmp", "starting/serial/tmp", "graphspec-0123456789ab/numba"):
+        (workers / place).mkdir(parents=True)
+    going = [Lock(workers / "going" / "serial.alive").__enter__(), Lock(workers / "orphaned" / "gw0.alive").__enter__()]
+    try:
+        alive, removed = held.begun(tmp_path, "this", "serial", True)
+        assert removed == [workers / "killed"]
+        assert sorted(path.name for path in (tmp_path / "tmp" / "suite").iterdir()) == ["going", "orphaned"]
+        kept = ["going", "graphspec-0123456789ab", "gw3", "orphaned", "runs.lock", "starting", "this"]
+        assert sorted(path.name for path in workers.iterdir()) == kept
+        with pytest.raises(LockBusy):
+            Lock(workers / "this" / "serial.alive").__enter__()
+        worker, none = held.begun(tmp_path, "this", "gw0", False)
+        assert none == [] and sorted(path.name for path in (workers / "this").iterdir()) == ["gw0.alive", "serial.alive"]
+        worker.__exit__(None, None, None)
+        assert held.finished(tmp_path, "this", alive) == workers / "this"
+        assert sorted(path.name for path in workers.iterdir()) == [name for name in kept if name != "this"]
+    finally:
+        for lock in going:
+            lock.__exit__(None, None, None)
+    LOG.info("begun test exit seconds=%.4f", time.perf_counter() - started)
 
 
 def keyed(module):

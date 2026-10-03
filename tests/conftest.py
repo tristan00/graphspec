@@ -1,11 +1,10 @@
 import logging
 import os
-import shutil
 import sys
 import threading
 import time
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from importlib import import_module
 from pathlib import Path
@@ -21,7 +20,6 @@ LOG = logging.getLogger(__name__)
 SUITE = {"heavy": "heavy-tests-" + os.environ.get("PYTEST_XDIST_WORKER", "serial")}
 SETTINGS = dict(entities=40, steps=12, degree=2.0, max_degree=6, alive=0.8, lifetime=4.0, period=3)
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
-HOME = Path(os.environ["GRAPHSPEC_HOME"])
 RECORD = Path(os.environ["GRAPHSPEC_SUITE_CHECKOUT"]) / "durations.json"
 SPENT = {}
 EARLY = []
@@ -155,26 +153,6 @@ def shared(name, make):
     return root
 
 
-def gone(place):
-    started = time.perf_counter()
-    if place.is_dir():
-        shutil.rmtree(place)
-    else:
-        place.unlink()
-    LOG.debug("gone exit place=%s seconds=%.4f", place, time.perf_counter() - started)
-    return place
-
-
-def cleared(run):
-    started = time.perf_counter()
-    places = [place for worker in sorted(run.iterdir()) for place in sorted(worker.iterdir())]
-    with ThreadPoolExecutor(8) as pool:
-        removed = list(pool.map(gone, places))
-    shutil.rmtree(run)
-    LOG.debug("cleared exit removed=%d seconds=%.4f", len(removed), time.perf_counter() - started)
-    return removed
-
-
 @pytest.hookimpl(trylast=True)
 def pytest_unconfigure(config):
     started = time.perf_counter()
@@ -189,10 +167,7 @@ def pytest_unconfigure(config):
         os._exit(0)
     for thread in EARLY:
         thread.join()
-    if suite().exists():
-        shutil.rmtree(suite())
-    cleared(HOME.parent)
-    LOG.debug("suite removed seconds=%.4f", time.perf_counter() - started)
+    LOG.debug("early threads joined seconds=%.4f", time.perf_counter() - started)
 
 
 def synthetic_bank(root, level):
