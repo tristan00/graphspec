@@ -76,7 +76,14 @@ def registered(path):
     held = pickle.loads(Path(path).read_bytes())
     sys.path.extend(place for place in held["path"] if place not in sys.path)
     restored(held["entries"])
-    emit("registered_restored", entries=len(held["entries"]), seconds=time.perf_counter() - started)
+    outside = [
+        name
+        for _, _, entries in held["entries"]
+        if entries is not None
+        for name, pickled, _ in entries
+        if pickled is not None
+    ]
+    emit("registered_restored", entries=len(outside), seconds=time.perf_counter() - started)
 
 
 @timed("run.worker")

@@ -29,6 +29,7 @@ from graphspec.infra.files import read_json
 from graphspec.infra.processes import processes
 from graphspec.infra.processes.processes import guarded, parallel, spawned
 from graphspec.infra.timing import timed
+from graphspec.operations.negatives import Rule
 from graphspec.registries import carried, restored
 from graphspec.schema.schema import VERSION
 from graphspec.sources import synthetic
@@ -223,6 +224,35 @@ def test_an_entry_registered_in_every_registry_reaches_the_workers_of_a_build_an
     assert np.isfinite(saved["measures"]["mse"]["value"]) and saved["holdout_rows"] == len(held.members(cfg, 1))
 
 
+def test_a_worker_holds_exactly_the_entries_its_caller_holds_or_stops_naming_one_whose_code_differs(
+    entries, monkeypatch
+):
+    from importlib import import_module
+
+    from graphspec.registries import REGISTRIES
+
+    assert all(any(held is names for held in vars(import_module(names.module)).values()) for names in REGISTRIES)
+    started = spawned(registered.ready, (), carried, restored)
+    for names in REGISTRIES:
+        monkeypatch.setattr(names, "held", dict(names.held))
+    monkeypatch.setattr(processes, "FAILED", [])
+    NEGATIVES.held["parity"] = Rule(registered.parities, registered.parity, 9)
+    SEVERAL.held["stale"] = registered.middle
+    del STEPS.held["changes"]
+    started["initializer"](*started["initargs"])
+    assert guarded(abs, -1) == 1
+    assert NEGATIVES.named("parity").version == 1 and "stale" not in SEVERAL.names() and "changes" in STEPS.names()
+    assert all(names.held[name] is names.shipped[name] for names in REGISTRIES for name in names.shipped)
+    monkeypatch.setattr(registered.Kept, "version", 2)
+    started["initializer"](*started["initargs"])
+    with pytest.raises(
+        ValueError,
+        match="the rule for an edge about an edge kept is at version 1 in the process that called and at 2 in this "
+        "worker, whose code differs",
+    ):
+        guarded(abs, -1)
+
+
 def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(entries, monkeypatch):
     class Local:
         version = 1
@@ -244,9 +274,13 @@ def test_an_entry_that_cannot_reach_a_worker_stops_naming_its_registry_and_name(
     finally:
         del SEES.held["vanished"]
         del registered.Vanished
-    assert {entry[:2] for entry in started["initargs"][0]} == {
-        (names.label, name) for names, name, _ in ENTRIES
-    } | {(SEES.label, "vanished")}
+    assert {
+        (label, name)
+        for label, _, held in started["initargs"][0]
+        if held is not None
+        for name, pickled, _ in held
+        if pickled is not None
+    } == {(names.label, name) for names, name, _ in ENTRIES} | {(SEES.label, "vanished")}
     monkeypatch.setattr(processes, "FAILED", [])
     monkeypatch.setattr(SEES, "held", dict(SEES.held))
     started["initializer"](*started["initargs"])

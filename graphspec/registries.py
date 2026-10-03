@@ -58,15 +58,16 @@ def version(entry):
 
 
 class Names:
-    @timed("registries.Names.__init__")
     def __init__(self, label, versioned):
+        started = time.perf_counter()
         if any(registry.label == label for registry in REGISTRIES):
             raise ValueError("a registry is labelled %s twice" % label)
         if type(versioned) is not bool:
             raise ValueError("the registry %s states with true or false whether its entries state versions" % label)
-        self.label, self.versioned, self.held, self.shipped = label, versioned, {}, frozenset()
+        self.label, self.versioned, self.held, self.shipped = label, versioned, {}, {}
         self.module = sys._getframe(1).f_globals["__name__"]
         REGISTRIES.append(self)
+        LOG.debug("names exit label=%s module=%s seconds=%.4f", label, self.module, time.perf_counter() - started)
 
     @timed("registries.Names.__setattr__")
     def __setattr__(self, name, value):
@@ -112,7 +113,7 @@ def versions(read):
 def ship(registries):
     started = time.perf_counter()
     for registry in registries:
-        registry.shipped = frozenset(registry.held)
+        registry.shipped = dict(registry.held)
     LOG.debug("ship exit registries=%d seconds=%.4f", len(registries), time.perf_counter() - started)
 
 
@@ -120,30 +121,53 @@ def carried():
     started = time.perf_counter()
     found = []
     for registry in REGISTRIES:
+        if list(registry.held) == list(registry.shipped) and all(
+            registry.held[name] is registry.shipped[name] for name in registry.shipped
+        ):
+            found.append((registry.label, registry.module, None))
+            continue
+        held = []
         for name, entry in registry.held.items():
-            if name in registry.shipped:
+            if name in registry.shipped and registry.shipped[name] is entry:
+                held.append((name, None, None))
                 continue
             try:
-                found.append((registry.label, name, pickle.dumps(entry), registry.module))
+                held.append((name, pickle.dumps(entry), version(entry) if registry.versioned else None))
             except Exception as error:
                 raise ValueError(
                     "the %s %s is registered from outside the library and cannot be passed to the processes "
                     "the library starts: %s" % (registry.label, name, error)
                 ) from error
-    LOG.debug("carried exit entries=%d seconds=%.4f", len(found), time.perf_counter() - started)
+        found.append((registry.label, registry.module, tuple(held)))
+    LOG.debug("carried exit registries=%d seconds=%.4f", len(found), time.perf_counter() - started)
     return tuple(found)
 
 
 def restored(entries):
     started = time.perf_counter()
-    for module in sorted({entry[3] for entry in entries}):
+    for module in sorted({module for _, module, held in entries if held is not None}):
         import_module(module)
+    loaded = [
+        (label, [(name, None if pickled is None else pickle.loads(pickled), stated) for name, pickled, stated in held])
+        for label, _, held in entries
+        if held is not None
+    ]
     registries = {registry.label: registry for registry in REGISTRIES}
-    for label, name, entry, _ in entries:
+    for label, _, held in entries:
+        if held is None and label in registries:
+            registries[label].held = dict(registries[label].shipped)
+    for label, held in loaded:
         registry = registries[label]
-        if name in registry.held:
-            continue
-        loaded = pickle.loads(entry)
-        if name not in registry.held:
-            registry.register(name, loaded)
-    LOG.debug("restored exit entries=%d seconds=%.4f", len(entries), time.perf_counter() - started)
+        for name, entry, stated in held:
+            if entry is None and name not in registry.shipped:
+                raise ValueError(
+                    "the %s %s is shipped with the library in the process that called and not in this worker"
+                    % (label, name)
+                )
+            if entry is not None and registry.versioned and version(entry) != stated:
+                raise ValueError(
+                    "the %s %s is at version %d in the process that called and at %s in this worker, whose code "
+                    "differs; the worker imports the code on disk" % (label, name, stated, version(entry))
+                )
+        registry.held = {name: registry.shipped[name] if entry is None else entry for name, entry, _ in held}
+    LOG.debug("restored exit registries=%d seconds=%.4f", len(entries), time.perf_counter() - started)
