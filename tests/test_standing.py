@@ -10,6 +10,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 import pytest
+from packaging.specifiers import SpecifierSet
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("standing")
@@ -909,7 +910,13 @@ def pinned(root):
 def test_every_package_whose_private_names_the_code_reads_or_replaces_is_pinned_to_its_installed_version(tmp_path):
     assert privates(ROOT, PROJECT) == sorted({name for names in PRIVATE.values() for name in names} | set(PUBLIC))
     installed = {name: platform.python_version() if name == "python" else version(name) for name in PRIVATE}
-    assert {name: pinned(ROOT)[name] for name in PRIVATE} == {name: "==" + held for name, held in installed.items()}
+    stated = {name: pinned(ROOT)[name] for name in PRIVATE}
+    assert all(installed[name] in SpecifierSet(stated[name]) for name in PRIVATE)
+    major, minor = map(int, platform.python_version_tuple()[:2])
+    assert stated["python"] == ">=%d.%d,<%d.%d" % (major, minor, major, minor + 1)
+    assert {name: held for name, held in stated.items() if name != "python"} == {
+        name: "==" + held for name, held in installed.items() if name != "python"
+    }
     write(tmp_path, "graphspec/reads.py", "import numba\n\n\ndef work(self, held):\n    return held._hidden, self._own, numba\n")
     write(tmp_path, "tuning/loads.py", "from numba.core import _internal\nimport numba._helper\n")
     assert privates(tmp_path, ("graphspec", "tuning")) == ["_helper", "_hidden", "_internal"]
