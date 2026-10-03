@@ -7,12 +7,15 @@ import keyed
 import numpy as np
 import pytest
 import support
+from test_segments import VALUES
 
+from conftest import SPLITS
 from graphspec import OPERATIONS, Operation, Phase
 from graphspec.budgets import GraphLimits
 from graphspec.engine import segments
 from graphspec.infra.arrays import RESIDENT
 from graphspec.operations import parameters as specs
+from graphspec.operations import pipeline
 from graphspec.operations.nodes import NODES
 from graphspec.operations.operation import listed
 from graphspec.operations.pipeline import resolved
@@ -156,6 +159,36 @@ def test_an_operation_registered_by_a_test_is_listed_with_its_parameters_and_rea
 
 def identical(left, right):
     return left.dtype == right.dtype and left.shape == right.shape and np.array_equal(left, right, equal_nan=True)
+
+
+def test_every_operation_added_after_the_seven_leaves_its_input_and_hands_on_unchanged_arrays_as_they_are(bank):
+    started = time.perf_counter()
+    opened = Deriver(bank, "cpu", support.SEED, RESIDENT)
+    registry = support.fitted(opened)
+    cfg = support.configuration(opened.registry, dict(view="snapshot"), support.several(opened.registry), 5, SPLITS)
+    partitions = opened.partitions(cfg)
+    names = [graph["name"] for graph in opened.manifest["graphs"]]
+    graphs = {"graphspec.merge": names[1], "graphspec.difference": names[0]}
+    found = {}
+    for index in range(2):
+        graph = support.shown(opened, index).dense()
+        for name in support.ADDED:
+            (step,) = resolved(registry, support.pipelined(registry, VALUES, (name,), None, graphs)[0])
+            grown = pipeline.grown(registry, (step,), None)
+            beside = {step.graph: support.beside(opened, index, step.graph)} if step.graph else {}
+            carry, given = segments.opening(graph, beside, grown)
+            before = {key: np.array(value) for key, value in given.arrays.items()}
+            result, _ = step(given, grown, support.SEED, GraphLimits("cpu"), carry, step.initial(grown), partitions)
+            changed = [key for key in DENSE if not identical(before[key], given.arrays[key])]
+            copied = [
+                key
+                for key in DENSE
+                if result.arrays[key] is not given.arrays[key] and identical(result.arrays[key], given.arrays[key])
+            ]
+            if changed or copied:
+                found[name, index] = changed, copied
+    assert found == {}
+    LOG.info("operations added share what they leave exit seconds=%.3f", time.perf_counter() - started)
 
 
 @pytest.mark.parametrize("place", range(10))

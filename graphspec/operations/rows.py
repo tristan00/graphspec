@@ -122,6 +122,16 @@ def written(registry, rows, columns, codes, dtype, named):
     return result
 
 
+@timed("rows.unchanged")
+def unchanged(graph, arrays):
+    found = {}
+    for name, value in arrays.items():
+        held = graph.arrays[name]
+        same = value.dtype == held.dtype and value.shape == held.shape and np.array_equal(value, held)
+        found[name] = held if same else value
+    return found
+
+
 @timed("rows.select")
 def select(graph, names, mask):
     if mask.all():

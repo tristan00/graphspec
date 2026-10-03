@@ -25,6 +25,7 @@ from .rows import (
     pruned,
     reduced,
     select,
+    unchanged,
 )
 from .state import EMPTY, Table
 
@@ -245,11 +246,10 @@ def contract(graph, registry, spec, seed, limits, carry, held):
     source, target = np.where(base, source, graph.fact_source), np.where(base, target, graph.fact_target)
     pair = carry.keys(graph.fact_code, source, target)
     remains = collapsed(graph, carry, "contract/live", base, pair) & ~dropped
-    graph = graph.replace(
-        fact_source=source.astype(graph.fact_source.dtype),
-        fact_target=target.astype(graph.fact_target.dtype),
-        **references,
+    ends = dict(
+        fact_source=source.astype(graph.fact_source.dtype), fact_target=target.astype(graph.fact_target.dtype)
     )
+    graph = graph.replace(**unchanged(graph, dict(ends, **references)))
     graph = prune(graph, remains, carry, "contract")
     grouped = members[group >= 0]
     pairs, owner = np.unique(
@@ -294,7 +294,7 @@ CONTRACT = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=adds,
         kinds=named,
-        version=9,
+        version=10,
         graphs=1,
     ),
 )

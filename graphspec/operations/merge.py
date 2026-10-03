@@ -7,7 +7,7 @@ from graphspec.infra.timing import timed
 
 from .operation import OPERATIONS, Operation, Phase
 from .parameters import choice
-from .rows import FACTS, OBSERVATIONS, fact_keys, keyed_relations, prune, pruned, second_of, shown
+from .rows import FACTS, OBSERVATIONS, fact_keys, keyed_relations, prune, pruned, second_of, shown, unchanged
 
 LOG = logging.getLogger(__name__)
 PREFERRED = ("first", "second")
@@ -107,8 +107,7 @@ def merge(graph, registry, spec, seed, limits, carry, held):
     merged = graph.replace(
         x_table=np.concatenate((graph.x_table, second.x_table.astype(graph.x_table.dtype))),
         value_table=np.concatenate((graph.value_table, second.value_table.astype(graph.value_table.dtype))),
-        **observations,
-        **facts,
+        **unchanged(graph, dict(observations, **facts)),
     )
     carry.x_global = np.concatenate((carry.x_global, second.x_global))
     carry.value_global = np.concatenate((carry.value_global, second.value_global))
@@ -129,7 +128,7 @@ MERGE = OPERATIONS.register(
         changes=("observations", "facts"),
         adds=None,
         kinds=filled,
-        version=7,
+        version=8,
         graphs=2,
     ),
 )
