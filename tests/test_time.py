@@ -412,20 +412,14 @@ def serving(held, graph, step):
 
 
 @pytest.mark.parametrize("name", ["forms", "snapshots", "seen", "timeless", "ordered", "spaced"])
-def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, name):
+def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, cases, name):
     held, _ = opened(banks, name)
     schema = held.registry.schema
     assert held.manifest["version"] == 10 and schema.tasks["grouping"] is None
-    written = support.written(banks[name].parent / (name + ".staging"), schema)
-    found = truths(held)
-    assert sorted(found) == sorted(written)
-    for graph, truth in found.items():
-        read = truth.stated(held.registry, held.splits, held.manifest["observers"])
-        assert read["graph"] == written[graph]["graph"] and read["nodes"] == written[graph]["nodes"]
-        for part in ("observations", "edges"):
-            assert support.alike(read[part], written[graph][part]), (graph, part)
-        assert support.normal(read["tasks"], schema) == written[graph]["tasks"], graph
-        assert read["targets"] == written[graph]["targets"], graph
+    found, wanted = support.read_back(held), support.meant(cases[name])
+    assert list(found) == list(wanted)
+    for graph, read in found.items():
+        assert support.differing(read, wanted[graph], schema) == [], graph
 
 
 @pytest.mark.parametrize("place", range(len(SHAPED)))

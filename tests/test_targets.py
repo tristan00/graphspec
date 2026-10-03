@@ -7,7 +7,6 @@ import pytest
 import support
 
 from conftest import SPLITS, inline
-from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
@@ -249,11 +248,10 @@ def test_a_number_and_a_path_in_one_bank_read_back_as_stated_and_are_scaled_per_
             for kind, key, target in zip(tasks["kind"], tasks["key"], tasks["target"])
         }
         assert read(held, graph["name"]) == wanted
-    written = support.written(bank.parent / "mixed.staging", schema)
-    for entry in held.manifest["graphs"]:
-        truth = Facts.load(held.truth(entry["index"]))
-        found = truth.stated(held.registry, held.splits, held.manifest["observers"])
-        assert found["targets"] == written[truth.name]["targets"] and len(found["targets"]["y"]) == 16
+    back, meant = support.read_back(held), support.meant(stated)
+    assert list(back) == list(meant) == ["g0", "g1"]
+    for name, found in back.items():
+        assert support.differing(found, meant[name], schema) == [] and len(found["targets"]["y"]) == 16, name
     trained = held.split["indices"]["train"]
     assert [entry["name"] for entry in held.split["series"]] == ["size", "near", "far"]
     for entry in held.split["series"]:
@@ -330,9 +328,8 @@ def test_a_kind_of_target_registered_by_a_test_builds_reads_back_and_completes_o
     assert schema.targets() == ("share",) and schema.target_columns() == dict(trials="FLOAT")
     tasks = stated["graphs"][0]["tasks"]
     assert read(held, "g0") == {("g0", "part", key): target for key, target in zip(tasks["key"], tasks["target"])}
-    truth = Facts.load(held.truth(0))
-    found = truth.stated(held.registry, held.splits, held.manifest["observers"])
-    assert found["targets"] == support.written(bank.parent / "share.staging", schema)["g0"]["targets"]
+    back, meant = support.read_back(held), support.meant(stated)
+    assert list(back) == ["g0"] and support.differing(back["g0"], meant["g0"], schema) == []
     assert held.split["series"] == [] and held.center.tolist() == [0.0] and held.scale.tolist() == [1.0]
     points = dict(
         task=[row["ticket"] for row in held.rows],

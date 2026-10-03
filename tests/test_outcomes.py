@@ -8,7 +8,6 @@ import support
 import torch
 
 from conftest import SPLITS, inline, shared
-from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
 from graphspec.infra.timing import timed
@@ -178,11 +177,10 @@ def test_every_kind_of_2_13_reads_back_as_stated(banks):
         assert held.fields[name][held.aims == 1].tolist() == [target[name] for target in points]
     assert held.split["series"] == [] and held.scale.tolist() == [1.0] * 4
     assert np.isnan(held.fields["tau"][held.aims == 0]).all() and (held.fields["tau"][held.aims == 1] > 0).all()
-    written = support.written(banks["stated"].parent / "stated.staging", schema)
-    for entry in held.manifest["graphs"]:
-        truth = Facts.load(held.truth(entry["index"]))
-        found = truth.stated(held.registry, held.splits, held.manifest["observers"])
-        assert found["targets"] == written[truth.name]["targets"]
+    back, meant = support.read_back(held), support.meant(given)
+    assert list(back) == list(meant) == ["g0", "g1"]
+    for name, found in back.items():
+        assert support.differing(found, meant[name], schema) == [], name
 
 
 def test_a_sequence_states_its_tokens_and_its_greatest_length_and_holds_a_point_per_token_and_place():

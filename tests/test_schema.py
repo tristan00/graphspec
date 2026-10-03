@@ -15,12 +15,14 @@ from graphspec.engine import join, transform
 from graphspec.facts.stored import VERSION, Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.schema.declaration import EXTRAS
 from graphspec.schema.schema import VALUE, Encoding, Schema, fitted
 from graphspec.sources import synthetic
 from graphspec.views.graph import conforms
 from tuning.bank.bank import Deriver
+from tuning.bank.build import build
 from tuning.fits.training import fit
 from tuning.statement import state
 
@@ -290,25 +292,93 @@ def test_the_varied_graph_builds_with_what_the_check_names(varied):
         assert found & {opened.registry.code(name) for name in taken}
 
 
-def test_the_varied_graph_reads_back_from_the_bank_equal_to_what_was_stated(varied):
-    opened = Deriver(varied, "cpu", RESIDENT)
+@timed("schema.lasting")
+def lasting(rows, **named):
+    count = len(next(iter(rows.values())))
+    return dict(named, form="state", parameters={}, rows=dict(dict(since=[0] * count, until=[None] * count), **rows))
+
+
+@timed("schema.spoken")
+def spoken(place):
+    people, spots = ("p0", "p1", "p2"), ("q0", "q1", "q2")
+    person = dict(key=["p0", "p0", "p1", "p2"], since=[0, 2, 0, 0], until=[2, None, None, None], seq=[0, 1, 2, 3])
+    person.update(size=[1.0 + place, 1.5, 2.0, 3.0], speed=[0.5, 0.75, 1.0, 1.25])
+    person.update(colour=["red", "blue", None, "green"], open=[True, False, None, True])
+    values = [
+        lasting(person, kind="person"),
+        lasting(dict(key=list(spots), size=[4.0, 5.0 + place, 6.0], seq=[0, 1, 2]), kind="place"),
+        lasting(dict(key=["i0", "i1"], speed=[7.0, 8.1], colour=["red", None], seq=[0, 1]), kind="item"),
+        lasting(dict(key=["t0"], open=[False], seq=[0]), kind="team"),
+    ]
+    pairs = dict(
+        visits=(("person", "place"), ["p0", "p1"], ["q0", "q1"], dict(weight=[1.5, 2.5 + place], mode=["foot", "road"])),
+        owns=(("person", "item"), ["p0", "p2"], ["i0", "i1"], {}),
+        member=(("person", "team"), ["p1"], ["t0"], {}),
+        near=(("place", "place"), ["q1", "q2"], ["q0", "q1"], {}),
+        located=(("team", "place"), ["t0"], ["q2"], dict(distance=[3.0])),
+        links=(("person", "item"), ["p1", "p2"], ["i0", "i1"], dict(relation=["likes", "sells"], mode=["air", "rail"])),
+    )
+    edges = [
+        lasting(
+            dict(source=source, target=target, present=[True] * len(source), seq=list(range(len(source))), **more),
+            table=table,
+            ends=ends,
+        )
+        for table, (ends, source, target, more) in pairs.items()
+    ]
+    tasks = dict(
+        key=[10 * place + at for at in range(4)],
+        kind=["buy", "sell", "move", "buy"],
+        time=[1, 2, 3, 4],
+        split=["train", "train", "validation", "validation"],
+        weight=[None] * 4,
+        size=[0.5 * at for at in range(4)],
+        speed=[None, 1.0, 2.0, 3.0],
+        grouping=[0, 0, 1, 1],
+        signal=[[0.25 * at, 1.0] for at in range(4)],
+        signal_observed=[[True, True]] * 4,
+        references=dict(person=["p0", "p1", "p2", "p0"], place=["q0", "q1", "q2", "q0"], team=["t0"] * 4),
+        target=[1.0 + at + place for at in range(4)],
+        known=[None] * 4,
+    )
+    return dict(
+        name="g%d" % place,
+        unit="step",
+        columns=dict(season=("dry", "wet")[place]),
+        nodes=dict(person=list(people), place=list(spots), item=["i0", "i1"], team=["t0"]),
+        values=values,
+        edges=edges,
+        tasks=tasks,
+    )
+
+
+@pytest.fixture(scope="module")
+def stated(tmp_path_factory):
+    started = time.perf_counter()
+    root = tmp_path_factory.mktemp("stated")
+    case = dict(schema=synthetic.varied("task")["schema"], graphs=[spoken(place) for place in range(2)])
+    build(synthetic.stage(root, "stated", case), root / "bank", 1, ("train",))
+    LOG.info("stated bank of the varied schema exit seconds=%.3f", time.perf_counter() - started)
+    return root / "bank", case
+
+
+def test_a_graph_of_the_varied_schema_reads_back_from_the_bank_equal_to_what_was_stated(stated):
+    bank, case = stated
+    opened = Deriver(bank, "cpu", RESIDENT)
     assert set(opened.rows[0]) == {"graph", "kind", "time", "ticket", "week", "series", "y"}
     assert {row["series"] for row in opened.rows} == {synthetic.OUTCOME}
     assert opened.split["series"][0]["name"] == synthetic.OUTCOME and len(opened.split["series"]) == 1
     assert sorted(opened.split["indices"]) == ["train", "validation"]
     schema = opened.registry.schema
-    stated = support.written(varied.parent / "varied.staging", schema)
-    for graph in opened.manifest["graphs"]:
-        truth = Facts.load(opened.truth(graph["index"]))
-        found = truth.stated(opened.registry, opened.splits, opened.manifest["observers"])
-        wanted = stated[truth.name]
-        assert found["graph"] == wanted["graph"] and found["nodes"] == wanted["nodes"]
-        for part in ("observations", "edges"):
-            assert support.alike(found[part], wanted[part]), (truth.name, part)
-        assert support.normal(found["tasks"], schema) == wanted["tasks"]
-        assert found["targets"] == wanted["targets"]
-        assert any(value is None for value in found["observations"]["person"][VALUE + "colour"])
-        assert set(found["edges"]["visits"][VALUE + "mode"]) <= {"foot", "road", "rail", "air", None}
+    assert schema.mapping() == case["schema"]
+    back, wanted = support.read_back(opened), support.meant(case)
+    assert list(back) == list(wanted) == ["g0", "g1"]
+    for name, found in back.items():
+        assert support.differing(found, wanted[name], schema) == [], name
+        assert None in found["observations"]["person"][VALUE + "colour"] and found["graph"]["season"] in ("dry", "wet")
+        assert sorted(found["edges"]["visits"][VALUE + "mode"]) == ["foot", "road"]
+        assert sorted(found["edges"]["links"]["relation"]) == ["likes", "sells"]
+        assert sorted(zip(found["edges"]["near"]["source"], found["edges"]["near"]["target"])) == [("q0", "q1"), ("q1", "q2")]
 
 
 def test_the_varied_graph_completes_one_fit_on_cpu(varied, varied_packed, tmp_path, statement):

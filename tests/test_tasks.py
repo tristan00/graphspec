@@ -271,16 +271,10 @@ def test_the_table_of_tasks_reads_back_from_the_bank_equal_to_what_was_stated(ba
     assert manifest["trained"] == ["north", "south"]
     assert manifest["split_rows"] == dict(east=6, north=6, south=6, west=6)
     assert schema.series() == ("total", "mark", "wide") and schema.targets() == ("number",)
-    written = support.written(bank.parent / "tasks.staging", schema)
-    for entry in manifest["graphs"]:
-        truth = Facts.load(held.truth(entry["index"]))
-        read = truth.stated(held.registry, held.splits, manifest["observers"])
-        wanted = written[truth.name]
-        assert read["graph"] == wanted["graph"] and read["nodes"] == wanted["nodes"]
-        for part in ("observations", "edges"):
-            assert support.alike(read[part], wanted[part]), (truth.name, part)
-        assert support.normal(read["tasks"], schema) == wanted["tasks"]
-        assert read["targets"] == wanted["targets"]
+    back, wanted = support.read_back(held), support.meant(case("keep"))
+    assert list(back) == list(wanted) == ["one", "two"]
+    for name, read in back.items():
+        assert support.differing(read, wanted[name], schema) == [], name
         assert read["tasks"]["time"] == sorted(entry[0] for entry in ASKED)
         assert read["tasks"]["kind"].count("mark") == 6 and read["tasks"]["kind"].count("joint") == 1
         place = read["tasks"]["kind"].index("joint")

@@ -155,11 +155,10 @@ def test_every_kind_over_classes_reads_back_as_stated_with_its_classes_as_its_se
     assert held.center[1:].tolist() == [0.0] * classes and held.scale[1:].tolist() == [1.0] * classes
     grade = [row for row in held.rows if row["kind"] == "grade"]
     assert len(grade) == 3 * sum(kind == "grade" for _, kind, _ in wanted) and {row["y"] for row in grade} == {0.0, 1.0}
-    written = support.written(bank.parent / "classes.staging", schema)
+    back, meant = support.read_back(held), support.meant(case)
     for entry in held.manifest["graphs"]:
         truth = Facts.load(held.truth(entry["index"]))
-        found = truth.stated(held.registry, held.splits, held.manifest["observers"])
-        assert found["targets"] == written[truth.name]["targets"]
+        assert support.differing(back[truth.name], meant[truth.name], schema) == [], truth.name
         named = [schema.series()[code] for code in truth.target_series.tolist()]
         assert named == [held.rows[row]["series"] for row in truth.target_row.tolist()]
 

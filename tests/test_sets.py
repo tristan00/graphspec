@@ -287,16 +287,11 @@ def test_sets_edges_about_edges_and_held_graphs_read_back_from_the_bank_equal_to
     held = Deriver(bank, "cpu", RESIDENT)
     schema = held.registry.schema
     assert held.manifest["version"] == 10 and schema.mapping() == stated()
-    written = support.written(bank.parent / "sets.staging", schema)
+    found, wanted = support.read_back(held), support.meant(case())
+    assert list(found) == list(wanted) == ["one", "two"]
     for entry in held.manifest["graphs"]:
-        truth = Facts.load(held.truth(entry["index"]))
-        read = truth.stated(held.registry, held.splits, held.manifest["observers"])
-        wanted = written[truth.name]
-        assert read["graph"] == wanted["graph"] and read["nodes"] == wanted["nodes"]
-        for part in ("observations", "edges", "sets", "held"):
-            assert support.alike(read[part], wanted[part]), (truth.name, part)
-        assert support.normal(read["tasks"], schema) == wanted["tasks"]
-        assert read["targets"] == wanted["targets"]
+        read = found[entry["name"]]
+        assert support.differing(read, wanted[entry["name"]], schema) == [], entry["name"]
         members = read["sets"]["gathering"]["set"]
         assert sorted(members.count(key) for key in set(members)) == list(SIZES)
         assert entry["members"] == sum(SIZES) + 2 * len(LINKS) and entry["held"] == 5 * 5
