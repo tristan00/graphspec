@@ -11,6 +11,7 @@ from graphspec.registries import Names
 from graphspec.schema.added import Added
 from graphspec.schema.declaration import membership, paired
 from graphspec.schema.references import SORTS
+from graphspec.schema.targets import TARGETS
 
 from .operation import OPERATIONS, Count, Need, Operation, Phase, Stored
 from .parameters import Parameter, choice, number, registered
@@ -426,6 +427,17 @@ def negatives(graph, registry, spec, seed, limits, carry, held):
     return graph
 
 
+def needed(schema):
+    started = time.perf_counter()
+    result = {}
+    for kind, entry in schema.tasks["kinds"].items():
+        target = entry["target"]
+        if target is not None and TARGETS.named(target["kind"]).names == "linked":
+            result[kind] = (NEGATIVE.name, {"negatives/of": "%s:%s:%s" % (LINK, target["relation"], target["about"])})
+    LOG.debug("negatives needed exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 @timed("negatives.drawing")
 def drawing(rule):
     return lambda registry, spec: spec["negatives/rule"] == rule
@@ -449,7 +461,7 @@ NEGATIVE = OPERATIONS.register(
         changes=(),
         adds=adds,
         kinds=named,
-        version=9,
+        version=10,
         graphs=1,
     ),
 )

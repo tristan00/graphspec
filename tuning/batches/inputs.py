@@ -11,10 +11,10 @@ from graphspec.infra import workspace
 from graphspec.infra.arrays import Resident, between
 from graphspec.infra.hashing import hashed, salted
 from graphspec.infra.timing import timed
+from graphspec.operations.negatives import needed
 from graphspec.operations.rows import counted, keyed_relations
 from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.references import SORTS
-from graphspec.schema.targets import needed
 from tuning.families.heads import FIELD
 
 from . import gather

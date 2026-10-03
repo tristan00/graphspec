@@ -43,6 +43,7 @@ COMPILERS = ("njit", "jit")
 LOADERS = ("import_module", "__import__", "run_module")
 LOCAL = re.compile(r"(^|[\\/])local([\\/]|$)")
 INFRA = "graphspec/infra"
+OPERATED = "graphspec/operations"
 GROUPED = ("graphspec", "tuning")
 REGISTRY = "Names"
 REGISTERED = "REGISTRIES"
@@ -155,9 +156,9 @@ RECORDED = {
     "graphspec.measures": (3, "738ad2944004dd94058b9877cbe44c1755ace68f2466b16d92affca51993aa88"),
     "graphspec.contract": (10, "be902bc3d6ae05296188837586c811d93ff96a7ba9168b1e487eaf4fad546927"),
     "graphspec.product": (5, "414e880458bb8727533225adab00a3c93108ef33291a5ce8f93c57d20b57b610"),
-    "graphspec.negatives": (9, "53d927f30cbdf47812340209a499360329795cee753a34e741372a49f5456e56"),
+    "graphspec.negatives": (10, "b59a00bd88e9ee16c57d8d3b9a9067727aeef3e3e55c731dba7b79d6ba7f9277"),
     "derivation": (53, "6bbcfd64aaad6e034b08f4d80df173da66e86bb3c59238379cea42126a78296e"),
-    "views": (61, "d8e8eda85ffc1f72f55ef7c38b191ed8f21905813ce654864a2f2f46280965e1"),
+    "views": (62, "2f67c9cef40cdd5cb059020ebc1617383de8ad12d127d9b4a37399dc2b894440"),
     "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
     "index": (5, "0c2dbace2e5333eb6de3c15286b206fadd7e66a8bfac6d181c8802e891b68cc8"),
     "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
@@ -707,6 +708,23 @@ def layered(root, folders):
     return unplaced, crossing
 
 
+def naming(root, folders, names):
+    started = time.perf_counter()
+    found = []
+    for place, source in sources(root, folders):
+        held = group(place)
+        if held == OPERATED or OPERATED in below(held) or not any(name in source for name in names):
+            continue
+        for value, line in mentions(source)[1]:
+            found.extend(
+                (place, line, name)
+                for name in names
+                if re.search(r"(?<![\w.])%s(?!\w)" % re.escape(name), value)
+            )
+    LOG.debug("naming exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return sorted(found)
+
+
 def write(root, place, source):
     started = time.perf_counter()
     path = root / place
@@ -917,7 +935,20 @@ def test_only_the_registries_read_what_a_registry_holds_and_other_code_reads_it_
 
 
 def test_every_module_sits_in_a_group_and_imports_only_the_groups_below_it(tmp_path):
+    from graphspec import OPERATIONS
+
     assert layered(ROOT, CODE) == ([], [])
+    names = tuple(OPERATIONS.names())
+    assert naming(ROOT, CODE, names) == []
+    write(tmp_path, "graphspec/schema/needs.py", "NEEDED = 'graphspec.negatives'\n")
+    write(tmp_path, "graphspec/infra/hidden.py", "def work():\n    return 'graphspec.window/carried'\n")
+    write(tmp_path, "graphspec/build/other.py", "NAMED = 'graphspec.negatives_of', 'mygraphspec.window'\n")
+    write(tmp_path, "graphspec/engine/allowed.py", "NAMED = 'graphspec.negatives'\n")
+    write(tmp_path, "tuning/searches/allowed.py", "NAMED = 'graphspec.contract'\n")
+    assert naming(tmp_path, CODE, names) == [
+        ("graphspec/infra/hidden.py", 2, "graphspec.window"),
+        ("graphspec/schema/needs.py", 1, "graphspec.negatives"),
+    ]
     for place in ("graphspec", "graphspec/infra", "graphspec/infra/processes", "graphspec/views", "tuning"):
         write(tmp_path, place + "/__init__.py", "")
     for place in ("registries", "infra/files", "operations/sets", "views/graph", "engine/transform"):

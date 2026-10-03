@@ -9,8 +9,8 @@ from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
+from graphspec.operations.negatives import needed
 from graphspec.operations.operation import Refused
-from graphspec.schema.targets import needed
 from graphspec.views.view import STEPS
 from tuning.families.model_spec import TRAINING, describe, groups
 from tuning.families.model_spec import space as model_space

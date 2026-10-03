@@ -16,7 +16,6 @@ UTILITIES = Names("utility", False)
 BETTER = ("higher", "lower")
 UTILITY = ("name", "better")
 SUMMED = 1e-6
-NEGATIVES = "graphspec.negatives"
 LONGEST = (1 << 63) - 1
 
 
@@ -837,17 +836,6 @@ def pointed(schema):
             found |= {first for first, second in edge["endpoints"] if second in starts}
         result[kind] = tuple(sorted(found))
     LOG.debug("pointed exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
-    return result
-
-
-def needed(schema):
-    started = time.perf_counter()
-    result = {}
-    for kind, entry in schema.tasks["kinds"].items():
-        target = entry["target"]
-        if target is not None and TARGETS.named(target["kind"]).names == "linked":
-            result[kind] = (NEGATIVES, {"negatives/of": "link:%s:%s" % (target["relation"], target["about"])})
-    LOG.debug("needed exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
