@@ -306,7 +306,7 @@ def asked(schema, level, found, layout):
         id=labels.column("id"), y=labels.column("y"), known=pa.array([None] * len(numbers), pa.int64())
     )
     if level == "path":
-        target.update(tau=labels.column("tau"), series=labels.column("series"))
+        target.update(tau=labels.column("tau").cast(pa.int64()), series=labels.column("series"))
     result[(TARGET, None, None)] = pa.table(target)
     result[(LINK, TARGET, "task")] = pa.table(
         {"from": labels.column("id"), "to": pa.array(aimed, pa.int64())}

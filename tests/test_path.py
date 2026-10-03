@@ -60,7 +60,7 @@ def test_path_supervision_rejects_duplicate_tau(tmp_path):
     def duplicated(table):
         tau = table.column("tau").to_numpy().copy()
         tau[1] = tau[0]
-        return table.set_column(table.schema.get_field_index("tau"), "tau", pa.array(tau, pa.float32()))
+        return table.set_column(table.schema.get_field_index("tau"), "tau", pa.array(tau, pa.int64()))
 
     with pytest.raises(ValueError, match="graph_000 has two points with one task, one series and one tau"):
         build(staged_points(tmp_path, "twice", duplicated), tmp_path / "bank", 1, ("train",))
@@ -69,10 +69,10 @@ def test_path_supervision_rejects_duplicate_tau(tmp_path):
 def test_path_supervision_rejects_nonpositive_tau(tmp_path):
     def flattened(table):
         tau = table.column("tau").to_numpy().copy()
-        tau[2] = 0.0
-        return table.set_column(table.schema.get_field_index("tau"), "tau", pa.array(tau, pa.float32()))
+        tau[2] = 0
+        return table.set_column(table.schema.get_field_index("tau"), "tau", pa.array(tau, pa.int64()))
 
-    with pytest.raises(ValueError, match="strictly positive"):
+    with pytest.raises(ValueError, match="state their tau, a whole number of at least 1$"):
         build(staged_points(tmp_path, "zero", flattened), tmp_path / "bank", 1, ("train",))
 
 

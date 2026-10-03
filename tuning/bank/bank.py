@@ -46,7 +46,7 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 43
+VIEW = 44
 TOKEN = (1 << 62) - 1
 
 

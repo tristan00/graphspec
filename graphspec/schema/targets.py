@@ -17,6 +17,7 @@ BETTER = ("higher", "lower")
 UTILITY = ("name", "better")
 SUMMED = 1e-6
 NEGATIVES = "graphspec.negatives"
+LONGEST = (1 << 63) - 1
 
 
 @timed("targets.real")
@@ -131,7 +132,7 @@ def ended(values, task, place):
 def accumulated(values, task, tau):
     started = time.perf_counter()
     task = np.unique(np.asarray(task, np.int64), return_inverse=True)[1].reshape(-1)
-    order = np.lexsort((np.asarray(tau, np.float64), task))
+    order = np.lexsort((np.asarray(tau), task))
     counts = np.bincount(task)
     place = np.empty(len(order), np.int64)
     place[order] = np.arange(len(order)) - np.repeat(np.cumsum(counts) - counts, counts)
@@ -154,6 +155,15 @@ def whole(stated, least, where):
     if type(stated) is not int or stated < least:
         raise ValueError("%s is a whole number of at least %d, found %r" % (where, least, stated))
     return stated
+
+
+@timed("targets.bounded")
+def bounded(value, name, where):
+    if value > LONGEST:
+        raise ValueError(
+            "%s states %d as %s, past %d, the greatest whole number of 64 bits" % (where, value, name, LONGEST)
+        )
+    return value
 
 
 @timed("targets.single")
@@ -236,7 +246,7 @@ class Path:
     matures = None
     names = None
     parameters = ()
-    columns = dict(tau="FLOAT", series="STRING")
+    columns = dict(tau="INT64", series="STRING")
     inputs = ("tau",)
     outcomes = ()
     times = ("tau",)
@@ -254,9 +264,9 @@ class Path:
         started = time.perf_counter()
         series = target["series"]
         owner = np.asarray(rows["task"], np.int64)
-        tau = np.asarray([np.nan if value is None else value for value in rows["tau"]], np.float64)
-        if not np.isfinite(tau).all() or np.any(tau <= 0):
-            raise ValueError("the points of %s state their tau finite and strictly positive" % where)
+        if any(type(value) is not int or value < 1 for value in rows["tau"]):
+            raise ValueError("the points of %s state their tau, a whole number of at least 1" % where)
+        tau = np.asarray(rows["tau"], np.int64)
         names = list(rows["series"])
         strangers = sorted({repr(name) for name in names if name not in series})
         if strangers:
@@ -280,12 +290,13 @@ class Path:
             not isinstance(stated, list)
             or not stated
             or any(not isinstance(point, (list, tuple)) or len(point) != 3 for point in stated)
+            or any(type(point[0]) is not int or point[0] < 1 for point in stated)
         ):
             raise ValueError(
-                "%s states its target as a list of points, each its tau, its series and its number; found %r"
-                % (where, stated)
+                "%s states its target as a list of points, each its tau, a whole number of at least 1 of the unit of "
+                "its graph, its series and its number; found %r" % (where, stated)
             )
-        return [dict(tau=tau, series=name, y=y) for tau, name, y in stated]
+        return [dict(tau=bounded(tau, "the tau of a point", where), series=name, y=y) for tau, name, y in stated]
 
     @timed("targets.path.read")
     def read(self, rows):
@@ -523,7 +534,7 @@ class Survival:
     matures = None
     names = None
     parameters = ("width", "intervals")
-    columns = dict(tau="FLOAT", duration="INT64", happened="BOOL")
+    columns = dict(tau="INT64", duration="INT64", happened="BOOL")
     inputs = ("tau",)
     outcomes = ("duration", "happened")
     times = ("tau", "duration")
@@ -535,10 +546,10 @@ class Survival:
                 "the target of %s is a time to an event, which counts on a clock, and the time of the schema is %s"
                 % (where, schema.model)
             )
-        return dict(
-            width=whole(stated["width"], 1, "the width of the intervals of the target of " + where),
-            intervals=whole(stated["intervals"], 1, "the number of intervals of the target of " + where),
-        )
+        width = whole(stated["width"], 1, "the width of the intervals of the target of " + where)
+        intervals = whole(stated["intervals"], 1, "the number of intervals of the target of " + where)
+        bounded(width * intervals, "the tau of its last interval", "the target of " + where)
+        return dict(width=width, intervals=intervals)
 
     @timed("targets.survival.series")
     def series(self, stated, where):
@@ -560,7 +571,7 @@ class Survival:
             )
         owner, lasted = np.asarray(rows["task"], np.int64), np.asarray(rows["duration"], np.int64)
         happened = np.asarray(rows["happened"], bool)
-        tau = np.asarray([np.nan if value is None else value for value in rows["tau"]], np.float64)
+        tau = np.asarray([-1 if value is None else value for value in rows["tau"]], np.int64)
         order = np.lexsort((tau, owner))
         _, first, counts = np.unique(owner[order], return_index=True, return_counts=True)
         wrong = counts != count
@@ -602,10 +613,10 @@ class Survival:
                 "the time of the task to its event or to the end of its case, and whether its event happened then, "
                 "true or false, found %r" % (where, stated)
             )
-        lasted, happened = stated["duration"], stated["happened"]
+        lasted, happened = bounded(stated["duration"], "its duration", where), stated["happened"]
         return [
             dict(
-                tau=float(width * end),
+                tau=width * end,
                 duration=lasted,
                 happened=happened,
                 y=float(happened and width * (end - 1) < lasted <= width * end),

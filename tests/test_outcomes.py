@@ -34,6 +34,7 @@ KINDS = dict(
 LOSSES = dict(sequence="tokens", survival="hazard")
 MEASURES = ["brier", "concordance", "tokens", "token_accuracy", "exact"]
 OPENED, HELD, NETS = {}, {}, {}
+WIDE = (1 << 24) + 1
 
 
 @timed("outcomes.schema")
@@ -121,7 +122,8 @@ def graph(place, changed):
 
 @timed("outcomes.case")
 def case(changed):
-    return dict(schema=schema(KINDS), graphs=[graph(place, changed) for place in range(2)])
+    wide = dict(KINDS, wait=dict(KINDS["wait"], width=WIDE))
+    return dict(schema=schema(wide), graphs=[graph(place, changed) for place in range(2)])
 
 
 @timed("outcomes.made")
@@ -160,7 +162,7 @@ def test_every_kind_of_2_13_reads_back_as_stated(banks):
     held = opened(banks, "stated")
     schema, given = held.registry.schema, case(False)
     assert schema.targets() == ("sequence", "survival") and Schema(schema.mapping()).mapping() == schema.mapping()
-    columns = dict(series="STRING", place="INT32", tau="FLOAT", duration="INT64", happened="BOOL")
+    columns = dict(series="STRING", place="INT32", tau="INT64", duration="INT64", happened="BOOL")
     assert schema.target_columns() == columns and schema.series() == (*TOKENS, "churn")
     wanted = {
         (graph["name"], kind, key): target
@@ -176,7 +178,10 @@ def test_every_kind_of_2_13_reads_back_as_stated(banks):
     for name in ("duration", "happened"):
         assert held.fields[name][held.aims == 1].tolist() == [target[name] for target in points]
     assert held.split["series"] == [] and held.scale.tolist() == [1.0] * 4
-    assert np.isnan(held.fields["tau"][held.aims == 0]).all() and (held.fields["tau"][held.aims == 1] > 0).all()
+    width, tau = given["schema"]["tasks"]["kinds"]["wait"]["target"]["width"], held.fields["tau"]
+    assert width > 1 << 24 and tau.dtype == np.int64 and (tau[held.aims == 0] == 0).all()
+    assert tau[held.aims == 1].tolist() == [width * (1 + place % 3) for place in range(len(points))]
+    assert np.isnan(held.inputs["tau"][held.aims == 0]).all()
     back, meant = support.read_back(held), support.meant(given)
     assert list(back) == list(meant) == ["g0", "g1"]
     for name, found in back.items():
@@ -255,8 +260,16 @@ def test_a_time_to_an_event_states_its_duration_and_outcome_and_holds_a_point_pe
             kind.staged(wrong, target, where)
     for stated_target, labels in ((dict(duration=4, happened=True), [0, 1, 0]), (dict(duration=9, happened=True), [0] * 3)):
         rows = kind.staged(stated_target, target, where)
-        assert [row["tau"] for row in rows] == [2.0, 4.0, 6.0] and [row["y"] for row in rows] == labels
-        assert kind.read(rows) == stated_target
+        assert [row["tau"] for row in rows] == [2, 4, 6] and {type(row["tau"]) for row in rows} == {int}
+        assert [row["y"] for row in rows] == labels and kind.read(rows) == stated_target
+    longest = (1 << 63) - 1
+    assert kind.staged(dict(duration=longest, happened=False), target, where)[0]["duration"] == longest
+    with pytest.raises(
+        ValueError,
+        match="the target of the kind of task wait states 9223372036854775808 as its duration, past 9223372036854775807, "
+        "the greatest whole number of 64 bits",
+    ):
+        kind.staged(dict(duration=longest + 1, happened=False), target, where)
     rows = kind.staged(dict(duration=3, happened=False), target, where)
     points = dict(task=[0] * 3, graph=["g1"] * 3, **{name: [row[name] for row in rows] for name in rows[0]})
     named = kind.inputs + kind.outcomes
@@ -264,7 +277,8 @@ def test_a_time_to_an_event_states_its_duration_and_outcome_and_holds_a_point_pe
     assert kind.points(points, target, where) == dict(series=["churn"] * 3, **{name: points[name] for name in named})
     refused = (
         (dict(points, duration=[3, 3, None]), "state the duration of their case, a whole number of at least 1"),
-        (dict(points, tau=[2.0, 4.0, 8.0]), "a task of graph g1 holds under .* 3 intervals of 2, by the end"),
+        (dict(points, tau=[2, 4, 8]), "a task of graph g1 holds under .* 3 intervals of 2, by the end"),
+        (dict(points, tau=[2, 4, None]), "a task of graph g1 holds under .* 3 intervals of 2, by the end"),
         (dict(points, happened=[False, True, False]), "a task of graph g1 holds under .* one duration and one outcome"),
         (dict(points, y=[0.0, 1.0, 0.0]), "state 1 for the interval in which the event of their task happened"),
     )
@@ -274,10 +288,16 @@ def test_a_time_to_an_event_states_its_duration_and_outcome_and_holds_a_point_pe
     restated = (
         (dict(KINDS["wait"], width=0), "the width of the intervals of the target of .* at least 1, found 0"),
         ({key: KINDS["wait"][key] for key in ("kind", "series", "width")}, "lacks intervals"),
+        (
+            dict(KINDS["wait"], width=1 << 62, intervals=2),
+            "the target of the kind of task wait states 9223372036854775808 as the tau of its last interval, past "
+            "9223372036854775807, the greatest whole number of 64 bits$",
+        ),
     )
     for given, message in restated:
         with pytest.raises(ValueError, match=message):
             Schema(schema(dict(wait=given)))
+    assert Schema(schema(dict(wait=dict(KINDS["wait"], width=(1 << 62) - 1, intervals=2)))).series() == ("churn",)
     ordered = schema(KINDS)
     ordered["time"] = dict(model="order", units=[], ties="key")
     with pytest.raises(ValueError, match="is a time to an event, which counts on a clock, and the time of the sch"):
@@ -382,7 +402,7 @@ def test_a_time_to_an_event_is_a_likelihood_over_intervals_that_reads_cases_ende
     assert found == pytest.approx(agreed(many, risk, 6.0))
 
 
-def test_durations_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_measures_exactly():
+def test_times_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_measures_exactly():
     from types import SimpleNamespace
 
     from tuning.bank.bank import pointed
@@ -390,7 +410,7 @@ def test_durations_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_meas
     from tuning.measures.measures import measured, predicted, scored
 
     started = time.perf_counter()
-    width, where = 1 << 25, "the target of the kind of task wait"
+    width, where = WIDE, "the target of the kind of task wait"
     cases = [(width - 1, True), (width + 1, True), (width - 1, False), (2 * width + 1, False), (3 * width, True)]
     target = dict(Schema(schema(KINDS)).tasks["kinds"]["wait"]["target"], width=width)
     rows = [
@@ -405,15 +425,17 @@ def test_durations_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_meas
     assert aims.tolist() == [1] * 15 + [0] and fields["place"].dtype == np.int32
     assert fields["duration"].dtype == np.int64 and fields["duration"][:15].tolist() == lasted
     assert fields["happened"].dtype == bool and fields["happened"][:15].tolist() == happened
-    assert fields["tau"].dtype == inputs["tau"].dtype == np.float32 and fields["tau"][:15].tolist() == tau
-    assert np.isnan(fields["tau"][15]) and fields["duration"][15] == 0 and not fields["happened"][15]
-    assert fields["place"].tolist() == [0] * 15 + [1] and np.isnan(inputs["place"][:15]).all()
+    assert fields["tau"].dtype == np.int64 and fields["tau"][:15].tolist() == tau and fields["tau"][15] == 0
+    assert fields["duration"][15] == 0 and not fields["happened"][15]
+    rounded = np.asarray(tau, np.float32).tolist()
+    assert inputs["tau"].dtype == np.float32 and inputs["tau"][:15].tolist() == rounded != tau
+    assert np.isnan(inputs["tau"][15]) and fields["place"].tolist() == [0] * 15 + [1] and np.isnan(inputs["place"][:15]).all()
     held = SimpleNamespace(targets=np.asarray([row["y"] for row in rows], np.float32), fields=fields)
     batch = dict(rows=np.arange(15), drawn=np.zeros(2, np.int64), placed=np.arange(17), left=np.zeros(15, bool))
     found = outcomes(held, batch, "cpu")
     assert found["field/duration"].dtype == torch.int64 and found["field/duration"].tolist() == lasted + lasted[:1] * 2
     assert found["field/happened"].dtype == torch.bool and found["field/happened"][:15].tolist() == happened
-    assert found["field/tau"].dtype == torch.float32 and found["field/tau"][:15].tolist() == tau
+    assert found["field/tau"].dtype == torch.int64 and found["field/tau"][:15].tolist() == tau
     scores = torch.tensor([0.5, -1.0, 2.0, -0.5, 0.0, 1.0, -2.0, -1.5, -1.0, 1.5, 0.0, 0.0, 0.0, 0.3, 0.1])
     batch = dict(
         target=found["target"][:15],
@@ -423,6 +445,7 @@ def test_durations_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_meas
         **{"field/" + name: found["field/" + name][:15] for name in ("tau", "duration")},
     )
     seen = torch.tensor([end <= held or y == 1 for end, held, y in zip(tau, lasted, [row["y"] for row in rows])])
+    assert seen.tolist() != [end <= held or y == 1 for end, held, y in zip(rounded, lasted, [row["y"] for row in rows])]
     error = torch.nn.functional.binary_cross_entropy_with_logits(scores, batch["target"], reduction="none")
     assert float(LOSSES.named("hazard")(scores, batch, None)) == pytest.approx(float((error * seen).sum() / 5))
     owner, chosen = np.arange(5).repeat(3), {name: values[:15] for name, values in fields.items()}
@@ -443,7 +466,7 @@ def test_durations_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_meas
             else:
                 parts.append((1 - alive) ** 2 / kept(stated, end) if moment > end else 0.0)
     assert found["brier"]["value"] == pytest.approx(np.mean(parts))
-    LOG.info("durations past 2^24 exit seconds=%.3f", time.perf_counter() - started)
+    LOG.info("times past 2^24 exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_bank_of_the_kinds_of_2_13_completes_one_fit(banks, tmp_path, statement, monkeypatch):
@@ -464,7 +487,8 @@ def test_a_bank_of_the_kinds_of_2_13_completes_one_fit(banks, tmp_path, statemen
         task, prediction, aim = held.task_of[stored["row_index"]], stored["prediction"], stored["aim"]
         place, tau = stored["field/place"], stored["field/tau"]
         assert set(aim.tolist()) == {0, 1} and ((prediction > 0) & (prediction < 1)).all()
-        assert place.dtype == np.int32 and (place[aim == 1] == 0).all() and np.isnan(tau[aim == 0]).all()
+        assert place.dtype == np.int32 and (place[aim == 1] == 0).all() and tau.dtype == np.int64
+        assert (tau[aim == 0] == 0).all() and set(tau[aim == 1].tolist()) == {WIDE, 2 * WIDE, 3 * WIDE}
         assert stored["field/duration"].dtype == np.int64 and stored["field/happened"].dtype == bool
         total = np.bincount(task[aim == 0] * 3 + place[aim == 0].astype(np.int64), prediction[aim == 0])
         assert (total[total > 0] < 1).all()

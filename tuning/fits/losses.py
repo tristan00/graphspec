@@ -95,7 +95,7 @@ class Hazard:
         from torch.nn import functional as F
 
         target, row, tasks = batch["target"], batch["point_row"], batch["tasks"]
-        seen = (batch[FIELD + "tau"].double() <= batch[FIELD + "duration"]) | (target == 1)
+        seen = (batch[FIELD + "tau"] <= batch[FIELD + "duration"]) | (target == 1)
         error = F.binary_cross_entropy_with_logits(predictions, target, reduction="none") * seen
         task = error.new_zeros(tasks).index_add(0, row, error)
         points = error.new_zeros(tasks).index_add(0, row, error.new_ones(len(row)))

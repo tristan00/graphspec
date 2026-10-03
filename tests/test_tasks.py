@@ -267,7 +267,7 @@ def observed(held, view, step, key, column):
 def test_the_table_of_tasks_reads_back_from_the_bank_equal_to_what_was_stated(bank):
     held, _ = opened(bank)
     manifest, schema = held.manifest, held.registry.schema
-    assert manifest["version"] == 10 and manifest["splits"] == ["east", "north", "south", "west"]
+    assert manifest["version"] == 11 and manifest["splits"] == ["east", "north", "south", "west"]
     assert manifest["trained"] == ["north", "south"]
     assert manifest["split_rows"] == dict(east=6, north=6, south=6, west=6)
     assert schema.series() == ("total", "mark", "wide") and schema.targets() == ("number",)

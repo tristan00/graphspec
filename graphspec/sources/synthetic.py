@@ -382,12 +382,12 @@ def graph_rows(rng, index, name, shape, settings, counter):
                 -2.0 * np.log1p(tau) * drift + rng.normal(scale=0.2, size=len(source)),
             )
         )
-        owner, tau = np.tile(source, len(SERIES)), np.tile(tau, len(SERIES))
+        owner, tau = np.tile(source, len(SERIES)), np.tile(later - source, len(SERIES))
         aimed = np.isin(np.arange(steps), source)
         split = np.where(aimed, "validation" if index % 2 == 1 else "train", None).tolist()
         label_step = np.zeros(0, np.int64)
         points = dict(
-            tau=pa.array(tau, pa.float32()),
+            tau=pa.array(tau, pa.int64()),
             series=pa.array(np.repeat(SERIES, len(source)).tolist(), pa.string()),
         )
     else:

@@ -23,6 +23,7 @@ pytestmark = pytest.mark.xdist_group("targets")
 SITES = ("s0", "s1", "s2", "s3", "s4", "s5")
 VALUE = dict(type="number", encoder="value")
 TIMES = (1, 2, 3, 4, 5, 6, 7, 8)
+LATE = (1 << 24) + 1
 
 
 @timed("targets.asked")
@@ -101,7 +102,7 @@ def number(at, place):
 
 @timed("targets.course")
 def course(at, place):
-    return [[1.0, "near", 1.0 + at + place], [2.0, "near", 2.0 * at - place], [1.0, "far", 0.25 * at * at]]
+    return [[1, "near", 1.0 + at + place], [LATE, "near", 2.0 * at - place], [1, "far", 0.25 * at * at]]
 
 
 @timed("targets.case")
@@ -179,7 +180,7 @@ def test_kinds_of_target_and_utilities_are_registered_and_a_target_names_them():
         name="weighted", better="higher", weights=dict(outcome=1.0)
     )
     assert schema.targets() == ("number",) and schema.target_columns() == {}
-    assert Schema(synthetic.varied("path")["schema"]).target_columns() == dict(tau="FLOAT", series="STRING")
+    assert Schema(synthetic.varied("path")["schema"]).target_columns() == dict(tau="INT64", series="STRING")
     with pytest.raises(KeyError, match="no kind of target is registered under the name 'unheard'"):
         Schema(restated(kind="unheard"))
     with pytest.raises(ValueError, match="the target of the kind of task buy names its one series without colons"):
@@ -203,6 +204,29 @@ def test_the_utility_of_a_target_is_one_number_per_task():
     number = Schema(restated()).tasks["kinds"]["buy"]["target"]
     tasks, values = valued(number, dict(task=[1, 0], series=["outcome", "outcome"], y=[2.5, -1.0]))
     assert tasks.tolist() == [0, 1] and np.array_equal(values, [-1.0, 2.5])
+
+
+def test_a_path_states_each_tau_a_whole_number_of_at_least_1_that_64_bits_hold():
+    started = time.perf_counter()
+    kind, where, longest = TARGETS.named("path"), "the graph g0, the task 3", (1 << 63) - 1
+    target = Schema(synthetic.varied("path")["schema"]).tasks["kinds"]["buy"]["target"]
+    for tau in (1.5, 2.0, 0, True, "1", None):
+        with pytest.raises(ValueError, match="each its tau, a whole number of at least 1 of the unit of its graph,"):
+            kind.staged([[1, "level", 1.0], [tau, "trend", 2.0]], target, where)
+    assert kind.staged([[longest, "level", 1.0]], target, where) == [dict(tau=longest, series="level", y=1.0)]
+    with pytest.raises(
+        ValueError,
+        match="the graph g0, the task 3 states 9223372036854775808 as the tau of a point, past 9223372036854775807, "
+        "the greatest whole number of 64 bits$",
+    ):
+        kind.staged([[longest + 1, "level", 1.0]], target, where)
+    where, points = "the target of the kind of task buy", dict(task=[0, 0], graph=["g0"] * 2, y=[1.0, 2.0])
+    points["series"] = ["level", "trend"]
+    for tau in ([1, 0], [1, None], [1, 2.5]):
+        with pytest.raises(ValueError, match="the points of %s state their tau, a whole number of at least 1$" % where):
+            kind.points(dict(points, tau=tau), target, where)
+    assert kind.points(dict(points, tau=[longest, 1]), target, where) == dict(series=points["series"], tau=[longest, 1])
+    LOG.info("whole times of a path exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_statement_names_a_loss_for_every_kind_of_target_of_the_bank_and_measures_that_read_each(
@@ -257,9 +281,18 @@ def test_a_number_and_a_path_in_one_bank_read_back_as_stated_and_are_scaled_per_
     for entry in held.split["series"]:
         values = [held.rows[row]["y"] for row in trained if held.rows[row]["series"] == entry["name"]]
         assert entry["mean"] == pytest.approx(np.mean(values)) and entry["sd"] == pytest.approx(np.std(values, ddof=1))
-    path = np.asarray([row["kind"] == "course" for row in held.rows])
-    assert np.array_equal(held.aims, path.astype(np.int64)) and np.isnan(held.fields["tau"][~path]).all()
-    assert held.fields["tau"][path].tolist() == [row["tau"] for row in held.rows if row["kind"] == "course"]
+    path, tau = np.asarray([row["kind"] == "course" for row in held.rows]), held.fields["tau"]
+    assert np.array_equal(held.aims, path.astype(np.int64)) and tau.dtype == np.int64 and (tau[~path] == 0).all()
+    placed = {}
+    for row, value in zip(held.rows, tau.tolist()):
+        if row["kind"] == "course":
+            placed.setdefault((row["graph"], row["ticket"]), []).append(value)
+    assert LATE in tau.tolist() and placed == {
+        (graph["name"], key): [point[0] for point in target]
+        for graph in stated["graphs"]
+        for kind, key, target in zip(graph["tasks"]["kind"], graph["tasks"]["key"], graph["tasks"]["target"])
+        if kind == "course"
+    }
 
 
 def test_a_head_gives_every_point_the_prediction_of_the_head_of_its_kind_of_target():
@@ -304,7 +337,8 @@ def test_a_bank_of_numbers_and_paths_completes_one_fit_with_a_head_per_kind_of_t
     assert saved["holdout_rows"] == len(held.members(cfg, 1)) and saved["statement"] == given
     with np.load(tmp_path / "predictions.npz") as found:
         aim, tau = found["aim"], found["field/tau"]
-        assert set(aim.tolist()) == {0, 1} and np.isnan(tau[aim == 0]).all() and (tau[aim == 1] > 0).all()
+        assert set(aim.tolist()) == {0, 1} and tau.dtype == np.int64 and (tau[aim == 0] == 0).all()
+        assert set(tau[aim == 1].tolist()) == {1, LATE}
         assert np.isfinite(found["prediction"]).all() and len(aim) == saved["holdout_rows"]
 
 

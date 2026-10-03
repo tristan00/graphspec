@@ -263,7 +263,7 @@ def test_the_onehot_encoder_states_what_it_does_with_a_value_unseen_in_training(
 def test_the_varied_graph_builds_with_what_the_check_names(varied):
     manifest = read_json(varied / "manifest.json")
     declared = manifest["spec"]
-    assert manifest["version"] == VERSION == 10 and manifest["trained"] == ["train"]
+    assert manifest["version"] == VERSION == 11 and manifest["trained"] == ["train"]
     assert declared["schema"] == synthetic.varied("task")["schema"]
     assert manifest["splits"] == ["train", "validation"] and list(declared["extras"]) == list(EXTRAS)
     assert declared["extras"]["events"] is True and Schema(declared["schema"]).targets() == ("number",)
@@ -437,9 +437,9 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
 
 def test_a_bank_of_version_7_is_refused_with_an_error_naming_its_version(ground):
     old = ground / "01_plain" / "bank"
-    with pytest.raises(ValueError, match="has version 7; this code reads version 10"):
+    with pytest.raises(ValueError, match="has version 7; this code reads version 11"):
         Deriver(old, "cpu", RESIDENT)
-    with pytest.raises(ValueError, match="has version 7; this code reads version 10"):
+    with pytest.raises(ValueError, match="has version 7; this code reads version 11"):
         inspect(old)
 
 

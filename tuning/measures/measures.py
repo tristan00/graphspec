@@ -27,7 +27,7 @@ def scored(target, prediction, task, series, names, scale, fields):
     started = time.perf_counter()
     target, prediction = np.asarray(target, np.float64), np.asarray(prediction, np.float64)
     task, series = np.asarray(task, np.int64), np.asarray(series, np.int64)
-    fields = {name: np.asarray(values, np.float64) for name, values in fields.items()}
+    fields = {name: np.asarray(values) for name, values in fields.items()}
     if target.ndim != 1 or not target.shape == prediction.shape == task.shape == series.shape:
         raise ValueError("every point scored needs a target, a prediction, a task and a series")
     if any(values.shape != target.shape for values in fields.values()):
@@ -367,7 +367,7 @@ def cased(held):
     started = time.perf_counter()
     owner = np.unique(held.task, return_inverse=True)[1].reshape(-1)
     tasks = owner.max() + 1
-    cases = dict(horizon=np.zeros(tasks))
+    cases = dict(horizon=np.zeros(tasks, held.fields["tau"].dtype))
     np.maximum.at(cases["horizon"], owner, held.fields["tau"])
     for name, values in (("duration", held.fields["duration"]), ("happened", held.fields["happened"] == 1)):
         cases[name] = np.zeros(tasks, values.dtype)
