@@ -59,7 +59,7 @@ class Step:
         phase = self.operation.phases[place]
         if phase.parts is None:
             return None
-        return phase.named(registry, self.operation.settings(registry, self.spec, None, None))
+        return phase.named(registry, self.operation.settings(registry, self.spec, None, None, True))
 
     def entry(self):
         started = time.perf_counter()

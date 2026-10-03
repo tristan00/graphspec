@@ -18,6 +18,7 @@ CHANGES = CHECKED + ("references",)
 SPLITS = ("trained", "scored")
 TREATMENTS = ("stored", "refuses")
 ROLES = ("names", "removes", "fills")
+NUMBERS = ("int", "float")
 STATED = WeakKeyDictionary()
 EDGES = dict(
     sets="the edges joining sets of the kind %s", about="the edges of the table %s, which are about edges"
@@ -79,9 +80,9 @@ class Stored:
 
 
 class Settings:
-    def __init__(self, operation, parameters, spec, splits, tasks):
+    def __init__(self, operation, parameters, spec, splits, tasks, numbers):
         self.operation, self.spec, self.splits, self.tasks = operation, spec, splits, tasks
-        self.parameters = {parameter.name: parameter for parameter in parameters}
+        self.parameters, self.numbers = {parameter.name: parameter for parameter in parameters}, numbers
 
     def split(self, name):
         started = time.perf_counter()
@@ -105,6 +106,12 @@ class Settings:
             raise KeyError(
                 "the operation %s reads %s, which is none of the parameters it states or reads"
                 % (self.operation, name)
+            )
+        if not self.numbers and self.parameters[name].kind in NUMBERS:
+            raise ValueError(
+                "the operation %s reads its number %s in what it does with kinds of node; it states that from its "
+                "choices and flags alone, since a search offers each value of a parameter by what it does with kinds "
+                "and cannot try every number" % (self.operation, name)
             )
         return self.parameters[name]
 
@@ -263,7 +270,7 @@ class Operation:
         )
         return found
 
-    def settings(self, registry, spec, graph, partitions):
+    def settings(self, registry, spec, graph, partitions, numbers):
         parameters = self.stated(registry)
         for read in self.reads:
             parameters += OPERATIONS.named(read).stated(registry)
@@ -284,7 +291,7 @@ class Operation:
             LOG.debug("tasks exit operation=%s split=%s seconds=%.4f", self.name, name, time.perf_counter() - started)
             return result
 
-        return Settings(self.name, parameters, spec, self.splits, tasks)
+        return Settings(self.name, parameters, spec, self.splits, tasks, numbers)
 
     def check(self, registry, settings):
         met = dict(sets=tuple(registry.schema.sets), about=tuple(registry.schema.about()))
@@ -337,7 +344,7 @@ class Operation:
     def added(self, registry, spec, entry):
         if self.adds is None:
             return None
-        result = self.adds(registry, self.settings(registry, spec, None, None), entry)
+        result = self.adds(registry, self.settings(registry, spec, None, None, True), entry)
         if not isinstance(result, Added):
             raise ValueError(
                 "the operation %s states what it adds as graphspec.schema.added.Added, found %r" % (self.name, result)
@@ -347,7 +354,7 @@ class Operation:
     def roles(self, registry, spec):
         if self.kinds is None:
             return {}
-        result = self.kinds(registry, self.settings(registry, spec, None, None))
+        result = self.kinds(registry, self.settings(registry, spec, None, None, False))
         if type(result) is not dict or not all(
             kind in registry.declared and role in ROLES for kind, role in result.items()
         ):
@@ -359,7 +366,7 @@ class Operation:
 
     def initial(self, registry, spec):
         started = time.perf_counter()
-        settings = self.settings(registry, spec, None, None)
+        settings = self.settings(registry, spec, None, None, True)
         result = {phase.name: phase.initial(registry, settings) for phase in self.phases if phase.carries is not None}
         LOG.debug(
             "initial exit operation=%s phases=%d seconds=%.4f", self.name, len(result), time.perf_counter() - started
@@ -368,7 +375,7 @@ class Operation:
 
     def phase(self, place, graph, registry, spec, seed, limits, carry, held, state, part, partitions):
         started = time.perf_counter()
-        settings = self.settings(registry, spec, graph, partitions)
+        settings = self.settings(registry, spec, graph, partitions, True)
         if place == 0:
             self.check(registry, settings)
         result = self.phases[place].once(graph, registry, settings, seed, limits, carry, held, state, part)
@@ -382,7 +389,7 @@ class Operation:
         return result
 
     def __call__(self, graph, registry, spec, seed, limits, carry, state, partitions):
-        settings = self.settings(registry, spec, graph, partitions)
+        settings = self.settings(registry, spec, graph, partitions, True)
         self.check(registry, settings)
         held, found = None, {}
         for phase in self.phases:

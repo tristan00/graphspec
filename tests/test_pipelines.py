@@ -235,6 +235,35 @@ def test_an_operation_a_bank_cannot_serve_is_held_absent_by_a_search_and_refused
     LOG.info("needs of a bank exit seconds=%.3f", time.perf_counter() - started)
 
 
+@timed("pipelines.counted")
+def counted(registry):
+    return (specs.number("counted/k", 0, 3, 0),)
+
+
+@timed("pipelines.counting")
+def counting(registry, settings):
+    return {"item": "names"} if settings["counted/k"] > 0 else {}
+
+
+def test_an_operation_whose_kinds_read_a_number_is_refused_when_a_search_starts_and_when_a_pipeline_is_stated(bank):
+    started = time.perf_counter()
+    counter = Operation(
+        "test", "counting", (Phase("counting", parted, None, None),), counted, (), (), (), (), None, counting, 1, 1
+    )
+    OPERATIONS.register(counter.name, counter)
+    try:
+        registry = Bank(bank).registry
+        message = "the operation test.counting reads its number counted/k in what it does with kinds of node"
+        template = support.template(("graphspec.nodes", counter.name))
+        with pytest.raises(ValueError, match=message):
+            random_suggest(registry, 0, 0, {"pipeline/test.counting": True}, 600, template)
+        with pytest.raises(ValueError, match=message):
+            pipeline.resolved(registry, [dict(operation=counter.name, parameters={"counted/k": 1})])
+    finally:
+        del OPERATIONS.held[counter.name]
+    LOG.info("numbers read by kinds exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_a_search_draws_which_operations_are_present_and_their_parameters_never_their_order(bank):
     started = time.perf_counter()
     registry = Deriver(bank, "cpu", support.SEED, RESIDENT).registry
