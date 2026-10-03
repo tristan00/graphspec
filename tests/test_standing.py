@@ -26,7 +26,7 @@ PRIVATE = {
 PUBLIC = ("_exit",)
 UNDERSCORED = re.compile(r"(?<!\w)_[^\W_]")
 PROJECT = ("graphspec", "tuning", "tests", "conftest.py")
-MARKS = ("timed", "staged")
+MARKS = ("timed",)
 LOGGERS = ("debug", "info", "warning", "error", "exception", "critical")
 NESTED = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 BODIES = ("body", "orelse", "finalbody", "handlers", "cases")
@@ -151,7 +151,7 @@ RECORDED = {
     "graphspec.contract": (7, "38b16e367216b1bbcc637e922fd74ef7e4d1c85e857b4067383f3568c3e5e3fd"),
     "graphspec.product": (3, "d0c09e09b3f2d702ab9d6386bfdafc3c35cddfdae8a9fc4fa21283446479d2e7"),
     "graphspec.negatives": (6, "14defe736b009f6eaf6fa92b1dd2b29508298985ba8227511aa4b5ab5b34d7a6"),
-    "derivation": (38, "2be3beb0a2894c89fc01dddc56c72c0f6e12854cc550229730f5648d738304f4"),
+    "derivation": (39, "d9424083b58a5ff146e6d7a202c3114543a5a1c35ed266c43d603ed31d90eacf"),
     "views": (48, "d54f2274e64e460757472d5d99f685915ef77aee309e3355845840ca32435afc"),
     "representations": (17, "6c373d07917515df876e95c6f3b946d61eccb5d105b0face340a3d80d4901e9c"),
     "index": (4, "de51fe453ec964424b70224c54bc8f64438a811c8326745daa22a105984f3f36"),
@@ -748,6 +748,7 @@ def test_every_function_logs_its_time_or_is_compiled_or_is_listed_with_its_calls
             "tuning/early.py:work",
             "tuning/hit.py:work",
             "tuning/measured.py:work",
+            "tuning/staged.py:work",
             "tuning/told.py:work",
         ],
         ["graphspec/each.py:gone", "tuning/marked.py:work"],

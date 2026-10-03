@@ -1,4 +1,3 @@
-import functools
 import heapq
 import logging
 import pickle
@@ -94,19 +93,6 @@ def attach(jobs, registry, stated, spec, groups, seed, limits, partitions, threa
     LOG.debug("attach exit jobs=%d seconds=%.4f", len(jobs), time.perf_counter() - started)
 
 
-@timed("schedule.staged")
-def staged(function):
-    @functools.wraps(function)
-    def run(job, *arguments):
-        started = time.perf_counter()
-        result = function(job, *arguments) or {}
-        seconds = time.perf_counter() - started
-        LOG.info("%s exit job=%d index=%s seconds=%.3f", function.__name__, job, arguments[0], seconds)
-        return dict(result, seconds=seconds)
-
-    return run
-
-
 @timed("schedule.first")
 def first(stage):
     if stage.name == "open":
@@ -174,13 +160,13 @@ def unpacked(job, value):
     return Dense(name, [], steps, **arrays), carry, value["held"]
 
 
-@staged
+@timed("schedule.expand_task")
 def expand_task(job, index):
     member = Graph.load(PIPE["jobs"][job]["paths"][index], mapped=True).dense()
     park(job, index, "expand", (member.name, member.steps, member.arrays))
 
 
-@staged
+@timed("schedule.open_task")
 def open_task(job, index):
     plan, stage = PIPE["jobs"][job]["plan"], PIPE["stages"]["open"]
     name, steps, arrays = taken(job, index, "expand")
@@ -190,7 +176,7 @@ def open_task(job, index):
     keep(job, stage, index, seen)
 
 
-@staged
+@timed("schedule.phase_task")
 def phase_task(job, index, name):
     stage, registry, limits = PIPE["stages"][name], PIPE["registry"], PIPE["limits"]
     step = PIPE["steps"][stage.step]
@@ -221,7 +207,7 @@ def phase_task(job, index, name):
         keep(job, stage, index, state)
 
 
-@staged
+@timed("schedule.represent_task")
 def represent_task(job, index):
     work, stage = PIPE["jobs"][job], PIPE["stages"]["represent"]
     graph, carry, _ = unpacked(job, taken(job, index, stage.source))
@@ -252,7 +238,7 @@ def represent_task(job, index):
         save_array(work["spill"] / MADE, np.concatenate(work.pop("made")))
 
 
-@staged
+@timed("schedule.stitch_task")
 def stitch_task(job, index):
     work = PIPE["jobs"][job]
     plan, registry, spec, chosen = work["plan"], PIPE["registry"], PIPE["spec"], PIPE["chosen"]
@@ -363,14 +349,16 @@ def variants(jobs, registry, steps, spec, groups, seed, workers, limits, partiti
                             job, name, arguments = task
                             function = TASKS[name] if name in TASKS else phase_task
                             running[executors[worker].submit(guarded, function, job, *arguments)] = worker
-                            pending[worker] = task
+                            pending[worker] = (*task, time.perf_counter())
                 if not running:
                     raise RuntimeError("parallel segment build stalled")
                 finished, _ = wait(running, return_when=FIRST_COMPLETED)
                 for future in finished:
-                    job, name, arguments = pending.pop(running.pop(future))
-                    result = future.result()
-                    busy[name] = busy.get(name, 0.0) + result["seconds"]
+                    job, name, arguments, begun = pending.pop(running.pop(future))
+                    future.result()
+                    seconds = time.perf_counter() - begun
+                    LOG.info("%s exit job=%d index=%s seconds=%.3f", name, job, arguments[0], seconds)
+                    busy[name] = busy.get(name, 0.0) + seconds
                     if name == "stitch":
                         stitched += 1
                         continue
