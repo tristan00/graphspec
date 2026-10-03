@@ -168,7 +168,7 @@ def gone(place):
 def cleared(checkout):
     started = time.perf_counter()
     places = []
-    for worker in sorted(checkout.iterdir()):
+    for worker in sorted(place for place in checkout.iterdir() if place.name != "numba"):
         places += [place for place in sorted(worker.iterdir()) if place.name != "cache"]
         if (worker / "cache").is_dir():
             places += [place for place in sorted((worker / "cache").iterdir()) if place.name != "numba"]

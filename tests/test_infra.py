@@ -1,3 +1,7 @@
+import importlib
+import logging
+import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +15,27 @@ from graphspec.infra import code, files, runtime
 from tuning import api
 from tuning.bank import build
 
+LOG = logging.getLogger(__name__)
+HELPER = "from numba import njit\n\n\n@njit\ndef helper(x):\n    return x + 1\n"
+KERNEL = (
+    "from numba import njit\n\nimport {helper}\nfrom {helper} import helper\n\n\n"
+    "@njit\ndef direct(x):\n    return helper(x) * 10\n\n\n"
+    "@njit\ndef through(x):\n    return {helper}.helper(x) * 10\n\n\n"
+    "@njit\ndef alone(x):\n    return x * 10\n"
+)
+
+
+def rooted(request):
+    started = time.perf_counter()
+    root = Path(__file__).parent.parent
+    named = [
+        plugin
+        for plugin in request.config.pluginmanager.get_plugins()
+        if getattr(plugin, "__file__", None) and Path(plugin.__file__) == root / "conftest.py"
+    ]
+    LOG.debug("rooted exit seconds=%.4f", time.perf_counter() - started)
+    return named[0]
+
 
 def test_the_identities_of_compiled_functions_start_far_from_one_and_differ_between_seedings():
     from numba.core.bytecode import FunctionIdentity
@@ -20,16 +45,12 @@ def test_the_identities_of_compiled_functions_start_far_from_one_and_differ_betw
     assert first != second and next(FunctionIdentity._unique_ids) == second
 
 
-def test_the_home_of_the_suite_is_named_by_the_checkout_and_the_worker(request):
-    import os
+def test_the_home_of_the_suite_is_named_by_the_checkout_and_the_worker_and_shares_its_compiled_code(request):
+    import numba
 
+    started = time.perf_counter()
     root = Path(__file__).parent.parent
-    named = [
-        plugin
-        for plugin in request.config.pluginmanager.get_plugins()
-        if getattr(plugin, "__file__", None) and Path(plugin.__file__) == root / "conftest.py"
-    ]
-    home = named[0].home
+    home = rooted(request).home
     suite = Path(os.environ["GRAPHSPEC_SUITE_HOME"])
     assert home(suite, root, "gw0") == home(suite, root / "tests" / "..", "gw0")
     assert home(suite, root, "gw0") != home(suite, root.parent / "elsewhere" / root.name, "gw0")
@@ -37,31 +58,112 @@ def test_the_home_of_the_suite_is_named_by_the_checkout_and_the_worker(request):
     assert home(suite, root, "gw0").parent.parent == suite / "workers"
     worker = os.environ.get("PYTEST_XDIST_WORKER", "serial")
     assert Path(os.environ["GRAPHSPEC_HOME"]) == home(suite, root, worker)
+    assert os.path.samefile(numba.config.CACHE_DIR, home(suite, root, worker).parent / "numba")
+    LOG.info("home exit seconds=%.4f", time.perf_counter() - started)
 
 
-def test_the_suite_clears_what_it_made_under_its_homes_except_compiled_code(tmp_path):
+def test_the_suite_clears_what_it_made_under_its_homes_and_keeps_the_compiled_code_of_the_checkout(
+    request, tmp_path
+):
     from conftest import cleared
 
+    started = time.perf_counter()
     for worker in ("gw0", "serial"):
-        for place in ("tmp/pytest", "cache/banks/one", "cache/numba/graphspec_1", "cache/partitions/two"):
+        for place in ("tmp/pytest", "cache/banks/one", "cache/partitions/two"):
             (tmp_path / worker / place).mkdir(parents=True)
-        (tmp_path / worker / "cache" / "numba" / "graphspec_1" / "kernel.nbi").write_text("")
         (tmp_path / worker / "stray.txt").write_text("")
+        rooted(request).linked(tmp_path / worker)
+    (tmp_path / "numba" / "graphspec_1").mkdir()
+    (tmp_path / "numba" / "graphspec_1" / "kernel.nbi").write_text("")
     removed = cleared(tmp_path)
     assert len(removed) == 8
-    found = sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*"))
-    assert found == [
-        "gw0",
-        "gw0/cache",
-        "gw0/cache/numba",
-        "gw0/cache/numba/graphspec_1",
-        "gw0/cache/numba/graphspec_1/kernel.nbi",
-        "serial",
-        "serial/cache",
-        "serial/cache/numba",
-        "serial/cache/numba/graphspec_1",
-        "serial/cache/numba/graphspec_1/kernel.nbi",
-    ]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["gw0", "numba", "serial"]
+    for worker in ("gw0", "serial"):
+        assert [path.name for path in (tmp_path / worker).iterdir()] == ["cache"]
+        assert [path.name for path in (tmp_path / worker / "cache").iterdir()] == ["numba"]
+        assert os.path.samefile(tmp_path / worker / "cache" / "numba", tmp_path / "numba")
+    assert (tmp_path / "numba" / "graphspec_1" / "kernel.nbi").exists()
+    (tmp_path / "elsewhere" / "cache" / "numba").mkdir(parents=True)
+    with pytest.raises(FileExistsError, match="held apart"):
+        rooted(request).linked(tmp_path / "elsewhere")
+    LOG.info("cleared test exit seconds=%.4f", time.perf_counter() - started)
+
+
+def keyed(module):
+    from numba.core import caching, types
+
+    started = time.perf_counter()
+    codegen = module.direct.targetctx.codegen()
+    result = {
+        name: caching.Cache._index_key(SimpleNamespace(_py_func=getattr(module, name).py_func), (types.int64,), codegen)
+        for name in ("direct", "through", "alone")
+    }
+    LOG.debug("keyed exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
+def written(index, writer):
+    started = time.perf_counter()
+    for entry in range(3):
+        index.save(("signature", writer, entry), ("code", writer, entry))
+    LOG.debug("written exit writer=%d seconds=%.4f", writer, time.perf_counter() - started)
+    return writer
+
+
+def test_compiled_code_is_keyed_by_the_files_of_every_compiled_function_it_reaches(tmp_path, monkeypatch):
+    import sys
+
+    started = time.perf_counter()
+    helper, kernel = "helper_%s" % tmp_path.name, "kernel_%s" % tmp_path.name
+    (tmp_path / (helper + ".py")).write_text(HELPER)
+    (tmp_path / (kernel + ".py")).write_text(KERNEL.format(helper=helper))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    held = importlib.import_module(kernel)
+    before = keyed(held)
+    files = {name: [Path(entry[0]).name for entry in key[-1]] for name, key in before.items()}
+    assert files == {
+        "direct": sorted([helper + ".py", kernel + ".py"]),
+        "through": sorted([helper + ".py", kernel + ".py"]),
+        "alone": [kernel + ".py"],
+    }
+    (tmp_path / (helper + ".py")).write_text(HELPER + "\nVALUE = 1\n")
+    after = keyed(held)
+    assert after["direct"] != before["direct"] and after["through"] != before["through"]
+    assert after["alone"] == before["alone"]
+    for name in (helper, kernel):
+        del sys.modules[name]
+    LOG.info("keyed test exit seconds=%.4f", time.perf_counter() - started)
+
+
+def test_compiled_code_saved_at_once_keeps_every_signature_with_its_own_code(tmp_path):
+    from numba.core import caching
+
+    started = time.perf_counter()
+    writers = [caching.IndexDataCacheFile(str(tmp_path), "kernel", (1.0, 10)) for _ in range(4)]
+    with ThreadPoolExecutor(4) as pool:
+        list(pool.map(written, writers, range(4)))
+    entries = [(writer, entry) for writer in range(4) for entry in range(3)]
+    found = {(writer, entry): writers[0].load(("signature", writer, entry)) for writer, entry in entries}
+    assert found == {(writer, entry): ("code", writer, entry) for writer, entry in entries}
+    LOG.info("saved test exit seconds=%.4f", time.perf_counter() - started)
+
+
+def test_compiled_code_is_saved_only_once_the_lock_of_its_index_is_free(tmp_path):
+    from numba.core import caching
+
+    from graphspec.infra.processes.locks import Lock
+
+    started = time.perf_counter()
+    index = caching.IndexDataCacheFile(str(tmp_path), "kernel", (1.0, 10))
+    lock = Lock(tmp_path / "kernel.nbi.lock").__enter__()
+    with ThreadPoolExecutor(1) as pool:
+        saving = pool.submit(index.save, "signature", "code")
+        time.sleep(0.05)
+        waited = not saving.done() and not (tmp_path / "kernel.nbi").exists()
+        lock.__exit__(None, None, None)
+        saving.result()
+    assert waited and index.load("signature") == "code"
+    LOG.info("lock test exit seconds=%.4f", time.perf_counter() - started)
 
 
 def test_json_write_failure_preserves_prior_record_and_removes_temporary(tmp_path):

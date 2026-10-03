@@ -5,7 +5,11 @@ import secrets
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from types import ModuleType
+
+from .processes.locks import Lock, LockBusy
 
 LOG = logging.getLogger(__name__)
 
@@ -71,6 +75,84 @@ def identities():
     FunctionIdentity._unique_ids = itertools.count(start)
     LOG.info("identities of compiled functions start=%d seconds=%.3f", start, time.perf_counter() - started)
     return start
+
+
+@contextmanager
+def held(path):
+    started = time.perf_counter()
+    while True:
+        try:
+            lock = Lock(path).__enter__()
+            break
+        except LockBusy:
+            time.sleep(0.001)
+    try:
+        yield lock
+    finally:
+        lock.__exit__(None, None, None)
+        LOG.debug("held exit lock=%s seconds=%.4f", path.name, time.perf_counter() - started)
+
+
+def reached(function):
+    from numba.core.dispatcher import Dispatcher
+
+    started = time.perf_counter()
+    pending, seen = [function], set()
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        codes, used = [current.__code__], set()
+        while codes:
+            code = codes.pop()
+            used |= set(code.co_names)
+            codes += [constant for constant in code.co_consts if isinstance(constant, type(code))]
+        values = [current.__globals__.get(name) for name in used]
+        values += [getattr(value, name, None) for value in values if isinstance(value, ModuleType) for name in used]
+        pending += [value.py_func for value in values if isinstance(value, Dispatcher)]
+    files = sorted({entry.__code__.co_filename for entry in seen})
+    result = tuple((name, os.stat(name).st_mtime, os.stat(name).st_size) for name in files)
+    LOG.debug(
+        "reached exit function=%s files=%d seconds=%.4f", function.__name__, len(result), time.perf_counter() - started
+    )
+    return result
+
+
+def compiled():
+    from numba.core import caching
+
+    started = time.perf_counter()
+    keyed, loaded = caching.Cache._index_key, caching.IndexDataCacheFile.load
+
+    def key(cache, signature, codegen):
+        clock = time.perf_counter()
+        result = keyed(cache, signature, codegen) + (reached(cache._py_func),)
+        LOG.debug("compiled key exit seconds=%.4f", time.perf_counter() - clock)
+        return result
+
+    def load(index, found):
+        clock = time.perf_counter()
+        with held(Path(index._index_path + ".lock")):
+            result = loaded(index, found)
+        LOG.debug("compiled load exit hit=%s seconds=%.4f", result is not None, time.perf_counter() - clock)
+        return result
+
+    def save(index, found, data):
+        clock = time.perf_counter()
+        with held(Path(index._index_path + ".lock")):
+            overloads = index._load_index()
+            if found not in overloads:
+                taken = set(overloads.values())
+                name = next(name for name in map(index._data_name, itertools.count(1)) if name not in taken)
+                index._save_data(name, data)
+                index._save_index({**overloads, found: name})
+        LOG.debug("compiled save exit seconds=%.4f", time.perf_counter() - clock)
+
+    caching.Cache._index_key = key
+    caching.IndexDataCacheFile.load = load
+    caching.IndexDataCacheFile.save = save
+    LOG.info("compiled code shared between processes seconds=%.3f", time.perf_counter() - started)
 
 
 def cache_path(namespace, identity):

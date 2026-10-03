@@ -17,6 +17,25 @@ def home(suite, checkout, worker):
     return result
 
 
+def linked(place):
+    started = time.perf_counter()
+    compiled = place.parent / "numba"
+    compiled.mkdir(parents=True, exist_ok=True)
+    link = place / "cache" / "numba"
+    if not os.path.lexists(link):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            import _winapi
+
+            _winapi.CreateJunction(str(compiled), str(link))
+        else:
+            link.symlink_to(compiled, target_is_directory=True)
+    if not os.path.samefile(link, compiled):
+        raise FileExistsError("compiled code of %s is held apart from its checkout's: %s" % (place, link))
+    LOG.debug("linked exit place=%s seconds=%.4f", place, time.perf_counter() - started)
+    return link
+
+
 if "GRAPHSPEC_SUITE_HOME" not in os.environ:
     os.environ["GRAPHSPEC_SUITE_HOME"] = os.environ["GRAPHSPEC_HOME"]
 if "GRAPHSPEC_SUITE_RUN" not in os.environ:
@@ -28,3 +47,4 @@ os.environ["GRAPHSPEC_HOME"] = str(
         os.environ.get("PYTEST_XDIST_WORKER", "serial"),
     )
 )
+linked(Path(os.environ["GRAPHSPEC_HOME"]))

@@ -1,7 +1,8 @@
-from .infra.runtime import identities, initialize_storage
+from .infra.runtime import compiled, identities, initialize_storage
 
 initialize_storage()
 identities()
+compiled()
 
 from .build.calls import GraphTables, write_task
 from .build.forms import FORMS
