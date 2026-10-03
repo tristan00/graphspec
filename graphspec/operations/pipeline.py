@@ -11,7 +11,7 @@ from graphspec.infra.timing import timed
 from graphspec.schema.schema import ENCODERS, TYPES
 from graphspec.schema.targets import pointed
 
-from .operation import OPERATIONS, Stored
+from .operation import OPERATIONS, Refused, Stored
 from .parameters import Parameter, flag
 from .sets import PARAMETER, STORAGE
 
@@ -107,34 +107,34 @@ def checked(entries, fields):
     found, names = [], set()
     for place, entry in enumerate(entries):
         if type(entry) is not dict or not set(entry) <= set(fields):
-            raise ValueError(
+            raise Refused(
                 "the entry %d of the pipeline is a mapping of %s, with a label where it states one and the name "
                 "of its second graph where its operation takes two; found %r" % (place, " and ".join(required), entry)
             )
         lacking = [field for field in required if field not in entry]
         if lacking:
-            raise ValueError("the entry %d of the pipeline states no %s" % (place, " and no ".join(lacking)))
+            raise Refused("the entry %d of the pipeline states no %s" % (place, " and no ".join(lacking)))
         operation = OPERATIONS.named(entry["operation"])
         label = entry["label"] if "label" in entry else None
         if label is not None and (type(label) is not str or not label or "/" in label or "." in label):
-            raise ValueError(
+            raise Refused(
                 "the label of the entry %d of the pipeline is a word without a slash or a dot, found %r"
                 % (place, label)
             )
         second = entry["graph"] if "graph" in entry else None
         if operation.graphs == 2 and (type(second) is not str or not second):
-            raise ValueError(
+            raise Refused(
                 "the entry %d of the pipeline, of %s, which takes two graphs, names its second graph under graph, "
                 "found %r" % (place, operation.name, second)
             )
         if operation.graphs == 1 and second is not None:
-            raise ValueError(
+            raise Refused(
                 "the entry %d of the pipeline, of %s, which takes one graph, names a second graph %r"
                 % (place, operation.name, second)
             )
         name = operation.name if label is None else label
         if name in names:
-            raise ValueError(
+            raise Refused(
                 "the pipeline holds %s twice; an operation stated more than once states a label on every entry "
                 "of it but one, and no two labels are equal" % name
             )
@@ -168,7 +168,7 @@ def walked(found, before, looped):
                 order.append(name)
                 continue
             if name in entered:
-                raise ValueError(looped % name)
+                raise Refused(looped % name)
             entered.add(name)
             waiting.append((name, True))
             waiting.extend((read, False) for read in reversed(before[name]))
@@ -232,14 +232,17 @@ def given(name, parameters, values, context):
     for parameter in parameters:
         if parameter.active(view):
             if parameter.name not in values:
-                raise ValueError(
+                raise Refused(
                     "the entry %s of the pipeline states no %s, which is active under what it states"
                     % (name, parameter.name)
                 )
-            result[parameter.name] = parameter.check(values[parameter.name])
+            try:
+                result[parameter.name] = parameter.check(values[parameter.name])
+            except ValueError as error:
+                raise Refused(str(error)) from error
     extra = sorted(set(values) - set(result))
     if extra:
-        raise ValueError(
+        raise Refused(
             "the entry %s of the pipeline states %s, which are inactive or unknown" % (name, ", ".join(extra))
         )
     return result
@@ -257,11 +260,11 @@ def resolved(registry, entries):
         grown = growing.before(places[name], partial(specified, stated, reads))
         lacking = operation.lacking(grown)
         if lacking is not None:
-            raise ValueError("the entry %s of the pipeline is of %s, which %s" % (name, operation.name, lacking))
+            raise Refused("the entry %s of the pipeline is of %s, which %s" % (name, operation.name, lacking))
         stated[name] = given(name, operation.stated(grown), entry["parameters"], context)
         refused = operation.refused(grown, stated[name])
         if refused is not None:
-            raise ValueError("the entry %s of the pipeline states %s %s, which %s" % ((name,) + refused))
+            raise Refused("the entry %s of the pipeline states %s %s, which %s" % ((name,) + refused))
     result = stepped(found, reads, stated)
     emptied(registry, result)
     LOG.debug("resolved exit steps=%d seconds=%.4f", len(result), time.perf_counter() - started)
@@ -310,13 +313,13 @@ def emptied(registry, steps):
         roles = step.operation.roles(registry, step.spec)
         lost = [kind for kind, role in roles.items() if role != "fills" and kind in removed]
         if lost:
-            raise ValueError(
+            raise Refused(
                 "the entry %s of the pipeline names the kind %s, which the entry %s before it removed; an entry "
                 "derives nothing for a kind no node of which is left" % (step.name, lost[0], removed[lost[0]])
             )
         gone = [kind for kind, role in roles.items() if role == "removes" and kind in named]
         if gone:
-            raise ValueError(
+            raise Refused(
                 "the entry %s of the pipeline removes the kind %s, which the target of the kind of task %s names; a "
                 "pipeline keeps every kind of node a target names" % (step.name, gone[0], named[gone[0]])
             )
@@ -335,7 +338,7 @@ def agreed(registry, steps, settings):
         found = step.operation.unstored(registry, step.parameters, settings)
         if found is not None:
             parameter, value, kind = found
-            raise ValueError(
+            raise Refused(
                 "the entry %s of the pipeline states %s %s, which needs the set edges of %s stored as nodes, and %s "
                 "states %s, which makes none"
                 % (step.name, parameter, value, kind, PARAMETER % kind, settings[PARAMETER % kind])

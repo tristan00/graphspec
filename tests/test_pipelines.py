@@ -36,7 +36,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.operations.negatives import Rule
-from graphspec.operations.operation import Need
+from graphspec.operations.operation import Need, Refused
 from graphspec.views.graph import Dense
 from tuning.bank.bank import Bank, Deriver
 from tuning.fits.training import fit
@@ -225,7 +225,7 @@ def test_an_operation_a_bank_cannot_serve_is_held_absent_by_a_search_and_refused
             assert [space["pipeline/" + name].options for name in NEEDS] == [offered] * len(NEEDS)
         for name, needs in NEEDS.items():
             message = "the entry %s of the pipeline is of %s, which needs %s, and the bank plain states none"
-            with pytest.raises(ValueError, match=re.escape(message % (name, name, needs))):
+            with pytest.raises(Refused, match=re.escape(message % (name, name, needs))):
                 pipeline.resolved(plain, [dict(operation=name, parameters={})])
         assert [step.name for step in pipeline.resolved(served, [dict(operation=placed.name, parameters={})])] == [
             placed.name
@@ -255,9 +255,9 @@ def test_an_operation_whose_kinds_read_a_number_is_refused_when_a_search_starts_
         registry = Bank(bank).registry
         message = "the operation test.counting reads its number counted/k in what it does with kinds of node"
         template = support.template(("graphspec.nodes", counter.name))
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(Refused, match=message):
             random_suggest(registry, 0, 0, {"pipeline/test.counting": True}, 600, template)
-        with pytest.raises(ValueError, match=message):
+        with pytest.raises(Refused, match=message):
             pipeline.resolved(registry, [dict(operation=counter.name, parameters={"counted/k": 1})])
     finally:
         del OPERATIONS.held[counter.name]

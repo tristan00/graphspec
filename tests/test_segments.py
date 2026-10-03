@@ -23,6 +23,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.operations.contract import groupable
+from graphspec.operations.operation import Refused
 from graphspec.views.graph import DENSE, PER_STEP, Graph, verify_dense
 from tuning.bank.bank import Deriver
 
@@ -609,7 +610,7 @@ def test_random_pipelines_of_every_operation_in_any_order_derive_verified_and_eq
     kind, column = grouping.split(":")
     message = "states contract/grouping %s, which needs a value of %s on every node of %s that a reference can name, "
     message += "and %d nodes of %s in the bank %s lack one in some fact"
-    with pytest.raises(ValueError, match=re.escape(message % (grouping, column, kind, lacking[grouping], kind, registry.name))):
+    with pytest.raises(Refused, match=re.escape(message % (grouping, column, kind, lacking[grouping], kind, registry.name))):
         pipeline.resolved(
             registry, [dict(operation="graphspec.contract", parameters=dict(CONTRACTED, **{"contract/grouping": grouping}))]
         )

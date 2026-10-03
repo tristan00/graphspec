@@ -9,6 +9,7 @@ from graphspec.infra.log import emit
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
+from graphspec.operations.operation import Refused
 from graphspec.schema.targets import needed
 from graphspec.views.view import STEPS
 from tuning.families.model_spec import TRAINING, describe, groups
@@ -133,7 +134,7 @@ def recorded(registry, template, parameters, flat, record, settings):
 def refused(registry, config):
     try:
         pipeline.agreed(registry, pipeline.resolved(registry, config["pipeline"]), config["graph"])
-    except ValueError:
+    except Refused:
         return ["pipeline"]
     return []
 

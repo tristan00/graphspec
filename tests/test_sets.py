@@ -20,7 +20,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline, sets
 from graphspec.operations.nodes import NODES
-from graphspec.operations.operation import Count
+from graphspec.operations.operation import Count, Refused
 from graphspec.schema.schema import VERSION, Encoding, Schema, fitted
 from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
@@ -632,7 +632,7 @@ def test_negative_sets_replace_one_member_by_a_node_of_its_kind_and_are_never_a_
         "the entry graphspec.negatives of the pipeline states negatives/of set:gathering, which needs the set edges "
         "of gathering stored as nodes, and sets/gathering/storage states pairs, which makes none"
     )
-    with pytest.raises(ValueError, match=re.escape(message)):
+    with pytest.raises(Refused, match=re.escape(message)):
         held.stated(refused)
     template, rng = [dict(operation="graphspec.negatives")], np.random.default_rng(5)
     space, offered = pipeline.space(held.registry, template), {}

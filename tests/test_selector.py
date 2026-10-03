@@ -11,10 +11,12 @@ import pytest
 import support
 from optuna.distributions import IntDistribution
 
+from graphspec import OPERATIONS, Operation, Phase
 from graphspec.infra.files import read_json, write_json
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
+from graphspec.operations.operation import Refused
 from graphspec.representations.groups import lags
 from tuning.bank.bank import Bank
 from tuning.families.model_spec import space
@@ -264,6 +266,37 @@ def test_a_search_offers_no_pipeline_its_statement_refuses_and_bounds_that_leave
     with pytest.raises(ValueError, match=re.escape(FORCED)):
         selector.random_suggest(registry, 1, 1, dict(NEARBY, **CONTRACTED), 600, template)
     LOG.info("offered pipelines exit drawn=%d seconds=%.3f", len(drawn), time.perf_counter() - started)
+
+
+@timed("selector.broken")
+def broken(registry, settings):
+    raise ValueError("a fault in the code of an operation")
+
+
+@timed("selector.unchanged")
+def unchanged(graph, registry, settings, seed, limits, carry, held):
+    return graph
+
+
+def test_only_what_a_statement_refuses_leaves_a_trial_out_and_a_fault_in_the_code_it_runs_propagates(bank):
+    started = time.perf_counter()
+    faulty = Operation(
+        "test", "faulty", (Phase("faulty", unchanged, None, None),), lambda registry: (), (), (), (), (), None, broken,
+        1, 1,
+    )
+    OPERATIONS.register(faulty.name, faulty)
+    try:
+        registry = Bank(bank).registry
+        config = random_suggest(registry, 0, 0, {}, 600)[0]
+        window = dict(operation="graphspec.window", label="again", parameters={"time/scheme": "nothing"})
+        assert selector.refused(registry, dict(config, pipeline=config["pipeline"] + [window])) == ["pipeline"]
+        faulted = dict(config, pipeline=config["pipeline"] + [dict(operation=faulty.name, parameters={})])
+        with pytest.raises(ValueError, match="a fault in the code of an operation") as raised:
+            selector.refused(registry, faulted)
+        assert not isinstance(raised.value, Refused)
+    finally:
+        del OPERATIONS.held[faulty.name]
+    LOG.info("refused trials exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("selector.present")

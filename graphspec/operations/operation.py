@@ -25,6 +25,10 @@ EDGES = dict(
 )
 
 
+class Refused(ValueError):
+    pass
+
+
 class Count:
     def __init__(self, name, counts, active, sets, about):
         started = time.perf_counter()
@@ -108,7 +112,7 @@ class Settings:
                 % (self.operation, name)
             )
         if not self.numbers and self.parameters[name].kind in NUMBERS:
-            raise ValueError(
+            raise Refused(
                 "the operation %s reads its number %s in what it does with kinds of node; it states that from its "
                 "choices and flags alone, since a search offers each value of a parameter by what it does with kinds "
                 "and cannot try every number" % (self.operation, name)
