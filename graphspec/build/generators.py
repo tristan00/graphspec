@@ -9,13 +9,14 @@ import pyarrow as pa
 from graphspec.facts.stored import stated as valued
 from graphspec.infra.hashing import token, unit
 from graphspec.infra.timing import timed
-from graphspec.registries import version
-from graphspec.schema.decisions import GENERATORS, RECORDED, TOGETHER, deciding, generator
+from graphspec.registries import Names, version
+from graphspec.schema.decisions import GENERATORS, RECORDED, RULES, TOGETHER, deciding, generator
 from graphspec.schema.fields import fields
 from graphspec.schema.schema import VALUE
 from graphspec.schema.targets import real
 
 LOG = logging.getLogger(__name__)
+DISTANCES = Names("distance between states", True)
 DRAWN = ("actions", "together", "drawn")
 ACTED = ("kind", "actor", "targets", "parameters")
 
@@ -23,6 +24,15 @@ ACTED = ("kind", "actor", "targets", "parameters")
 @timed("generators.plain")
 def plain(value):
     return float(value) if real(value) else value
+
+
+@timed("generators.keyed")
+def keyed(column):
+    if isinstance(column, np.ndarray):
+        return column
+    if column and all(type(value) is str for value in column):
+        return np.asarray([token(value) for value in column], np.uint64)
+    return np.asarray(column, np.int64)
 
 
 class World:
@@ -63,12 +73,7 @@ class World:
             time=int(self.truth.task_time[task]),
             actors=dict(self.acting[task]),
             options=[
-                dict(
-                    key=option["key"],
-                    actions=copy.deepcopy(option["actions"]),
-                    together=option["together"],
-                    chosen=option["chosen"],
-                )
+                dict(key=option["key"], chosen=option["chosen"], **self.canonical(option))
                 for option in self.decided[task]["options"]
                 if option["origin"] == RECORDED
             ],
@@ -290,7 +295,7 @@ class Seen:
             self.statement["name"],
             np.full(count, token(self.world.truth.name), np.uint64),
             np.full(count, self.decision["key"], np.int64),
-            *columns,
+            *(keyed(column) for column in columns),
         )
 
     def formed(self, option, names, where):
@@ -552,4 +557,160 @@ class Others(Pooled):
         return self.drawn(seen, found, parameters["count"])
 
 
+class Euclidean:
+    version = 1
+
+    @timed("generators.Euclidean.__call__")
+    def __call__(self, left, right):
+        return np.sqrt(((np.asarray(right, np.float64) - np.asarray(left, np.float64)) ** 2).sum(1))
+
+
+class Nearest(Pooled):
+    version = 1
+    reads = ("state", "decisions")
+
+    def checked(self, parameters, schema, target, references, where):
+        started = time.perf_counter()
+        parameters = fields(parameters, ("count", "states", "columns", "distance"), where)
+        counted(dict(count=parameters["count"], states=parameters["states"]), ("count", "states"), where)
+        kinds, columns = references[target["actors"]]["kinds"], parameters["columns"]
+        if (
+            not isinstance(columns, list)
+            or not columns
+            or len(set(columns)) != len(columns)
+            or any(
+                type(column) is not str
+                or column not in schema.columns
+                or schema.columns[column]["type"] != "number"
+                or any(kind not in schema.nodes or column not in schema.nodes[kind] for kind in kinds)
+                for column in columns
+            )
+        ):
+            raise ValueError(
+                "%s states its columns as a list of distinct columns of numbers that every kind of the actors, %s, "
+                "states, found %r" % (where, ", ".join(kinds), columns)
+            )
+        DISTANCES.named(parameters["distance"])
+        LOG.debug("nearest checked exit columns=%d seconds=%.6f", len(columns), time.perf_counter() - started)
+        return parameters
+
+    def vector(self, seen, decision, columns):
+        started = time.perf_counter()
+        nodes, result = seen.at(decision["time"])["nodes"], []
+        for column in columns:
+            values = [
+                nodes[kind][key][column]
+                for key, kind in sorted(decision["actors"].items())
+                if key in nodes[kind] and nodes[kind][key][column] is not None
+            ]
+            if not values:
+                raise ValueError(
+                    "the generator of options nearest finds no value of %s for the actors of the decision %d at %d"
+                    % (column, decision["key"], decision["time"])
+                )
+            result.append(sum(values) / len(values))
+        LOG.debug("nearest vector exit columns=%d seconds=%.6f", len(columns), time.perf_counter() - started)
+        return result
+
+    @timed("generators.Nearest.__call__")
+    def __call__(self, seen, parameters):
+        kind, columns = seen.decision["kind"], parameters["columns"]
+        others = [other for other in seen.decisions if other["kind"] == kind]
+        if not others:
+            return []
+        distances = DISTANCES.named(parameters["distance"])(
+            self.vector(seen, seen.decision, columns), [self.vector(seen, other, columns) for other in others]
+        )
+        order = np.lexsort(([other["key"] for other in others], distances))[: parameters["states"]].tolist()
+        found = [option for at in order for option in others[at]["options"]]
+        return self.drawn(seen, found, parameters["count"])
+
+
+class Changed:
+    version = 1
+    reads = ("chosen",)
+    probable = False
+
+    def checked(self, parameters, schema, target, references, where):
+        started = time.perf_counter()
+        parameters = fields(parameters, ("count", "ranges"), where)
+        counted(dict(count=parameters["count"]), ("count",), where)
+        stated = {name for action in target["actions"].values() for name in action["parameters"]}
+        ranges = parameters["ranges"]
+        if (
+            not isinstance(ranges, dict)
+            or not ranges
+            or any(
+                column not in stated
+                or schema.columns[column]["type"] != "number"
+                or not isinstance(bounds, list)
+                or len(bounds) != 2
+                or not all(real(bound) for bound in bounds)
+                or bounds[0] > bounds[1]
+                for column, bounds in ranges.items()
+            )
+        ):
+            raise ValueError(
+                "%s states its ranges as a mapping from a parameter of numbers of its kinds of action to its least "
+                "and greatest change, found %r" % (where, ranges)
+            )
+        LOG.debug("changed checked exit columns=%d seconds=%.6f", len(ranges), time.perf_counter() - started)
+        return parameters
+
+    @timed("generators.Changed.__call__")
+    def __call__(self, seen, parameters):
+        ranges, chosen = parameters["ranges"], sorted(seen.chosen, key=lambda option: option["key"])
+        rows = [
+            (place, number, action, column)
+            for place, option in enumerate(chosen)
+            for number in range(parameters["count"])
+            for action, held in enumerate(option["actions"])
+            for column in sorted(ranges)
+            if column in held["parameters"] and held["parameters"][column] is not None
+        ]
+        if not rows:
+            return []
+        draws = seen.unit(*([chosen[row[0]]["key"] for row in rows], *([row[at] for row in rows] for at in (1, 2, 3))))
+        found = {}
+        for (place, number, action, column), draw in zip(rows, draws.tolist()):
+            option = found.setdefault((place, number), copy.deepcopy(chosen[place]))
+            low, high = ranges[column]
+            held = option["actions"][action]["parameters"]
+            held[column] = float(np.float32(held[column] + low + (high - low) * draw))
+        result = [
+            dict(actions=option["actions"], together=option["together"], drawn=None)
+            for _, option in sorted(found.items())
+        ]
+        return [option for option in result if seen.fresh(option)]
+
+
+class Ruled(Pooled):
+    version = 1
+    reads = ("rule", "state")
+
+    @timed("generators.Ruled.checked")
+    def checked(self, parameters, schema, target, references, where):
+        rule = RULES.named(target["rule"]["name"])
+        if not hasattr(rule, "options") or not callable(rule.options):
+            raise ValueError(
+                "%s draws from the rule %s, which states no options, the options it gives a decision"
+                % (where, target["rule"]["name"])
+            )
+        return counted(parameters, ("count",), where)
+
+    @timed("generators.Ruled.__call__")
+    def __call__(self, seen, parameters):
+        rule = seen.rule
+        found = RULES.named(rule["name"]).options(seen, rule["parameters"])
+        if not isinstance(found, list):
+            raise ValueError("the rule of options %s gives for %s a list of options, found %r" % (rule["name"], seen.where, found))
+        for place, option in enumerate(found):
+            seen.formed(option, ("actions", "together"), "the option %d the rule %s gives %s" % (place, rule["name"], seen.where))
+        return self.drawn(seen, found, parameters["count"])
+
+
 GENERATORS.register("others", Others())
+GENERATORS.register("nearest", Nearest())
+GENERATORS.register("changed", Changed())
+GENERATORS.register("ruled", Ruled())
+DISTANCES.register("euclidean", Euclidean())

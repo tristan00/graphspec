@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 
-from graphspec import GENERATORS, Scripted
+from graphspec import GENERATORS, RULES, Scripted
 from graphspec.facts.stored import Facts
 from graphspec.infra.timing import timed
 from graphspec.sources import synthetic
@@ -13,9 +13,94 @@ from tuning.bank.build import build
 LOG = logging.getLogger(__name__)
 LATER = 3
 KIND = "turn"
-STATED = [dict(name="others", seed=11, repeats=False, parameters=dict(count=2))]
+RULE = dict(name="spots", parameters=dict(speed=1.25))
+STATED = [
+    dict(name="others", seed=11, repeats=False, parameters=dict(count=2)),
+    dict(
+        name="nearest",
+        seed=12,
+        repeats=False,
+        parameters=dict(count=2, states=2, columns=["load"], distance="euclidean"),
+    ),
+    dict(name="changed", seed=13, repeats=False, parameters=dict(count=1, ranges=dict(speed=[-0.5, 0.5]))),
+    dict(name="ruled", seed=14, repeats=False, parameters=dict(count=2)),
+    dict(name="around", seed=15, repeats=False, parameters={}),
+    dict(name="crossings", seed=16, repeats=True, parameters=dict(count=1, mode="fast")),
+]
 ORIGIN = "around"
-CASES = ("base",)
+CASES = ("base", "later", "turned")
+
+
+class Spots:
+    version = 1
+
+    @timed("generated.Spots.checked")
+    def checked(self, parameters, schema, where):
+        if not isinstance(parameters, dict) or set(parameters) != {"speed"} or type(parameters["speed"]) is not float:
+            raise ValueError("%s reads speed, found %r" % (where, parameters))
+        return parameters
+
+    @timed("generated.Spots.options")
+    def options(self, seen, parameters):
+        return [
+            dict(
+                actions=[dict(kind="go", actor=actor, targets=dict(to=spot), parameters=dict(speed=parameters["speed"]))],
+                together="set",
+            )
+            for actor in sorted(seen.decision["actors"])
+            for spot in sorted(seen.state["nodes"]["spot"])
+        ]
+
+
+class Crossings:
+    version = 1
+    reads = ("state",)
+    probable = True
+
+    @timed("generated.Crossings.checked")
+    def checked(self, parameters, schema, target, references, where):
+        if not isinstance(parameters, dict) or set(parameters) != {"count", "mode"}:
+            raise ValueError("%s reads count and mode, found %r" % (where, parameters))
+        return parameters
+
+    @timed("generated.Crossings.__call__")
+    def __call__(self, seen, parameters):
+        actor = sorted(seen.decision["actors"])[0]
+        edges = sorted(
+            {tuple(sorted((edge["source"], edge["target"]))) for edge in seen.state["edges"] if edge["relation"] == "near"}
+        )
+        made = [
+            dict(
+                actions=[
+                    dict(kind="cut", actor=actor, targets=dict(along=[first, "near", second]), parameters=dict(mode=parameters["mode"]))
+                ],
+                together="set",
+            )
+            for first, second in edges
+        ]
+        order = np.argsort(seen.unit([first for first, _ in edges], [second for _, second in edges]), kind="stable")
+        return [dict(made[at], drawn=min(parameters["count"], len(made)) / len(made)) for at in order[: parameters["count"]].tolist()]
+
+
+class Faulty:
+    version = 1
+    reads = ("chosen",)
+    probable = False
+
+    @timed("generated.Faulty.checked")
+    def checked(self, parameters, schema, target, references, where):
+        return parameters
+
+    @timed("generated.Faulty.__call__")
+    def __call__(self, seen, parameters):
+        fault = parameters["fault"]
+        if fault == "unread":
+            return seen.state
+        if fault == "unobserved":
+            cut = dict(kind="cut", actor=sorted(seen.decision["actors"])[0], targets=dict(along=["s0", "near", "s4"]), parameters=dict(mode="fast"))
+            return [dict(actions=[cut], together="set", drawn=None)]
+        copied = [dict(actions=option["actions"], together=option["together"], drawn=None) for option in seen.chosen if option["actions"]]
+        return [dict(option, drawn=0.5) for option in copied] if fault == "probability" else copied
 
 
 @timed("generated.around")
@@ -41,7 +126,12 @@ def around(seen, parameters):
     return found
 
 
-ENTRIES = ((GENERATORS, ORIGIN, Scripted(around, ("state", "chosen"), True, 1)),)
+ENTRIES = (
+    (GENERATORS, ORIGIN, Scripted(around, ("state", "chosen"), True, 1)),
+    (GENERATORS, "crossings", Crossings()),
+    (GENERATORS, "faulty", Faulty()),
+    (RULES, "spots", Spots()),
+)
 
 
 def register():
@@ -58,20 +148,24 @@ def unregister():
     LOG.debug("generated unregister exit seconds=%.4f", time.perf_counter() - started)
 
 
+SPAN = 2
+
+
 @timed("generated.load")
 def load(at, moment, place):
-    return 1.0 + at + place + 0.5 * ((moment * (at + 1)) % 3)
+    start = moment - moment % SPAN
+    return 1.0 + at + place + 0.5 * ((start * (at + 1)) % 3)
 
 
 def agents(place):
     started = time.perf_counter()
     rows = dict(key=[], since=[], until=[], load=[])
     for at, key in enumerate(synthetic.AGENTS):
-        for moment in range(synthetic.TURNS[-1] + 1):
+        for start in range(0, synthetic.TURNS[-1] + 1, SPAN):
             rows["key"].append(key)
-            rows["since"].append(moment)
-            rows["until"].append(None if moment == synthetic.TURNS[-1] else moment + 1)
-            rows["load"].append(load(at, moment, place))
+            rows["since"].append(start)
+            rows["until"].append(None if start + SPAN > synthetic.TURNS[-1] else start + SPAN)
+            rows["load"].append(load(at, start, place))
     LOG.debug("generated agents exit rows=%d seconds=%.4f", len(rows["key"]), time.perf_counter() - started)
     return rows
 
@@ -129,13 +223,16 @@ def turned(graph):
             values.reverse()
     for target in filter(None, tasks["target"]):
         target["options"].reverse()
+        for option in target["options"]:
+            if option["together"] == "set":
+                option["actions"].reverse()
     LOG.debug("generated turned exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
 
 
 def case(name):
     started = time.perf_counter()
     result = synthetic.decisions(ORIGIN)
-    result["schema"]["tasks"]["kinds"][KIND]["target"]["generators"] = copy.deepcopy(STATED)
+    result["schema"]["tasks"]["kinds"][KIND]["target"].update(generators=copy.deepcopy(STATED), rule=copy.deepcopy(RULE))
     for place, graph in enumerate(result["graphs"]):
         graph["values"][0]["rows"] = agents(place)
         if name == "later":

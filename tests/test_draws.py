@@ -2,17 +2,22 @@ import logging
 import time
 from types import SimpleNamespace
 
+import generated
 import numpy as np
 import pytest
 import support
 import torch
 from keyed import Keys, Spaces, dense_keyed, differing, labelled, rows, through, variant_part
 
-from conftest import SPLITS
+from conftest import SPLITS, shared
 from graphspec.budgets import GraphLimits
+from graphspec.build.generators import regenerated
 from graphspec.engine.segments import Derivation
+from graphspec.engine.transform import shown
+from graphspec.facts.stored import Facts
 from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
+from graphspec.infra.timing import timed
 from graphspec.operations import derive, pipeline
 from graphspec.operations import parameters as specs
 from graphspec.operations.rows import FACTS
@@ -382,6 +387,39 @@ def test_no_draw_reads_a_random_generator_or_a_device(drawn, monkeypatch):
             monkeypatch.setattr(module, name, lambda *args, name=name, **kwargs: pytest.fail("a draw used " + name))
     steps, spec = stated(fitted, DRAWN, {})
     assert differing(derived(views[:1], registry, steps, spec, [6], Unread()), reference) == []
+
+
+@pytest.fixture(scope="module")
+def generations():
+    generated.register()
+    root = shared("generated", generated.made)
+    yield {name: Deriver(root / name, "cpu", support.SEED, RESIDENT) for name in ("base", "turned")}
+    generated.unregister()
+
+
+@timed("draws.options")
+def options(found):
+    return {place: [(option["key"], option["origin"], generated.content(option)) for option in held] for place, held in found.items()}
+
+
+def test_generated_options_are_drawn_by_keys_equal_when_entities_are_renumbered_and_rows_and_graphs_reordered(
+    generations, monkeypatch
+):
+    started = time.perf_counter()
+    base, turned = (options(generated.drawn(support.read_back(held))) for held in generations.values())
+    assert sum(len(held) for held in base.values()) > 50 and base == turned
+    for module, names in GENERATORS:
+        for name in names:
+            monkeypatch.setattr(module, name, lambda *args, name=name, **kwargs: pytest.fail("a draw used " + name))
+    held = generations["base"]
+    for entry in held.manifest["graphs"]:
+        truth = generated.undrawn(Facts.load(held.truth(entry["index"])))
+        found = regenerated(truth, held.registry, shown(truth, held.registry, held.splits)[1])
+        again = {}
+        for drawn in found:
+            again.setdefault((truth.name, drawn["task"]), []).append(dict(drawn["option"], outcome=None))
+        assert options(again) == {place: value for place, value in base.items() if place[0] == truth.name and value}
+    LOG.info("generated draws exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_the_case_of_the_gpu_check_gives_dense_algebra_the_rows_from_which_it_runs_on_the_gpu(drawn):

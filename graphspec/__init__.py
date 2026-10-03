@@ -6,7 +6,7 @@ compiled()
 
 from .build.calls import GraphTables, write_task
 from .build.forms import FORMS
-from .build.generators import Scripted
+from .build.generators import DISTANCES, Scripted
 from .build.output import Stage
 from .descriptions.inspect import inspect
 from .operations.negatives import NEGATIVES
@@ -27,6 +27,7 @@ ship(REGISTRIES)
 
 __all__ = [
     "ABOUT",
+    "DISTANCES",
     "ENCODERS",
     "FORMS",
     "GENERATORS",
