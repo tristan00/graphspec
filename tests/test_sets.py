@@ -480,7 +480,7 @@ def test_a_node_holds_a_graph_of_five_nodes_encoded_by_its_stated_encoder(bank, 
     assert other.held["tray"][1] == 1 and other.graphs("tray", graphs)[:, 0].tolist() == [2.0, 0.0, 1.0]
 
 
-def test_a_column_no_view_of_the_statement_shows_is_not_encoded_and_a_shown_one_without_values_stops(bank):
+def test_a_column_no_view_of_the_statement_shows_is_not_encoded_and_a_shown_one_without_two_values_encodes_0(bank):
     held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     for form, width in (("node", 2), ("pairs", 0)):
         cfg = configuration(held.registry, dict(view="snapshot"), STORED[form], 5, SPLITS)
@@ -492,8 +492,8 @@ def test_a_column_no_view_of_the_statement_shows_is_not_encoded_and_a_shown_one_
     samples = dict.fromkeys(held.registry.schema.columns, [])
     samples.update(mass=[np.asarray([1.0, 2.0], np.float32)], share=None, tie=None)
     assert fitted(held.registry.encoding, samples).width(("share", "tie")) == 0
-    with pytest.raises(ValueError, match="the column share has fewer than two differing values"):
-        fitted(held.registry.encoding, dict(samples, share=[np.asarray([3.0], np.float32)]))
+    shown = fitted(held.registry.encoding, dict(samples, share=[np.asarray([3.0], np.float32)]))
+    assert shown.states["share"] == dict(mean=None, sd=None) and shown.width(("share", "tie")) == 2
 
 
 def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edges(bank, monkeypatch):

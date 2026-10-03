@@ -197,7 +197,7 @@ def test_column_types_and_encoders_are_registered_by_name_from_outside(monkeypat
     assert encoded.tolist() == [[5.0, 2.5, 0.0, 0.0], [2.0, 1.0, 3.0, 1.0]]
 
 
-def test_a_bank_keeps_every_value_stated_in_its_dictionaries_and_encoders_fit_on_what_they_are_shown():
+def test_a_bank_keeps_every_value_stated_in_its_dictionaries_and_encoders_fit_on_what_they_are_shown(caplog):
     schema = support.stated(
         dict(shelf=["shade", "height"]),
         {},
@@ -230,12 +230,15 @@ def test_a_bank_keeps_every_value_stated_in_its_dictionaries_and_encoders_fit_on
     blind = fitted(stated, dict(shown, shade=[]))
     assert blind.states["shade"] == dict(values=[])
     assert blind.nodes(np.asarray([[2, 3]], np.float32), None)[0, :1].tolist() == [1.0]
-    with pytest.raises(
-        ValueError,
-        match="the column height has fewer than two differing values in what the views of the splits trained on "
-        "show, and cannot be standardised",
-    ):
-        fitted(stated, dict(shown, height=[np.asarray([1.0], np.float32)]))
+    with caplog.at_level(logging.INFO, logger="graphspec.schema.schema"):
+        flat = fitted(stated, dict(shown, height=[np.asarray([4.0, 4.0], np.float32)]))
+        empty = fitted(stated, dict(shown, height=[]))
+    assert flat.states["height"] == empty.states["height"] == dict(mean=None, sd=None)
+    assert "column=height values=2 " in caplog.text and "column=height values=0 " in caplog.text
+    assert flat.width(("height",)) == empty.width(("height",)) == encoding.width(("height",)) == 2
+    unscaled = flat.nodes(np.asarray([[0, 4], [2, 300], [np.nan, np.nan]], np.float32), None)
+    assert unscaled[:, 3].tolist() == [0.0, 0.0, 0.0] and unscaled[:, 5].tolist() == [1.0, 1.0, 0.0]
+    assert np.array_equal(unscaled[:, :3], encoded[:, :3]) and np.array_equal(unscaled[:, 4], encoded[:, 4])
 
 
 @pytest.mark.parametrize("unseen", ["stop", "shared"])

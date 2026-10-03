@@ -206,17 +206,19 @@ class Logarithm:
 
 
 class Standard:
-    version = 1
+    version = 2
     types = ("number",)
 
     @timed("schema.Standard.fit")
     def fit(self, codes, dictionary, column):
         values = np.asarray(codes, np.float64)
         if len(values) < 2 or np.ptp(values) == 0:
-            raise ValueError(
-                "the column %s has fewer than two differing values in what the views of the splits trained on "
-                "show, and cannot be standardised" % column
+            LOG.info(
+                "standard fit column=%s values=%d differ in fewer than two; every value is encoded as 0",
+                column,
+                len(values),
             )
+            return dict(mean=None, sd=None)
         return dict(mean=float(values.mean()), sd=float(values.std(ddof=1)))
 
     @timed("schema.Standard.widths")
@@ -226,6 +228,8 @@ class Standard:
     @timed("schema.Standard.encode")
     def encode(self, codes, state, dictionary):
         codes, known = parted(codes)
+        if state["sd"] is None:
+            return np.zeros((len(codes), 1), np.float32), known[:, None].astype(np.float32)
         scaled = (np.where(known, codes, state["mean"]).astype(np.float64) - state["mean"]) / state["sd"]
         return scaled[:, None].astype(np.float32), known[:, None].astype(np.float32)
 
