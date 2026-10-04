@@ -141,6 +141,21 @@ class Roles(Pooled):
         return options + pooled[decision] - own, actions
 
 
+class Detached(Pooled):
+    def acted(self, fields, held):
+        given = fields["parameters"]
+        return super().acted(dict(fields, parameters=given - given.detach()), held)
+
+
+class Uniform(Pooled):
+    def forward(self, fields, held):
+        options, actions = super().forward(fields, held)
+        decision = held["decision"]
+        total = options.new_zeros((int(decision.max()) + 1, options.shape[1])).index_add(0, decision, options)
+        count = options.new_zeros(int(decision.max()) + 1).index_add(0, decision, options.new_ones(len(decision)))
+        return options - options.detach() + (total / count[:, None])[decision], actions
+
+
 class Realised:
     version = 1
     reads = FIELDS
@@ -184,7 +199,10 @@ REALISED = dict(
     placing=Together(Positional),
     last=Realised(Last),
     roles=Realised(Roles),
+    detached=Realised(Detached),
+    uniform=Together(Uniform),
 )
+FINITE = "with the moves drawn by the seed 5, the score of no option of the splits scored on changes when its own field %s of the kind of task turn moves by a finite amount, under the realisation of options %s$"
 APART = "the score of an option of the kind of task turn differs from its score where it is the only option of its decision, and the realisation of options %s does not state that it reads"
 
 
@@ -406,9 +424,12 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
     assert guarded(held, "together")["pairs"] == found["pairs"]
     with pytest.raises(ValueError, match="whose actions, go, go, are a set changes with the order of its actions under the realisation of options ordered"):
         guarded(held, "ordered")
-    assert guarded(held, "flat")["share"] == 1.0
-    with pytest.raises(ValueError, match="have equal predictions under the realisation of options flat, a share of 1.0000 above the statement's alike 0.5$"):
-        guarded(held, "flat", 0.5)
+    for field, name in (("kind", "flat"), ("parameter speed of go", "detached")):
+        with pytest.raises(ValueError, match=FINITE % (field, name)):
+            guarded(held, name)
+    assert guarded(held, "uniform")["share"] == 1.0
+    with pytest.raises(ValueError, match="have equal predictions under the realisation of options uniform, a share of 1.0000 above the statement's alike 0.5$"):
+        guarded(held, "uniform", 0.5)
     LOG.info("guards of realisations exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -526,7 +547,7 @@ def test_a_fit_stops_before_it_trains_where_a_guard_refuses_or_equal_pairs_pass_
     given = state(dict(statement, loss=dict(decision="squared"), measures=["mse"], alike=0.5))
     for name, message in (
         ("deaf", "the field parameter speed of go of the kind of task turn has no route to the prediction"),
-        ("flat", "have equal predictions under the realisation of options flat, a share of 1.0000 above the statement's"),
+        ("uniform", "have equal predictions under the realisation of options uniform, a share of 1.0000 above the statement's"),
     ):
         cfg = dict(configured(held, name, modelled("snapshot"), PLAIN), epochs=1)
         (tmp_path / name).mkdir()

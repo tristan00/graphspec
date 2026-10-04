@@ -186,6 +186,7 @@ class Guard:
         self.fields = {task: fielded(self.schema, task) for task in self.schema.decided()}
         self.actions = coded(self.schema)[0]
         self.moved = {(task, field["name"]): None for task, found in self.fields.items() for field in found}
+        self.finite = dict(self.moved)
         self.pairs, self.equal, self.options, self.sets = 0, 0, 0, 0
 
     @timed("guards.Guard.scored")
@@ -229,6 +230,26 @@ class Guard:
             "the state" % (kind, self.name)
         )
 
+    def located(self, held):
+        started = time.perf_counter()
+        kind, owner = np.asarray(held["kind"], np.int64), np.asarray(held["action_option"].cpu(), np.int64)
+        roled = owner[np.asarray(held["role_action"].cpu(), np.int64)]
+        kinds, codes = np.asarray(held["action_kind"].cpu(), np.int64), np.asarray(held["role_code"].cpu(), np.int64)
+        columns, result = self.schema.parameters(), []
+        for task, found in self.fields.items():
+            code = self.kinds.index(task)
+            for field in found:
+                key = (task, field["name"])
+                if field["sort"] == "kind":
+                    result.append((key, "kind", kind[owner] == code, owner, None))
+                elif field["sort"] == "targets":
+                    result.append((key, "targets", (kind[roled] == code) & (codes == field["code"]), roled, None))
+                else:
+                    place = slots(self.registry.encoding, columns, field["column"])
+                    result.append((key, "parameters", (kind[owner] == code) & (kinds == field["code"]), owner, place))
+        LOG.debug("guard located exit fields=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
+
     def derived(self, features, b, members, mask):
         started = time.perf_counter()
         held = b["options"]
@@ -241,26 +262,30 @@ class Guard:
             name: (torch.zeros_like(fields[name]) if grad is None else grad).abs().cpu().numpy()
             for name, grad in zip(fields, found)
         }
-        owner = np.asarray(held["kind"], np.int64)
-        acting = owner[np.asarray(held["action_option"].cpu(), np.int64)]
-        roling = acting[np.asarray(held["role_action"].cpu(), np.int64)]
-        kinds, codes = np.asarray(held["action_kind"].cpu(), np.int64), np.asarray(held["role_code"].cpu(), np.int64)
-        columns = self.schema.parameters()
-        for task, found in self.fields.items():
-            code = self.kinds.index(task)
-            for field in found:
-                if field["sort"] == "kind":
-                    rows, part = acting == code, grads["kind"]
-                elif field["sort"] == "targets":
-                    rows, part = (roling == code) & (codes == field["code"]), grads["targets"]
-                else:
-                    rows = (acting == code) & (kinds == field["code"])
-                    part = grads["parameters"][:, slots(self.registry.encoding, columns, field["column"])]
-                if rows.any():
-                    key = (task, field["name"])
-                    self.moved[key] = bool(self.moved[key]) or bool(part[rows].sum() > 0)
-        LOG.debug("guard derived exit options=%d seconds=%.4f", len(owner), time.perf_counter() - started)
+        for key, name, rows, _, columns in self.located(held):
+            if rows.any():
+                part = grads[name] if columns is None else grads[name][:, columns]
+                self.moved[key] = bool(self.moved[key]) or bool(part[rows].sum() > 0)
+        LOG.debug("guard derived exit options=%d seconds=%.4f", len(values), time.perf_counter() - started)
         return {name: value.detach() for name, value in fields.items()}
+
+    def shifted(self, features, b, fields, values, mask):
+        started = time.perf_counter()
+        held = b["options"]
+        decision = np.asarray(held["decision"].cpu(), np.int64)
+        for key, name, rows, option, columns in self.located(held):
+            if self.finite[key] or not rows.any():
+                continue
+            first = np.full(decision.max() + 1, len(decision), np.int64)
+            np.minimum.at(first, decision[option[rows]], option[rows])
+            picked = first[first < len(decision)]
+            cells = np.zeros(tuple(fields[name].shape), bool)
+            cells[np.ix_(rows & np.isin(option, picked), np.arange(cells.shape[1]) if columns is None else columns)] = True
+            moved = torch.randn(cells.shape, generator=self.generator) * torch.as_tensor(cells)
+            with torch.no_grad():
+                again = self.scored(features, b, dict(fields, **{name: fields[name] + moved.to(fields[name].device)}))[0]
+            self.finite[key] = bool((mask[picked] & ~close(again.cpu().numpy()[picked], values[picked])).any())
+        LOG.debug("guard shifted exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
 
     def apart(self, features, b, fields, values, mask):
         started = time.perf_counter()
@@ -357,6 +382,7 @@ class Guard:
             with torch.no_grad():
                 values, options, actions = self.scored(features, b, fields)
             values = values.cpu().numpy()
+            self.shifted(features, b, fields, values, mask)
             if not self.entry.together:
                 self.apart(features, b, fields, values, mask)
             self.placed(features, b, fields, values, mask)
@@ -374,6 +400,14 @@ class Guard:
             raise ValueError(
                 "with the weights drawn by the seed %d, the prediction does not move with the field %s of the kind of "
                 "task %s for any option of the splits scored on, under the realisation of options %s"
+                % (self.seed, name, task, self.name)
+            )
+        still = [(task, name) for (task, name), moved in self.finite.items() if moved is False]
+        if still:
+            task, name = still[0]
+            raise ValueError(
+                "with the moves drawn by the seed %d, the score of no option of the splits scored on changes when its "
+                "own field %s of the kind of task %s moves by a finite amount, under the realisation of options %s"
                 % (self.seed, name, task, self.name)
             )
         share = self.equal / self.pairs if self.pairs else None
@@ -402,7 +436,7 @@ class Forked(Guard):
     def __init__(self, bank, cfg, net, seed, device):
         super().__init__(bank, cfg, net, seed)
         self.bank, self.cfg, self.device, self.found = bank, cfg, device, offered(bank)
-        self.roles = coded(self.schema)[1]
+        self.roles, self.finite = coded(self.schema)[1], self.moved
 
     def valued(self, b):
         started = time.perf_counter()
