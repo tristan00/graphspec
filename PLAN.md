@@ -762,6 +762,7 @@ One line per place where the plan was wrong or silent: the subsection, what the 
 | 3.4 | A set of actions in any order; a sequence keeps its order | Under `back` a sequence makes the same facts in any order | An edit holds no order within a step |
 | 3.4 | Options left out where the variant lacks a target | Under `back` none is left out | The pipeline sees the edit |
 | 3.4 | Not stated | Bounds or a random realisation that would leave a family no realisation it reads are refused when the search starts | One check at start; holding those families absent needs coupled narrowing and a refusal anyway |
+| Rules | The test suite stays under 20 seconds with its 4 workers | Under 30 seconds with the same 4 workers, from 3 October | The owner's instruction of 3 October |
 | Rules | Not stated | Optuna is imported on a thread of its own | It keeps deferred import tracebacks holding the importer's frames until the process ends |
 | 3.4 | Structure put into the family's graph | Elements read the family's final encodings through new instances of its own kind of layer at the readout, not inserted before its layers | State to options only leaves the state's layers untouched; elements are one edge from the state |
 | 3.4 | Not stated | The actor is one more target row of its action (its own role, no relation); its option is left out where the actor is unobserved | One channel; the actor stays out of content |
