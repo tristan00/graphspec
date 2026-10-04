@@ -7,7 +7,7 @@ import numpy as np
 from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from tuning.bank.bank import ROWS
-from tuning.bank.forks import UNMOVED, Forks, Part
+from tuning.bank.forks import UNMOVED, Forks, Part, shown
 from tuning.bank.options import offered
 from tuning.families.heads import FIELD, realisation
 from tuning.families.model_spec import realised
@@ -248,12 +248,17 @@ def parted(bank, blocks, cfg):
     return result
 
 
-def branched(bank, blocks, offsets):
+def branched(bank, blocks, offsets, cfg):
     started = time.perf_counter()
-    found, decisions, chosen = offered(bank), {}, []
+    found, decisions, chosen, lost = offered(bank), {}, [], []
     for at, block in enumerate(blocks):
-        if isinstance(block[0], Part) and block[0].option >= 0:
-            chosen.append((at, block[0], decisions.setdefault((block[0].graph, block[0].place), len(decisions))))
+        part = block[0]
+        if not isinstance(part, Part) or part.option < 0:
+            continue
+        if part.move == UNMOVED and found.actions[1][part.option] and not shown(bank, cfg, part):
+            lost.append((at, part.option))
+            continue
+        chosen.append((at, part, decisions.setdefault((part.graph, part.place), len(decisions))))
     options = np.asarray([part.option for _, part, _ in chosen], np.int64)
     result = dict(
         row=Host(np.asarray([offsets[at] for at, _, _ in chosen], np.int64)),
@@ -263,10 +268,10 @@ def branched(bank, blocks, offsets):
         sequence=Host(found.option["sequence"][options]),
         content=Host(found.option["content"][options]),
         kind=Host(found.option["kind"][options]),
-        left=Host(np.zeros(0, np.int64)),
+        left=Host(found.option["kind"][np.asarray([option for _, option in lost], np.int64)]),
     )
-    LOG.debug("branched exit options=%d seconds=%.4f", len(options), time.perf_counter() - started)
-    return result
+    LOG.debug("branched exit options=%d left=%d seconds=%.4f", len(options), len(lost), time.perf_counter() - started)
+    return result, [at for at, _ in lost]
 
 
 @timed("recipe_batch")
@@ -400,7 +405,11 @@ def combined(bank, blocks, cfg):
     if "options" in parts[0]:
         b["options"] = optioned(parts, offsets, member_offsets)
     elif isinstance(blocks[0][0], Part):
-        b["options"] = branched(bank, blocks, offsets)
+        b["options"], lost = branched(bank, blocks, offsets, cfg)
+        left = np.asarray(b["left"].value, bool).copy()
+        for at in lost:
+            left[real[at] : real[at + 1]] = True
+        b["left"] = Host(left)
     if "end_steps" in parts[0]:
         b["end_steps"] = moved(parts, "end_steps", [i * t for i in range(size)])
         b["member_end_local"] = moved(parts, "member_end_local", nodes)

@@ -8,6 +8,7 @@ from graphspec.engine.edits import Edit
 from graphspec.engine.segments import Derivation, padded
 from graphspec.facts.stored import encoded, unheld
 from graphspec.infra.arrays import Resident
+from graphspec.infra.hashing import hashed
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import MEMORY_BYTES
 from graphspec.views.graph import Graph
@@ -17,6 +18,7 @@ from .options import TOKEN, offered
 
 LOG = logging.getLogger(__name__)
 UNMOVED = ()
+SHOWN = ("entity", "spatial", "spatial_step", "step")
 
 
 @dataclass(frozen=True)
@@ -253,6 +255,27 @@ def forked(bank, part, cfg, device):
             held[key] = Resident(derived(bank, cfg, part), device, bank.residents.dtypes, MEMORY_BYTES)
         result = held[key]
     LOG.debug("forks forked exit option=%d seconds=%.4f", part.option, time.perf_counter() - started)
+    return result
+
+
+def listed(arrays):
+    started = time.perf_counter()
+    entity, spatial = np.asarray(arrays["entity"], np.int64), np.asarray(arrays["spatial"], np.int64)
+    facts = hashed(np.asarray(arrays["spatial_step"], np.int64), entity[spatial[:, 0]], entity[spatial[:, 1]], spatial[:, 2])
+    result = np.sort(facts), np.sort(hashed(np.asarray(arrays["step"], np.int64), entity))
+    LOG.debug("forks listed exit facts=%d seconds=%.4f", len(facts), time.perf_counter() - started)
+    return result
+
+
+def shown(bank, cfg, part):
+    started = time.perf_counter()
+    held, key = opened(bank).held, (bank.variant(cfg)[0], "unedited", part.graph, part.step)
+    if key not in held:
+        held[key] = listed(trunk(bank, cfg, part.graph, part.step).continued(part.step + 1, None).arrays())
+    fork = bank.resident(part, cfg, "cpu")
+    found = listed({name: fork.numpy(name) for name in SHOWN})
+    result = any(not np.array_equal(mine, plain) for mine, plain in zip(found, held[key]))
+    LOG.debug("forks shown exit option=%d shown=%s seconds=%.4f", part.option, result, time.perf_counter() - started)
     return result
 
 

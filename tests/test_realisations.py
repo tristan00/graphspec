@@ -251,7 +251,7 @@ def modelled(family):
 
 def packed(held, name, partition, family="snapshot", graph=SAMPLED):
     started = time.perf_counter()
-    key = (id(held), name, partition, family, tuple(sorted(graph.items())))
+    key = (str(held.directory), name, partition, family, tuple(sorted(graph.items())))
     if key not in PACKED:
         cfg = configured(held, name, modelled(family), graph)
         PACKED[key] = [pack_batch(held, group, cfg, "cpu") for group in grouped(held, cfg, partition)]
@@ -401,14 +401,14 @@ def test_the_options_of_every_decision_reach_its_batch_beside_the_variant_and_re
 
 @timed("realisations.named")
 def named(held):
-    if id(held) not in NAMED:
-        NAMED[id(held)] = {
+    if str(held.directory) not in NAMED:
+        NAMED[str(held.directory)] = {
             (graph, key): [option["key"] for option in decision["options"]]
             for graph, found in support.read_back(held).items()
             for key, decision in zip(found["tasks"]["key"], found["decisions"])
             if decision is not None
         }
-    return NAMED[id(held)]
+    return NAMED[str(held.directory)]
 
 
 def canonical(held, found):

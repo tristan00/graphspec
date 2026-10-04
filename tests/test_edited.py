@@ -9,7 +9,7 @@ import pytest
 import support
 import torch
 from test_decisions import banks, opened, registered
-from test_realisations import PLAIN, canonical, modelled, varied
+from test_realisations import PLAIN, SAMPLED, canonical, modelled, varied
 
 from conftest import SPLITS, inline
 from graphspec.engine.segments import Derivation
@@ -215,8 +215,9 @@ def test_the_options_of_a_decision_are_forks_of_one_history_each_adding_its_fact
         options = [len(found) for found in parts]
         assert all(part[0].option >= 0 and part[0].move == () for found in parts for part in found) and options[1] > 2
         assert calls == [(0, steps[0], True)] + [(steps[0], steps[0] + 1, False)] * options[0] + [
-            (steps[0], steps[1], True)
-        ] + [(steps[1], steps[1] + 1, False)] * options[1]
+            (steps[0], steps[0] + 1, True),
+            (steps[0], steps[1], True),
+        ] + [(steps[1], steps[1] + 1, False)] * options[1] + [(steps[1], steps[1] + 1, True)]
         monkeypatch.undo()
         codes = {held.fitted(cfg).code(name) for name in RELATIONS}
         whole = held.arrays(0, cfg)
@@ -357,6 +358,24 @@ def test_every_guard_holds_for_an_edit_and_one_refuses_a_field_whose_facts_the_f
         "the kind of task turn for any option of the splits scored on, under the realisation of options edited"
     )
     LOG.info("guards of an edit exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_an_option_whose_edit_the_variant_shows_none_of_at_its_step_is_left_out_and_counted(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    cfg = support.configuration(held.registry, dict(modelled("snapshot"), **{REALISATION: "edited"}), SAMPLED, 5, SPLITS)
+    chosen = last(held, cfg, 2)
+    b, found = pack_batch(held, chosen, cfg, "cpu"), forks.offered(held)
+    with forks.Forks(held):
+        parts = [part for part, *_ in parted(held, chosen, cfg) if part.option >= 0]
+        empty = [part.option for part in parts if found.actions[1][part.option] and not forks.shown(held, cfg, part)]
+    kept, rows = list(b["options"]["option"]), np.asarray(b["rows"])
+    assert len(empty) > 0 and sorted(kept + empty) == sorted(part.option for part in parts) and not set(kept) & set(empty)
+    assert list(b["options"]["left"]) == list(found.option["kind"][empty])
+    left = np.asarray(b["left"], bool)
+    assert left.any() and set(found.row_option[rows[left]].tolist()) <= set(empty)
+    assert not set(found.row_option[rows[~left]].tolist()) & set(empty)
+    LOG.info("edits shown none of exit left=%d seconds=%.3f", len(empty), time.perf_counter() - started)
 
 
 def test_an_edit_completes_one_fit_whose_guards_record_that_messages_pass_back(banks, tmp_path, statement, monkeypatch):
