@@ -64,7 +64,7 @@ class Bare:
     actor = True
 
     @timed("edited.Bare.refusal")
-    def refusal(self, schema):
+    def refusal(self, registry):
         return None
 
 
@@ -94,38 +94,38 @@ def last(held, cfg, count):
 def test_an_edit_maps_every_kind_of_action_to_facts_and_is_refused_naming_what_it_leaves_unmapped(banks):
     started = time.perf_counter()
     stated, chosen = opened(banks, "stated"), opened(banks, "picked")
-    schema = stated.registry.schema
-    assert refused("edited", schema) is None and refused("moved", chosen.registry.schema) is None
-    assert refused("moved", schema).endswith(
+    registry = stated.registry
+    assert refused("edited", registry) is None and refused("moved", chosen.registry) is None
+    assert refused("moved", registry).endswith(
         "the parameter speed of the kind of action go of the kind of task turn becomes the value of no fact: no "
         "relation its roles become holds the column speed"
     )
-    assert Edited(dict(turn=WENT, show=ACTED), RELATIONS, 1).refusal(schema) == (
+    assert Edited(dict(turn=WENT, show=ACTED), RELATIONS, 1).refusal(registry) == (
         "the mapping of the edit states nothing for the kind of action cut of the kind of task turn, so an option "
         "holding it cannot be made an edit"
     )
-    assert refused("edited", chosen.registry.schema).endswith(
+    assert refused("edited", chosen.registry).endswith(
         "the edit adds the relation went between kinds of node or with columns the schema does not state"
     )
     assert EDITED["moved"].relations["went"]["columns"] == () and Edited(
         dict(turn=ACTED, show=WENT), EDITED["moved"].relations, 1
-    ).refusal(chosen.registry.schema) == (
+    ).refusal(chosen.registry) == (
         "the mapping of the edit states the kind of action cut of the kind of task turn, which it does not state"
     )
-    went, base = dict(relation="went", actor="source"), schema.mapping()
-    stay = varied(base, "stay", dict(roles=dict(at=dict(sort="node", kinds=["spot"])), parameters=["speed"]), {})
+    went = dict(relation="went", actor="source")
+    stay = varied(registry, "stay", dict(roles=dict(at=dict(sort="node", kinds=["spot"])), parameters=["speed"]), {})
     where = "the kind of action %s of the kind of task turn"
     for acted, relations, wrong, message in (
-        (dict(ACTED, put=dict(at=went)), RELATIONS, schema, "the mapping of the edit states for %s the roles at, and it states the roles at, made" % (where % "put")),
-        (dict(ACTED, go=dict(to=dict(went, relation="wings"))), RELATIONS, schema, "the role to of %s becomes wings, neither a relation the edit adds nor one the schema declares" % (where % "go")),
-        (dict(ACTED, go=dict(to=dict(went, relation="made"))), RELATIONS, schema, "the role to of %s becomes facts of made from agent to spot, which made does not join" % (where % "go")),
-        (dict(ACTED, go=dict(to=dict(went, actor="target"))), RELATIONS, schema, "the role to of %s becomes facts of went from spot to agent, which went does not join" % (where % "go")),
-        (ACTED, dict(RELATIONS, went=dict(RELATIONS["went"], columns=())), schema, "the parameter speed of %s becomes the value of no fact: no relation its roles become holds the column speed" % (where % "go")),
-        (ACTED, dict(RELATIONS, near=RELATIONS["went"]), schema, "the edit adds the relation near, a name without a colon the schema does not hold"),
+        (dict(ACTED, put=dict(at=went)), RELATIONS, registry, "the mapping of the edit states for %s the roles at, and it states the roles at, made" % (where % "put")),
+        (dict(ACTED, go=dict(to=dict(went, relation="wings"))), RELATIONS, registry, "the role to of %s becomes wings, neither a relation the edit adds nor one the schema declares" % (where % "go")),
+        (dict(ACTED, go=dict(to=dict(went, relation="made"))), RELATIONS, registry, "the role to of %s becomes facts of made from agent to spot, which made does not join" % (where % "go")),
+        (dict(ACTED, go=dict(to=dict(went, actor="target"))), RELATIONS, registry, "the role to of %s becomes facts of went from spot to agent, which went does not join" % (where % "go")),
+        (ACTED, dict(RELATIONS, went=dict(RELATIONS["went"], columns=())), registry, "the parameter speed of %s becomes the value of no fact: no relation its roles become holds the column speed" % (where % "go")),
+        (ACTED, dict(RELATIONS, near=RELATIONS["went"]), registry, "the edit adds the relation near, a name without a colon the schema does not hold"),
         (dict(ACTED, stay=dict(at=went)), RELATIONS, stay, "the kinds of action go and stay of the kind of task turn become facts of the same relations, went, carrying the same parameters, so the field kind has no route"),
     ):
         assert Edited(dict(turn=acted, show=ACTED), relations, 1).refusal(wrong).startswith(message), message
-    assert Edited(dict(turn=ACTED, show=ACTED, visit=ACTED), RELATIONS, 1).refusal(schema).startswith(
+    assert Edited(dict(turn=ACTED, show=ACTED, visit=ACTED), RELATIONS, 1).refusal(registry).startswith(
         "the mapping of the edit states the kind of task visit, which decides nothing in the schema"
     )
     for mapping, version in ((dict(turn=dict(go=dict(to=dict(went, actor="side")))), 1), (dict(turn=ACTED), 0)):
@@ -168,6 +168,30 @@ def test_each_family_states_what_of_an_edit_it_reads_and_a_field_it_cannot_read_
             kept = model_spec.fitting(choosing, {"view": family, "snapshot/spatial": spatial}).options
             assert ("edited" in kept) == (family == "snapshot" and spatial == "relational"), (family, spatial)
     LOG.info("families reading edits exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_an_edit_is_offered_only_under_settings_its_facts_reach_the_actor_and_a_statement_cutting_them_is_refused(banks):
+    from tuning.searches.selector import graph_space, pipeline_space
+
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    edit, vector = (configured(held, name, "snapshot")["model"] for name in ("edited", "vector"))
+    directions = {name: [parameter for parameter in graph_space(held.registry, model, {}) if parameter.name == "relations/direction"][0].options for name, model in (("edited", edit), ("vector", vector))}
+    assert directions == dict(edited=("inverse", "symmetric"), vector=("inverse", "symmetric", "directed"))
+    where = "the field target to of go of the kind of task turn has no route to the prediction under the realisation of options edited: "
+    directed = support.configuration(held.registry, dict(modelled("snapshot"), **{REALISATION: "edited"}), dict(PLAIN, **{"relations/direction": "directed"}), 5, SPLITS)
+    with pytest.raises(ValueError, match="^" + re.escape(where + "an edit makes it facts of the relation went, which has a direction, from the actor, and the setting relations/direction directed reads a relation from its source to its target alone, so the actor reads none of them") + "$"):
+        routed(held, directed)
+    agentless = support.configuration(held.registry, dict(modelled("snapshot"), **{REALISATION: "edited"}), dict(PLAIN, **{"nodes/agent/keep": False}), 5, SPLITS)
+    with pytest.raises(ValueError, match="^" + re.escape(where + "the pipeline removes the kind of node agent, which it may name, the entry graphspec.nodes removing it") + "$"):
+        routed(held, agentless)
+    unbased = support.configuration(held.registry, dict(modelled("snapshot"), **{REALISATION: "edited"}), dict(PLAIN, **{"relations/base/keep": False}), 5, SPLITS)
+    with pytest.raises(ValueError, match="target at of put of the kind of task turn has no route .* the pipeline removes the relation base, which it may name, by relations/base/keep False of the entry graphspec.relations$"):
+        routed(held, unbased)
+    found = {parameter.name: parameter for parameter in pipeline_space(held.registry, support.template(), {})}
+    assert found["pipeline/graphspec.relations/relations/base/keep"].options == (True,)
+    assert found["pipeline/graphspec.edges/edges/base/persistence"].high == 1
+    LOG.info("edits offered where they reach exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_the_options_of_a_decision_are_forks_of_one_history_each_adding_its_facts_at_its_step_alone(banks, monkeypatch):

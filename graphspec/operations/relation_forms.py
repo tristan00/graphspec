@@ -48,6 +48,11 @@ def cut(registry, name, value):
     return tuple(registry.groups) if name == "relation_forms/types" and value == "untyped" else ()
 
 
+@timed("relation_forms.whole")
+def whole(registry, kinds, relations):
+    return {"relation_forms/types": ["typed"]} if set(registry.groups) & set(relations) else {}
+
+
 @timed("operators.relation_forms_adds")
 def adds(registry, settings, entry):
     relations = {}
@@ -149,7 +154,7 @@ RELATION_FORMS = OPERATIONS.register(
         changes=("facts",),
         adds=adds,
         kinds=None,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

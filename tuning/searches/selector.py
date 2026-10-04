@@ -12,7 +12,7 @@ from graphspec.operations import pipeline
 from graphspec.operations.negatives import needed
 from graphspec.operations.operation import Refused
 from graphspec.views.view import STEPS
-from tuning.families.model_spec import TRAINING, describe, drawn, groups, placed, realisable
+from tuning.families.model_spec import TRAINING, describe, drawn, groups, mapped, placed, realisable, turned
 from tuning.families.model_spec import space as model_space
 from tuning.measures import objective
 
@@ -57,12 +57,20 @@ def stepped(registry, parameters):
 
 @timed("selector.graph_space")
 def graph_space(registry, model, bounds):
-    return stepped(registry, narrow_group(specs.settings(registry, groups(model)), bounds))
+    return turned(registry, model, stepped(registry, narrow_group(specs.settings(registry, groups(model)), bounds)))
 
 
 @timed("selector.pipeline_space")
 def pipeline_space(registry, template, bounds):
-    return needing(registry, template, narrow_group(pipeline.space(registry, template), bounds))
+    return kept(registry, template, needing(registry, template, narrow_group(pipeline.space(registry, template), bounds)))
+
+
+@timed("selector.kept")
+def kept(registry, template, parameters):
+    kinds, groups = pipeline.decided(registry)
+    stated = pipeline.whole(registry, template, set(kinds), set(groups) | mapped(registry))
+    names = {parameter.name for parameter in parameters}
+    return specs.narrow(parameters, {name: value for name, value in stated.items() if name in names})
 
 
 @timed("selector.needing")

@@ -12,13 +12,13 @@ from tuning.bank.forks import Forks, made, trunk
 from tuning.bank.options import offered
 from tuning.batches.batching import batches, pack_batch, pack_parts
 from tuning.families.heads import NONE, REALISATION, coded, fielded, realisation, refused
-from tuning.families.model_spec import NEEDS, edits, ignored, realised, unedited
+from tuning.families.model_spec import DIRECTION, NEEDS, edits, ignored, realised, sending, unedited
 from tuning.families.options import slots
 from tuning.families.periods import blocks as windows
 
 LOG = logging.getLogger(__name__)
 CLOSE = 1e-6
-STATE = 1e-5
+STATE = SUMMED = 1e-5
 EQUAL, BACK = "equal", "back"
 MADE = dict(targets="the end of a fact", kind="the relation of a fact", parameters="a value of a fact")
 ORDERED = (
@@ -107,12 +107,14 @@ def withheld(field):
     return ("parameter", field["code"], field["column"])
 
 
-def cut(bank, entry, task, field, removed, unkept):
+def cut(bank, entry, task, field, removed, unkept, directed):
     started = time.perf_counter()
-    kinds, relations, result = field["named"], field["relations"], None
+    kinds, relations, held, result = field["named"], field["relations"], None, None
     if entry.back:
-        held = entry.mapping[task][field["action"]][field["part"]]["relation"]
-        relations = (held,) if held in bank.registry.schema.edges else ()
+        schema = bank.registry.schema
+        held = entry.mapping[task][field["action"]][field["part"]]
+        relations = (held["relation"],) if held["relation"] in schema.edges else ()
+        kinds += tuple(schema.tasks["references"][schema.tasks["kinds"][task]["target"]["actors"]]["kinds"])
     elif field["role"] == "new":
         kinds = ()
     lost = [kind for kind in kinds if kind in removed]
@@ -129,6 +131,12 @@ def cut(bank, entry, task, field, removed, unkept):
             parameter,
             value,
             step,
+        )
+    elif held is not None and directed and sending(bank.registry, entry, held):
+        result = (
+            "an edit makes it facts of the relation %s, which has a direction, from the actor, and the setting %s "
+            "directed reads a relation from its source to its target alone, so the actor reads none of them"
+            % (held["relation"], DIRECTION)
         )
     LOG.debug("guards cut exit field=%s cut=%s seconds=%.4f", field["name"], result is not None, time.perf_counter() - started)
     return result
@@ -149,16 +157,17 @@ def routed(bank, cfg):
             "%s reads no option put there: %s" % (name, spec["view"], reason)
         )
     schema = bank.registry.schema
-    reason = refused(name, schema)
+    reason = refused(name, bank.registry)
     if reason is not None:
         raise ValueError(reason)
-    steps = bank.stated(cfg)[1]
+    _, steps, settings, _ = bank.stated(cfg)
     removed, unkept = emptied(bank.registry, steps), unrelated(bank.registry, steps)
+    directed = DIRECTION in settings and settings[DIRECTION] == "directed"
     for task in schema.decided():
         for field in fielded(schema, task):
             where = "the field %s of the kind of task %s has no route to the prediction under the realisation of options %s"
             where %= (field["name"], task, name)
-            reason = cut(bank, entry, task, field, removed, unkept) if field["sort"] == "targets" else None
+            reason = cut(bank, entry, task, field, removed, unkept, directed) if field["sort"] == "targets" else None
             if reason is not None:
                 raise ValueError("%s: %s" % (where, reason))
             if back and NEEDS[field["sort"]] not in edits(spec):
@@ -194,8 +203,8 @@ def captured(net, b):
 
 
 @timed("guards.close")
-def close(left, right):
-    return np.abs(left - right) <= CLOSE * np.maximum(1.0, np.maximum(np.abs(left), np.abs(right)))
+def close(left, right, tolerance):
+    return np.abs(left - right) <= tolerance * np.maximum(1.0, np.maximum(np.abs(left), np.abs(right)))
 
 
 class Guard:
@@ -316,7 +325,7 @@ class Guard:
             moved = torch.randn(cells.shape, generator=self.generator) * torch.as_tensor(cells)
             with torch.no_grad():
                 again = self.scored(features, b, dict(fields, **{name: fields[name] + moved.to(fields[name].device)}))[0]
-            self.finite[key] = bool((mask[picked] & ~close(again.cpu().numpy()[picked], values[picked])).any())
+            self.finite[key] = bool((mask[picked] & ~close(again.cpu().numpy()[picked], values[picked], CLOSE)).any())
         LOG.debug("guard shifted exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
 
     def apart(self, features, b, fields, values, mask):
@@ -329,7 +338,7 @@ class Guard:
             lone, changed = rearranged(held, fields, chosen, np.flatnonzero(np.isin(owner, chosen)))
             with torch.no_grad():
                 alone[chosen] = self.scored(features, dict(b, options=lone), changed)[0].cpu().numpy()
-        wrong = np.flatnonzero((mask & ~close(alone, values)).any(1))
+        wrong = np.flatnonzero((mask & ~close(alone, values, SUMMED)).any(1))
         if len(wrong):
             raise ValueError(APART % (self.kinds[int(np.asarray(held["kind"])[wrong[0]])], self.name))
         LOG.debug("guard apart exit options=%d slots=%d seconds=%.4f", len(slot), len(np.unique(slot)), time.perf_counter() - started)
@@ -348,7 +357,7 @@ class Guard:
             turning, changed = rearranged(held, fields, moved, np.argsort(inverse[owner], kind="stable"))
             with torch.no_grad():
                 again = self.scored(features, dict(b, options=turning), changed)[0].cpu().numpy()
-            wrong = np.flatnonzero((mask[moved] & ~close(again, values[moved])).any(1))
+            wrong = np.flatnonzero((mask[moved] & ~close(again, values[moved], SUMMED)).any(1))
             if len(wrong):
                 raise ValueError(PLACED % (self.kinds[int(np.asarray(turning["kind"])[wrong[0]])], name, self.name))
         LOG.debug("guard placed exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
@@ -370,8 +379,8 @@ class Guard:
             with torch.no_grad():
                 again, acting = self.head.options.encoded(changed, dict(b, options=dict(turning, action_place=held["action_place"])))
             inverse = torch.as_tensor(np.argsort(acts), device=acting.device)
-            same = torch.isclose(again, options, rtol=CLOSE, atol=CLOSE).all(-1).cpu().numpy()
-            each = torch.isclose(acting[inverse], actions, rtol=CLOSE, atol=CLOSE)
+            same = torch.isclose(again, options, rtol=SUMMED, atol=SUMMED).all(-1).cpu().numpy()
+            each = torch.isclose(acting[inverse], actions, rtol=SUMMED, atol=SUMMED)
             np.logical_and.at(same, owner, each.all(-1).cpu().numpy())
             wrong = np.flatnonzero(sets & ~same)
             if len(wrong):
@@ -390,7 +399,7 @@ class Guard:
             left, right = np.triu_indices(len(chosen), 1)
             left, right = chosen[left], chosen[right]
             differing = content[left] != content[right]
-            equal = (close(values[left], values[right]) | ~mask[left]).all(1)
+            equal = (close(values[left], values[right], CLOSE) | ~mask[left]).all(1)
             self.pairs += int(differing.sum())
             self.equal += int((differing & equal).sum())
         LOG.debug("guard alike exit pairs=%d seconds=%.4f", self.pairs, time.perf_counter() - started)
@@ -571,7 +580,7 @@ class Forked(Guard):
                     if not self.holding(int(held["option"][place]), task, field):
                         continue
                     again = self.moving(held["block"][place], withheld(field))[0]
-                    self.moved[key] = bool(((~close(again, values[place])) & mask[place]).any())
+                    self.moved[key] = bool(((~close(again, values[place], CLOSE)) & mask[place]).any())
                     if self.moved[key]:
                         break
         LOG.debug("forked guard derived exit options=%d seconds=%.4f", len(values), time.perf_counter() - started)
@@ -584,7 +593,7 @@ class Forked(Guard):
         for place in np.unique(slot).tolist():
             chosen = np.flatnonzero(slot == place)
             alone[chosen] = self.valued(pack_parts(self.bank, [blocks[at] for at in chosen.tolist()], self.cfg, self.device))
-        wrong = np.flatnonzero((mask & ~close(alone, values)).any(1))
+        wrong = np.flatnonzero((mask & ~close(alone, values, SUMMED)).any(1))
         if len(wrong):
             raise ValueError(APART % (self.kinds[int(np.asarray(held["kind"])[wrong[0]])], self.name))
         LOG.debug("forked guard apart exit options=%d slots=%d seconds=%.4f", len(slot), len(np.unique(slot)), time.perf_counter() - started)
@@ -598,7 +607,7 @@ class Forked(Guard):
             if (moved == np.arange(len(moved))).all():
                 continue
             again = self.valued(pack_parts(self.bank, [blocks[at] for at in moved.tolist()], self.cfg, self.device))
-            wrong = np.flatnonzero((mask[moved] & ~close(again, values[moved])).any(1))
+            wrong = np.flatnonzero((mask[moved] & ~close(again, values[moved], SUMMED)).any(1))
             if len(wrong):
                 raise ValueError(PLACED % (self.kinds[int(np.asarray(held["kind"])[moved[wrong[0]]])], name, self.name))
         LOG.debug("forked guard placed exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)

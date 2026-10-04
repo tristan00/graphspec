@@ -287,7 +287,7 @@ def present(held, graph, relation):
 def test_sets_edges_about_edges_and_held_graphs_read_back_from_the_bank_equal_to_what_was_stated(bank):
     held = Deriver(bank, "cpu", support.SEED, RESIDENT)
     schema = held.registry.schema
-    assert held.manifest["version"] == 15 and schema.mapping() == stated()
+    assert held.manifest["version"] == 16 and schema.mapping() == stated()
     found, wanted = support.read_back(held), support.meant(case())
     assert list(found) == list(wanted) == ["one", "two"]
     for entry in held.manifest["graphs"]:

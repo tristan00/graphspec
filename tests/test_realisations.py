@@ -180,7 +180,7 @@ class Realised:
         self.built, self.settings = built, settings
 
     @timed("realisations.Realised.refusal")
-    def refusal(self, schema):
+    def refusal(self, registry):
         return None
 
     @timed("realisations.Realised.module")
@@ -605,6 +605,34 @@ def test_a_search_offers_a_realisation_where_the_bank_decides_and_only_to_a_fami
     LOG.info("realisation stated or absent exit seconds=%.3f", time.perf_counter() - started)
 
 
+def test_a_search_keeps_whole_every_kind_and_relation_the_decisions_of_its_bank_name_and_leaves_out_trials_that_cut_them(banks):
+    from graphspec.operations import pipeline
+    from tuning.searches.selector import excluded, pipeline_space
+
+    started = time.perf_counter()
+    held, template = opened(banks, "stated"), support.template()
+    found = {parameter.name: parameter for parameter in pipeline_space(held.registry, template, {})}
+    named = "pipeline/graphspec.%s/%s"
+    for kind in ("agent", "spot", "mark"):
+        assert found[named % ("nodes", "nodes/%s/keep" % kind)].options == (True,)
+        assert found[named % ("nodes", "nodes/%s/filter" % kind)].options == ("none",)
+    assert found[named % ("relations", "relations/near/keep")].options == (True,)
+    assert found[named % ("relations", "relations/base/keep")].options == (False, True)
+    assert found[named % ("relation_forms", "relation_forms/types")].options == ("typed",)
+    for name, value in (("drop", 0.0), ("persistence", 1), ("cap", 0)):
+        assert (found[named % ("edges", "edges/near/%s" % name)].low, found[named % ("edges", "edges/near/%s" % name)].high) == (value, value)
+    assert found[named % ("edges", "edges/base/cap")].high == 64
+    assert pipeline.decided(held.registry) == (dict(agent="turn", spot="turn", mark="turn"), dict(near="turn"))
+    for operation, graph in (
+        ("nodes", {"nodes/spot/filter": "sample", "nodes/spot/sample": 0.5}),
+        ("relations", {"relations/near/keep": False}),
+        ("edges", {"edges/near/persistence": 2}),
+    ):
+        cut = configured(held, "whole", graph=dict(PLAIN, **graph))
+        assert excluded(held.registry, cut, {}, template) == [named % (operation, list(graph)[0])]
+    LOG.info("decisions kept whole exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_the_loss_reads_the_points_of_the_realisation_its_model_states_whatever_the_batch_holds(banks):
     started = time.perf_counter()
     held = opened(banks, "stated")
@@ -790,11 +818,13 @@ def test_each_shipped_realisation_passes_every_guard_on_its_shared_bank_and_comp
 
 
 @timed("realisations.varied")
-def varied(base, action, entry, columns):
-    stated = copy.deepcopy(base)
+def varied(registry, action, entry, columns):
+    stated = copy.deepcopy(registry.schema.mapping())
     stated["tasks"]["kinds"]["turn"]["target"]["actions"][action] = entry
     stated["columns"].update(columns)
-    return Schema(stated)
+    result = copy.copy(registry)
+    result.schema = Schema(stated)
+    return result
 
 
 @timed("realisations.offering")
@@ -810,7 +840,7 @@ def test_the_node_realisation_reads_options_of_one_action_whose_one_target_is_a_
         routed(stated, configured(stated, "node", graph=PLAIN))
     routed(chosen, configured(chosen, "node", graph=PLAIN))
     spot, number = dict(sort="node", kinds=["spot"]), dict(type="number", encoder="value")
-    base = chosen.registry.schema.mapping()
+    base = chosen.registry
     routes = "of the kind of task turn has no route to the prediction under the realisation of options node: the realisation"
     for action, entry, columns, message in (
         ("cut", dict(roles=dict(along=dict(spot, sort="edge")), parameters=[]), {}, where + "of action cut of the kind of task turn states the roles along of the sort edge, and the realisation reads options of one action whose one target is a node"),
@@ -819,7 +849,16 @@ def test_the_node_realisation_reads_options_of_one_action_whose_one_target_is_a_
         ("go", dict(roles=dict(to=spot), parameters=["speed"]), dict(speed=number), "the field parameter speed of go " + routes + " reads no parameters"),
     ):
         assert refused("node", varied(base, action, entry, columns)).startswith(message)
-    assert refused("node", chosen.registry.schema) is None and refused("vector", stated.registry.schema) is None
+    assert refused("node", chosen.registry) is None and refused("vector", stated.registry) is None
+    assert (chosen.registry.extras["acted"], stated.registry.extras["acted"]) == (1, 2)
+    paired = copy.copy(chosen.registry)
+    paired.extras = dict(chosen.registry.extras, acted=2)
+    assert refused("node", paired) == (
+        "the realisation of options node cannot read the options of this bank: the bank holds an option of 2 actions, "
+        "and the realisation reads options of one action whose one target is a node"
+    )
+    (drawing,) = [parameter for parameter in realisable(paired, space(paired)) if parameter.name == REALISATION]
+    assert "node" not in drawing.options and "node" in offering(chosen).options
     structure = dict(sequence=torch.zeros(1, dtype=torch.bool), action_option=torch.zeros(2, dtype=torch.long))
     structure.update(role_action=torch.arange(2), role_code=torch.zeros(2, dtype=torch.long))
     with pytest.raises(ValueError, match="an option of the kind of task turn holds 2 actions, of the kinds go, go, and the realisation reads"):
@@ -875,8 +914,7 @@ def test_each_structural_realisation_puts_through_one_channel_the_elements_its_r
         options, actions = module(fields, acted([0, 0], 2, codes, False, [0, 1]))
         assert (found["labels"], found["module"].held) == (labels, [joined]), name
         assert options.shape == actions.shape == (2, 4) and torch.equal(options[1], module.empty.detach())
-    base = held.registry.schema.mapping()
-    bare = varied(base, "stay", dict(roles={}, parameters=[]), {})
+    bare = varied(held.registry, "stay", dict(roles={}, parameters=[]), {})
     assert refused("actor_edge", bare).startswith(
         "the realisation of options actor_edge cannot read the options of this bank: the kind of action stay of the "
         "kind of task turn states no role, and the realisation joins the actor of an action to each of its targets"

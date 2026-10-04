@@ -17,7 +17,7 @@ from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.registries import carried, restored
 from tuning.families.heads import REALISATION
-from tuning.families.model_spec import TRAINING, drawn, groups, placed
+from tuning.families.model_spec import TRAINING, drawn, edited, groups, placed
 from tuning.families.model_spec import space as model_space
 
 from .selector import (
@@ -154,7 +154,7 @@ class Space:
             return parameter.uniform(rng)
 
         model = drawn(self.models, lambda p: choose("model/", p))
-        key = groups(model)
+        key = groups(model), edited(model, self.registry.schema)
         if key not in self.graphs:
             self.graphs[key] = graph_space(self.registry, model, self.bounds)
         graph = specs.draw(self.graphs[key], lambda p: choose("graph/", p))

@@ -43,6 +43,7 @@ STRUCTURE = dict(
     signal="it reads the signals of tasks and the features of members and reads no edge",
 )
 EDITS = ("facts", "relations", "values")
+DIRECTION = "relations/direction"
 NEEDS = dict(targets="facts", kind="relations", parameters="values")
 EDITED = dict(
     mixed=(),
@@ -199,6 +200,50 @@ def edited(spec, schema):
     return name if name is not None and realisation(name).back else None
 
 
+def sending(registry, entry, held):
+    started = time.perf_counter()
+    name = held["relation"]
+    stated = entry.relations[name] if name in entry.relations else registry.schema.edges[name]
+    result = stated["directed"] and held["actor"] == "source"
+    LOG.debug("model sending exit relation=%s sending=%s seconds=%.6f", name, result, time.perf_counter() - started)
+    return result
+
+
+def mapped(registry):
+    started = time.perf_counter()
+    result = set()
+    for name in REALISATIONS.names():
+        entry = realisation(name)
+        if entry.back and refused(name, registry) is None:
+            result |= {
+                held["relation"]
+                for actions in entry.mapping.values()
+                for roles in actions.values()
+                for held in roles.values()
+                if held["relation"] in registry.schema.edges
+            }
+    LOG.debug("model mapped exit relations=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def turned(registry, spec, parameters):
+    started = time.perf_counter()
+    name = edited(spec, registry.schema)
+    entry = None if name is None else realisation(name)
+    sends = entry is not None and any(
+        sending(registry, entry, held)
+        for actions in entry.mapping.values()
+        for roles in actions.values()
+        for held in roles.values()
+    )
+    result = parameters
+    if sends and DIRECTION in [parameter.name for parameter in parameters]:
+        (direction,) = [parameter for parameter in parameters if parameter.name == DIRECTION]
+        result = narrow(parameters, {DIRECTION: [option for option in direction.options if option != "directed"]})
+    LOG.debug("model turned exit sends=%s seconds=%.4f", sends, time.perf_counter() - started)
+    return result
+
+
 @timed("model_spec.unstructured")
 def unstructured(spec):
     if spec["view"] == "snapshot" and spec["snapshot/spatial"] == "none":
@@ -290,7 +335,7 @@ def realisable(registry, parameters):
     held = [parameter for parameter in parameters if parameter.name == REALISATION]
     result = parameters
     if held:
-        offered = [name for name in held[0].options if name == NONE or refused(name, registry.schema) is None]
+        offered = [name for name in held[0].options if name == NONE or refused(name, registry) is None]
         result = narrow(parameters, {REALISATION: offered})
     LOG.debug("model realisable exit realisations=%d seconds=%.4f", len(held), time.perf_counter() - started)
     return result

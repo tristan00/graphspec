@@ -2,6 +2,7 @@ import logging
 import time
 
 from graphspec.infra.timing import timed
+from graphspec.operations.pipeline import related
 from graphspec.registries import Names, ship
 from graphspec.schema.added import Added
 from graphspec.schema.targets import TARGETS, Sequence
@@ -139,20 +140,6 @@ def coded(schema):
     return actions, roles
 
 
-def related(schema, sort, kinds):
-    started = time.perf_counter()
-    tables, ends = [], set(kinds)
-    for name, entry in schema.edges.items() if sort == "edge" else ():
-        found = [second for first, second in entry["endpoints"] if first in kinds]
-        found += [first for first, second in entry["endpoints"] if not entry["directed"] and second in kinds]
-        if found:
-            tables.append(name)
-            ends.update(found)
-    result = tuple(sorted(ends)), tuple(tables)
-    LOG.debug("options related exit sort=%s tables=%d seconds=%.6f", sort, len(tables), time.perf_counter() - started)
-    return result
-
-
 def fielded(schema, task):
     started = time.perf_counter()
     actions, roles = coded(schema)
@@ -182,10 +169,10 @@ def fielded(schema, task):
     return result
 
 
-def refused(name, schema):
+def refused(name, registry):
     started = time.perf_counter()
-    entry = realisation(name)
-    found, result = entry.refusal(schema), None
+    entry, schema = realisation(name), registry.schema
+    found, result = entry.refusal(registry), None
     unread = [
         (task, field)
         for task in schema.decided()
@@ -205,7 +192,7 @@ def refused(name, schema):
 
 
 class Existing:
-    version = 5
+    version = 6
     reads = ("targets",)
     together = False
     back = False
@@ -213,7 +200,8 @@ class Existing:
     actor = False
 
     @timed("heads.Existing.refusal")
-    def refusal(self, schema):
+    def refusal(self, registry):
+        schema = registry.schema
         for task in schema.decided():
             target = schema.tasks["kinds"][task]["target"]
             if target["nothing"] is not None:
@@ -230,6 +218,8 @@ class Existing:
                         ", ".join("%s of the sort %s" % (role, held["sort"]) for role, held in entry["roles"].items()),
                         ONE,
                     )
+        if registry.extras["acted"] > 1:
+            return "the bank holds an option of %d actions, and %s" % (registry.extras["acted"], ONE)
         return None
 
     @timed("heads.Existing.module")
@@ -240,7 +230,7 @@ class Existing:
 
 
 class Built:
-    version = 5
+    version = 6
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
@@ -248,7 +238,7 @@ class Built:
     actor = False
 
     @timed("heads.Built.refusal")
-    def refusal(self, schema):
+    def refusal(self, registry):
         return None
 
     @timed("heads.Built.module")
@@ -259,7 +249,7 @@ class Built:
 
 
 class Structural:
-    version = 3
+    version = 4
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
@@ -276,11 +266,11 @@ class Structural:
         self.element, self.actor = element, actor
 
     @timed("heads.Structural.refusal")
-    def refusal(self, schema):
+    def refusal(self, registry):
         if self.element != "target":
             return None
-        for task in schema.decided():
-            for action, entry in schema.tasks["kinds"][task]["target"]["actions"].items():
+        for task in registry.schema.decided():
+            for action, entry in registry.schema.tasks["kinds"][task]["target"]["actions"].items():
                 if not entry["roles"]:
                     return (
                         "the kind of action %s of the kind of task %s states no role, and the realisation joins the "
@@ -377,9 +367,9 @@ class Edited:
         LOG.debug("edited relation exit name=%s seconds=%.6f", name, time.perf_counter() - started)
         return result
 
-    def refusal(self, schema):
+    def refusal(self, registry):
         started = time.perf_counter()
-        result = self.unread(schema) or self.unmapped(schema)
+        result = self.unread(registry.schema) or self.unmapped(registry.schema)
         LOG.debug("edited refusal exit refused=%s seconds=%.4f", result is not None, time.perf_counter() - started)
         return result
 

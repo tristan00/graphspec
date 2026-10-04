@@ -139,6 +139,11 @@ def unvalued(stated, tables):
     return result
 
 
+@timed("build.largest")
+def largest(owner):
+    return int(np.unique(np.asarray(owner, np.int64), return_counts=True)[1].max()) if len(owner) else 0
+
+
 def scanned(trained, index):
     started = time.perf_counter()
     stated = WORKER["reader"].source.stated
@@ -153,6 +158,7 @@ def scanned(trained, index):
         observing(tables),
         several(stated, tables, trained),
         unvalued(stated, tables),
+        largest(tables["decisions"]["action"].column("option").to_numpy()) if stated.decided() else 0,
     )
     LOG.info("bank scan exit graph=%d seconds=%.3f", index, time.perf_counter() - started)
     return result
@@ -393,6 +399,7 @@ def graph(context, job):
         index=index,
         name=name,
         **counts(truth),
+        acted=largest(truth.action_option),
         seconds=time.perf_counter() - started,
     )
     LOG.info("bank graph exit graph=%d views=%d seconds=%.3f", index, len(shown), metrics["seconds"])
@@ -478,7 +485,8 @@ def build(task_path, output, workers, trained):
             )
             observers = sorted({name for entry in found for name in entry[2]})
             lacking = sum((Counter(entry[4]) for entry in found), Counter())
-            registry = declaration.registry(task, encoding, any(entry[3] for entry in found), bare, lacking)
+            given = (task, encoding, any(entry[3] for entry in found), bare, lacking)
+            registry = declaration.registry(*given, max(entry[5] for entry in found))
             (output / "truth").mkdir(parents=True)
             write_json(output / "supervision.json", rows)
             code = {name: place for place, name in enumerate(stated.series())}
@@ -487,6 +495,7 @@ def build(task_path, output, workers, trained):
                 partial(graph, (registry.declaration(), splits, observers, trained)),
                 [(index, names[index], ids, members, series[members]) for index, ids, members, _ in groups],
             )
+            registry = declaration.registry(*given, max(entry["acted"] for entry in metrics))
     finally:
         release()
     manifest = dict(

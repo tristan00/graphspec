@@ -37,6 +37,12 @@ def stated(registry):
     return tuple(result)
 
 
+@timed("nodes.whole")
+def whole(registry, kinds, relations):
+    held = [kind for kind in registry.declared if kind in kinds]
+    return {**{"nodes/%s/keep" % kind: [True] for kind in held}, **{"nodes/%s/filter" % kind: ["none"] for kind in held}}
+
+
 def named(registry, settings):
     result = {}
     for kind in registry.declared:
@@ -173,7 +179,7 @@ NODES = OPERATIONS.register(
         changes=("observations", "facts", "references"),
         adds=None,
         kinds=named,
-        version=10,
+        version=11,
         graphs=1,
     ),
 )

@@ -35,7 +35,7 @@ class Stated:
     actor = False
 
     @timed("model_config.Stated.refusal")
-    def refusal(self, schema):
+    def refusal(self, registry):
         return None
 
     @timed("model_config.Stated.module")
@@ -49,7 +49,7 @@ def registry(events=True, signals=2, decided=()):
     kinds = dict(ask=dict(target=target, references=("unit",), absent="stop"))
     return SimpleNamespace(
         name="stated",
-        extras=dict(events=events, signals=signals),
+        extras=dict(events=events, signals=signals, acted=1),
         schema=SimpleNamespace(
             tasks=dict(kinds=kinds, references=dict(unit=dict(sort="node"))),
             targets=lambda: ("number",),

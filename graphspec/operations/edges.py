@@ -64,6 +64,16 @@ def stated(registry):
     return tuple(result)
 
 
+@timed("edges.whole")
+def whole(registry, kinds, relations):
+    held = [group for group in registry.groups if group in relations]
+    return {
+        name % group: value
+        for group in held
+        for name, value in (("edges/%s/drop", 0.0), ("edges/%s/persistence", 1), ("edges/%s/cap", 0))
+    }
+
+
 @timed("operators.filterable")
 def filterable(registry):
     return [
@@ -243,7 +253,7 @@ EDGES = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=None,
-        version=10,
+        version=11,
         graphs=1,
     ),
 )

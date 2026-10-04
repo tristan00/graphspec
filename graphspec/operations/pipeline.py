@@ -11,10 +11,9 @@ from graphspec.infra.timing import timed
 from graphspec.schema.schema import ENCODERS, TYPES
 from graphspec.schema.targets import pointed
 
+from . import edges, nodes, relation_forms, relations
 from .operation import OPERATIONS, Refused, Stored
 from .parameters import Parameter, flag
-from .relation_forms import cut as untyped
-from .relations import cut as unkept
 from .sets import PARAMETER, STORAGE
 
 LOG = logging.getLogger(__name__)
@@ -27,7 +26,13 @@ HITS = ("names", "removes")
 NONE = frozenset()
 PROBED = WeakKeyDictionary()
 PLANNED = WeakKeyDictionary()
-CUTS = {"graphspec.relations": unkept, "graphspec.relation_forms": untyped}
+CUTS = {"graphspec.relations": relations.cut, "graphspec.relation_forms": relation_forms.cut}
+WHOLE = {
+    "graphspec.nodes": nodes.whole,
+    "graphspec.relations": relations.whole,
+    "graphspec.edges": edges.whole,
+    "graphspec.relation_forms": relation_forms.whole,
+}
 
 
 class Step:
@@ -306,6 +311,45 @@ def targeted(registry):
         for kind in kinds:
             result.setdefault(kind, task)
     LOG.debug("targeted exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def related(schema, sort, kinds):
+    started = time.perf_counter()
+    tables, ends = [], set(kinds)
+    for name, entry in schema.edges.items() if sort == "edge" else ():
+        found = [second for first, second in entry["endpoints"] if first in kinds]
+        found += [first for first, second in entry["endpoints"] if not entry["directed"] and second in kinds]
+        if found:
+            tables.append(name)
+            ends.update(found)
+    result = tuple(sorted(ends)), tuple(tables)
+    LOG.debug("related exit sort=%s tables=%d seconds=%.6f", sort, len(tables), time.perf_counter() - started)
+    return result
+
+
+def decided(registry):
+    started = time.perf_counter()
+    schema, kinds, groups = registry.schema, {}, {}
+    for task in schema.decided():
+        actors = schema.tasks["references"][schema.tasks["kinds"][task]["target"]["actors"]]["kinds"]
+        kinds.update((kind, task) for kind in actors if kind not in kinds)
+        for entry in schema.tasks["kinds"][task]["target"]["actions"].values():
+            for held in entry["roles"].values():
+                named, tables = related(schema, held["sort"], held["kinds"])
+                kinds.update((kind, task) for kind in named if kind not in kinds)
+                groups.update((table, task) for table in tables if table not in groups)
+    LOG.debug("decided exit kinds=%d relations=%d seconds=%.4f", len(kinds), len(groups), time.perf_counter() - started)
+    return kinds, groups
+
+
+def whole(registry, template, kinds, groups):
+    started = time.perf_counter()
+    result = {}
+    for name, operation, _, _ in checked(template, TEMPLATE):
+        if operation.name in WHOLE:
+            result.update({NAMED % name + key: value for key, value in WHOLE[operation.name](registry, kinds, groups).items()})
+    LOG.debug("whole exit parameters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
@@ -614,7 +658,8 @@ class Offered:
                     )
             self.probes[name] = probed(registry, self.operations[name], bounded[name], context)
         self.protected, ahead = {}, {}
-        tasked = {kind: "the target of the kind of task %s" % task for kind, task in targeted(registry).items()}
+        tasked = {kind: "a decision of the kind of task %s" % task for kind, task in decided(registry)[0].items()}
+        tasked.update({kind: "the target of the kind of task %s" % task for kind, task in targeted(registry).items()})
         for name in reversed(self.names):
             self.protected[name] = dict(ahead, **tasked)
             if self.flags[name].options == (True,) and self.probes[name] is not None:
@@ -769,8 +814,9 @@ def draw(registry, template, parameters, choose, settings):
                 if parameter.options and not held:
                     raise ValueError(
                         "the entry %s of the template is left no value of %s that names no kind an entry before it "
-                        "removed, removes none an entry after it, held present, or a target names, and needs no set "
-                        "edges stored as nodes that the forms of storage store otherwise" % (name, parameter.name)
+                        "removed, removes none an entry after it, held present, a target or a role of a decision "
+                        "names, and needs no set edges stored as nodes that the forms of storage store otherwise"
+                        % (name, parameter.name)
                     )
                 flat[parameter.name] = choose(narrowed(parameter, held))
         if plan.probes[name] is not None:
