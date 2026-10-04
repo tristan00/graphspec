@@ -118,6 +118,29 @@ class Positional(Pooled):
         return options + self.position(torch.arange(len(decision)) - first[decision]), actions
 
 
+class Last(Pooled):
+    def forward(self, fields, held):
+        options, actions = super().forward(fields, held)
+        decision, index = held["decision"], torch.arange(len(held["decision"]))
+        last = torch.zeros(int(decision.max()) + 1, dtype=torch.long)
+        last = last.scatter_reduce(0, decision, index, "amax", include_self=False)[decision]
+        return options + 0.5 * options[last] * (last != index)[:, None], actions
+
+
+class Roles(Pooled):
+    @timed("realisations.Roles.__init__")
+    def __init__(self, hidden, width):
+        super().__init__(hidden, width)
+        self.table = nn.Embedding(64, hidden)
+
+    def forward(self, fields, held):
+        options, actions = super().forward(fields, held)
+        decision, owner = held["decision"], held["action_option"][held["role_action"]]
+        own = options.new_zeros(options.shape).index_add(0, owner, self.table(held["role_code"]))
+        pooled = options.new_zeros((int(decision.max()) + 1, options.shape[1])).index_add(0, decision, own)
+        return options + pooled[decision] - own, actions
+
+
 class Realised:
     version = 1
     reads = FIELDS
@@ -159,7 +182,10 @@ REALISED = dict(
     pooling=Realised(Pooling),
     positional=Realised(Positional),
     placing=Together(Positional),
+    last=Realised(Last),
+    roles=Realised(Roles),
 )
+APART = "the score of an option of the kind of task turn differs from its score where it is the only option of its decision, and the realisation of options %s does not state that it reads"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -374,12 +400,10 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
     moved = "with the weights drawn by the seed 5, the prediction does not move with the field parameter speed of go"
     with pytest.raises(ValueError, match=moved + " of the kind of task turn for any option of the splits scored on, under the realisation of options muted$"):
         guarded(held, "muted")
-    with pytest.raises(ValueError, match="option of the kind of task turn changes when the kind of another option of its decision change, and the realisation of options mixing does not state"):
-        guarded(held, "mixing")
+    for name in ("mixing", "pooling", "last", "roles"):
+        with pytest.raises(ValueError, match=APART % name):
+            guarded(held, name)
     assert guarded(held, "together")["pairs"] == found["pairs"]
-    pooling = "changes when the members named by the targets of another option of its decision change, and the realisation of options pooling does not state"
-    with pytest.raises(ValueError, match=pooling):
-        guarded(held, "pooling")
     with pytest.raises(ValueError, match="whose actions, go, go, are a set changes with the order of its actions under the realisation of options ordered"):
         guarded(held, "ordered")
     assert guarded(held, "flat")["share"] == 1.0
@@ -400,9 +424,10 @@ def test_options_are_packed_in_an_order_keyed_by_their_content_and_a_realisation
         for partition in (0, 1):
             assert support.same(unpointed(packed(one, name, partition)), unpointed(packed(other, name, partition))), name
     held = opened(banks, "stated")
-    for name in ("positional", "placing"):
-        with pytest.raises(ValueError, match="changes when the options of its decision are swapped, under the realisation of options %s; permuting" % name):
-            guarded(held, name)
+    with pytest.raises(ValueError, match=APART % "positional"):
+        guarded(held, "positional")
+    with pytest.raises(ValueError, match="changes when the options of its decision are swapped, under the realisation of options placing; permuting"):
+        guarded(held, "placing")
     LOG.info("options keyed by content exit seconds=%.3f", time.perf_counter() - started)
 
 

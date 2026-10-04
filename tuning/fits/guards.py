@@ -21,6 +21,10 @@ CLOSE = 1e-6
 STATE = 1e-5
 EQUAL, BACK = "equal", "back"
 MADE = dict(targets="the end of a fact", kind="the relation of a fact", parameters="a value of a fact")
+APART = (
+    "the score of an option of the kind of task %s differs from its score where it is the only option of its "
+    "decision, and the realisation of options %s does not state that it reads the options of a decision together"
+)
 PLACED = (
     "the score of an option of the kind of task %s changes when the options of its decision are %s, under the "
     "realisation of options %s; permuting the options of a decision permutes their scores"
@@ -51,21 +55,32 @@ def turned(group, step):
     return result
 
 
+@timed("guards.places")
+def places(group):
+    order = np.argsort(group, kind="stable")
+    grouped = group[order]
+    result = np.empty(len(group), np.int64)
+    result[order] = np.arange(len(order)) - np.searchsorted(grouped, grouped)
+    return result
+
+
 def rearranged(held, fields, moved, acts):
     started = time.perf_counter()
     device = held["action_option"].device
-    inverse = np.empty(len(moved), np.int64)
+    inverse = np.full(len(held["sequence"]), -1, np.int64)
     inverse[moved] = np.arange(len(moved))
-    acting = np.empty(len(acts), np.int64)
+    acting = np.full(len(held["action_option"]), -1, np.int64)
     acting[acts] = np.arange(len(acts))
     roled = acting[np.asarray(held["role_action"].cpu(), np.int64)]
-    roles = np.argsort(roled, kind="stable")
+    kept = np.flatnonzero(roled >= 0)
+    roles = kept[np.argsort(roled[kept], kind="stable")]
     index = {name: torch.as_tensor(found, device=device) for name, found in (("option", moved), ("action", acts), ("role", roles))}
     owner = inverse[np.asarray(held["action_option"].cpu(), np.int64)][acts]
+    decision = np.unique(np.asarray(held["decision"].cpu(), np.int64)[moved], return_inverse=True)[1]
     result = dict(
         held,
         row=held["row"][index["option"]],
-        decision=held["decision"][index["option"]],
+        decision=torch.as_tensor(decision.reshape(-1), device=device),
         sequence=held["sequence"][index["option"]],
         kind=np.asarray(held["kind"])[moved],
         content=np.asarray(held["content"])[moved],
@@ -247,45 +262,20 @@ class Guard:
         LOG.debug("guard derived exit options=%d seconds=%.4f", len(owner), time.perf_counter() - started)
         return {name: value.detach() for name, value in fields.items()}
 
-    def kept(self, features, b, changed, values, mask, others, name):
-        started = time.perf_counter()
-        with torch.no_grad():
-            again = self.scored(features, b, changed)[0].cpu().numpy()
-        differ = others[:, None] & mask & ~close(again, values)
-        if differ.any():
-            kind = self.kinds[int(np.asarray(b["options"]["kind"])[np.flatnonzero(differ.any(1))[0]])]
-            raise ValueError(
-                "the score of an option of the kind of task %s changes when the %s of another option of its "
-                "decision change, and the realisation of options %s does not state that it reads the options of "
-                "a decision together" % (kind, name, self.name)
-            )
-        LOG.debug("guard kept exit moved=%s seconds=%.4f", name, time.perf_counter() - started)
-
-    def apart(self, features, b, members, fields, values, mask):
+    def apart(self, features, b, fields, values, mask):
         started = time.perf_counter()
         held = b["options"]
-        decision = np.asarray(held["decision"].cpu(), np.int64)
-        owner = np.asarray(held["action_option"].cpu(), np.int64)
-        acted = np.bincount(owner, minlength=len(decision)) > 0
-        chosen = np.full(decision.max() + 1 if len(decision) else 0, -1, np.int64)
-        for place in np.flatnonzero(acted)[::-1].tolist():
-            chosen[decision[place]] = place
-        moved = np.zeros(len(decision), bool)
-        moved[chosen[chosen >= 0]] = True
-        others = ~moved & (chosen[decision] >= 0)
-        roles = moved[owner][np.asarray(held["role_action"].cpu(), np.int64)]
-        rows = dict(kind=moved[owner], parameters=moved[owner], targets=roles)
-        for name in fields:
-            changed = dict(fields)
-            changed[name] = fields[name] + torch.as_tensor(rows[name], device=fields[name].device)[:, None]
-            self.kept(features, b, changed, values, mask, others, name)
-        ends = held["role_member"][torch.as_tensor(roles, device=members.device)].flatten()
-        ends = ends[ends >= 0]
-        shifted = members.index_add(0, ends, members.new_ones((len(ends), members.shape[1])))
-        with torch.no_grad():
-            changed = self.head.options.fields(b, shifted)
-        self.kept(features, b, changed, values, mask, others, "members named by the targets")
-        LOG.debug("guard apart exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
+        owner, slot = np.asarray(held["action_option"].cpu(), np.int64), places(np.asarray(held["decision"].cpu(), np.int64))
+        alone = np.zeros_like(values)
+        for place in np.unique(slot).tolist():
+            chosen = np.flatnonzero(slot == place)
+            lone, changed = rearranged(held, fields, chosen, np.flatnonzero(np.isin(owner, chosen)))
+            with torch.no_grad():
+                alone[chosen] = self.scored(features, dict(b, options=lone), changed)[0].cpu().numpy()
+        wrong = np.flatnonzero((mask & ~close(alone, values)).any(1))
+        if len(wrong):
+            raise ValueError(APART % (self.kinds[int(np.asarray(held["kind"])[wrong[0]])], self.name))
+        LOG.debug("guard apart exit options=%d slots=%d seconds=%.4f", len(slot), len(np.unique(slot)), time.perf_counter() - started)
 
     def placed(self, features, b, fields, values, mask):
         started = time.perf_counter()
@@ -368,7 +358,7 @@ class Guard:
                 values, options, actions = self.scored(features, b, fields)
             values = values.cpu().numpy()
             if not self.entry.together:
-                self.apart(features, b, members, fields, values, mask)
+                self.apart(features, b, fields, values, mask)
             self.placed(features, b, fields, values, mask)
             self.ordered(b, fields, options, actions)
             self.alike(b, values, mask)
@@ -474,29 +464,15 @@ class Forked(Guard):
     def apart(self, b, values, mask):
         started = time.perf_counter()
         held = b["options"]
-        decision, chosen = np.asarray(held["decision"], np.int64), {}
-        for place in range(len(decision)):
-            if int(decision[place]) not in chosen and int(self.found.actions[1][int(held["option"][place])]) > 0:
-                chosen[int(decision[place])] = place
-        moved = set(chosen.values())
-        others = np.asarray([place not in moved and int(decision[place]) in chosen for place in range(len(decision))])
-        if not others.any():
-            LOG.debug("forked guard apart exit decisions=0 seconds=%.4f", time.perf_counter() - started)
-            return
-        blocks = [
-            (replace(block[0], move=("kind",)),) + tuple(block[1:]) if place in moved else block
-            for place, block in enumerate(held["block"])
-        ]
-        again = self.valued(pack_parts(self.bank, blocks, self.cfg, self.device))
-        differ = others[:, None] & mask & ~close(again, values)
-        if differ.any():
-            kind = self.kinds[int(np.asarray(held["kind"])[np.flatnonzero(differ.any(1))[0]])]
-            raise ValueError(
-                "the score of an option of the kind of task %s changes when the facts of another option of its "
-                "decision are withheld, and the realisation of options %s does not state that it reads the options "
-                "of a decision together" % (kind, self.name)
-            )
-        LOG.debug("forked guard apart exit decisions=%d seconds=%.4f", len(chosen), time.perf_counter() - started)
+        slot, blocks = places(np.asarray(held["decision"], np.int64)), held["block"]
+        alone = np.zeros_like(values)
+        for place in np.unique(slot).tolist():
+            chosen = np.flatnonzero(slot == place)
+            alone[chosen] = self.valued(pack_parts(self.bank, [blocks[at] for at in chosen.tolist()], self.cfg, self.device))
+        wrong = np.flatnonzero((mask & ~close(alone, values)).any(1))
+        if len(wrong):
+            raise ValueError(APART % (self.kinds[int(np.asarray(held["kind"])[wrong[0]])], self.name))
+        LOG.debug("forked guard apart exit options=%d slots=%d seconds=%.4f", len(slot), len(np.unique(slot)), time.perf_counter() - started)
 
     def placed(self, b, values, mask):
         started = time.perf_counter()
