@@ -23,7 +23,7 @@ from tuning.batches import inputs
 from tuning.batches.batching import batches, pack_batch
 from tuning.families import model_spec
 from tuning.families import options as channel
-from tuning.families.heads import FIELDS, NONE, REALISATION, coded, realisation, refused
+from tuning.families.heads import DEPTH, DEPTHS, FIELDS, NONE, REALISATION, coded, realisation, refused
 from tuning.families.model_spec import VIEWS, realisable, space, views
 from tuning.families.models import build as network
 from tuning.families.options import Node
@@ -48,6 +48,7 @@ READERS = ["snapshot", "mixed", "event_graph", "tree"]
 SHIPPED = dict(node=("picked", []), vector=("stated", UNSEEN), **{name: ("stated", UNSEEN) for name in STRUCTURAL})
 LAST = dict(node=1, vector=2, **{name: 2 for name in STRUCTURAL})
 ALONE = 1e-5
+ROUNDS = 2
 REACHED = dict(
     node={"fields.role.weight", "fields.node.0.weight", "fields.node.0.bias"},
     vector={"fields.kind.weight", "fields.role.weight", "fields.relation.weight", "fields.node.0.weight"}
@@ -158,8 +159,9 @@ def realisations():
 
 
 @timed("realisations.configured")
-def configured(held, realisation, values=KEYED, graph=SAMPLED):
-    return support.configuration(held.registry, dict(values, **{REALISATION: realisation}), graph, 5, SPLITS)
+def configured(held, name, values=KEYED, graph=SAMPLED):
+    deep = {DEPTH: ROUNDS} if name != NONE and realisation(name).structure else {}
+    return support.configuration(held.registry, {**deep, **values, REALISATION: name}, graph, 5, SPLITS)
 
 
 @timed("realisations.grouped")
@@ -680,24 +682,94 @@ def test_through_each_family_that_reads_them_a_set_of_actions_encodes_alike_in_a
     own = {0: (torch.randn(1, 8, generator=generator), [0]), 1: (torch.randn(2, 8, generator=generator), [3, 1])}
     actor, picked = torch.randn(1, 8, generator=generator), [0, 1, 1, 0]
     readers = [family for family in VIEWS if model_spec.STRUCTURE[family] is None]
-    for family in readers:
-        for name in STRUCTURAL:
-            spec = configured(held, name, modelled(family), PLAIN)["model"]
-            torch.manual_seed(5)
-            module = REALISATIONS.named(name).module(8, 3, spec, held.registry).eval()
-            codes, parts = [], []
-            for at, action in enumerate(picked):
-                rows, labels = own[action]
-                parts += [rows] + ([actor] if realisation(name).actor else [])
-                codes += [(at, code) for code in labels] + ([(at, slot)] if realisation(name).actor else [])
-            fields = dict(kind=kind[picked], targets=torch.cat(parts), parameters=parameters[picked])
-            encoded = []
-            for sequence in (False, True):
-                with torch.no_grad():
-                    options = module(fields, acted([0, 0, 1, 1], 2, codes, sequence, [0, 1, 0, 1]))[0]
-                encoded.append(torch.allclose(options[0], options[1], rtol=1e-6, atol=1e-6))
-            assert encoded == [True, False], (family, name)
+    for family, name, deep in [(family, name, deep) for family in readers for name in STRUCTURAL for deep in (0, ROUNDS)]:
+        spec = configured(held, name, dict(modelled(family), **{DEPTH: deep}), PLAIN)["model"]
+        torch.manual_seed(5)
+        module = REALISATIONS.named(name).module(8, 3, spec, held.registry).eval()
+        codes, parts = [], []
+        for at, action in enumerate(picked):
+            rows, labels = own[action]
+            parts += [rows] + ([actor] if realisation(name).actor else [])
+            codes += [(at, code) for code in labels] + ([(at, slot)] if realisation(name).actor else [])
+        fields = dict(kind=kind[picked], targets=torch.cat(parts), parameters=parameters[picked])
+        encoded = []
+        for sequence in (False, True):
+            with torch.no_grad():
+                options = module(fields, acted([0, 0, 1, 1], 2, codes, sequence, [0, 1, 0, 1]))[0]
+            encoded.append(torch.allclose(options[0], options[1], rtol=1e-6, atol=1e-6))
+        assert encoded == [True, False], (family, name, deep)
     LOG.info("order through families exit families=%d seconds=%.3f", len(readers), time.perf_counter() - started)
+
+
+class Late(nn.Module):
+    @timed("realisations.Late.__init__")
+    def __init__(self, realised, slot):
+        super().__init__()
+        self.realised, self.slot = realised, slot
+
+    def forward(self, fields, structure):
+        module, rows = self.realised, fields["targets"]
+        owner, acting, codes = structure["action_option"], structure["role_action"], structure["role_code"]
+        placed = module.place(torch.log1p(structure["action_place"].float())[:, None]) * structure["sequence"][owner][:, None]
+        own = module.action(torch.cat((fields["kind"] + placed, fields["parameters"]), -1))
+        actions = []
+        for action in range(len(owner)):
+            read = torch.nonzero(acting == action).flatten()
+            if module.element == "action":
+                actions.append(own[action] + rows[read].mean(0))
+                continue
+            actor = read[codes[read] == self.slot]
+            edges = [own[action] + rows[torch.cat((target[None], actor))].mean(0) for target in read[codes[read] != self.slot]]
+            actions.append(torch.stack(edges).mean(0))
+        actions = torch.stack(actions)
+        options = [actions[owner == option].mean(0) if (owner == option).any() else module.empty for option in range(len(structure["sequence"]))]
+        return torch.stack(options), actions
+
+
+def test_a_structural_realisation_reads_its_depth_stated_without_a_default_as_rounds_of_its_familys_layer(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    (deepening,) = [parameter for parameter in space(held.registry) if parameter.name == DEPTH]
+    assert deepening.options == DEPTHS and deepening.default is None
+    for name in (NONE,) + REALISATIONS.names():
+        assert deepening.active(dict(view="snapshot", **{REALISATION: name})) == (name in STRUCTURAL)
+    stops = "the pipeline states no options/depth, which has no default; it is one of [0, 1, 2, 3]"
+    with pytest.raises(ValueError, match=re.escape(stops)):
+        support.configuration(held.registry, dict(KEYED, **{REALISATION: "set_edge"}), PLAIN, 5, SPLITS)
+    with pytest.raises(ValueError, match="spec sets inactive or unknown parameters: options/depth"):
+        support.configuration(held.registry, dict(KEYED, **{REALISATION: "vector", DEPTH: 0}), PLAIN, 5, SPLITS)
+    stated = "the model of the family tree states the realisation of options set_edge, which puts options into the graph of its family, and states no options/depth"
+    with pytest.raises(ValueError, match="^" + re.escape(stated)):
+        REALISATIONS.named("set_edge").module(8, 3, dict(view="tree", **{REALISATION: "set_edge"}), held.registry)
+    layers = {"snapshot": "layers", "mixed": "layers", "event_graph": "layers", "tree": "q"}
+    for family, name, deep in [(family, name, deep) for family in READERS for name in STRUCTURAL for deep in DEPTHS]:
+        spec = configured(held, name, dict(modelled(family), **{DEPTH: deep}), PLAIN)["model"]
+        received = REALISATIONS.named(name).module(8, 3, spec, held.registry).received
+        assert (0 if received is None else len(getattr(received, layers[family]))) == deep, (family, name, deep)
+    LOG.info("depth stated exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_at_depth_zero_each_option_is_scored_from_the_encoding_of_the_state_alone(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    slot, plain = len(coded(held.registry.schema)[1]), packed(held, NONE, 1, graph=PLAIN)[0]
+    alone = {"place.weight", "action.0.weight", "action.0.bias", "action.2.weight", "action.2.bias", "empty"}
+    for name in STRUCTURAL:
+        cfg = configured(held, name, dict(KEYED, **{DEPTH: 0}), PLAIN)
+        torch.manual_seed(5)
+        net = network(cfg, held.fitted(cfg)).eval()
+        module = net.head.options.realised
+        assert module.received is None and {key for key, _ in module.named_parameters()} == alone
+        b = packed(held, "actor_edge" if realisation(name).actor else "whole", 1, graph=PLAIN)[0]
+        guard = Guard(held, cfg, net, 5)
+        guard.checked(b, plain)
+        assert guard.concluded(1.0)["state"] == "equal"
+        with torch.no_grad():
+            scored = net(b)
+            net.head.options.realised = Late(module, slot)
+            late = net(b)
+        assert torch.allclose(scored, late, rtol=1e-6, atol=1e-6), name
+    LOG.info("depth zero exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_family_that_passes_no_message_over_a_graph_reads_no_structural_realisation_and_a_search_never_offers_it(banks):
@@ -724,6 +796,8 @@ def test_a_family_that_passes_no_message_over_a_graph_reads_no_structural_realis
     assert all(spec[REALISATION] not in STRUCTURAL or model_spec.unstructured(spec) is None for spec in drawn)
     assert {spec["view"] for spec in drawn} == set(VIEWS)
     assert {spec[REALISATION] for spec in drawn if spec["view"] in readers} >= set(STRUCTURAL)
+    assert all((DEPTH in spec) == (spec[REALISATION] in STRUCTURAL) for spec in drawn)
+    assert {spec[DEPTH] for spec in drawn if DEPTH in spec} == set(DEPTHS)
     template = support.template()
     assert excluded(held.registry, configured(held, "actor_edge", modelled("walks"), PLAIN), {}, template) == [REALISATION]
     assert excluded(held.registry, configured(held, "actor_edge", modelled("tree"), PLAIN), {}, template) == []

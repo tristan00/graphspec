@@ -20,15 +20,14 @@ from .periods import EndContext, enabled, lookback
 
 class Received(nn.Module):
     @timed("neighbors.received")
-    def __init__(self, spec, hidden, labels):
+    def __init__(self, spec, hidden, labels, rounds):
         super().__init__()
-        depth = spec["tree/depth"]
         self.relation = nn.Embedding(labels, hidden)
-        self.q = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(depth))
-        self.k = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(depth))
-        self.v = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(depth))
+        self.q = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(rounds))
+        self.k = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(rounds))
+        self.v = nn.ModuleList(nn.Linear(hidden, hidden) for _ in range(rounds))
         self.merge = nn.ModuleList(
-            nn.Sequential(nn.Linear(2 * hidden, hidden), nn.SiLU(), normalization(hidden)) for _ in range(depth)
+            nn.Sequential(nn.Linear(2 * hidden, hidden), nn.SiLU(), normalization(hidden)) for _ in range(rounds)
         )
 
     def forward(self, sinks, sources, edges, label):

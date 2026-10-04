@@ -11,11 +11,11 @@ KINDS = 4
 
 class Received(nn.Module):
     @timed("events.received")
-    def __init__(self, spec, hidden, labels):
+    def __init__(self, spec, hidden, labels, rounds):
         super().__init__()
         self.layers = nn.ModuleList(
             TemporalEdges(hidden, spec["event_graph/message"] == "attention", labels, spec["dropout"], None)
-            for _ in range(spec["event_graph/layers"])
+            for _ in range(rounds)
         )
 
     def forward(self, sinks, sources, edges, label):

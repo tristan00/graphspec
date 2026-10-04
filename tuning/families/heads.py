@@ -11,6 +11,8 @@ HEADS = Names("head of a kind of target", False)
 REALISATIONS = Names("realisation of options", True)
 FIELD = "field/"
 REALISATION = "options/realisation"
+DEPTH = "options/depth"
+DEPTHS = (0, 1, 2, 3)
 NONE = "none"
 ONE = "the realisation reads options of one action whose one target is a node"
 FIELDS = ("kind", "targets", "parameters")
@@ -178,7 +180,7 @@ def refused(name, schema):
 
 
 class Existing:
-    version = 4
+    version = 5
     reads = ("targets",)
     together = False
     back = False
@@ -213,7 +215,7 @@ class Existing:
 
 
 class Built:
-    version = 4
+    version = 5
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
@@ -232,7 +234,7 @@ class Built:
 
 
 class Structural:
-    version = 2
+    version = 3
     reads = ("kind", "targets", "parameters")
     together = False
     back = False

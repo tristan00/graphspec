@@ -23,11 +23,11 @@ from .periods import EndContext, enabled, gather_end
 
 class Received(nn.Module):
     @timed("snapshot.received")
-    def __init__(self, spec, hidden, labels):
+    def __init__(self, spec, hidden, labels, rounds):
         super().__init__()
         self.mode = spec["snapshot/spatial"]
         self.layers = nn.ModuleList(
-            Spatial(hidden, self.mode, labels, {}, spec["dropout"], 1, labels) for _ in range(spec["snapshot/layers"])
+            Spatial(hidden, self.mode, labels, {}, spec["dropout"], 1, labels) for _ in range(rounds)
         )
         self.register_buffer("grouped", torch.arange(labels), persistent=False)
 

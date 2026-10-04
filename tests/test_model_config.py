@@ -16,7 +16,7 @@ from graphspec.operations import parameters as specs
 from tuning.bank.bank import Deriver
 from tuning.batches.batching import pack_batch
 from tuning.batches.packing import Packer
-from tuning.families.heads import NONE, REALISATION, REALISATIONS, realisation
+from tuning.families.heads import DEPTH, DEPTHS, NONE, REALISATION, REALISATIONS, realisation
 from tuning.families.layers import CausalAttention, TimeEncoding
 from tuning.families.model_spec import configured, samples, space, unstructured, views
 from tuning.families.models import build
@@ -108,14 +108,19 @@ def test_the_check_states_every_value_of_a_choice_without_a_default_and_starts_i
         offered = samples(registry(decided=("ask",)))
     finally:
         del REALISATIONS.held["stated"]
-    starts = {}
+    starts, depths = {}, {}
     for model in offered:
-        rest = tuple(sorted((name, value) for name, value in model.items() if name != REALISATION))
+        rest = tuple(sorted((name, value) for name, value in model.items() if name not in (REALISATION, DEPTH)))
         starts.setdefault(model[REALISATION], set()).add(rest)
+        if DEPTH in model:
+            depths.setdefault(model[REALISATION], {}).setdefault(rest, set()).add(model[DEPTH])
     assert sorted(starts) == sorted([NONE, "stated", *REALISATIONS.shipped])
     read = {rest for rest in starts[NONE] if unstructured(dict(rest)) is None}
     assert read and read != starts[NONE] and {dict(rest)["view"] for rest in read} == {"snapshot", "mixed", "event_graph", "tree"}
-    assert all(found == (read if name in REALISATIONS.shipped and realisation(name).structure else starts[NONE]) for name, found in starts.items())
+    deep = [name for name in REALISATIONS.shipped if realisation(name).structure]
+    assert all(found == (read if name in deep else starts[NONE]) for name, found in starts.items())
+    assert sorted(depths) == sorted(deep) and all(set(held) == read for held in depths.values())
+    assert all(found == set(DEPTHS) for held in depths.values() for found in held.values())
     LOG.info("samples of a choice without a default exit seconds=%.3f", time.perf_counter() - started)
 
 

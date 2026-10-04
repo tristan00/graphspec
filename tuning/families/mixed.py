@@ -46,11 +46,10 @@ class MessageLayer(nn.Module):
 
 class Received(nn.Module):
     @timed("message_net.received")
-    def __init__(self, spec, hidden, labels):
+    def __init__(self, spec, hidden, labels, rounds):
         super().__init__()
         self.layers = nn.ModuleList(
-            MessageLayer(hidden, spec["mixed/aggregation"], spec["mixed/update"], spec["dropout"])
-            for _ in range(spec["mixed/layers"])
+            MessageLayer(hidden, spec["mixed/aggregation"], spec["mixed/update"], spec["dropout"]) for _ in range(rounds)
         )
         self.register_buffer("shifts", torch.arange(CODE_BITS), persistent=False)
 

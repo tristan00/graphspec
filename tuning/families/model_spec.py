@@ -4,11 +4,11 @@ import time
 from graphspec import registries
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
-from graphspec.operations.parameters import GROUPS, among, choice, draw, equals, flag, narrow, number, real
+from graphspec.operations.parameters import GROUPS, among, choice, equals, flag, narrow, number, real
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
-from .heads import NONE, REALISATION, REALISATIONS, reading, realisation, refused
+from .heads import DEPTH, DEPTHS, NONE, REALISATION, REALISATIONS, reading, realisation, refused
 
 LOG = logging.getLogger(__name__)
 SPACES = {}
@@ -176,6 +176,21 @@ def realised(spec, schema):
             "that decides: %s or a realisation registered in tuning.REALISATIONS" % (spec["view"], REALISATION, NONE)
         )
     return None if spec[REALISATION] == NONE else spec[REALISATION]
+
+
+def deep(spec):
+    return REALISATION in spec and spec[REALISATION] != NONE and REALISATIONS.named(spec[REALISATION]).structure
+
+
+@timed("model_spec.depth")
+def depth(spec):
+    if DEPTH not in spec:
+        raise ValueError(
+            "the model of the family %s states the realisation of options %s, which puts options into the graph of its "
+            "family, and states no %s, the number of rounds of messages from the state into each option, one of %s"
+            % (spec["view"], spec[REALISATION], DEPTH, ", ".join(map(str, DEPTHS)))
+        )
+    return spec[DEPTH]
 
 
 @timed("model_spec.edited")
@@ -364,6 +379,7 @@ def built(offered, events, encoded, decides, families):
         parameters.append(
             choice(REALISATION, (NONE,) + REALISATIONS.names(), None, lambda spec: optioned(spec, families))
         )
+        parameters.append(choice(DEPTH, DEPTHS, None, deep))
     LOG.debug(
         "model space built exit seconds=%.4f parameters=%d views=%d",
         time.perf_counter() - started,
@@ -502,14 +518,15 @@ def samples(registry):
             )
 
     def add(values):
-        spec = specs.canonical(parameters, draw(parameters, lambda parameter: parameter.given(values)))
-        if REALISATION in spec and placing[spec[REALISATION]] is not None and placing[spec[REALISATION]](spec) is not None:
-            return None
-        if spec not in result:
-            result.append(spec)
-        return spec
+        found = []
+        for spec in starts(values):
+            if REALISATION in spec and placing[spec[REALISATION]] is not None and placing[spec[REALISATION]](spec) is not None:
+                continue
+            found.append(spec)
+            if spec not in result:
+                result.append(spec)
+        return found
 
-    @timed("model_spec.samples.starts")
     def starts(values):
         spec = {}
         for parameter in parameters:
@@ -518,17 +535,18 @@ def samples(registry):
                     options = (fitting(parameter, spec) if parameter.name == REALISATION else parameter).options
                     return [found for option in options for found in starts(dict(values, **{parameter.name: option}))]
                 spec[parameter.name] = parameter.given(values)
-        return [values]
+        return [spec]
 
     for name in views(registry):
-        for base in filter(None, [add(values) for values in starts(dict(view=name))]):
+        for base in add(dict(view=name)):
             first = [
-                add(dict(base, **{parameter.name: option}))
+                spec
                 for parameter in switches
                 if parameter.active(base)
                 for option in parameter.options
+                for spec in add(dict(base, **{parameter.name: option}))
             ]
-            for spec in filter(None, first):
+            for spec in first:
                 for parameter in switches:
                     if parameter.name in spec:
                         for option in parameter.options:

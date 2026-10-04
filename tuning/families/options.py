@@ -95,12 +95,13 @@ class Vector(nn.Module):
 
 @timed("options.received")
 def received(spec, hidden, labels):
-    from .model_spec import unstructured
+    from .model_spec import depth, unstructured
 
     reason = unstructured(spec)
     if reason is not None:
         raise ValueError("the family %s reads no option put into its graph: %s" % (spec["view"], reason))
-    return import_module("." + spec["view"], __package__).Received(spec, hidden, labels)
+    rounds = depth(spec)
+    return import_module("." + spec["view"], __package__).Received(spec, hidden, labels, rounds) if rounds else None
 
 
 class Structured(nn.Module):
@@ -126,7 +127,10 @@ class Structured(nn.Module):
             held = torch.full((len(actions),), -1, dtype=torch.long, device=code.device).index_put((acting[actor],), actor)
             each = torch.arange(len(target), device=code.device)
             source, sink, sinks = torch.cat((target, held[acting[target]])), torch.cat((each, each)), actions[acting[target]]
-        found = self.received(sinks, fields["targets"], (source, sink), code[source])
+        if self.received is None:
+            found = sinks + mean(fields["targets"][source], sink, len(sinks))
+        else:
+            found = self.received(sinks, fields["targets"], (source, sink), code[source])
         acted = found if self.element == "action" else mean(found, acting[target], len(actions))
         count = acted.new_zeros(len(structure["sequence"])).index_add(0, owner, acted.new_ones(len(owner)))
         total = acted.new_zeros((len(count), acted.shape[1])).index_add(0, owner, acted)
