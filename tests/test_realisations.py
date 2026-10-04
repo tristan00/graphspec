@@ -42,7 +42,9 @@ SAMPLED = dict(PLAIN, **{"nodes/spot/filter": "sample", "nodes/spot/sample": 0.5
 UNSEEN = ["parameter lit of put of show", "parameter mode of cut of show", "target along of cut of show"]
 UNSEEN += ["target at of put of show", "target made of put of show"]
 UNREAD = ("available", "chosen", "order", "shown", "logged", "generator", "seed", "drawn")
-PACKED, BUILT, SHOWN = {}, {}, {}
+PACKED, BUILT, SHOWN, NAMED = {}, {}, {}, {}
+POINTS = ("aim", "point_node", "point_row", "series", "weight")
+POINTED = ("point_option", "point_action")
 SHARED = (banks, registered)
 STRUCTURAL = ("action_nodes", "actor_edge", "set_edge")
 READERS = ["snapshot", "mixed", "event_graph", "tree"]
@@ -227,6 +229,7 @@ def realisations():
     PACKED.clear()
     BUILT.clear()
     SHOWN.clear()
+    NAMED.clear()
 
 
 @timed("realisations.configured")
@@ -396,12 +399,57 @@ def test_the_options_of_every_decision_reach_its_batch_beside_the_variant_and_re
     LOG.info("options read back exit kept=%d left=%d seconds=%.3f", kept, left, time.perf_counter() - started)
 
 
+@timed("realisations.named")
+def named(held):
+    if id(held) not in NAMED:
+        NAMED[id(held)] = {
+            (graph, key): [option["key"] for option in decision["options"]]
+            for graph, found in support.read_back(held).items()
+            for key, decision in zip(found["tasks"]["key"], found["decisions"])
+            if decision is not None
+        }
+    return NAMED[id(held)]
+
+
+def canonical(held, found):
+    started, names, result = time.perf_counter(), named(held), []
+    deciding = held.registry.schema.decided()
+    for b in found:
+        placed = np.asarray(b["placed"])
+        rows = np.r_[np.asarray(b["rows"]), np.asarray(b["drawn"])][placed]
+        left = np.r_[np.asarray(b["left"], bool), np.zeros(len(b["drawn"]), bool)][placed]
+        points = []
+        for row in rows.tolist():
+            stated = held.rows[row]
+            owned = (names[stated["graph"], stated["ticket"]][stated["option"]], stated["part"]) if stated["kind"] in deciding else ("", 0)
+            points.append((stated["graph"], stated["kind"], stated["ticket"], *owned, stated["series"]))
+        order = sorted(range(len(points)), key=lambda at: (int(b["point_row"][at]), points[at]))
+        index = torch.as_tensor(order, dtype=torch.long)
+        options = {key: value[index] if key in POINTED else value for key, value in (b["options"].items() if "options" in b else ())}
+        result.append(
+            dict(
+                {key: value for key, value in b.items() if key not in ("rows", "drawn", "placed", "left", "options")},
+                **{key: b[key][index] for key in POINTS},
+                points=[points[at] for at in order],
+                lefts=left[order],
+                options=options,
+            )
+        )
+    LOG.debug("realisations canonical exit batches=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
 def test_nothing_a_realisation_must_not_read_reaches_its_batch(banks):
     started = time.perf_counter()
     stated, flipped = opened(banks, "stated"), opened(banks, "flipped")
     assert not set(offered.READ) & {"option_" + name for name in UNREAD}
     for partition in (0, 1):
         assert support.same(packed(stated, "whole", partition), packed(flipped, "whole", partition))
+    for (left, right), names in ((("stated", "moved"), (NONE, "vector") + STRUCTURAL), (("picked", "moved_picked"), (NONE, "node"))):
+        one, other = opened(banks, left), opened(banks, right)
+        for name, partition in [(name, partition) for name in names for partition in (0, 1)]:
+            found = (canonical(held, packed(held, name, partition)) for held in (one, other))
+            assert support.same(*found), (left, name, partition)
     cfg, targets, fields = configured(stated, "whole"), stated.targets, stated.fields
     stated.targets = targets[::-1] + 1
     stated.fields = dict(fields, chosen=~fields["chosen"])
@@ -442,11 +490,6 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
     with pytest.raises(ValueError, match="have equal predictions under the realisation of options uniform, a share of 1.0000 above the statement's alike 0.5$"):
         guarded(held, "uniform", 0.5)
     LOG.info("guards of realisations exit seconds=%.3f", time.perf_counter() - started)
-
-
-@timed("realisations.unpointed")
-def unpointed(found):
-    return [{key: value for key, value in b["options"].items() if not key.startswith("point_")} for b in found]
 
 
 def test_one_action_has_one_content_as_a_set_and_as_a_sequence_and_a_created_element_counts_by_its_role(banks):
@@ -503,18 +546,14 @@ def test_a_set_of_three_actions_gives_the_same_encoding_whichever_two_are_swappe
     LOG.info("sets of three exit seconds=%.3f", time.perf_counter() - started)
 
 
-def test_options_are_packed_in_an_order_keyed_by_their_content_and_a_realisation_reading_their_place_is_refused(banks):
+def test_a_realisation_reading_the_place_of_an_option_is_refused_whether_or_not_it_reads_options_together(banks):
     started = time.perf_counter()
-    for (left, right), name in ((("stated", "moved"), "vector"), (("picked", "moved_picked"), "node")):
-        one, other = opened(banks, left), opened(banks, right)
-        for partition in (0, 1):
-            assert support.same(unpointed(packed(one, name, partition)), unpointed(packed(other, name, partition))), name
     held = opened(banks, "stated")
     with pytest.raises(ValueError, match=APART % "positional"):
         guarded(held, "positional")
     with pytest.raises(ValueError, match="changes when the options of its decision are swapped, under the realisation of options placing; permuting"):
         guarded(held, "placing")
-    LOG.info("options keyed by content exit seconds=%.3f", time.perf_counter() - started)
+    LOG.info("place of options exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_search_offers_a_realisation_where_the_bank_decides_and_only_to_a_family_that_reads_options(banks, bank, monkeypatch):

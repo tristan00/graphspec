@@ -9,7 +9,7 @@ import pytest
 import support
 import torch
 from test_decisions import banks, opened, registered
-from test_realisations import PLAIN, modelled, varied
+from test_realisations import PLAIN, canonical, modelled, varied
 
 from conftest import SPLITS, inline
 from graphspec.engine.segments import Derivation
@@ -352,10 +352,10 @@ def test_an_edit_completes_one_fit_whose_guards_record_that_messages_pass_back(b
 
 def test_the_facts_an_edit_adds_come_from_the_content_of_its_option_alone(banks):
     started = time.perf_counter()
-    stated, flipped = opened(banks, "stated"), opened(banks, "flipped")
+    stated, flipped, moved = (opened(banks, name) for name in ("stated", "flipped", "moved"))
     assert not set(OFFERED) & {"option_" + name for name in ("available", "chosen", "order", "shown", "logged", "origin", "outcome")}
-    made = []
-    for held in (stated, flipped):
+    made, packed = [], []
+    for held in (stated, flipped, moved):
         cfg = configured(held, "edited", "snapshot")
         made.append([])
         with forks.Forks(held):
@@ -363,21 +363,13 @@ def test_the_facts_an_edit_adds_come_from_the_content_of_its_option_alone(banks)
                 history = forks.trunk(held, cfg, part[0].graph, part[0].step)
                 edit = forks.made(held, cfg, history, part[0], forks.ordered(held, part[0].option))
                 made[-1].append([np.asarray(values) for side in edit.added.values() for values in side.values()])
-    assert [len(edit) for edit in made[0]] == [len(edit) for edit in made[1]] and any(len(edit[-4]) for edit in made[0])
+        packed.append(canonical(held, [pack_batch(held, last(held, cfg, 2), cfg, "cpu")]))
+    assert all([len(edit) for edit in found] == [len(edit) for edit in made[0]] for found in made) and any(len(edit[-4]) for edit in made[0])
     assert all(
         np.array_equal(left, right, equal_nan=left.dtype.kind == "f")
-        for one, two in zip(made[0], made[1], strict=True)
+        for other in made[1:]
+        for one, two in zip(made[0], other, strict=True)
         for left, right in zip(one, two, strict=True)
     )
-    cfg = configured(stated, "edited", "snapshot")
-    chosen = last(stated, cfg, 1)
-    targets, fields = stated.targets, stated.fields
-    before = pack_batch(stated, chosen, cfg, "cpu")
-    stated.targets = targets[::-1] + 1
-    stated.fields = dict(fields, chosen=~fields["chosen"])
-    try:
-        after = pack_batch(stated, chosen, cfg, "cpu")
-    finally:
-        stated.targets, stated.fields = targets, fields
-    assert support.same(before, after)
+    assert support.same(packed[0], packed[1]) and support.same(packed[0], packed[2])
     LOG.info("edits from content alone exit seconds=%.3f", time.perf_counter() - started)
