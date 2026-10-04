@@ -13,6 +13,8 @@ from graphspec.schema.targets import pointed
 
 from .operation import OPERATIONS, Refused, Stored
 from .parameters import Parameter, flag
+from .relation_forms import cut as untyped
+from .relations import cut as unkept
 from .sets import PARAMETER, STORAGE
 
 LOG = logging.getLogger(__name__)
@@ -25,6 +27,7 @@ HITS = ("names", "removes")
 NONE = frozenset()
 PROBED = WeakKeyDictionary()
 PLANNED = WeakKeyDictionary()
+CUTS = {"graphspec.relations": unkept, "graphspec.relation_forms": untyped}
 
 
 class Step:
@@ -330,6 +333,17 @@ def emptied(registry, steps):
                 removed.pop(kind, None)
     LOG.debug("emptied exit steps=%d removed=%d seconds=%.4f", len(steps), len(removed), time.perf_counter() - started)
     return removed
+
+
+def unrelated(registry, steps):
+    started = time.perf_counter()
+    result = {}
+    for step in steps:
+        for name, value in step.parameters.items() if step.operation.name in CUTS else ():
+            for group in CUTS[step.operation.name](registry, name, value):
+                result.setdefault(group, (step.name, name, value))
+    LOG.debug("unrelated exit steps=%d removed=%d seconds=%.4f", len(steps), len(result), time.perf_counter() - started)
+    return result
 
 
 def agreed(registry, steps, settings):

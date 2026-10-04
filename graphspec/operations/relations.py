@@ -32,6 +32,11 @@ def stated(registry):
     return result
 
 
+@timed("relations.cut")
+def cut(registry, name, value):
+    return tuple(group for group in registry.groups if name == "relations/%s/keep" % group and value is False)
+
+
 @timed("operators.relations")
 def relations(graph, registry, spec, seed, limits, carry, held):
     dropped = [group for group in registry.groups if not enabled(spec, "relations/%s/keep" % group)]
@@ -53,7 +58,7 @@ RELATIONS = OPERATIONS.register(
         changes=("facts",),
         adds=None,
         kinds=None,
-        version=6,
+        version=7,
         graphs=1,
     ),
 )

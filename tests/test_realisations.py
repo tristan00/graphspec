@@ -468,12 +468,24 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
     with pytest.raises(ValueError, match=where % ("parameter speed of go", "deaf") + "the realisation reads no parameters$"):
         routed(held, configured(held, "deaf"))
     removed = configured(held, "whole", graph={"time/history": 2, "nodes/spot/keep": False})
-    removing = "the pipeline removes every kind of node it may name, spot, the entry graphspec.nodes removing spot$"
+    removing = "the pipeline removes the kind of node spot, which it may name, the entry graphspec.nodes removing it$"
     with pytest.raises(ValueError, match=where % ("target to of go", "whole") + removing):
         routed(held, removed)
+    unkept = configured(held, "whole", graph=dict(PLAIN, **{"relations/near/keep": False}))
+    removing = "the pipeline removes the relation near, which it may name, by relations/near/keep False of the entry graphspec.relations$"
+    with pytest.raises(ValueError, match=where % ("target along of cut", "whole") + removing):
+        routed(held, unkept)
     routed(held, configured(held, "whole"))
     found = guarded(held, "whole")
     assert found["sets"] > 0 and found["pairs"] > 0 and found["share"] == 0.0 and found["unseen"] == UNSEEN
+    filtered = dict(PLAIN, **{"nodes/spot/filter": "degree", "nodes/spot/min_degree": 16})
+    cfg, net = built(held, "whole")
+    guard = Guard(held, dict(cfg, pipeline=configured(held, "whole", graph=filtered)["pipeline"]), net, 5)
+    for b, plain in zip(packed(held, "whole", 1, graph=filtered), packed(held, NONE, 1, graph=filtered)):
+        guard.checked(b, plain)
+    held_out = "^the field target along of cut of the kind of task turn is held by 10 options of the splits scored on, validation, and by none of the options the batches of those splits hold under the realisation of options whole, since the variant shows none of them at the step of its decision: the settings in force on its kinds and relations are nodes/spot/filter degree of the entry graphspec.nodes, nodes/spot/min_degree 16 of the entry graphspec.nodes$"
+    with pytest.raises(ValueError, match=held_out):
+        guard.concluded(1.0)
     moved = "with the weights drawn by the seed 5, the prediction does not move with the field parameter speed of go"
     with pytest.raises(ValueError, match=moved + " of the kind of task turn for any option of the splits scored on, under the realisation of options muted$"):
         guarded(held, "muted")

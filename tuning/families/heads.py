@@ -139,6 +139,20 @@ def coded(schema):
     return actions, roles
 
 
+def related(schema, sort, kinds):
+    started = time.perf_counter()
+    tables, ends = [], set(kinds)
+    for name, entry in schema.edges.items() if sort == "edge" else ():
+        found = [second for first, second in entry["endpoints"] if first in kinds]
+        found += [first for first, second in entry["endpoints"] if not entry["directed"] and second in kinds]
+        if found:
+            tables.append(name)
+            ends.update(found)
+    result = tuple(sorted(ends)), tuple(tables)
+    LOG.debug("options related exit sort=%s tables=%d seconds=%.6f", sort, len(tables), time.perf_counter() - started)
+    return result
+
+
 def fielded(schema, task):
     started = time.perf_counter()
     actions, roles = coded(schema)
@@ -146,8 +160,19 @@ def fielded(schema, task):
     result = [dict(name="kind", sort="kind", code=None)] if several else []
     for code, (owner, action, role, sort, kinds) in enumerate(roles):
         if owner == task:
+            named, relations = related(schema, sort, kinds)
             result.append(
-                dict(name="target %s of %s" % (role, action), sort="targets", code=code, role=sort, kinds=kinds)
+                dict(
+                    name="target %s of %s" % (role, action),
+                    sort="targets",
+                    code=code,
+                    role=sort,
+                    kinds=kinds,
+                    action=action,
+                    part=role,
+                    named=named,
+                    relations=relations,
+                )
             )
     for code, (owner, action) in enumerate(actions):
         if owner == task:

@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from graphspec.infra.timing import timed
-from graphspec.operations.pipeline import emptied
+from graphspec.operations.pipeline import emptied, unrelated
 from tuning.bank.forks import Forks, made, trunk
 from tuning.bank.options import offered
 from tuning.batches.batching import batches, pack_batch, pack_parts
@@ -107,13 +107,41 @@ def withheld(field):
     return ("parameter", field["code"], field["column"])
 
 
+def cut(bank, entry, task, field, removed, unkept):
+    started = time.perf_counter()
+    kinds, relations, result = field["named"], field["relations"], None
+    if entry.back:
+        held = entry.mapping[task][field["action"]][field["part"]]["relation"]
+        relations = (held,) if held in bank.registry.schema.edges else ()
+    elif field["role"] == "new":
+        kinds = ()
+    lost = [kind for kind in kinds if kind in removed]
+    gone = [relation for relation in relations if relation in unkept]
+    if lost:
+        result = "the pipeline removes the kind of node %s, which it may name, the entry %s removing it" % (
+            lost[0],
+            removed[lost[0]],
+        )
+    elif gone:
+        step, parameter, value = unkept[gone[0]]
+        result = "the pipeline removes the relation %s, which it may name, by %s %s of the entry %s" % (
+            gone[0],
+            parameter,
+            value,
+            step,
+        )
+    LOG.debug("guards cut exit field=%s cut=%s seconds=%.4f", field["name"], result is not None, time.perf_counter() - started)
+    return result
+
+
 def routed(bank, cfg):
     started = time.perf_counter()
     name = realised(cfg["model"], bank.registry.schema)
     if name is None:
         LOG.debug("guards routed exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return
-    back, spec = realisation(name).back, cfg["model"]
+    entry, spec = realisation(name), cfg["model"]
+    back = entry.back
     reason = ignored(spec, name) if not back or not edits(spec) else None
     if reason is not None:
         raise ValueError(
@@ -124,16 +152,15 @@ def routed(bank, cfg):
     reason = refused(name, schema)
     if reason is not None:
         raise ValueError(reason)
-    removed = emptied(bank.registry, bank.stated(cfg)[1])
+    steps = bank.stated(cfg)[1]
+    removed, unkept = emptied(bank.registry, steps), unrelated(bank.registry, steps)
     for task in schema.decided():
         for field in fielded(schema, task):
             where = "the field %s of the kind of task %s has no route to the prediction under the realisation of options %s"
             where %= (field["name"], task, name)
-            if field["sort"] == "targets" and field["role"] != "new" and all(kind in removed for kind in field["kinds"]):
-                raise ValueError(
-                    "%s: the pipeline removes every kind of node it may name, %s, the entry %s removing %s"
-                    % (where, ", ".join(field["kinds"]), removed[field["kinds"][0]], field["kinds"][0])
-                )
+            reason = cut(bank, entry, task, field, removed, unkept) if field["sort"] == "targets" else None
+            if reason is not None:
+                raise ValueError("%s: %s" % (where, reason))
             if back and NEEDS[field["sort"]] not in edits(spec):
                 raise ValueError(
                     "%s: an edit makes it %s, which the family %s does not read; %s"
@@ -174,7 +201,7 @@ def close(left, right):
 class Guard:
     @timed("guards.Guard.__init__")
     def __init__(self, bank, cfg, net, seed):
-        self.registry, self.schema = bank.fitted(cfg), bank.registry.schema
+        self.bank, self.cfg, self.registry, self.schema = bank, cfg, bank.fitted(cfg), bank.registry.schema
         self.name, self.net, self.head, self.seed = realised(cfg["model"], self.schema), net, net.head, seed
         self.splits = cfg["splits"]["scored"]
         self.entry = realisation(self.name)
@@ -189,7 +216,7 @@ class Guard:
         self.series = list(self.schema.series())
         self.generator = torch.Generator().manual_seed(seed)
         self.fields = {task: fielded(self.schema, task) for task in self.schema.decided()}
-        self.actions = coded(self.schema)[0]
+        self.actions, self.roles = coded(self.schema)
         self.moved = {(task, field["name"]): None for task, found in self.fields.items() for field in found}
         self.finite = dict(self.moved)
         self.pairs, self.equal, self.options, self.sets = 0, 0, 0, 0
@@ -388,6 +415,48 @@ class Guard:
         LOG.debug("guard checked exit seconds=%.4f", time.perf_counter() - started)
 
 
+    def banked(self):
+        started = time.perf_counter()
+        found, columns = offered(self.bank), self.schema.parameters()
+        decision = found.decision[self.bank.members(self.cfg, 1)]
+        owner, kind = found.action["option"], found.action["kind"]
+        scored = np.isin(found.option["decision"], decision[decision >= 0])[owner]
+        result = {}
+        for task, fields in self.fields.items():
+            mine = scored & (found.option["kind"][owner] == self.kinds.index(task))
+            for field in fields:
+                held = mine
+                if field["sort"] == "targets":
+                    held = mine & (kind == self.actions.index(self.roles[field["code"]][:2]))
+                elif field["sort"] == "parameters":
+                    values = found.action["values"][:, columns.index(field["column"])]
+                    held = mine & (kind == field["code"]) & ~np.isnan(values)
+                result[(task, field["name"])] = len(np.unique(owner[held]))
+        LOG.debug("guard banked exit fields=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
+
+    def acting(self, task, field):
+        started = time.perf_counter()
+        targets = [held for held in self.fields[task] if held["sort"] == "targets"]
+        if field["sort"] == "targets":
+            targets = [field]
+        elif field["sort"] == "parameters":
+            targets = [held for held in targets if held["action"] == self.actions[field["code"]][1]]
+        names = {name for held in targets for name in held["named"] + held["relations"]}
+        if self.entry.back:
+            names |= {self.entry.mapping[task][held["action"]][held["part"]]["relation"] for held in targets}
+        found = []
+        for step in self.bank.stated(self.cfg)[1]:
+            defaults = {parameter.name: parameter.default for parameter in step.operation.stated(self.bank.registry)}
+            for parameter, value in step.parameters.items():
+                if names & set(parameter.split("/")) and (parameter not in defaults or defaults[parameter] != value):
+                    found.append("%s %s of the entry %s" % (parameter, value, step.name))
+        result = "the settings in force on its kinds and relations are %s" % ", ".join(found) if found else (
+            "no setting of the pipeline names its kinds or relations"
+        )
+        LOG.debug("guard acting exit settings=%d seconds=%.4f", len(found), time.perf_counter() - started)
+        return result
+
     def concluded(self, alike):
         started = time.perf_counter()
         if not self.options:
@@ -395,6 +464,17 @@ class Guard:
                 "the splits scored on, %s, hold no option of a decision under the realisation of options %s, so nothing "
                 "can show that the model reads options; a fit stating a realisation scores on options"
                 % (", ".join(self.splits), self.name)
+            )
+        banked = self.banked() if None in self.moved.values() else {}
+        still = [(task, name) for (task, name), moved in self.moved.items() if moved is None and banked[task, name]]
+        if still:
+            task, name = still[0]
+            (field,) = [held for held in self.fields[task] if held["name"] == name]
+            raise ValueError(
+                "the field %s of the kind of task %s is held by %d options of the splits scored on, %s, and by none of "
+                "the options the batches of those splits hold under the realisation of options %s, since the variant "
+                "shows none of them at the step of its decision: %s"
+                % (name, task, banked[task, name], ", ".join(self.splits), self.name, self.acting(task, field))
             )
         still = [(task, name) for (task, name), moved in self.moved.items() if moved is False]
         if still:
@@ -437,8 +517,7 @@ class Forked(Guard):
     @timed("guards.Forked.__init__")
     def __init__(self, bank, cfg, net, seed, device):
         super().__init__(bank, cfg, net, seed)
-        self.bank, self.cfg, self.device, self.found = bank, cfg, device, offered(bank)
-        self.roles, self.finite = coded(self.schema)[1], self.moved
+        self.device, self.found, self.finite = device, offered(bank), self.moved
 
     def valued(self, b):
         started = time.perf_counter()
