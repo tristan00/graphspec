@@ -21,6 +21,62 @@ CLOSE = 1e-6
 STATE = 1e-5
 EQUAL, BACK = "equal", "back"
 MADE = dict(targets="the end of a fact", kind="the relation of a fact", parameters="a value of a fact")
+PLACED = (
+    "the score of an option of the kind of task %s changes when the options of its decision are %s, under the "
+    "realisation of options %s; permuting the options of a decision permutes their scores"
+)
+
+
+@timed("guards.swapped")
+def swapped(place, count):
+    return np.where(count < 2, place, np.where(place < 2, 1 - place, place))
+
+
+@timed("guards.rotated")
+def rotated(place, count):
+    return (place + 1) % count
+
+
+ORDERS = dict(swapped=swapped, rotated=rotated)
+
+
+@timed("guards.turned")
+def turned(group, step):
+    order = np.argsort(group, kind="stable")
+    grouped = group[order]
+    first = np.searchsorted(grouped, grouped)
+    count = np.bincount(grouped)[grouped]
+    result = np.arange(len(group))
+    result[order] = order[first + step(np.arange(len(order)) - first, count)]
+    return result
+
+
+def rearranged(held, fields, moved, acts):
+    started = time.perf_counter()
+    device = held["action_option"].device
+    inverse = np.empty(len(moved), np.int64)
+    inverse[moved] = np.arange(len(moved))
+    acting = np.empty(len(acts), np.int64)
+    acting[acts] = np.arange(len(acts))
+    roled = acting[np.asarray(held["role_action"].cpu(), np.int64)]
+    roles = np.argsort(roled, kind="stable")
+    index = {name: torch.as_tensor(found, device=device) for name, found in (("option", moved), ("action", acts), ("role", roles))}
+    owner = inverse[np.asarray(held["action_option"].cpu(), np.int64)][acts]
+    result = dict(
+        held,
+        row=held["row"][index["option"]],
+        decision=held["decision"][index["option"]],
+        sequence=held["sequence"][index["option"]],
+        kind=np.asarray(held["kind"])[moved],
+        content=np.asarray(held["content"])[moved],
+        action_option=torch.as_tensor(owner, device=device),
+        role_action=torch.as_tensor(roled[roles], device=device),
+        **{name: held[name][index["action"]] for name in ("action_kind", "action_place", "action_values")},
+        **{name: held[name][index["role"]] for name in ("role_code", "role_member", "role_relation")},
+    )
+    changed = {name: value[index["role" if name == "targets" else "action"]] for name, value in fields.items()}
+    LOG.debug("guards rearranged exit options=%d seconds=%.4f", len(moved), time.perf_counter() - started)
+    return result, changed
 
 
 @timed("guards.withheld")
@@ -231,6 +287,25 @@ class Guard:
         self.kept(features, b, changed, values, mask, others, "members named by the targets")
         LOG.debug("guard apart exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
 
+    def placed(self, features, b, fields, values, mask):
+        started = time.perf_counter()
+        held = b["options"]
+        decision = np.asarray(held["decision"].cpu(), np.int64)
+        owner = np.asarray(held["action_option"].cpu(), np.int64)
+        for name, step in ORDERS.items():
+            moved = turned(decision, step)
+            if (moved == np.arange(len(moved))).all():
+                continue
+            inverse = np.empty(len(moved), np.int64)
+            inverse[moved] = np.arange(len(moved))
+            turning, changed = rearranged(held, fields, moved, np.argsort(inverse[owner], kind="stable"))
+            with torch.no_grad():
+                again = self.scored(features, dict(b, options=turning), changed)[0].cpu().numpy()
+            wrong = np.flatnonzero((mask[moved] & ~close(again, values[moved])).any(1))
+            if len(wrong):
+                raise ValueError(PLACED % (self.kinds[int(np.asarray(turning["kind"])[wrong[0]])], name, self.name))
+        LOG.debug("guard placed exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
+
     def ordered(self, b, fields, options, actions):
         started = time.perf_counter()
         held = b["options"]
@@ -294,6 +369,7 @@ class Guard:
             values = values.cpu().numpy()
             if not self.entry.together:
                 self.apart(features, b, members, fields, values, mask)
+            self.placed(features, b, fields, values, mask)
             self.ordered(b, fields, options, actions)
             self.alike(b, values, mask)
             self.options += len(values)
@@ -422,6 +498,20 @@ class Forked(Guard):
             )
         LOG.debug("forked guard apart exit decisions=%d seconds=%.4f", len(chosen), time.perf_counter() - started)
 
+    def placed(self, b, values, mask):
+        started = time.perf_counter()
+        held = b["options"]
+        decision, blocks = np.asarray(held["decision"], np.int64), held["block"]
+        for name, step in ORDERS.items():
+            moved = turned(decision, step)
+            if (moved == np.arange(len(moved))).all():
+                continue
+            again = self.valued(pack_parts(self.bank, [blocks[at] for at in moved.tolist()], self.cfg, self.device))
+            wrong = np.flatnonzero((mask[moved] & ~close(again, values[moved])).any(1))
+            if len(wrong):
+                raise ValueError(PLACED % (self.kinds[int(np.asarray(held["kind"])[moved[wrong[0]]])], name, self.name))
+        LOG.debug("forked guard placed exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
+
     def ordered(self, b):
         started = time.perf_counter()
         held, found = b["options"], self.found
@@ -456,6 +546,7 @@ class Forked(Guard):
             mask = self.mask(b)
             self.derived(b, values, mask)
             self.apart(b, values, mask)
+            self.placed(b, values, mask)
             self.ordered(b)
             self.alike(b, values, mask)
             self.options += len(values)

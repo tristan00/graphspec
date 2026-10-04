@@ -104,6 +104,20 @@ class Pooling(Pooled):
         return options + pooled[held["decision"]], actions
 
 
+class Positional(Pooled):
+    @timed("realisations.Positional.__init__")
+    def __init__(self, hidden, width):
+        super().__init__(hidden, width)
+        self.position = nn.Embedding(64, hidden)
+
+    def forward(self, fields, held):
+        options, actions = super().forward(fields, held)
+        decision = held["decision"]
+        first = torch.full((int(decision.max()) + 1,), len(decision), dtype=torch.long)
+        first = first.scatter_reduce(0, decision, torch.arange(len(decision)), "amin")
+        return options + self.position(torch.arange(len(decision)) - first[decision]), actions
+
+
 class Realised:
     version = 1
     reads = FIELDS
@@ -143,6 +157,8 @@ REALISED = dict(
     ordered=Realised(Pooled, placed=True),
     flat=Realised(Flat),
     pooling=Realised(Pooling),
+    positional=Realised(Positional),
+    placing=Together(Positional),
 )
 
 
@@ -308,11 +324,16 @@ def test_the_options_of_every_decision_reach_its_batch_beside_the_variant_and_re
                 assert len(chosen) == len(kept_options) and (graph, ticket) not in seen
                 seen.add((graph, ticket))
                 left += len(options) - len(kept_options)
-                for place, option in zip(chosen.tolist(), kept_options):
-                    together, actions, values = stated(registry, option)
+                wanted = [stated(registry, option) for option in kept_options]
+                for place in chosen.tolist():
                     found_together, found_actions, found_values = read(held, b, place)
-                    assert (found_together, found_actions) == (together, actions)
-                    assert np.allclose(found_values, values)
+                    matching = [
+                        at
+                        for at, (together, actions, values) in enumerate(wanted)
+                        if (found_together, found_actions) == (together, actions) and np.allclose(found_values, values)
+                    ]
+                    assert matching, (graph, ticket, found_actions)
+                    del wanted[matching[0]]
                 kept += len(chosen)
             counted += len(found["left"])
     wanted = {(row["graph"], row["ticket"]) for row in held.rows if row["kind"] in ("turn", "show")}
@@ -365,6 +386,24 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
     with pytest.raises(ValueError, match="have equal predictions under the realisation of options flat, a share of 1.0000 above the statement's alike 0.5$"):
         guarded(held, "flat", 0.5)
     LOG.info("guards of realisations exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("realisations.unpointed")
+def unpointed(found):
+    return [{key: value for key, value in b["options"].items() if not key.startswith("point_")} for b in found]
+
+
+def test_options_are_packed_in_an_order_keyed_by_their_content_and_a_realisation_reading_their_place_is_refused(banks):
+    started = time.perf_counter()
+    for (left, right), name in ((("stated", "moved"), "vector"), (("picked", "moved_picked"), "node")):
+        one, other = opened(banks, left), opened(banks, right)
+        for partition in (0, 1):
+            assert support.same(unpointed(packed(one, name, partition)), unpointed(packed(other, name, partition))), name
+    held = opened(banks, "stated")
+    for name in ("positional", "placing"):
+        with pytest.raises(ValueError, match="changes when the options of its decision are swapped, under the realisation of options %s; permuting" % name):
+            guarded(held, name)
+    LOG.info("options keyed by content exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_search_offers_a_realisation_where_the_bank_decides_and_only_to_a_family_that_reads_options(banks, bank, monkeypatch):

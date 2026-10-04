@@ -106,11 +106,41 @@ def picked(case):
     return result
 
 
+@timed("decisions.moved")
+def moved(case):
+    result = copy.deepcopy(case)
+    for graph in result["graphs"]:
+        for target in filter(None, graph["tasks"]["target"]):
+            options = target["options"]
+            chosen = [option for option in options if option["chosen"]]
+            for option in chosen if len(chosen) > 1 else ():
+                option["order"] = len(chosen) - 1 - option["order"]
+            others = [
+                option
+                for option in options
+                if not option["chosen"] and option["origin"] == RECORDED and (option["outcome"] is None) == (chosen[0]["outcome"] is None)
+            ]
+            if len(chosen) == 1 and others:
+                chosen[0]["chosen"], others[-1]["chosen"] = False, True
+            for option in options:
+                option["origin"] = RECORDED
+            unchosen = [option for option in options if not option["chosen"] and option["actions"]]
+            unchosen[0]["origin"] = dict(generator=GENERATOR, seed=3, drawn=0.5)
+            options.reverse()
+    return result
+
+
 @timed("decisions.made")
 def made(root):
     started = time.perf_counter()
     case = synthetic.decisions(GENERATOR)
-    for name, given in (("stated", case), ("flipped", flipped(case)), ("picked", picked(case))):
+    for name, given in (
+        ("stated", case),
+        ("flipped", flipped(case)),
+        ("picked", picked(case)),
+        ("moved", moved(case)),
+        ("moved_picked", moved(picked(case))),
+    ):
         build(synthetic.stage(root, name, given), root / name, 1, ("train",))
     LOG.info("banks of decisions exit seconds=%.3f", time.perf_counter() - started)
 
@@ -118,7 +148,7 @@ def made(root):
 @pytest.fixture(scope="module")
 def banks(registered):
     root = shared("decisions", made)
-    return {name: root / name for name in ("stated", "flipped", "picked")}
+    return {name: root / name for name in ("stated", "flipped", "picked", "moved", "moved_picked")}
 
 
 @timed("decisions.opened")

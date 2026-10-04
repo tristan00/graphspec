@@ -4,14 +4,15 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 
-from graphspec.infra.files import load_arrays
-from graphspec.infra.hashing import hashed
+from graphspec.infra.files import load_arrays, read_json
+from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from graphspec.schema.decisions import ROLES
 from tuning.families.heads import coded
 
 LOG = logging.getLogger(__name__)
 TOKEN = (1 << 62) - 1
+ORDER, TIE = "options/order", "options/key"
 READ = (
     "task_key",
     "task_kind",
@@ -44,6 +45,15 @@ def spans(owner, count):
     return first, np.searchsorted(owner, np.arange(count), "right") - first
 
 
+@timed("bank.options.starts")
+def starts(decision, count):
+    first, number = np.full(count, -1, np.int64), np.zeros(count, np.int64)
+    decided = np.flatnonzero(decision >= 0)
+    held, place, many = np.unique(decision[decided], return_index=True, return_counts=True)
+    first[held], number[held] = decided[place], many
+    return first, number
+
+
 def located(unique, graph, keys):
     started = time.perf_counter()
     low, high = np.searchsorted(unique[:, 0], [graph, graph + 1])
@@ -70,12 +80,13 @@ class Offered:
         owners = {graph["name"]: graph["index"] for graph in bank.manifest["graphs"]}
         asked = schema.tasks["key"]
         unique = np.unique(np.asarray([(owners[row["graph"]], row[asked]) for row in bank.rows], np.int64), axis=0)
-        found, options, acted = dict(option=[], action=[], role=[]), 0, 0
+        found, options, acted, keys = dict(option=[], action=[], role=[]), 0, 0, []
         for graph in bank.manifest["graphs"]:
             held = load_arrays(bank.truth(graph["index"]), READ)
             task = np.asarray(held["option_task"], np.int64)
             if not len(task):
                 continue
+            keys += read_json(bank.truth(graph["index"]) / "graph.json")["options"]
             tokens = np.asarray(held["entity_token"]).astype(np.uint64) & np.uint64(TOKEN)
             owner = np.asarray(held["action_option"], np.int64)
             kind = acting[np.asarray(held["task_kind"], np.int64)[task]][owner] + np.asarray(held["action_kind"], np.int64)
@@ -112,30 +123,42 @@ class Offered:
             {name: np.concatenate([entry[name] for entry in found[part]]) for name in found[part][0]}
             for part in ("option", "action", "role")
         )
-        self.first, self.count = np.full(len(unique), -1, np.int64), np.zeros(len(unique), np.int64)
-        decided = np.flatnonzero(self.option["decision"] >= 0)
-        held, first, count = np.unique(self.option["decision"][decided], return_index=True, return_counts=True)
-        self.first[held], self.count[held] = decided[first], count
+        stated = starts(self.option["decision"], len(unique))[0]
         self.actions = spans(self.action["option"], len(self.option["decision"]))
         self.roles = spans(self.role["action"], len(self.action["option"]))
         self.action["place"] = np.arange(len(self.action["option"])) - self.actions[0][self.action["option"]]
         self.option["content"] = self.contents()
+        order = self.ordered(bank.seed, keys)
+        inverse = np.empty(len(order), np.int64)
+        inverse[order] = np.arange(len(order))
+        self.option = {name: values[order] for name, values in self.option.items()}
+        self.actions = (self.actions[0][order], self.actions[1][order])
+        self.action["option"] = inverse[self.action["option"]]
+        self.first, self.count = starts(self.option["decision"], len(unique))
         decision = bank.task_of.astype(np.int64)
         aimed = np.isin([row["kind"] for row in bank.rows], schema.decided())
         self.decision = np.where(aimed & (self.first[decision] >= 0), decision, -1)
         place, part = (np.asarray(bank.fields[name], np.int64) for name in ("option", "part"))
-        self.row_option = np.where(self.decision >= 0, self.first[self.decision] + place, -1)
+        at = np.where(self.decision >= 0, stated[np.maximum(self.decision, 0)] + place, 0)
+        self.row_option = np.where(self.decision >= 0, inverse[at], -1)
         self.row_action = np.where(
             (self.row_option >= 0) & (part >= 0), self.actions[0][np.maximum(self.row_option, 0)] + part, -1
         )
         LOG.info(
             "offered exit decisions=%d options=%d actions=%d roles=%d seconds=%.3f",
-            len(held),
+            int((self.count > 0).sum()),
             len(self.option["decision"]),
             len(self.action["option"]),
             len(self.role["action"]),
             time.perf_counter() - started,
         )
+
+    def ordered(self, seed, keys):
+        started = time.perf_counter()
+        tie = unit(seed, TIE, np.asarray([token(key) for key in keys], np.uint64))
+        result = np.lexsort((tie, unit(seed, ORDER, self.option["content"]), self.option["decision"]))
+        LOG.debug("offered ordered exit options=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
 
     def contents(self):
         started = time.perf_counter()
