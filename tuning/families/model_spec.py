@@ -506,7 +506,7 @@ def samples(registry):
         and isinstance(parameter.options[0], (str, bool))
         and parameter.name != "view"
     ]
-    result, placing = [], {NONE: None}
+    result, seen, placing = [], set(), {NONE: None}
     for parameter in parameters:
         if parameter.name == REALISATION:
             placing.update(
@@ -523,7 +523,8 @@ def samples(registry):
             if REALISATION in spec and placing[spec[REALISATION]] is not None and placing[spec[REALISATION]](spec) is not None:
                 continue
             found.append(spec)
-            if spec not in result:
+            if tuple(spec.items()) not in seen:
+                seen.add(tuple(spec.items()))
                 result.append(spec)
         return found
 
