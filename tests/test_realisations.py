@@ -14,6 +14,7 @@ from conftest import SPLITS, inline
 from graphspec.infra.files import read_json
 from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
+from graphspec.schema.decisions import ROLES
 from graphspec.schema.schema import Schema
 from graphspec.sources import synthetic
 from tuning import REALISATIONS
@@ -446,6 +447,19 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
 @timed("realisations.unpointed")
 def unpointed(found):
     return [{key: value for key, value in b["options"].items() if not key.startswith("point_")} for b in found]
+
+
+def test_one_action_has_one_content_as_a_set_and_as_a_sequence_and_a_created_element_counts_by_its_role(banks):
+    started = time.perf_counter()
+    found = offered.offered(opened(banks, "stated"))
+    view, single, several = copy.copy(found), found.actions[1] == 1, found.actions[1] > 1
+    created = found.sorts[found.role["code"]] == ROLES.index("new")
+    view.role = dict(found.role, source=np.where(created, found.role["source"] + 1, found.role["source"]))
+    view.option = dict(found.option, sequence=found.option["sequence"] ^ single)
+    assert single.any() and created.any() and np.array_equal(view.contents(), found.option["content"])
+    view.option = dict(found.option, sequence=found.option["sequence"] ^ several)
+    assert several.any() and np.array_equal(view.contents() != found.option["content"], several)
+    LOG.info("content of options exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("realisations.three")

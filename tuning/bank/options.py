@@ -162,12 +162,14 @@ class Offered:
 
     def contents(self):
         started = time.perf_counter()
-        role = hashed(self.role["code"], self.role["source"], self.role["target"], self.role["relation"])
+        created = self.sorts[self.role["code"]] == ROLES.index("new")
+        source = np.where(created, -1, self.role["source"])
+        role = hashed(self.role["code"], source, self.role["target"], self.role["relation"])
         summed = np.zeros(len(self.action["option"]), np.uint64)
         np.add.at(summed, self.role["action"], role)
         values = np.ascontiguousarray(self.action["values"]).view(np.uint32).astype(np.int64)
         action = hashed(self.action["kind"], summed, *values.T)
-        sequence = self.option["sequence"]
+        sequence = self.option["sequence"] & (self.actions[1] > 1)
         placed = np.where(sequence[self.action["option"]], hashed(action, self.action["place"]), action)
         total = np.zeros(len(sequence), np.uint64)
         np.add.at(total, self.action["option"], placed)
