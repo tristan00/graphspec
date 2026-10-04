@@ -156,6 +156,15 @@ class Uniform(Pooled):
         return options - options.detach() + (total / count[:, None])[decision], actions
 
 
+class Palindrome(Pooled):
+    def forward(self, fields, held):
+        action, owner = self.acted(fields, held), held["action_option"]
+        count = torch.bincount(owner, minlength=len(held["sequence"])).float()
+        action = action * (1 + (held["action_place"].float() - (count[owner] - 1) / 2) ** 2)[:, None]
+        total = action.new_zeros((len(held["sequence"]), action.shape[1])).index_add(0, owner, action)
+        return total / count.clamp_min(1)[:, None], action
+
+
 class Realised:
     version = 1
     reads = FIELDS
@@ -201,6 +210,7 @@ REALISED = dict(
     roles=Realised(Roles),
     detached=Realised(Detached),
     uniform=Together(Uniform),
+    palindrome=Realised(Palindrome),
 )
 FINITE = "with the moves drawn by the seed 5, the score of no option of the splits scored on changes when its own field %s of the kind of task turn moves by a finite amount, under the realisation of options %s$"
 APART = "the score of an option of the kind of task turn differs from its score where it is the only option of its decision, and the realisation of options %s does not state that it reads"
@@ -422,7 +432,7 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
         with pytest.raises(ValueError, match=APART % name):
             guarded(held, name)
     assert guarded(held, "together")["pairs"] == found["pairs"]
-    with pytest.raises(ValueError, match="whose actions, go, go, are a set changes with the order of its actions under the realisation of options ordered"):
+    with pytest.raises(ValueError, match="whose actions, go, go, are a set changes when its actions are swapped, under the realisation of options ordered; a set"):
         guarded(held, "ordered")
     for field, name in (("kind", "flat"), ("parameter speed of go", "detached")):
         with pytest.raises(ValueError, match=FINITE % (field, name)):
@@ -436,6 +446,47 @@ def test_each_guard_refuses_its_broken_realisation_before_a_fit_naming_the_field
 @timed("realisations.unpointed")
 def unpointed(found):
     return [{key: value for key, value in b["options"].items() if not key.startswith("point_")} for b in found]
+
+
+@timed("realisations.three")
+def three(width):
+    generator = torch.Generator().manual_seed(5)
+    options = dict(
+        row=torch.zeros(2, dtype=torch.long),
+        decision=torch.arange(2),
+        sequence=torch.zeros(2, dtype=torch.bool),
+        action_option=torch.tensor([0, 0, 0, 1, 1, 1]),
+        action_kind=torch.zeros(6, dtype=torch.long),
+        action_place=torch.tensor([0, 1, 2, 0, 1, 2]),
+        action_values=torch.zeros(6, width),
+        role_action=torch.arange(6),
+        role_code=torch.zeros(6, dtype=torch.long),
+        role_member=torch.full((6, 2), -1),
+        role_relation=torch.full((6,), -1),
+        kind=np.zeros(2, np.int64),
+        content=np.arange(2),
+    )
+    fields = dict(kind=torch.randn(6, 8, generator=generator), targets=torch.randn(6, 8, generator=generator))
+    return dict(options=options), dict(fields, parameters=torch.randn(6, width, generator=generator))
+
+
+def test_a_set_of_three_actions_gives_the_same_encoding_whichever_two_are_swapped_and_however_it_is_rotated(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    for name, refusal in (("whole", None), ("palindrome", "swapped"), ("ordered", "swapped")):
+        cfg, net = built(held, name)
+        guard = Guard(held, cfg, net, 5)
+        b, fields = three(net.head.options.realised.values.in_features)
+        with torch.no_grad():
+            options, actions = guard.head.options.encoded(fields, b)
+        if refusal is None:
+            guard.ordered(b, fields, options, actions)
+            assert guard.sets == 2
+            continue
+        stops = "whose actions, go, go, go, are a set changes when its actions are %s, under the realisation of options %s; a set"
+        with pytest.raises(ValueError, match=stops % (refusal, name)):
+            guard.ordered(b, fields, options, actions)
+    LOG.info("sets of three exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_options_are_packed_in_an_order_keyed_by_their_content_and_a_realisation_reading_their_place_is_refused(banks):

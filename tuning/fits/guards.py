@@ -21,6 +21,10 @@ CLOSE = 1e-6
 STATE = 1e-5
 EQUAL, BACK = "equal", "back"
 MADE = dict(targets="the end of a fact", kind="the relation of a fact", parameters="a value of a fact")
+ORDERED = (
+    "the encoding of an option of the kind of task %s whose actions, %s, are a set changes when its actions are %s, "
+    "under the realisation of options %s; a set gives the same encoding in any order"
+)
 APART = (
     "the score of an option of the kind of task %s differs from its score where it is the only option of its "
     "decision, and the realisation of options %s does not state that it reads the options of a decision together"
@@ -326,35 +330,26 @@ class Guard:
         held = b["options"]
         owner = np.asarray(held["action_option"].cpu(), np.int64)
         count = np.bincount(owner, minlength=len(options))
-        first = np.r_[0, np.cumsum(count)[:-1]].astype(np.int64)
         sets = ~np.asarray(held["sequence"].cpu(), bool) & (count > 1)
         if not sets.any():
             LOG.debug("guard ordered exit sets=0 seconds=%.4f", time.perf_counter() - started)
             return
-        place = np.arange(len(owner)) - first[owner]
-        turned = np.where(sets[owner], first[owner] + count[owner] - 1 - place, np.arange(len(owner)))
-        inverse = np.argsort(turned)
-        role = inverse[np.asarray(held["role_action"].cpu(), np.int64)]
-        order = np.argsort(role, kind="stable")
-        device = held["action_option"].device
-        index, by = torch.as_tensor(turned, device=device), torch.as_tensor(order, device=device)
-        changed = {name: value[by if name == "targets" else index] for name, value in fields.items()}
-        turning = dict(held, role_action=torch.as_tensor(role[order], device=device), role_code=held["role_code"][by])
-        with torch.no_grad():
-            again, acting = self.head.options.encoded(changed, dict(b, options=turning))
-        same = torch.isclose(again, options, rtol=CLOSE, atol=CLOSE).all(-1).cpu().numpy()
-        each = torch.isclose(acting[torch.as_tensor(inverse, device=device)], actions, rtol=CLOSE, atol=CLOSE)
-        np.logical_and.at(same, owner, each.all(-1).cpu().numpy())
-        wrong = np.flatnonzero(sets & ~same)
+        group = np.where(sets[owner], owner, len(options) + np.arange(len(owner)))
         self.sets += int(sets.sum())
-        if len(wrong):
-            kind = self.kinds[int(np.asarray(held["kind"])[wrong[0]])]
-            named = [self.actions[code][1] for code in np.asarray(held["action_kind"].cpu())[owner == wrong[0]].tolist()]
-            raise ValueError(
-                "the encoding of an option of the kind of task %s whose actions, %s, are a set changes with the "
-                "order of its actions under the realisation of options %s; a set gives the same encoding in any order"
-                % (kind, ", ".join(named), self.name)
-            )
+        for name, step in ORDERS.items():
+            acts = turned(group, step)
+            turning, changed = rearranged(held, fields, np.arange(len(options)), acts)
+            with torch.no_grad():
+                again, acting = self.head.options.encoded(changed, dict(b, options=dict(turning, action_place=held["action_place"])))
+            inverse = torch.as_tensor(np.argsort(acts), device=acting.device)
+            same = torch.isclose(again, options, rtol=CLOSE, atol=CLOSE).all(-1).cpu().numpy()
+            each = torch.isclose(acting[inverse], actions, rtol=CLOSE, atol=CLOSE)
+            np.logical_and.at(same, owner, each.all(-1).cpu().numpy())
+            wrong = np.flatnonzero(sets & ~same)
+            if len(wrong):
+                kind = self.kinds[int(np.asarray(held["kind"])[wrong[0]])]
+                named = [self.actions[code][1] for code in np.asarray(held["action_kind"].cpu())[owner == wrong[0]].tolist()]
+                raise ValueError(ORDERED % (kind, ", ".join(named), name, self.name))
         LOG.debug("guard ordered exit sets=%d seconds=%.4f", int(sets.sum()), time.perf_counter() - started)
 
     def alike(self, b, values, mask):
@@ -531,22 +526,24 @@ class Forked(Guard):
                 continue
             part = held["block"][place][0]
             history = trunk(self.bank, self.cfg, part.graph, part.step)
-            stated = list(range(first, first + count))
-            edits = [made(self.bank, self.cfg, history, part, order) for order in (stated, stated[::-1])]
-            same = all(
-                np.array_equal(edits[0].added[side][name], edits[1].added[side][name], equal_nan=name in ("x", "values"))
-                for side in edits[0].added
-                for name in edits[0].added[side]
-            )
+            stated = np.arange(first, first + count)
+            edit = made(self.bank, self.cfg, history, part, stated.tolist())
             self.sets += 1
-            if not same:
-                kind = self.kinds[int(held["kind"][place])]
-                named = [self.actions[code][1] for code in found.action["kind"][first : first + count].tolist()]
-                raise ValueError(
-                    "the facts of an option of the kind of task %s whose actions, %s, are a set change with the order "
-                    "of its actions under the realisation of options %s; a set makes the same facts in any order"
-                    % (kind, ", ".join(named), self.name)
+            for name, step in ORDERS.items():
+                again = made(self.bank, self.cfg, history, part, stated[step(np.arange(count), count)].tolist())
+                same = all(
+                    np.array_equal(edit.added[side][array], again.added[side][array], equal_nan=array in ("x", "values"))
+                    for side in edit.added
+                    for array in edit.added[side]
                 )
+                if not same:
+                    kind = self.kinds[int(held["kind"][place])]
+                    named = [self.actions[code][1] for code in found.action["kind"][first : first + count].tolist()]
+                    raise ValueError(
+                        "the facts of an option of the kind of task %s whose actions, %s, are a set change when its "
+                        "actions are %s, under the realisation of options %s; a set makes the same facts in any order"
+                        % (kind, ", ".join(named), name, self.name)
+                    )
         LOG.debug("forked guard ordered exit sets=%d seconds=%.4f", self.sets, time.perf_counter() - started)
 
     def checked(self, b):
