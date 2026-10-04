@@ -176,6 +176,7 @@ class Guard:
     def __init__(self, bank, cfg, net, seed):
         self.registry, self.schema = bank.fitted(cfg), bank.registry.schema
         self.name, self.net, self.head, self.seed = realised(cfg["model"], self.schema), net, net.head, seed
+        self.splits = cfg["splits"]["scored"]
         self.entry = realisation(self.name)
         self.kinds = list(self.schema.tasks["kinds"])
         self.aims = np.asarray(
@@ -389,6 +390,12 @@ class Guard:
 
     def concluded(self, alike):
         started = time.perf_counter()
+        if not self.options:
+            raise ValueError(
+                "the splits scored on, %s, hold no option of a decision under the realisation of options %s, so nothing "
+                "can show that the model reads options; a fit stating a realisation scores on options"
+                % (", ".join(self.splits), self.name)
+            )
         still = [(task, name) for (task, name), moved in self.moved.items() if moved is False]
         if still:
             task, name = still[0]

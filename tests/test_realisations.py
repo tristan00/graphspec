@@ -546,6 +546,16 @@ def test_a_set_of_three_actions_gives_the_same_encoding_whichever_two_are_swappe
     LOG.info("sets of three exit seconds=%.3f", time.perf_counter() - started)
 
 
+def test_the_guards_stop_a_fit_whose_splits_scored_on_hold_no_option_naming_them(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    cfg, net = built(held, "whole")
+    stops = "^the splits scored on, validation, hold no option of a decision under the realisation of options whole, so nothing can show"
+    with pytest.raises(ValueError, match=stops):
+        Guard(held, cfg, net, 5).concluded(1.0)
+    LOG.info("no option scored exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_a_realisation_reading_the_place_of_an_option_is_refused_whether_or_not_it_reads_options_together(banks):
     started = time.perf_counter()
     held = opened(banks, "stated")
