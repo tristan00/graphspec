@@ -419,6 +419,11 @@ def load_history(directory, plan):
             )
             continue
         result = outcome.data
+        if result["unscored"]:
+            history.append(
+                dict(trial=trial.item["directory"], unscored=result["unscored"], result_sha256=sha256_file(outcome.path))
+            )
+            continue
         score = objective.value(result, plan)
         observations.append(
             dict(result, objective=score, config=trial.parameters, trial=trial.item["directory"])

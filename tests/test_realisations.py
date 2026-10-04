@@ -685,6 +685,8 @@ def test_a_realisation_registered_from_outside_completes_one_fit_whose_loss_read
     left = [kinds[code] for b in packed(held, "whole", 1) for code in b["options"]["left"].tolist()]
     assert {kind: saved["unmeasured"][kind] for kind in ("turn", "show")} == {kind: left.count(kind) for kind in ("turn", "show")}
     assert saved["unmeasured"]["turn"] > 0
+    chosen = [row for b in packed(held, "whole", 1) for row, out in zip(b["rows"].tolist(), b["left"].tolist()) if out and held.counted[row]]
+    assert saved["unscored"] == len(chosen) > 0
     rows = [row for b in packed(held, "whole", 0) for row, out in zip(b["rows"].tolist(), b["left"].tolist()) if not out]
     wanted = sorted(float(np.float32(held.rows[row]["y"])) for row in rows if held.rows[row]["kind"] in ("turn", "show"))
     read = np.concatenate([batch["target"] for batch in READ]).tolist()

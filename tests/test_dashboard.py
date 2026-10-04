@@ -101,6 +101,7 @@ def fixture(root, name="search-alpha", count=32):
                     training_losses=list(range(100)),
                     peak_cuda_bytes=0,
                     optimizer_updates=30,
+                    unscored=0,
                 ),
             )
         else:
@@ -135,6 +136,20 @@ def test_optimizer_history_reads_actual_limits_without_rewriting_configs(tmp_pat
     assert all(
         path.read_bytes() == content for path, content in original.items() if path.name != "trial.json"
     )
+
+
+def test_a_trial_whose_measures_leave_chosen_points_out_is_recorded_with_their_number_and_never_ranked(tmp_path):
+    from tuning.searches.report import report
+
+    directory = fixture(tmp_path, count=8)
+    path = directory / "trial_000002" / "result.json"
+    write(path, dict(read_json(path), unscored=3))
+    observations, failures, history, _ = load_history(directory, read_json(directory / "plan.json"))
+    assert [entry["trial"] for entry in observations] == ["trial_000000", "trial_000001", "trial_000003", "trial_000004"]
+    assert [(entry["trial"], entry["unscored"]) for entry in history if "unscored" in entry] == [("trial_000002", 3)]
+    results = {entry["trial"]: entry for entry in report(directory)}
+    assert "objective" not in results["trial_000002"] and "objective" in results["trial_000003"]
+    assert "1 completed fits left chosen points of the splits scored on out of their measures" in (directory / "progress.md").read_text(encoding="utf-8")
 
 
 class DashboardTests(unittest.TestCase):

@@ -43,12 +43,14 @@ def report(directory):
                 phases=record["phases"] if record is not None else None,
                 **(
                     dict(objective=objective.value(outcome, planned))
-                    if trial.status == Status.COMPLETE
+                    if trial.status == Status.COMPLETE and not outcome["unscored"]
                     else {}
                 ),
             )
         )
     completed = [r for r in results if r["status"] == "complete"]
+    unranked = [r for r in completed if r["unscored"]]
+    ranked = [r for r in completed if not r["unscored"]]
     columns = [
         "trial",
         "view",
@@ -105,8 +107,10 @@ def report(directory):
         "",
         "Updated " + datetime.now(timezone.utc).isoformat() + ".",
         "",
-        "%d completed fits; %d failed, timed out or interrupted; %d planned so far. %s"
-        % (len(completed), len(results) - len(completed), len(planned["trials"]), selection_text),
+        "%d completed fits; %d failed, timed out or interrupted; %d planned so far. %s %d completed fits left chosen "
+        "points of the splits scored on out of their measures, are recorded with their number under unscored and "
+        "are not ranked."
+        % (len(completed), len(results) - len(completed), len(planned["trials"]), selection_text, len(unranked)),
         "",
     ]
     lines.extend(
@@ -117,7 +121,7 @@ def report(directory):
         ]
     )
     for view in views:
-        subset = [r for r in completed if r["config"]["model"]["view"] == view]
+        subset = [r for r in ranked if r["config"]["model"]["view"] == view]
         best = min(subset, key=lambda r: r["objective"]) if subset else None
         lines.append(
             "| %s | %d | %s | %s | %s |"

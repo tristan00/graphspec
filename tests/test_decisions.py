@@ -450,7 +450,7 @@ def test_a_bank_of_decisions_completes_one_fit_reading_the_task_and_the_outcome_
     fit(bank, tmp_path, cfg, held.blocks(0, 4, cfg), 16, started + statement["seconds"], state(given))
     LOG.info("fit of decisions exit seconds=%.3f", time.perf_counter() - started)
     saved = read_json(tmp_path / "result.json")
-    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
+    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20 and saved["unscored"] == 0
     trained = [held.rows[row] for row in held.split["indices"]["train"]]
     wanted = sorted(float(np.float32(row["y"])) for row in trained if row["chosen"])
     assert sorted(np.concatenate([found["target"] for found in READ]).tolist()) == wanted

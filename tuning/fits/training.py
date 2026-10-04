@@ -61,6 +61,13 @@ def shortened(bank, pipeline, every):
     return kept, unmeasured
 
 
+@timed("training.unscored")
+def unscored(bank, indices, kept):
+    deciding = set(bank.registry.schema.decided())
+    chosen = bank.counted[indices] & np.asarray([bank.rows[row]["kind"] in deciding for row in indices.tolist()], bool)
+    return int((chosen & ~kept).sum())
+
+
 class TrainingSession:
     @timed("training.TrainingSession.__init__")
     def __init__(self, bank, bank_directory, directory, config: dict, budget, stated):
@@ -372,7 +379,9 @@ class TrainingSession:
             )
             values, drawn = both[: len(indices)], both[len(indices) :]
             kept, unmeasured = shortened(self.bank, self.config["pipeline"], every)
-            kept &= self.bank.counted[every] & ~np.r_[left, np.zeros(len(owners), bool)]
+            kept &= ~np.r_[left, np.zeros(len(owners), bool)]
+            left_out = unscored(self.bank, indices, kept[: len(indices)])
+            kept &= self.bank.counted[every]
             if self.realisation is not None:
                 kinds = list(schema.tasks["kinds"])
                 unmeasured.update({kind: int((lost == kinds.index(kind)).sum()) for kind in schema.decided()})
@@ -408,6 +417,7 @@ class TrainingSession:
             loss=self.stated.loss,
             measures=metrics,
             unmeasured=unmeasured,
+            unscored=left_out,
             options=self.guards,
             seconds=time.perf_counter() - self.entered,
             timings=self.timing,
