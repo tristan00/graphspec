@@ -166,6 +166,20 @@ def stated(bank, cfg, option, order):
     return result
 
 
+def other(registry, entry, relation, kinds):
+    started = time.perf_counter()
+    result = relation
+    for name in [name for name in list(registry.extras["base"]) + list(entry.relations) if name != relation.name]:
+        edge = registry.by_name[name]
+        pairs = {(registry.kind(first), registry.kind(second)) for first, second in edge.pairs}
+        pairs |= {(second, first) for first, second in pairs} if edge.symmetric else set()
+        if (int(kinds[0]), int(kinds[1])) in pairs:
+            result = edge
+            break
+    LOG.debug("forks other exit relation=%s other=%s seconds=%.6f", relation.name, result.name, time.perf_counter() - started)
+    return result
+
+
 def made(bank, cfg, history, part, order):
     started = time.perf_counter()
     registry, view = bank.fitted(cfg), bank.viewed(cfg).registry
@@ -173,7 +187,7 @@ def made(bank, cfg, history, part, order):
     plan = history.source.plan
     graph = history.source.members[int(np.searchsorted(plan.steps, part.step, "right")) - 1]
     facts, observed = [], set()
-    for kind, actor, values, held in stated(bank, cfg, part.option, order) if part.move[:1] != ("kind",) else ():
+    for kind, actor, values, held in stated(bank, cfg, part.option, order):
         task, action = acts[kind]
         own = registry.schema.tasks["kinds"][task]["target"]["actions"][action]["parameters"]
         tokens = [actor] + [token for _, source, target in held for token in (source, target) if token >= 0]
@@ -183,17 +197,19 @@ def made(bank, cfg, history, part, order):
                 continue
             _, _, role, sort, _ = roles[code]
             mapped = entry.mapping[task][action][role]
-            relation = registry.by_name[mapped["relation"]]
             if sort == "new":
                 observed.add(known[source])
             for end in [known[source]] + ([known[target]] if sort == "edge" else []):
                 pair = (known[actor], end) if mapped["actor"] == "source" else (end, known[actor])
                 kinds = np.asarray(graph.kinds)[list(pair)]
+                relation = registry.by_name[mapped["relation"]]
+                if part.move == ("kind",):
+                    relation = other(registry, entry, relation, kinds)
                 if relation.symmetric and kinds[0] == kinds[1] and pair[0] > pair[1]:
                     pair = pair[::-1]
                 facts.append((relation.code, pair[0], pair[1], valued(registry, relation.code, kind, values, own, part.move)))
     facts.sort(key=lambda fact: (fact[0], fact[1], fact[2], tuple(np.nan_to_num(fact[3], nan=np.inf).tolist())))
-    observed = sorted(observed) if part.move[:1] != ("kind",) else []
+    observed = sorted(observed)
     missing = np.full((len(observed), len(view.encoding.layout)), np.nan, np.float32)
     x = encoded(view, missing, unheld(view, len(observed)), None, lambda row: "the element an option creates")
     result = Edit(

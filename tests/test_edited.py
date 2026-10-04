@@ -339,24 +339,25 @@ def test_the_options_of_a_decision_in_a_joined_group_are_forks_of_its_history_ea
 def test_every_guard_holds_for_an_edit_and_one_refuses_a_field_whose_facts_the_family_does_not_read(banks):
     started = time.perf_counter()
     held = opened(banks, "stated")
-    found = {}
-    for spatial in ("relational", "mean"):
+    found, moved = {}, {}
+    for spatial in ("relational", "mean", "relational_attention"):
         cfg = configured(held, "edited", "snapshot", **{"snapshot/spatial": spatial})
         torch.manual_seed(5)
         net = network(cfg, held.fitted(cfg)).eval()
         guard = Forked(held, cfg, net, 5, "cpu")
         with forks.Forks(held):
             guard.checked(pack_batch(held, last(held, cfg, 1), cfg, "cpu"))
+        moved[spatial] = {name: value for (task, name), value in guard.moved.items() if task == "turn"}
         try:
             found[spatial] = guard.concluded(0.0)
         except ValueError as error:
             found[spatial] = str(error)
     assert found["relational"]["state"] == BACK and found["relational"]["unseen"] == UNSEEN
     assert found["relational"]["sets"] > 0 and found["relational"]["pairs"] > 0 and found["relational"]["share"] == 0.0
-    assert found["mean"] == (
-        "with the weights drawn by the seed 5, the prediction does not move with the field parameter speed of go of "
-        "the kind of task turn for any option of the splits scored on, under the realisation of options edited"
-    )
+    stops = "with the weights drawn by the seed 5, the prediction does not move with the field %s of the kind of task turn for any option of the splits scored on, under the realisation of options edited"
+    assert found["mean"] == stops % "kind" and found["relational_attention"] == stops % "parameter speed of go"
+    assert (moved["mean"]["kind"], moved["mean"]["target to of go"]) == (False, True)
+    assert (moved["relational_attention"]["kind"], moved["relational_attention"]["parameter speed of go"]) == (True, False)
     LOG.info("guards of an edit exit seconds=%.3f", time.perf_counter() - started)
 
 
