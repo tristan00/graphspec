@@ -139,7 +139,7 @@ A trial's configuration holds the model spec under `model`, the pipeline under `
 | Parameter | Present when | Range |
 |---|---|---|
 | `view` | always | the views the bank offers |
-| `hidden` | always | Every integer from 1 through 128; uniform integer sampling for random trials and an integer distribution for TPE. |
+| `hidden` | always | Every integer from 1 through 128; uniform integer sampling for random trials and an integer distribution for TPE. Every LayerNorm a family or a structural realisation applies over `hidden` values is left out where `hidden` is 1 or 2 (`tuning.families.layers.normalization`): over one value it gives a constant, and over two values one sign, plus or minus one up to its epsilon, with no gradient to speak of, so a field of an option, or anything else read before it, would move the prediction only where a move flips that sign. |
 | `dropout` | a component applies it | 0–0.5 |
 | `time/encoding` | a view encodes time gaps: `event_graph`, `memory`, `projection`, `sequence`, `tree`, `walks`, and `snapshot` with `coupling_edges`; or the head of a kind of target of the bank reads it, as that of a path does | log_cosine, cosine, log_linear |
 | `keys/embedding`, `keys/table` | a view embeds entities: every view but `affinity` and `signal`; table when on | off, on; 4096–65536 |

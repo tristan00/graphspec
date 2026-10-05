@@ -977,9 +977,10 @@ class Late(nn.Module):
         return torch.stack(options), actions
 
 
-def test_a_structural_realisation_reads_its_depth_stated_without_a_default_as_rounds_of_its_familys_layer(banks):
+def test_a_structural_realisation_reads_its_depth_stated_without_a_default_as_rounds_of_its_familys_layer_which_pass_a_moved_field_at_a_width_of_two(banks):
     started = time.perf_counter()
     held = opened(banks, "stated")
+    slot, generator, still = len(coded(held.registry.schema)[1]), torch.Generator().manual_seed(5), []
     (deepening,) = [parameter for parameter in space(held.registry) if parameter.name == DEPTH]
     assert deepening.options == DEPTHS and deepening.default is None
     for name in (NONE,) + REALISATIONS.names():
@@ -997,6 +998,20 @@ def test_a_structural_realisation_reads_its_depth_stated_without_a_default_as_ro
         spec = configured(held, name, dict(modelled(family), **{DEPTH: deep}), PLAIN)["model"]
         received = REALISATIONS.named(name).module(8, 3, spec, held.registry).received
         assert (0 if received is None else len(getattr(received, layers[family]))) == deep, (family, name, deep)
+        if deep != 1:
+            continue
+        torch.manual_seed(5)
+        module = REALISATIONS.named(name).module(2, 3, dict(spec, hidden=2), held.registry).eval()
+        codes = [(action, code) for action in range(4) for code in [0] + [slot] * realisation(name).actor]
+        fields = dict(kind=torch.randn(4, 2, generator=generator), targets=torch.randn(len(codes), 2, generator=generator))
+        fields.update(parameters=torch.randn(4, 3, generator=generator))
+        structure = acted(list(range(4)), 4, codes, False, [0] * 4)
+        with torch.no_grad():
+            before = module(fields, structure)[0]
+            after = module(dict(fields, kind=fields["kind"] + torch.randn(4, 2, generator=generator)), structure)[0]
+        if torch.isclose(before, after, rtol=1e-6, atol=1e-6).all(-1).any():
+            still.append((family, name))
+    assert still == [], still
     LOG.info("depth stated exit seconds=%.3f", time.perf_counter() - started)
 
 

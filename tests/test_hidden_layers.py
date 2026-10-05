@@ -99,12 +99,12 @@ def test_walks_accept_every_hidden_width_with_finite_gradients():
             assert not any(name.startswith("walk_output.") for name in net.state_dict())
 
 
-def test_normalization_preserves_scalar_input_and_existing_wider_parameters():
-    values = torch.tensor([[2.0], [-3.0]], requires_grad=True)
-    scalar = normalization(1)
-    torch.testing.assert_close(scalar(values), values)
-    scalar(values).sum().backward()
-    torch.testing.assert_close(values.grad, torch.ones_like(values))
+def test_normalization_preserves_inputs_of_one_or_two_values_and_existing_wider_parameters():
+    for values in (torch.tensor([[2.0], [-3.0]], requires_grad=True), torch.tensor([[2.0, -3.0], [0.5, 0.25]], requires_grad=True)):
+        narrow = normalization(values.shape[1])
+        torch.testing.assert_close(narrow(values), values)
+        narrow(values).sum().backward()
+        torch.testing.assert_close(values.grad, torch.ones_like(values))
     wider = normalization(7)
     assert isinstance(wider, nn.LayerNorm)
     assert wider.weight.shape == wider.bias.shape == (7,)

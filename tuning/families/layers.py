@@ -18,7 +18,7 @@ CHUNK = 128
 def normalization(width):
     if type(width) is not int or width < 1:
         raise ValueError("normalization width must be a positive integer")
-    return nn.Identity() if width == 1 else nn.LayerNorm(width)
+    return nn.Identity() if width <= 2 else nn.LayerNorm(width)
 
 
 def mean(values, index, size):
