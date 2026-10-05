@@ -8,11 +8,26 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import psutil
 import pytest
 
 LOG = logging.getLogger(__name__)
 ALIVE = []
 RUNS = "runs.lock"
+CORES = 2
+
+
+def pinned(cores):
+    started = time.perf_counter()
+    process = psutil.Process()
+    if not hasattr(process, "cpu_affinity"):
+        raise RuntimeError(
+            "the suite holds itself to %d cores by processor affinity, which %s does not offer" % (cores, sys.platform)
+        )
+    process.cpu_affinity(process.cpu_affinity()[:cores])
+    result = process.cpu_affinity()
+    LOG.debug("pinned exit cores=%s seconds=%.4f", result, time.perf_counter() - started)
+    return result
 
 
 def lasting(suite, checkout):
@@ -144,6 +159,9 @@ def finished(suite, run, alive):
     return result
 
 
+pinned(CORES)
+if "GRAPHSPEC_SUITE_CONTROLLER" not in os.environ:
+    os.environ["GRAPHSPEC_SUITE_CONTROLLER"] = str(os.getpid())
 if "GRAPHSPEC_SUITE_HOME" not in os.environ:
     os.environ["GRAPHSPEC_SUITE_HOME"] = os.environ["GRAPHSPEC_HOME"]
 if "GRAPHSPEC_SUITE_RUN" not in os.environ:

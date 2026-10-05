@@ -111,6 +111,39 @@ def test_a_home_of_the_suite_is_named_by_its_run_and_worker_and_shares_the_compi
     LOG.info("home exit seconds=%.4f", time.perf_counter() - started)
 
 
+def allowed(processes):
+    import psutil
+
+    started = time.perf_counter()
+    found = {}
+    for process in processes:
+        try:
+            found[process.pid] = len(process.cpu_affinity())
+        except psutil.NoSuchProcess:
+            continue
+    LOG.debug("allowed exit processes=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def test_every_process_of_the_run_and_every_child_of_a_test_is_allowed_at_most_the_cores_of_the_suite(request):
+    import subprocess
+    import sys
+
+    import psutil
+
+    started = time.perf_counter()
+    held = rooted(request)
+    controller = psutil.Process(int(os.environ["GRAPHSPEC_SUITE_CONTROLLER"]))
+    child = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE)
+    try:
+        found = allowed([controller, *controller.children(recursive=True)])
+    finally:
+        child.communicate(b"", timeout=30)
+    assert held.CORES == 2 and {os.getpid(), child.pid} <= set(found)
+    assert {pid: cores for pid, cores in found.items() if not 1 <= cores <= held.CORES} == {}
+    LOG.info("cores test exit processes=%d seconds=%.4f", len(found), time.perf_counter() - started)
+
+
 def test_a_run_of_the_suite_removes_its_own_homes_and_leaves_other_runs_and_the_compiled_code(request, tmp_path):
     started = time.perf_counter()
     compiled = tmp_path / "checkout" / "numba"
