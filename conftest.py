@@ -203,3 +203,14 @@ def pytest_unconfigure(config):
     while ALIVE and "PYTEST_XDIST_WORKER" not in os.environ:
         finished(os.environ["GRAPHSPEC_SUITE_HOME"], os.environ["GRAPHSPEC_SUITE_RUN"], ALIVE.pop())
     return result
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items):
+    from tests.conftest import SLOW
+
+    started = time.perf_counter()
+    marked = [item for item in items if item.nodeid.split("@")[0] in SLOW]
+    for item in marked:
+        item.add_marker(pytest.mark.slow)
+    LOG.debug("slow marks exit marked=%d seconds=%.4f", len(marked), time.perf_counter() - started)

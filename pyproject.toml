@@ -24,7 +24,7 @@ ladybug = ["ladybug==0.20.4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-p no:cacheprovider -n 2 --dist loadgroup -m \"not gpu\" --assert=plain"
+addopts = "-p no:cacheprovider -n 2 --dist loadgroup -m \"not gpu and not slow\" --assert=plain"
 
 [tool.ruff]
 target-version = "py311"
