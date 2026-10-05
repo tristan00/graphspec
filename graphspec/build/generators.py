@@ -112,7 +112,7 @@ class World:
                     time=int(self.truth.task_time[task]),
                     actors=dict(self.acting[task]),
                     options=[
-                        dict(key=option["key"], chosen=option["chosen"], **self.canonical(option))
+                        dict(key=option["key"], chosen=option["chosen"], **self.canonical(option, self.target(task)))
                         for option in self.decided[task]["options"]
                         if option["origin"] == RECORDED
                     ],
@@ -122,22 +122,31 @@ class World:
         LOG.debug("world shown exit options=%d seconds=%.6f", len(result["options"]), time.perf_counter() - started)
         return result
 
+    @timed("generators.World.rank")
+    def rank(self, key, kinds):
+        codes = [self.registry.kind(kind) for kind in kinds]
+        found = [code for code in codes if (code, key) in self.lookup]
+        return codes.index(found[0]) if len(found) == 1 else len(codes)
+
     @timed("generators.World.aimed")
-    def aimed(self, aim):
+    def aimed(self, aim, kinds):
         if not isinstance(aim, list):
             return aim
-        first, relation, second = aim
-        if relation in self.registry.tables and self.registry.by_code[self.registry.code(relation)].symmetric:
-            first, second = sorted((first, second))
-        return [first, relation, second]
+        if aim[1] not in self.symmetric:
+            return list(aim)
+        first, second = sorted((aim[0], aim[2]), key=lambda end: (self.rank(end, kinds), end))
+        return [first, aim[1], second]
 
-    def canonical(self, option):
+    def canonical(self, option, target):
         started = time.perf_counter()
+        roles = {kind: declared["roles"] for kind, declared in target["actions"].items()}
         actions = [
             dict(
                 kind=action["kind"],
                 actor=action["actor"],
-                targets={role: self.aimed(aim) for role, aim in sorted(action["targets"].items())},
+                targets={
+                    role: self.aimed(aim, roles[action["kind"]][role]["kinds"]) for role, aim in sorted(action["targets"].items())
+                },
                 parameters={name: plain(value) for name, value in sorted(action["parameters"].items())},
             )
             for action in option["actions"]
@@ -348,7 +357,7 @@ class Frame:
                         "the probability of each draw, above 0 and at most 1" if entry.probable else "none, having none",
                     )
                 )
-            held = world.canonical(option)
+            held = world.canonical(option, world.target(task))
             content = world.content(held)
             if not statement["repeats"] and content in present:
                 raise ValueError("%s equals an option already present, which its statement does not allow" % where)
@@ -515,7 +524,8 @@ class Check:
             isinstance(aim, list) and len(aim) == 3 and all(type(part) is str for part in aim) and aim[1] in self.relations
         ):
             return "%r, which is not the first node, a relation stated and the second node of an edge" % (aim,)
-        if tuple(aim) in self.edges[(kind, role)]:
+        held = self.edges[(kind, role)]
+        if tuple(aim) in held or (aim[1] in self.symmetric and (aim[2], aim[1], aim[0]) in held):
             return None
         return "the edge %r, which does not hold at the step of its decision" % (aim,)
 
@@ -652,7 +662,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 3
+    version = 4
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -675,7 +685,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 3
+    version = 4
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -736,7 +746,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 3
+    version = 4
     reads = ("chosen",)
     probable = False
 
@@ -794,7 +804,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 3
+    version = 4
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

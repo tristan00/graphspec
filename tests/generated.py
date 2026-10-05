@@ -56,13 +56,25 @@ class Spots:
 
     @timed("generated.Spots.options")
     def options(self, seen, parameters):
+        state = seen.state
         return [
             dict(
                 actions=[dict(kind="go", actor=actor, targets=dict(to=spot), parameters=dict(speed=parameters["speed"]))],
                 together="set",
             )
             for actor in sorted(seen.decision["actors"])
-            for spot in sorted(seen.state["nodes"]["spot"])
+            for spot in sorted(state["nodes"]["spot"])
+        ] + [
+            dict(
+                actions=[dict(kind="hold", actor=actor, targets=dict(of=[actor, "base", spot]), parameters=dict(speed=parameters["speed"]))],
+                together="set",
+            )
+            for actor in sorted(seen.decision["actors"])
+            for spot in sorted(
+                edge["source"] if edge["target"] == actor else edge["target"]
+                for edge in state["edges"]
+                if edge["relation"] == "base" and actor in (edge["source"], edge["target"])
+            )
         ]
 
 
@@ -166,6 +178,33 @@ def unregister():
 
 
 SPAN = 2
+HOME = dict(zip(synthetic.AGENTS, ("s0", "s2", "s4")))
+MIRRORED = dict(
+    tie=dict(roles=dict(by=dict(sort="edge", kinds=["agent"])), parameters=["speed"]),
+    hold=dict(roles=dict(of=dict(sort="edge", kinds=["spot"])), parameters=["speed"]),
+)
+MIRRORED_ROLES = ("by", "of")
+
+
+def tied(graph, place):
+    started = time.perf_counter()
+    rows = graph["edges"][1]["rows"]
+    rows.update({name: [None] * len(rows["since"]) for name in ("known", "replaced", "observers")})
+    tasks = graph["tasks"]
+    for kind, moment, target in zip(tasks["kind"], tasks["time"], tasks["target"]):
+        if kind != KIND or target is None:
+            continue
+        actor = target["options"][1]["actions"][0]["actor"]
+        made = [
+            synthetic.offered("tie", [synthetic.acting("tie", actor, dict(by=[actor, "base", HOME[actor]]), dict(speed=0.25 * moment))], "set", "recorded"),
+            synthetic.offered("hold", [synthetic.acting("hold", actor, dict(of=[HOME[actor], "base", actor]), dict(speed=0.5 * moment + place))], "set", "recorded"),
+        ]
+        if (moment + place) % 3 == 0:
+            for option in target["options"]:
+                option.update(chosen=False, order=None)
+            made[1]["chosen"] = True
+        target["options"] += made
+    LOG.debug("generated tied exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
 
 
 @timed("generated.load")
@@ -299,10 +338,13 @@ def case(name):
     schema.update(time=dict(schema["time"], model="clocks"), observers=True)
     kinds = schema["tasks"]["kinds"]
     kinds[KIND]["target"].update(generators=copy.deepcopy(STATED), rule=copy.deepcopy(RULE))
+    kinds[KIND]["target"]["actions"].update(copy.deepcopy(MIRRORED))
     kinds["visit"].update(target=copy.deepcopy(GAUGE), matures=dict(reference="who", column="load"))
+    schema["edges"]["base"] = synthetic.edge("agent", "spot", [], directed=False)
     for place, graph in enumerate(result["graphs"]):
         graph["values"][0]["rows"] = agents(place)
         watched(graph, place)
+        tied(graph, place)
         if name == "later":
             later(graph)
         if name == "turned":
@@ -350,12 +392,14 @@ def linked(rows, first, second, moment, observer):
 
 def observed(graph, option, moment, observer):
     started = time.perf_counter()
-    spots, near = graph["values"][1]["rows"], graph["edges"][0]["rows"]
+    spots, near, base = graph["values"][1]["rows"], graph["edges"][0]["rows"], graph["edges"][1]["rows"]
     result = all(
         holds(spots, aim, moment, observer)
         if role in ("to", "at")
         else linked(near, aim[0], aim[2], moment, observer)
         if role == "along"
+        else linked(base, aim[0], aim[2], moment, observer)
+        if role in MIRRORED_ROLES
         else True
         for action in option["actions"]
         for role, aim in action["targets"].items()

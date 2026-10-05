@@ -158,6 +158,10 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
             counts[name] += checked(found, drawn, place, name, pool(found, drawn, place, chosen, name), 2)
         spotted = generated.spotted(own["graph"], own["time"], own["observer"])
         spots = [dict(actions=[dict(kind="go", actor=actor, targets=dict(to=spot), parameters=dict(speed=1.25))], together="set") for actor in own["actors"] for spot in spotted]
+        spots += [
+            dict(actions=[dict(kind="hold", actor=actor, targets=dict(of=[generated.HOME[actor], "base", actor]), parameters=dict(speed=1.25))], together="set")
+            for actor in own["actors"]
+        ]
         counts["ruled"] += checked(found, drawn, place, "ruled", {generated.content(option): option for option in spots}, 2)
         changed, recorded = of(drawn[place], "changed"), [option for option in own["options"] if option["chosen"] and any(action["parameters"].get("speed") is not None for action in option["actions"])]
         assert len(changed) == len(recorded)
@@ -184,14 +188,23 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
             assert generated.content(option) not in present or option["origin"]["generator"] == "crossings"
             present.append(generated.content(option))
             assert (option["available"], option["chosen"], option["order"], option["shown"], option["logged"], option["outcome"]) == (True, False, None, None, None, None)
+    mirrored = {
+        (option["origin"]["generator"], action["kind"], [aim[0] in generated.HOME for aim in action["targets"].values()] == [action["kind"] == "tie"])
+        for options in drawn.values()
+        for option in options
+        for action in option["actions"]
+        if action["kind"] in generated.MIRRORED
+    }
+    wanted = {("others", "tie"), ("others", "hold"), ("nearest", "tie"), ("nearest", "hold"), ("changed", "hold"), ("ruled", "hold")}
+    assert {(name, kind, True) for name, kind in wanted} <= mirrored and all(oriented for *_, oriented in mirrored), mirrored
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=3, probabilities=False),
+        changed=dict(version=4, probabilities=False),
         crossings=dict(version=1, probabilities=True),
-        nearest=dict(version=3, probabilities=True),
-        others=dict(version=3, probabilities=True),
-        ruled=dict(version=3, probabilities=True),
+        nearest=dict(version=4, probabilities=True),
+        others=dict(version=4, probabilities=True),
+        ruled=dict(version=4, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -262,9 +275,9 @@ def test_an_option_recorded_is_made_canonical_at_most_twice_per_graph_however_ma
     held, calls, canonical = opened(banks, "base"), Counter(), World.canonical
 
     @timed("generators.counted")
-    def counted(self, option):
+    def counted(self, option, target):
         calls["recorded" if "origin" in option else "read" if "chosen" in option else "drawn", id(option)] += 1
-        return canonical(self, option)
+        return canonical(self, option, target)
 
     monkeypatch.setattr(World, "canonical", counted)
     seen = looking(held.splits, held.manifest["trained"])
