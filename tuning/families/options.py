@@ -7,7 +7,7 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 
-from .heads import ONE, REALISATION, coded, realisation
+from .heads import REALISATION, coded, realisation
 from .layers import mean, padded
 
 LOG = logging.getLogger(__name__)
@@ -53,22 +53,7 @@ class Fields(nn.Module):
 
 
 class Node(nn.Module):
-    @timed("options.Node.__init__")
-    def __init__(self, registry):
-        super().__init__()
-        self.roles = coded(registry.schema)[1]
-
     def forward(self, fields, structure):
-        owner, options = structure["action_option"], len(structure["sequence"])
-        if len(owner) != options:
-            count = torch.bincount(owner, minlength=options)
-            place = int(torch.nonzero(count != 1)[0])
-            codes = structure["role_code"][torch.isin(structure["role_action"], torch.nonzero(owner == place).flatten())]
-            named = [self.roles[code] for code in codes.tolist()]
-            raise ValueError(
-                "an option of the kind of task %s holds %d actions, of the kinds %s, and %s"
-                % (named[0][0], int(count[place]), ", ".join(role[1] for role in named), ONE)
-            )
         return fields["targets"], fields["targets"]
 
 

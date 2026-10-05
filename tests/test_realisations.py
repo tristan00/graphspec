@@ -27,7 +27,6 @@ from tuning.families import options as channel
 from tuning.families.heads import DEPTH, DEPTHS, FIELDS, NONE, REALISATION, coded, realisation, refused
 from tuning.families.model_spec import VIEWS, realisable, space, views
 from tuning.families.models import build as network
-from tuning.families.options import Node
 from tuning.families.periods import blocks as windows
 from tuning.fits.guards import STATE, Guard, captured, routed
 from tuning.fits.losses import Summed, counting, outcomes
@@ -861,10 +860,10 @@ def test_the_node_realisation_reads_options_of_one_action_whose_one_target_is_a_
     )
     (drawing,) = [parameter for parameter in realisable(paired, space(paired)) if parameter.name == REALISATION]
     assert "node" not in drawing.options and "node" in offering(chosen).options
-    structure = dict(sequence=torch.zeros(1, dtype=torch.bool), action_option=torch.zeros(2, dtype=torch.long))
-    structure.update(role_action=torch.arange(2), role_code=torch.zeros(2, dtype=torch.long))
-    with pytest.raises(ValueError, match="an option of the kind of task turn holds 2 actions, of the kinds go, go, and the realisation reads"):
-        Node(chosen.registry)(dict(targets=torch.zeros(2, 4)), structure)
+    acting = copy.copy(chosen)
+    acting.registry = paired
+    with pytest.raises(ValueError, match="^the realisation of options node cannot read the options of this bank: the bank holds an option of 2 actions"):
+        routed(acting, configured(chosen, "node", graph=PLAIN))
     assert {"node", "deaf"}.isdisjoint(offering(stated).options) and "vector" in offering(stated).options
     assert {"node", "vector", "deaf"} <= set(offering(chosen).options) and offering(chosen).options[0] == NONE
     LOG.info("node realisation refusals exit seconds=%.3f", time.perf_counter() - started)

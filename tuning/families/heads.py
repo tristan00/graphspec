@@ -192,7 +192,7 @@ def refused(name, registry):
 
 
 class Existing:
-    version = 7
+    version = 8
     reads = ("targets",)
     together = False
     back = False
@@ -226,11 +226,11 @@ class Existing:
     def module(self, hidden, width, spec, registry):
         from .options import Node
 
-        return Node(registry)
+        return Node()
 
 
 class Built:
-    version = 7
+    version = 8
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
@@ -249,7 +249,7 @@ class Built:
 
 
 class Structural:
-    version = 5
+    version = 6
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
