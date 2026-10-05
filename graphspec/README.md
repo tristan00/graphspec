@@ -22,7 +22,7 @@ Set an explicit absolute `GRAPHSPEC_HOME` before importing the package or launch
 
 | File | Role |
 |---|---|
-| `schema/schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types and encoders; the one table of type names written to staged tables and its inverse; `Encoding`, the dictionaries of a bank and, once fitted by `fitted` on what the views of the splits trained on show, the states of its encoders. |
+| `schema/schema.py` | `Schema`, the one statement of kinds, edge tables, columns, graph attributes, the model of time with its units and rule for ties, and whether observers are named; the registries of column types, each stating whether it is `numeric`, and encoders; the one table of type names written to staged tables and its inverse; `Encoding`, the dictionaries of a bank and, once fitted by `fitted` on what the views of the splits trained on show, the states of its encoders. |
 | `descriptions/inspect.py` | `inspect` prints the schema of a task file or of a bank. |
 | `sources/ladybug.py` | `Database` checks the tables of a database against the schema. `Reader` reads one graph with Cypher anchored on the entity tables. `export` writes staged tables to a database. They go through `graphspec.infra.database`, which handles database access and `copy` import. The public Parquet `Stage` is implemented in `build/output.py`. |
 | `schema/references.py` | The sorts of reference, registered: what a task may refer to, how it is stored and how it resolves at the time of the task. |

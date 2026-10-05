@@ -89,11 +89,12 @@ def typename(kind):
 
 
 class Number:
-    version = 1
+    version = 2
     accepts = ("FLOAT",)
     written = pa.float32()
     symbols = False
     ordered = True
+    numeric = True
 
     @timed("schema.Number.read")
     def read(self, column):
@@ -113,11 +114,12 @@ class Number:
 
 
 class Flag:
-    version = 1
+    version = 2
     accepts = ("BOOL", "BOOLEAN")
     written = pa.bool_()
     symbols = False
     ordered = False
+    numeric = False
 
     @timed("schema.Flag.read")
     def read(self, column):
@@ -139,11 +141,12 @@ class Flag:
 
 
 class Category:
-    version = 1
+    version = 2
     accepts = ("STRING",)
     written = pa.string()
     symbols = True
     ordered = False
+    numeric = False
 
     @timed("schema.Category.read")
     def read(self, column):
@@ -427,7 +430,11 @@ class Schema:
         for name, entry in held["columns"].items():
             where = "the column " + named(name, "a column")
             entry = fields(entry, ("type", "encoder"), where)
-            TYPES.named(entry["type"])
+            if type(getattr(TYPES.named(entry["type"]), "numeric", None)) is not bool:
+                raise ValueError(
+                    "%s has the type %s, which does not state numeric, whether its values are numbers, as true or false"
+                    % (where, entry["type"])
+                )
             if entry["type"] not in ENCODERS.named(entry["encoder"]).types:
                 raise ValueError(
                     "%s has the type %s, which the encoder %s does not read"

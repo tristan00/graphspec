@@ -10,7 +10,7 @@ import pytest
 import support
 
 from conftest import shared
-from graphspec import GENERATORS, Registry
+from graphspec import GENERATORS, TYPES, Registry
 from graphspec.build.generators import Check, Past, Seen, World, looking, regenerated
 from graphspec.engine.transform import shown, validate
 from graphspec.facts.stored import Facts
@@ -200,11 +200,11 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=4, probabilities=False),
+        changed=dict(version=5, probabilities=False),
         crossings=dict(version=1, probabilities=True),
-        nearest=dict(version=4, probabilities=True),
-        others=dict(version=4, probabilities=True),
-        ruled=dict(version=4, probabilities=True),
+        nearest=dict(version=5, probabilities=True),
+        others=dict(version=5, probabilities=True),
+        ruled=dict(version=5, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -350,14 +350,16 @@ def test_a_generator_holds_the_parts_it_states_and_reaches_nothing_else_of_the_b
     generated.KEPT.clear()
     assert regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1]) == []
     assert len(generated.KEPT) > 5
-    parts = ("decision", "unit", "closed", "fresh", "content", "formed", "chosen", "state", "at", "generator", "reads", "where")
+    parts = ("decision", "unit", "closed", "fresh", "content", "formed", "kept", "chosen", "state", "at", "generator", "reads", "where")
+    typed = {type(TYPES.named(name)) for name in TYPES.names()}
     for seen in generated.KEPT:
         assert sorted(vars(seen)) == sorted(parts)
         assert not any(hasattr(seen, name) for name in ("world", "frame", "task", "statement", "present"))
         for part in ("decisions", "rule"):
             with pytest.raises(ValueError, match="reads the %s of the decision" % part):
                 getattr(seen, part)
-        assert {type(found) for found in reached(seen) if type(found).__module__.split(".")[0] in ("graphspec", "tuning")} == {Seen, Check, Past}
+        found = {type(held) for held in reached(seen) if type(held).__module__.split(".")[0] in ("graphspec", "tuning")}
+        assert {Seen, Check, Past} <= found <= {Seen, Check, Past} | typed
         past = seen.at.__self__.held
         assert max(past) == seen.decision["time"] and all(type(state) is bytes for state in past.values())
     generated.KEPT.clear()
@@ -377,7 +379,7 @@ def test_a_statement_of_generators_is_checked_with_the_schema_and_a_rule_is_draw
         (0, dict(parameters=dict(count=1, other=2)), "holds fields it does not know: other"),
         (1, dict(parameters=dict(count=1, states=1, columns=["speed"], distance="euclidean")), "states its columns as a list"),
         (1, dict(parameters=dict(count=1, states=1, columns=["load"], distance="far")), "no distance between states is registered"),
-        (2, dict(parameters=dict(count=1, ranges=dict(mode=[0, 1]))), "states its ranges as a mapping"),
+        (2, dict(parameters=dict(count=1, ranges=dict(mode=[0, 1]))), "changes the parameter mode of the type category, which is not numeric"),
         (2, dict(parameters=dict(count=1, ranges=dict(speed=[1, 0]))), "states its ranges as a mapping"),
     )
     for place, change, message in wrong:
@@ -388,6 +390,15 @@ def test_a_statement_of_generators_is_checked_with_the_schema_and_a_rule_is_draw
         entry["generators"][place].update(change)
         with pytest.raises((ValueError, KeyError), match=message):
             Schema(held)
+    for typed, encoder in (("flag", "value"), ("amount", "plain")):
+        held = copy.deepcopy(stated)
+        held["columns"]["load"] = dict(type=typed, encoder=encoder)
+        held["tasks"]["kinds"]["visit"]["matures"] = None
+        if typed == "flag":
+            with pytest.raises(ValueError, match="measures the column load of the type flag, which is not numeric"):
+                Schema(held)
+        else:
+            assert Schema(held).kind("load").numeric
     held = copy.deepcopy(stated)
     held["tasks"]["kinds"][generated.KIND]["target"]["rule"] = None
     with pytest.raises(ValueError, match="the generator 3 of the options of the target of the kind of task turn, ruled, draws from"):

@@ -286,10 +286,8 @@ class Frame:
         columns = {}
         for declared in target["actions"].values():
             for column in declared["parameters"]:
-                columns[column] = (
-                    world.schema.columns[column]["type"],
-                    tuple(dictionaries[column]) if world.schema.kind(column).symbols else None,
-                )
+                kind = world.schema.kind(column)
+                columns[column] = kind, tuple(dictionaries[column]) if kind.symbols else None
         check = Check(
             name,
             statement,
@@ -317,6 +315,7 @@ class Frame:
             fresh=check.fresh,
             content=check.content,
             formed=check.formed,
+            kept=check.kept,
         )
         if "state" in reads:
             parts["state"] = pickle.loads(self.pickled(step))
@@ -455,11 +454,23 @@ class Check:
     @timed("generators.Check.held")
     def held(self, name, value):
         kind, dictionary = self.columns[name]
+        if kind.numeric and not real(value):
+            return False
+        try:
+            codes = kind.codes([value], dictionary)
+        except (TypeError, ValueError):
+            return False
+        back = kind.stated(codes, dictionary)
         return (
-            (kind == "number" and real(value))
-            or (kind == "flag" and type(value) is bool)
-            or (kind == "category" and type(value) is str and value in dictionary)
+            back[0] is not None
+            and (kind.numeric or type(back[0]) is type(value))
+            and np.array_equal(kind.codes(back, dictionary), codes)
         )
+
+    @timed("generators.Check.kept")
+    def kept(self, name, value):
+        kind, dictionary = self.columns[name]
+        return kind.stated(kind.codes([value], dictionary), dictionary)[0]
 
     def formed(self, option, names, where):
         started = time.perf_counter()
@@ -662,7 +673,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 4
+    version = 5
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -685,7 +696,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 4
+    version = 5
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -700,15 +711,20 @@ class Nearest(Pooled):
             or any(
                 type(column) is not str
                 or column not in schema.columns
-                or schema.columns[column]["type"] != "number"
                 or any(kind not in schema.nodes or column not in schema.nodes[kind] for kind in kinds)
                 for column in columns
             )
         ):
             raise ValueError(
-                "%s states its columns as a list of distinct columns of numbers that every kind of the actors, %s, "
-                "states, found %r" % (where, ", ".join(kinds), columns)
+                "%s states its columns as a list of distinct columns that every kind of the actors, %s, states, found %r"
+                % (where, ", ".join(kinds), columns)
             )
+        for column in columns:
+            if not schema.kind(column).numeric:
+                raise ValueError(
+                    "%s measures the column %s of the type %s, which is not numeric"
+                    % (where, column, schema.columns[column]["type"])
+                )
         DISTANCES.named(parameters["distance"])
         LOG.debug("nearest checked exit columns=%d seconds=%.6f", len(columns), time.perf_counter() - started)
         return parameters
@@ -746,7 +762,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 4
+    version = 5
     reads = ("chosen",)
     probable = False
 
@@ -761,7 +777,6 @@ class Changed:
             or not ranges
             or any(
                 column not in stated
-                or schema.columns[column]["type"] != "number"
                 or not isinstance(bounds, list)
                 or len(bounds) != 2
                 or not all(real(bound) for bound in bounds)
@@ -770,9 +785,15 @@ class Changed:
             )
         ):
             raise ValueError(
-                "%s states its ranges as a mapping from a parameter of numbers of its kinds of action to its least "
-                "and greatest change, found %r" % (where, ranges)
+                "%s states its ranges as a mapping from a parameter of its kinds of action to its least and greatest "
+                "change, found %r" % (where, ranges)
             )
+        for column in ranges:
+            if not schema.kind(column).numeric:
+                raise ValueError(
+                    "%s changes the parameter %s of the type %s, which is not numeric"
+                    % (where, column, schema.columns[column]["type"])
+                )
         LOG.debug("changed checked exit columns=%d seconds=%.6f", len(ranges), time.perf_counter() - started)
         return parameters
 
@@ -795,7 +816,7 @@ class Changed:
             option = found.setdefault((place, number), copy.deepcopy(chosen[place]))
             low, high = ranges[column]
             held = option["actions"][action]["parameters"]
-            held[column] = float(np.float32(held[column] + low + (high - low) * draw))
+            held[column] = seen.kept(column, held[column] + low + (high - low) * draw)
         result = [
             dict(actions=option["actions"], together=option["together"], drawn=None)
             for _, option in sorted(found.items())
@@ -804,7 +825,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 4
+    version = 5
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

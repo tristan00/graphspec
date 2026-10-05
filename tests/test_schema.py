@@ -131,6 +131,7 @@ class Count:
     written = pa.int32()
     symbols = False
     ordered = True
+    numeric = True
 
     def read(self, column):
         return np.asarray(column.to_numpy(zero_copy_only=False), np.float32)
@@ -143,6 +144,10 @@ class Count:
 
     def stated(self, codes, dictionary):
         return [None if np.isnan(value) else int(value) for value in codes]
+
+
+class Tally:
+    version = 1
 
 
 class Halved:
@@ -169,6 +174,9 @@ def test_column_types_and_encoders_are_registered_by_name_from_outside(monkeypat
         TYPES.register("count", Count())
     with pytest.raises(ValueError, match="the encoder halved is registered twice"):
         ENCODERS.register("halved", Halved())
+    TYPES.register("tally", Tally())
+    with pytest.raises(ValueError, match="the column stock has the type tally, which does not state numeric, whether"):
+        support.stated(dict(shelf=["stock"]), {}, dict(stock=dict(type="tally", encoder="halved")), support.asked(["shelf"]))
     schema = support.stated(
         dict(shelf=["stock", "value"], crate=["stock"]),
         {},

@@ -4,9 +4,10 @@ import time
 
 import numpy as np
 
-from graphspec import GENERATORS, RULES, Scripted
+from graphspec import ENCODERS, GENERATORS, RULES, TYPES, Scripted
 from graphspec.facts.stored import Facts
 from graphspec.infra.timing import timed
+from graphspec.schema.schema import Number, Value
 from graphspec.sources import synthetic
 from tuning.bank.build import build
 
@@ -43,6 +44,15 @@ SEEN = (
     ("near", dict(source="s0", target="s3", since=1, until=None, known=LATER + 1, replaced=None, observers=None)),
     ("near", dict(source="s0", target="s2", since=0, until=None, known=None, replaced=None, observers=[SOUTH])),
 )
+
+
+class Amount(Number):
+    version = 1
+
+
+class Plain(Value):
+    version = 1
+    types = ("amount",)
 
 
 class Spots:
@@ -160,6 +170,8 @@ ENTRIES = (
     (GENERATORS, "crossings", Crossings()),
     (GENERATORS, "faulty", Faulty()),
     (RULES, "spots", Spots()),
+    (TYPES, "amount", Amount()),
+    (ENCODERS, "plain", Plain()),
 )
 
 
@@ -341,6 +353,7 @@ def case(name):
     kinds[KIND]["target"]["actions"].update(copy.deepcopy(MIRRORED))
     kinds["visit"].update(target=copy.deepcopy(GAUGE), matures=dict(reference="who", column="load"))
     schema["edges"]["base"] = synthetic.edge("agent", "spot", [], directed=False)
+    schema["columns"]["speed"] = dict(type="amount", encoder="plain")
     for place, graph in enumerate(result["graphs"]):
         graph["values"][0]["rows"] = agents(place)
         watched(graph, place)
