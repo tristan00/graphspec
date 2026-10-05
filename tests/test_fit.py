@@ -1,7 +1,6 @@
 import argparse
 import dataclasses
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -13,6 +12,7 @@ from support import SEED
 from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
+from graphspec.infra.processes.processes import processors
 from tuning import api
 from tuning.bank.bank import Bank, Deriver
 from tuning.fits.training import fit
@@ -185,7 +185,7 @@ def test_fit_with_a_field_absent_stops_naming_the_field(tmp_path, statement, nam
         ("derivation_seed", 1.5),
         ("derivation_seed", True),
         ("workers", 0),
-        ("workers", os.cpu_count() + 1),
+        ("workers", processors() + 1),
         ("workers", 1.0),
         ("seconds", 0),
         ("seconds", 2.5),
@@ -244,8 +244,8 @@ def test_a_statement_is_built_only_through_its_checks(monkeypatch, statement):
         Statement(*statement.values())
     with pytest.raises(TypeError, match="read from a mapping"):
         state(list(statement.items()))
-    held = state(dict(statement, device="cuda:1", seed=2**32 - 1, workers=os.cpu_count()))
-    assert (held.device, held.seed, held.workers) == ("cuda:1", 2**32 - 1, os.cpu_count())
+    held = state(dict(statement, device="cuda:1", seed=2**32 - 1, workers=processors()))
+    assert (held.device, held.seed, held.workers) == ("cuda:1", 2**32 - 1, processors())
     with pytest.raises(dataclasses.FrozenInstanceError):
         held.seed = 3
 

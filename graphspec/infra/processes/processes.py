@@ -17,6 +17,11 @@ LOG = logging.getLogger(__name__)
 FAILED = []
 
 
+@timed("processes.processors")
+def processors():
+    return len(psutil.Process().cpu_affinity())
+
+
 @timed("processes.command")
 def command(pid):
     try:
@@ -162,7 +167,7 @@ def pooled(workers, jobs, initializer, initargs, carry, restore):
         yield lambda function, items: [function(item) for item in items]
     else:
         with (
-            worker_threads(max(1, (os.cpu_count() or 1) // workers)),
+            worker_threads(max(1, processors() // workers)),
             ProcessPoolExecutor(max_workers=count, **spawned(initializer, initargs, carry, restore)) as pool,
         ):
             yield lambda function, items: list(pool.map(partial(guarded, function), items))

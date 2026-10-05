@@ -1,8 +1,6 @@
-import atexit
 import fnmatch
 import json
 import math
-import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
@@ -12,7 +10,7 @@ import numpy as np
 
 from graphspec import registries
 from graphspec.infra.log import emit
-from graphspec.infra.processes.processes import guarded, spawned
+from graphspec.infra.processes.processes import guarded, processors, spawned
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
@@ -190,11 +188,10 @@ def pool():
     if "executor" in POOL and POOL["generation"] != registries.GENERATION:
         POOL.pop("executor").shutdown(wait=False, cancel_futures=True)
     if "executor" not in POOL:
-        started = time.perf_counter()
-        executor = ProcessPoolExecutor(os.cpu_count(), **spawned(None, (), carried, restored))
+        started, workers = time.perf_counter(), processors()
+        executor = ProcessPoolExecutor(workers, **spawned(None, (), carried, restored))
         POOL.update(executor=executor, generation=registries.GENERATION)
-        atexit.register(executor.shutdown, wait=False, cancel_futures=True)
-        emit("candidate_pool_started", workers=os.cpu_count(), seconds=time.perf_counter() - started)
+        emit("candidate_pool_started", workers=workers, seconds=time.perf_counter() - started)
     return POOL["executor"]
 
 
@@ -208,7 +205,7 @@ def draw_chunk(registry, bounds, seconds, history, template, seed, training_seed
 @timed("space.draw_candidates")
 def draw_candidates(registry, bounds, seconds, history, template, seed, training_seed, fixed, count):
     started = time.perf_counter()
-    workers = min(os.cpu_count(), count)
+    workers = min(processors(), count)
     counts = [count // workers + (index < count % workers) for index in range(workers)]
     seeds = np.random.SeedSequence(seed).spawn(workers)
     chunks = pool().map(

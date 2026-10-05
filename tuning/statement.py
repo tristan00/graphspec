@@ -1,10 +1,10 @@
 import dataclasses
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 
 from graphspec.infra.log import emit
+from graphspec.infra.processes import processes
 from graphspec.infra.timing import timed
 
 LOG = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def positive(value):
 
 @timed("statement.processors")
 def processors(value):
-    return type(value) is int and 1 <= value <= os.cpu_count()
+    return type(value) is int and 1 <= value <= processes.processors()
 
 
 @timed("statement.named")
@@ -117,7 +117,7 @@ class Statement:
     )
     seconds: int = held(positive, "a positive integer")
     preparation_seconds: int = held(positive, "a positive integer")
-    workers: int = held(processors, "an integer from 1 to the number of logical processors")
+    workers: int = held(processors, "an integer from 1 to the number of logical processors the process may use")
     variant_cache_bytes: int = held(positive, "a positive integer")
     batch_sequences: int = held(positive, "a positive integer")
     trained: list = held(splits, "a list of the distinct names of the splits trained on, at least one")

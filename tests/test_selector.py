@@ -1,6 +1,9 @@
 import argparse
+import atexit
+import contextlib
 import importlib
 import logging
+import os
 import re
 import shutil
 import sys
@@ -69,11 +72,15 @@ class Late:
 class Pool:
     @timed("selector_tests.Pool.__init__")
     def __init__(self, workers, initializer, initargs):
-        self.initargs, self.down = initargs, False
+        self.workers, self.initargs, self.down = workers, initargs, False
 
     @timed("selector_tests.Pool.shutdown")
     def shutdown(self, wait, cancel_futures):
         self.down = True
+
+    @timed("selector_tests.Pool.map")
+    def map(self, function, *iterables):
+        return [function(*arguments) for arguments in zip(*iterables)]
 
     @timed("selector_tests.Pool.carried")
     def carried(self):
@@ -97,14 +104,27 @@ def test_the_template_of_the_suite_is_the_seven_in_their_order():
     assert read_json(PIPELINE) == TEMPLATE
 
 
-def test_the_pool_of_candidates_starts_again_with_the_registries_whenever_they_change(monkeypatch):
+def test_the_pool_of_candidates_starts_again_with_the_registries_whenever_they_change_on_the_processors_the_process_may_use(monkeypatch):
+    from graphspec.infra.processes import processes
     from tuning import REALISATIONS
     from tuning.searches import space as searching
 
+    hooks, threads = [], []
     monkeypatch.setattr(searching, "ProcessPoolExecutor", Pool)
     monkeypatch.setattr(searching, "POOL", {})
+    for owner in (processes, searching):
+        monkeypatch.setattr(owner, "processors", lambda: 3)
+    for name in ("cpu_count", "process_cpu_count"):
+        monkeypatch.setattr(os, name, lambda: 5)
+    monkeypatch.setattr(atexit, "register", lambda *arguments, **named: hooks.append(arguments))
+    monkeypatch.setattr(searching, "draw_chunk", lambda *arguments: [arguments[-1]])
     first = searching.pool()
-    assert searching.pool() is first and "late" not in first.carried()["realisation of options"]
+    assert searching.pool() is first and "late" not in first.carried()["realisation of options"] and first.workers == 3
+    assert searching.draw_candidates(None, None, None, None, None, 7, 1, {}, 10) == [4, 3, 3]
+    monkeypatch.setattr(processes, "worker_threads", lambda count: threads.append(count) or contextlib.nullcontext())
+    monkeypatch.setattr(processes, "ProcessPoolExecutor", lambda max_workers, **named: contextlib.nullcontext())
+    with processes.pooled(2, 3, None, (), lambda: None, None):
+        assert threads == [1]
     REALISATIONS.register("late", Late())
     try:
         second = searching.pool()
@@ -113,7 +133,7 @@ def test_the_pool_of_candidates_starts_again_with_the_registries_whenever_they_c
         del REALISATIONS.held["late"]
     assert first.down and not second.down and "late" in second.carried()["realisation of options"]
     third = searching.pool()
-    assert second.down and "late" not in third.carried()["realisation of options"]
+    assert second.down and "late" not in third.carried()["realisation of options"] and hooks == []
 
 
 def test_the_search_imports_optuna_on_a_thread_of_its_own_so_no_frame_of_its_caller_outlives_the_import(tmp_path, monkeypatch):
