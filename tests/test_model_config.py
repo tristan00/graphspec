@@ -118,9 +118,9 @@ def test_the_check_states_every_value_of_a_choice_without_a_default_and_starts_i
     read = {rest for rest in starts[NONE] if unstructured(dict(rest)) is None}
     assert read and read != starts[NONE] and {dict(rest)["view"] for rest in read} == {"snapshot", "mixed", "event_graph", "tree"}
     deep = [name for name in REALISATIONS.shipped if realisation(name).structure]
-    assert all(found == (read if name in deep else starts[NONE]) for name, found in starts.items())
-    assert sorted(depths) == sorted(deep) and all(set(held) == read for held in depths.values())
-    assert all(found == set(DEPTHS) for held in depths.values() for found in held.values())
+    assert all(found == starts[NONE] for found in starts.values())
+    assert sorted(depths) == sorted(deep) and all(set(held) == starts[NONE] for held in depths.values())
+    assert all(found == (set(DEPTHS) if rest in read else {0}) for held in depths.values() for rest, found in held.items())
     LOG.info("samples of a choice without a default exit seconds=%.3f", time.perf_counter() - started)
 
 

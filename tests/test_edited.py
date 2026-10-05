@@ -48,7 +48,8 @@ EDITED = dict(
     edited=Edited(dict(turn=ACTED, show=ACTED), RELATIONS, 1),
     moved=Edited(dict(turn=WENT, show=WENT), dict(went=dict(RELATIONS["went"], columns=())), 1),
 )
-READING = [family for family in VIEWS if model_spec.edits({"view": family, "snapshot/spatial": "relational"})]
+STATED = {"snapshot/spatial": "relational", "memory/update": "mailbox_gru"}
+READING = [family for family in VIEWS if model_spec.edits(dict(STATED, view=family))]
 ALONE = 1e-5
 JOINED = {"graphs/join": "single", "graphs/join_size": 2}
 UNSEEN = ["parameter lit of put of show", "parameter mode of cut of show", "target along of cut of show"]
@@ -143,35 +144,42 @@ def test_an_edit_maps_every_kind_of_action_to_facts_and_is_refused_naming_what_i
 def test_each_family_states_what_of_an_edit_it_reads_and_a_field_it_cannot_read_has_no_route(banks):
     started = time.perf_counter()
     stated, chosen = opened(banks, "stated"), opened(banks, "picked")
-    found = {family: model_spec.edits(dict(view=family, **{"snapshot/spatial": "relational"})) for family in VIEWS}
+    found = {family: model_spec.edits(dict(STATED, view=family)) for family in VIEWS}
     assert found["snapshot"] == EDITS and {family for family, held in found.items() if not held} == {"mixed", "affinity", "signal"}
     assert {family for family, held in found.items() if held == ("facts", "relations")} == set(READING) - {"snapshot"}
     assert model_spec.edits(dict(view="snapshot", **{"snapshot/spatial": "mean"})) == ("facts",)
-    where = "the field %s of the kind of task turn has no route to the prediction under the realisation of options edited: an edit makes it %s, which the family %s does not read; %s"
+    assert model_spec.edits(dict(STATED, view="memory", **{"memory/update": "mutual_rnn"})) == ()
+    where = "the realisation of options %s puts options into the graph of the family of its model, and the family %s does not read them there: %s"
     for family, spatial, field, made in (
         ("event_graph", "relational", "parameter speed of go", "a value of a fact"),
         ("snapshot", "mean", "kind", "the relation of a fact"),
     ):
         spec = dict(view=family, **{"snapshot/spatial": spatial})
-        with pytest.raises(ValueError, match="^" + re.escape(where % (field, made, family, model_spec.unedited(spec))) + "$"):
+        reason = "an edit makes the field %s of the kind of task turn %s, and %s" % (field, made, model_spec.unedited(spec))
+        with pytest.raises(ValueError, match="^" + re.escape(where % ("edited", family, reason)) + "$"):
             routed(stated, configured(stated, "edited", family, **({"snapshot/spatial": spatial} if family == "snapshot" else {})))
-    mixed = "the realisation of options edited puts options into the graph of the family of its model, and the family mixed reads no option put there: it reads no edge, so neither the facts an edit adds nor their relations nor their values"
-    with pytest.raises(ValueError, match="^" + re.escape(mixed) + "$"):
+    mixed = "it reads no edge, so neither the facts an edit adds nor their relations nor their values"
+    with pytest.raises(ValueError, match="^" + re.escape(where % ("edited", "mixed", mixed)) + "$"):
         routed(stated, configured(stated, "edited", "mixed"))
+    with pytest.raises(ValueError, match="^" + re.escape(where % ("moved", "mixed", mixed)) + "$"):
+        routed(chosen, configured(chosen, "moved", "mixed"))
     routed(stated, configured(stated, "edited", "snapshot"))
     for family in READING:
         routed(chosen, configured(chosen, "moved", family))
-    (choosing,) = [parameter for parameter in realisable(stated.registry, space(stated.registry)) if parameter.name == REALISATION]
-    assert "edited" in choosing.options and "moved" not in choosing.options
-    for family in VIEWS:
-        for spatial in ("relational", "mean"):
-            kept = model_spec.fitting(choosing, {"view": family, "snapshot/spatial": spatial}).options
-            assert ("edited" in kept) == (family == "snapshot" and spatial == "relational"), (family, spatial)
+    for held, name, other, parts in ((stated, "edited", "moved", EDITS), (chosen, "moved", "edited", ("facts",))):
+        parameters = realisable(held.registry, space(held.registry))
+        (choosing,) = [parameter for parameter in parameters if parameter.name == REALISATION]
+        assert name in choosing.options and other not in choosing.options
+        for family in VIEWS:
+            for spatial, update in (("relational", "mailbox_gru"), ("mean", "mutual_rnn"), ("none", "intensity")):
+                spec = {"view": family, "snapshot/spatial": spatial, "memory/update": update}
+                kept = model_spec.fitting(choosing, spec, held.registry.schema, parameters).options
+                assert (name in kept) == (set(parts) <= set(model_spec.edits(spec))), (name, family, spatial, update)
     LOG.info("families reading edits exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_an_edit_is_offered_only_under_settings_its_facts_reach_the_actor_and_a_statement_cutting_them_is_refused(banks):
-    from tuning.searches.selector import graph_space, pipeline_space
+    from tuning.searches.selector import check_bounds, graph_space, pipeline_space
 
     started = time.perf_counter()
     held = opened(banks, "stated")
@@ -191,6 +199,19 @@ def test_an_edit_is_offered_only_under_settings_its_facts_reach_the_actor_and_a_
     found = {parameter.name: parameter for parameter in pipeline_space(held.registry, support.template(), {})}
     assert found["pipeline/graphspec.relations/relations/base/keep"].options == (True,)
     assert found["pipeline/graphspec.edges/edges/base/persistence"].high == 1
+    chosen = opened(banks, "picked")
+    for family, setting in (("event_graph", "events/kinds"), ("sequence", "neighbors/kinds"), ("walks", "neighbors/kinds")):
+        model = configured(chosen, "moved", family)["model"]
+        (kinds,) = [parameter.options for parameter in graph_space(chosen.registry, model, {}) if parameter.name == setting]
+        assert kinds and all("relation" in option.split("+") for option in kinds) and "task" not in kinds, (family, kinds)
+        hidden = support.configuration(chosen.registry, dict(modelled(family), **{REALISATION: "moved"}), dict(PLAIN, **{setting: "task"}), 5, SPLITS)
+        shows = "an edit makes it facts of the relation went, and the setting %s task shows the family %s no relation" % (setting, family)
+        with pytest.raises(ValueError, match="^" + re.escape("the field target to of go of the kind of task turn has no route to the prediction under the realisation of options moved: " + shows) + "$"):
+            routed(chosen, hidden)
+    bounded = "the bounds leave neighbors/kinds the values task alone, and the family sequence of a model the bounds leave the realisation of options moved reads the facts its edit adds under none of them"
+    with pytest.raises(ValueError, match="^" + re.escape(bounded) + "$"):
+        check_bounds(chosen.registry, {"neighbors/kinds": ["task"], "view": ["snapshot", "sequence", "projection"]}, support.template())
+    check_bounds(chosen.registry, {"neighbors/kinds": ["task"], "view": ["snapshot", "projection"]}, support.template())
     LOG.info("edits offered where they reach exit seconds=%.3f", time.perf_counter() - started)
 
 

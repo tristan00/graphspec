@@ -899,7 +899,7 @@ def test_each_structural_realisation_puts_through_one_channel_the_elements_its_r
     slot, found = len(coded(held.registry.schema)[1]), {}
 
     @timed("realisations.recording")
-    def recording(spec, hidden, labels):
+    def recording(spec, hidden, labels, schema):
         found.update(labels=labels, module=Recording())
         return found["module"]
 
@@ -1023,40 +1023,48 @@ def test_at_depth_zero_each_option_is_scored_from_the_encoding_of_the_state_alon
     LOG.info("depth zero exit seconds=%.3f", time.perf_counter() - started)
 
 
-def test_a_family_that_passes_no_message_over_a_graph_reads_no_structural_realisation_and_a_search_never_offers_it(banks):
+def test_a_family_that_passes_no_message_over_a_graph_reads_a_structural_realisation_at_depth_zero_alone_and_a_search_offers_it_there(banks):
     from tuning.searches.selector import excluded, keyed, statics
 
     started = time.perf_counter()
     held = opened(banks, "stated")
+    schema = held.registry.schema
     readers = [family for family in VIEWS if model_spec.STRUCTURE[family] is None]
     assert sorted(model_spec.STRUCTURE) == sorted(VIEWS) and readers == READERS
     assert [name for name in REALISATIONS.shipped if realisation(name).structure] == list(STRUCTURAL)
+    stops = "the realisation of options %s puts options into the graph of the family of its model, and the family %s does not read them there: %s; it reads options put there at the options/depth 0 alone, where none of its layers passes a message"
     for family, name in (("walks", "actor_edge"), ("memory", "set_edge"), ("signal", "action_nodes")):
         cfg = configured(held, name, modelled(family), PLAIN)
-        reason = model_spec.STRUCTURE[family]
-        stops = "the realisation of options %s puts options into the graph of the family of its model, and the family %s reads no option put there: %s"
-        with pytest.raises(ValueError, match="^" + re.escape(stops % (name, family, reason)) + "$"):
+        refusal = "^" + re.escape(stops % (name, family, model_spec.STRUCTURE[family])) + "$"
+        with pytest.raises(ValueError, match=refusal):
             routed(held, cfg)
-        with pytest.raises(ValueError, match="^" + re.escape("the family %s reads no option put into its graph: %s" % (family, reason))):
+        with pytest.raises(ValueError, match=refusal):
             network(cfg, held.fitted(cfg))
+        shallow = configured(held, name, dict(modelled(family), **{DEPTH: 0}), PLAIN)
+        routed(held, shallow)
+        assert network(shallow, held.fitted(shallow)).head.options.realised.received is None
     spatial = dict(modelled("snapshot"), **{"snapshot/spatial": "none"})
-    with pytest.raises(ValueError, match="the family snapshot reads no option put there: its spatial layer is none"):
+    with pytest.raises(ValueError, match="the family snapshot does not read them there: its spatial layer is none"):
         routed(held, configured(held, "set_edge", spatial, PLAIN))
     rng, parameters = np.random.default_rng(5), realisable(held.registry, space(held.registry))
-    drawn = [model_spec.drawn(parameters, lambda parameter: parameter.uniform(rng)) for _ in range(300)]
-    assert all(spec[REALISATION] not in STRUCTURAL or model_spec.unstructured(spec) is None for spec in drawn)
+    drawn = [model_spec.drawn(parameters, lambda parameter: parameter.uniform(rng), schema) for _ in range(300)]
+    assert all(model_spec.ignored(spec, spec[REALISATION], schema) is None for spec in drawn)
     assert {spec["view"] for spec in drawn} == set(VIEWS)
     assert {spec[REALISATION] for spec in drawn if spec["view"] in readers} >= set(STRUCTURAL)
+    assert {spec[REALISATION] for spec in drawn if spec["view"] not in readers} >= set(STRUCTURAL)
     assert all((DEPTH in spec) == (spec[REALISATION] in STRUCTURAL) for spec in drawn)
-    assert {spec[DEPTH] for spec in drawn if DEPTH in spec} == set(DEPTHS)
+    deepened = {(model_spec.unstructured(spec) is None, spec[DEPTH]) for spec in drawn if DEPTH in spec}
+    assert deepened == {(True, value) for value in DEPTHS} | {(False, 0)}
     template = support.template()
-    assert excluded(held.registry, configured(held, "actor_edge", modelled("walks"), PLAIN), {}, template) == [REALISATION]
+    assert excluded(held.registry, configured(held, "actor_edge", modelled("walks"), PLAIN), {}, template) == [DEPTH]
+    assert excluded(held.registry, configured(held, "actor_edge", dict(modelled("walks"), **{DEPTH: 0}), PLAIN), {}, template) == []
     assert excluded(held.registry, configured(held, "actor_edge", modelled("tree"), PLAIN), {}, template) == []
-    static, (choosing,) = statics(parameters, ()), [parameter for parameter in parameters if parameter.name == REALISATION]
-    for family, reads in (("walks", False), ("tree", True)):
-        fitted = model_spec.fitting(choosing, dict(view=family))
-        assert (set(STRUCTURAL) <= set(fitted.options)) == reads and set(STRUCTURAL).isdisjoint(fitted.options) != reads
-        assert keyed("model/", fitted, static) == "model/" + REALISATION + ("" if reads else "|" + "|".join(fitted.options))
+    static = statics(parameters, ())
+    (choosing,), (deepening,) = ([parameter for parameter in parameters if parameter.name == name] for name in (REALISATION, DEPTH))
+    for family, depths in (("walks", (0,)), ("tree", DEPTHS)):
+        fitted = model_spec.fitting(choosing, dict(view=family), schema, parameters)
+        assert set(STRUCTURAL) <= set(fitted.options) and keyed("model/", fitted, static) == "model/" + REALISATION
+        assert model_spec.fitting(deepening, dict(view=family, **{REALISATION: "set_edge"}), schema, parameters).options == depths
     LOG.info("structure read by families exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -1065,23 +1073,33 @@ def test_bounds_or_a_random_realisation_that_would_leave_a_family_none_it_reads_
     from tuning.searches.space import Space
 
     started = time.perf_counter()
-    registry, template, fixed = opened(banks, "stated").registry, support.template(), "model/" + REALISATION
-    unread = {"snapshot": model_spec.unstructured({"view": "snapshot", "snapshot/spatial": "none"})}
-    unread.update((family, reason) for family, reason in model_spec.STRUCTURE.items() if reason is not None)
+    registry, template, fixed, fixing = opened(banks, "stated").registry, support.template(), "model/" + REALISATION, "model/" + DEPTH
+    alone = "; it reads options put there at the options/depth 0 alone, where none of its layers passes a message"
+    unread = {"snapshot": model_spec.unstructured({"view": "snapshot", "snapshot/spatial": "none"}) + alone}
+    unread.update((family, reason + alone) for family, reason in model_spec.STRUCTURE.items() if reason is not None)
     families, reasons = ", ".join(unread), "; ".join("%s: %s" % pair for pair in unread.items())
     placing, readers = {REALISATION: ["action_nodes", "set_edge"]}, {"view": READERS, "snapshot/spatial": ["mean", "relational"]}
-    bounded = "the bounds leave the model the realisations of options action_nodes, set_edge alone, each putting options into "
-    bounded += "the graph of its family, and leave it the families %s, which read no option put there: %s" % (families, reasons)
-    with pytest.raises(ValueError, match="^" + re.escape(bounded) + "$"):
-        check_bounds(registry, placing, template)
-    random = "the random parameter %s fixes one realisation of options for every model of a proposal, and its bounds let it "
-    random += "fix action_nodes, actor_edge, set_edge, each putting options into the graph of its family, while they leave the "
-    random += "model the families %s, which read no option put there: %s"
-    with pytest.raises(ValueError, match="^" + re.escape(random % (fixed, families, reasons)) + "$"):
+    bounded = "the bounds leave the model the realisations of options action_nodes, set_edge alone at the options/depth 1, 2, "
+    bounded += "each putting options into the graph of its family, and leave it the families %s, which read none of them there: %s"
+    with pytest.raises(ValueError, match="^" + re.escape(bounded % (families, reasons)) + "$"):
+        check_bounds(registry, dict(placing, **{DEPTH: [1, 2]}), template)
+    check_bounds(registry, placing, template)
+    random = "the random parameters %s fix one value for every model of a proposal, and with the bounds they may leave the model "
+    random += "the realisations of options action_nodes, actor_edge, set_edge alone at the options/depth %s, each putting options "
+    random += "into the graph of its family, and the families %s, which read none of them there: %s"
+    with pytest.raises(ValueError, match="^" + re.escape(random % (fixed + ", " + fixing, "1, 2, 3", families, reasons)) + "$"):
         Space(registry, {}, 60, (), template).random_names(["model/*"])
+    with pytest.raises(ValueError, match="^" + re.escape(random % (fixed, "1, 2", families, reasons)) + "$"):
+        Space(registry, {DEPTH: [1, 2]}, 60, (), template).random_names([fixed])
+    assert Space(registry, {}, 60, (), template).random_names([fixed]) == [fixed]
+    space, rng = Space(registry, {REALISATION: [NONE, "set_edge"]}, 60, (), template), np.random.default_rng(5)
+    assert space.random_names([fixing]) == [fixing]
+    drawn = [space.draw(rng, 7, {fixing: 2})["model"] for _ in range(20)]
+    assert all(spec[REALISATION] == NONE or (spec["view"] in READERS and spec[DEPTH] == 2) for spec in drawn)
+    assert {spec[REALISATION] for spec in drawn} == {NONE, "set_edge"} and {spec["view"] for spec in drawn} - set(READERS)
     check_bounds(registry, dict(placing, **readers), template)
     assert Space(registry, {REALISATION: [NONE, "vector"]}, 60, (), template).random_names([fixed]) == [fixed]
-    space, rng = Space(registry, readers, 60, (), template), np.random.default_rng(5)
+    space = Space(registry, readers, 60, (), template)
     assert space.random_names([fixed]) == [fixed]
     drawn = [(name, space.draw(rng, 7, {fixed: name})["model"]) for name in STRUCTURAL * 8]
     assert all(spec[REALISATION] == name for name, spec in drawn) and {spec["view"] for _, spec in drawn} == set(READERS)
@@ -1097,11 +1115,11 @@ def test_tpe_records_each_family_under_the_realisations_it_reads_while_the_banks
     held = opened(banks, "stated")
     packed(held, "whole", 1)
     template, keys = support.template(), {}
-    for family, name in (("tree", "set_edge"), ("walks", "vector")):
-        record = observation(held.registry, configured(held, name, modelled(family), PLAIN), 1.0, {}, template)
-        (keys[family],) = [key for key in record.params if key.startswith("model/" + REALISATION)]
-        assert record.params[keys[family]] == name
-    assert keys["tree"] == "model/" + REALISATION and keys["walks"].startswith("model/%s|%s|vector|" % (REALISATION, NONE))
-    assert set(STRUCTURAL).isdisjoint(keys["walks"].split("|"))
+    for family, deep in (("tree", ROUNDS), ("walks", 0)):
+        cfg = configured(held, "set_edge", dict(modelled(family), **{DEPTH: deep}), PLAIN)
+        record = observation(held.registry, cfg, 1.0, {}, template)
+        keys[family] = sorted(key for key in record.params if key.startswith("model/options/"))
+        assert [record.params[key] for key in keys[family]] == [deep, "set_edge"]
+    assert keys == dict(tree=["model/" + DEPTH, "model/" + REALISATION], walks=["model/%s|0" % DEPTH, "model/" + REALISATION])
     LOG.info("tpe records realisations exit seconds=%.3f", time.perf_counter() - started)
 

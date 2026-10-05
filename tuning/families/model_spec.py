@@ -8,9 +8,13 @@ from graphspec.operations.parameters import GROUPS, among, choice, equals, flag,
 from graphspec.operations.pipeline import resolved
 from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 
-from .heads import DEPTH, DEPTHS, NONE, REALISATION, REALISATIONS, reading, realisation, refused
+from .heads import DEPTH, DEPTHS, NONE, REALISATION, REALISATIONS, fielded, reading, realisation, refused
 
 LOG = logging.getLogger(__name__)
+UNREAD = (
+    "the realisation of options %s puts options into the graph of the family of its model, and the family %s does not "
+    "read them there: %s"
+)
 SPACES = {}
 DERIVES = "representations/%s"
 VIEWS = (
@@ -66,6 +70,11 @@ SPATIALLY = dict(
     relational_attention=("facts", "relations"),
 )
 PARTS = dict(facts="the facts an edit adds", relations="their relations", values="their values")
+MADE = dict(targets="the end of a fact", kind="the relation of a fact", parameters="a value of a fact")
+UNRELATED = "mutual_rnn"
+SHOWN = dict(event_graph="events/kinds", sequence="neighbors/kinds", tree="neighbors/kinds", walks="neighbors/kinds")
+RELATION = "relation"
+VARIED = ("snapshot/spatial", "memory/update")
 SPATIAL = ("none", "mean", "normalised", "relational", "attention", "chebyshev", "relational_attention")
 ENCODINGS = ("log_cosine", "cosine", "log_linear")
 EMBEDDING = ("snapshot", "mixed", "event_graph", "memory", "projection", "sequence", "tree", "walks")
@@ -226,9 +235,9 @@ def mapped(registry):
     return result
 
 
-def turned(registry, spec, parameters):
+def turning(registry, spec, parameters):
     started = time.perf_counter()
-    name = edited(spec, registry.schema)
+    name, named, result = edited(spec, registry.schema), {parameter.name: parameter for parameter in parameters}, {}
     entry = None if name is None else realisation(name)
     sends = entry is not None and any(
         sending(registry, entry, held)
@@ -236,12 +245,51 @@ def turned(registry, spec, parameters):
         for roles in actions.values()
         for held in roles.values()
     )
-    result = parameters
-    if sends and DIRECTION in [parameter.name for parameter in parameters]:
-        (direction,) = [parameter for parameter in parameters if parameter.name == DIRECTION]
-        result = narrow(parameters, {DIRECTION: [option for option in direction.options if option != "directed"]})
-    LOG.debug("model turned exit sends=%s seconds=%.4f", sends, time.perf_counter() - started)
+    if sends and DIRECTION in named:
+        result[DIRECTION] = [option for option in named[DIRECTION].options if option != "directed"]
+    if entry is not None and spec["view"] in SHOWN and SHOWN[spec["view"]] in named:
+        result[SHOWN[spec["view"]]] = [option for option in named[SHOWN[spec["view"]]].options if showing(option)]
+    LOG.debug("model turning exit settings=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
+
+
+def turned(registry, spec, parameters):
+    started = time.perf_counter()
+    kept = turning(registry, spec, parameters)
+    result = narrow(parameters, kept) if kept else parameters
+    LOG.debug("model turned exit settings=%d seconds=%.4f", len(kept), time.perf_counter() - started)
+    return result
+
+
+@timed("model_spec.variants")
+def variants(named):
+    result = []
+    for family in named["view"].options:
+        found = [{"view": family}]
+        for name in VARIED:
+            if named[name].active(found[0]):
+                found = [dict(spec, **{name: option}) for spec in found for option in named[name].options]
+        result += found
+    return result
+
+
+@timed("model_spec.turnable")
+def turnable(registry, parameters, settings):
+    named = {parameter.name: parameter for parameter in parameters}
+    for name in named[REALISATION].options if REALISATION in named else ():
+        if name == NONE or not realisation(name).back:
+            continue
+        for spec in variants(named):
+            if not named[REALISATION].active(spec) or not depths(spec, name, registry.schema, named[DEPTH].options):
+                continue
+            for setting, kept in turning(registry, dict(spec, **{REALISATION: name}), settings).items():
+                if not kept:
+                    (held,) = [parameter.options for parameter in settings if parameter.name == setting]
+                    raise ValueError(
+                        "the bounds leave %s the values %s alone, and the family %s of a model the bounds leave the "
+                        "realisation of options %s reads the facts its edit adds under none of them"
+                        % (setting, ", ".join(held), spec["view"], name)
+                    )
 
 
 @timed("model_spec.unstructured")
@@ -251,9 +299,16 @@ def unstructured(spec):
     return STRUCTURE[spec["view"]]
 
 
+@timed("model_spec.relationless")
+def relationless(spec):
+    return spec["view"] == "memory" and spec["memory/update"] == UNRELATED
+
+
 @timed("model_spec.edits")
 def edits(spec):
-    return SPATIALLY[spec["snapshot/spatial"]] if spec["view"] == "snapshot" else EDITED[spec["view"]]
+    if spec["view"] == "snapshot":
+        return SPATIALLY[spec["snapshot/spatial"]]
+    return () if relationless(spec) else EDITED[spec["view"]]
 
 
 @timed("model_spec.unedited")
@@ -262,71 +317,139 @@ def unedited(spec):
     if held == EDITS:
         return None
     lacking = " nor ".join(PARTS[part] for part in EDITS if part not in held)
+    if relationless(spec):
+        return "its update %s reads observations and tasks and no relation, so neither %s" % (UNRELATED, lacking)
     if not held:
         return "it reads no edge, so neither %s" % lacking
     return "it reads %s, and not %s" % (" and ".join(PARTS[part] for part in held), lacking)
 
 
+@timed("model_spec.showing")
+def showing(value):
+    return RELATION in value.split("+")
+
+
+def wanting(spec, schema):
+    started = time.perf_counter()
+    held, result = edits(spec), None
+    if not held:
+        result = unedited(spec)
+    elif held != EDITS:
+        lacking = [
+            (task, field) for task in schema.decided() for field in fielded(schema, task) if NEEDS[field["sort"]] not in held
+        ]
+        if lacking:
+            task, field = lacking[0]
+            result = "an edit makes the field %s of the kind of task %s %s, and %s" % (
+                field["name"],
+                task,
+                MADE[field["sort"]],
+                unedited(spec),
+            )
+    LOG.debug("model wanting exit wanting=%s seconds=%.6f", result is not None, time.perf_counter() - started)
+    return result
+
+
 @timed("model_spec.ignored")
-def ignored(spec, name):
+def ignored(spec, name, schema):
     if name == NONE:
         return None
     entry = realisation(name)
     if entry.structure:
-        return unstructured(spec)
-    return unedited(spec) if entry.back else None
+        reason = unstructured(spec)
+        if reason is None or not depth(spec):
+            return None
+        return "%s; it reads options put there at the %s 0 alone, where none of its layers passes a message" % (reason, DEPTH)
+    return wanting(spec, schema) if entry.back else None
 
 
-def fitting(parameter, spec):
+def depths(spec, name, schema, offered):
     started = time.perf_counter()
-    reasons = (unstructured(spec), unedited(spec))
-    kept = tuple(name for name in parameter.options if reasons == (None, None) or ignored(spec, name) is None)
-    if not kept:
-        raise ValueError(
-            "the realisations of options left to the model of the family %s, %s, each put options into its graph, "
-            "and it reads none put there: %s" % (spec["view"], ", ".join(parameter.options), ignored(spec, parameter.options[0]))
-        )
-    result = parameter if kept == parameter.options else narrow((parameter,), {REALISATION: list(kept)})[0]
-    LOG.debug("model fitting exit kept=%d seconds=%.6f", len(kept), time.perf_counter() - started)
+    stated = dict(spec, **{REALISATION: name})
+    if deep(stated):
+        result = tuple(value for value in offered if ignored(dict(stated, **{DEPTH: value}), name, schema) is None)
+    else:
+        result = offered if ignored(stated, name, schema) is None else ()
+    LOG.debug("model depths exit name=%s depths=%d seconds=%.6f", name, len(result), time.perf_counter() - started)
     return result
 
 
-def drawn(parameters, choose):
+def unreadable(spec, name, schema, offered):
+    started = time.perf_counter()
+    stated = dict(spec, **{REALISATION: name})
+    result = ignored(dict(stated, **{DEPTH: offered[0]}) if deep(stated) else stated, name, schema)
+    LOG.debug("model unreadable exit name=%s seconds=%.6f", name, time.perf_counter() - started)
+    return result
+
+
+def fitting(parameter, spec, schema, parameters):
+    started = time.perf_counter()
+    (offered,) = [held.options for held in parameters if held.name == DEPTH]
+    if parameter.name == DEPTH:
+        name, offered = spec[REALISATION], parameter.options
+        kept = depths(spec, name, schema, offered)
+        stops = "the model of the family %s reads the realisation of options %s at none of the values of %s left to it, %s"
+        stops %= (spec["view"], name, DEPTH, ", ".join(map(str, offered)))
+    else:
+        name = parameter.options[0]
+        kept = tuple(held for held in parameter.options if depths(spec, held, schema, offered))
+        stops = "the model of the family %s reads none of the realisations of options left to it, %s" % (
+            spec["view"],
+            ", ".join(parameter.options),
+        )
+    if not kept:
+        raise ValueError("%s: %s" % (stops, unreadable(spec, name, schema, offered)))
+    result = parameter if kept == parameter.options else narrow((parameter,), {parameter.name: list(kept)})[0]
+    LOG.debug("model fitting exit parameter=%s kept=%d seconds=%.6f", parameter.name, len(kept), time.perf_counter() - started)
+    return result
+
+
+def drawn(parameters, choose, schema):
     started = time.perf_counter()
     spec = {}
     for parameter in parameters:
         if parameter.active(spec):
-            spec[parameter.name] = choose(fitting(parameter, spec) if parameter.name == REALISATION else parameter)
+            held = fitting(parameter, spec, schema, parameters) if parameter.name in (REALISATION, DEPTH) else parameter
+            spec[parameter.name] = choose(held)
     LOG.debug("model drawn exit parameters=%d seconds=%.6f", len(spec), time.perf_counter() - started)
     return spec
 
 
 @timed("model_spec.placed")
-def placed(parameters, fixed):
+def placed(parameters, fixed, schema):
     named = {parameter.name: parameter for parameter in parameters}
-    held = named[REALISATION].options if REALISATION in named else ()
-    placing = [name for name in held if name != NONE and (realisation(name).structure or realisation(name).back)]
-    unread = {}
-    if placing and (fixed is not None or len(placing) == len(held)):
-        for family in named["view"].options:
-            for spatial in named["snapshot/spatial"].options:
-                spec = {"view": family, "snapshot/spatial": spatial}
-                reasons = [reason for reason in (ignored(spec, name) for name in placing) if reason is not None]
-                if reasons and (fixed is not None or len(reasons) == len(placing)) and named[REALISATION].active(spec):
-                    unread.setdefault(family, reasons[0])
+    if REALISATION not in named:
+        return
+    held, offered = named[REALISATION].options, named[DEPTH].options
+    choices = [(name,) for name in held] if "model/" + REALISATION in fixed else [held]
+    levels = [(value,) for value in offered] if "model/" + DEPTH in fixed else [offered]
+    unread, names, values = {}, [], []
+    for spec in variants(named):
+        if not named[REALISATION].active(spec):
+            continue
+        for group in choices:
+            for level in levels:
+                if any(depths(spec, name, schema, level) for name in group):
+                    continue
+                unread.setdefault(spec["view"], unreadable(spec, group[0], schema, level))
+                names += [name for name in group if name not in names]
+                structural = any(realisation(name).structure for name in group)
+                values += [value for value in level if structural and value not in values]
     if not unread:
         return
     families, reasons = ", ".join(unread), "; ".join("%s: %s" % pair for pair in unread.items())
-    if fixed is None:
+    left = "the realisations of options %s alone%s, each putting options into the graph of its family" % (
+        ", ".join(names),
+        " at the %s %s" % (DEPTH, ", ".join(map(str, sorted(values)))) if values else "",
+    )
+    if not fixed:
         raise ValueError(
-            "the bounds leave the model the realisations of options %s alone, each putting options into the graph of "
-            "its family, and leave it the families %s, which read no option put there: %s"
-            % (", ".join(placing), families, reasons)
+            "the bounds leave the model %s, and leave it the families %s, which read none of them there: %s"
+            % (left, families, reasons)
         )
     raise ValueError(
-        "the random parameter %s fixes one realisation of options for every model of a proposal, and its bounds let it "
-        "fix %s, each putting options into the graph of its family, while they leave the model the families %s, which "
-        "read no option put there: %s" % (fixed, ", ".join(placing), families, reasons)
+        "the random parameters %s fix one value for every model of a proposal, and with the bounds they may leave the "
+        "model %s, and the families %s, which read none of them there: %s" % (", ".join(fixed), left, families, reasons)
     )
 
 
@@ -551,21 +674,12 @@ def samples(registry):
         and isinstance(parameter.options[0], (str, bool))
         and parameter.name != "view"
     ]
-    result, seen, placing = [], set(), {NONE: None}
-    for parameter in parameters:
-        if parameter.name == REALISATION:
-            placing.update(
-                {
-                    name: unstructured if realisation(name).structure else unedited if realisation(name).back else None
-                    for name in parameter.options
-                    if name != NONE
-                }
-            )
+    result, seen, schema = [], set(), registry.schema
 
     def add(values):
         found = []
         for spec in starts(values):
-            if REALISATION in spec and placing[spec[REALISATION]] is not None and placing[spec[REALISATION]](spec) is not None:
+            if REALISATION in spec and ignored(spec, spec[REALISATION], schema) is not None:
                 continue
             found.append(spec)
             if tuple(spec.items()) not in seen:
@@ -578,8 +692,8 @@ def samples(registry):
         for parameter in parameters:
             if parameter.active(spec):
                 if parameter.default is None and parameter.name not in values:
-                    options = (fitting(parameter, spec) if parameter.name == REALISATION else parameter).options
-                    return [found for option in options for found in starts(dict(values, **{parameter.name: option}))]
+                    held = fitting(parameter, spec, schema, parameters) if parameter.name in (REALISATION, DEPTH) else parameter
+                    return [found for option in held.options for found in starts(dict(values, **{parameter.name: option}))]
                 spec[parameter.name] = parameter.given(values)
         return [spec]
 

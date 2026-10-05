@@ -192,7 +192,7 @@ def refused(name, registry):
 
 
 class Existing:
-    version = 6
+    version = 7
     reads = ("targets",)
     together = False
     back = False
@@ -230,7 +230,7 @@ class Existing:
 
 
 class Built:
-    version = 6
+    version = 7
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
@@ -249,7 +249,7 @@ class Built:
 
 
 class Structural:
-    version = 4
+    version = 5
     reads = ("kind", "targets", "parameters")
     together = False
     back = False

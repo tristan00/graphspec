@@ -12,7 +12,7 @@ from tuning.bank.forks import Forks, made, trunk
 from tuning.bank.options import offered
 from tuning.batches.batching import batches, pack_batch, pack_parts
 from tuning.families.heads import NONE, REALISATION, coded, fielded, realisation, refused
-from tuning.families.model_spec import DIRECTION, NEEDS, edits, ignored, realised, sending, unedited
+from tuning.families.model_spec import DIRECTION, SHOWN, UNREAD, ignored, realised, sending, showing
 from tuning.families.options import slots
 from tuning.families.periods import blocks as windows
 
@@ -20,7 +20,6 @@ LOG = logging.getLogger(__name__)
 CLOSE = 1e-6
 STATE = SUMMED = 1e-5
 EQUAL, BACK = "equal", "back"
-MADE = dict(targets="the end of a fact", kind="the relation of a fact", parameters="a value of a fact")
 ORDERED = (
     "the encoding of an option of the kind of task %s whose actions, %s, are a set changes when its actions are %s, "
     "under the realisation of options %s; a set gives the same encoding in any order"
@@ -107,8 +106,10 @@ def withheld(field):
     return ("parameter", field["code"], field["column"])
 
 
-def cut(bank, entry, task, field, removed, unkept, directed):
+def cut(bank, entry, task, field, removed, unkept, settings, family):
     started = time.perf_counter()
+    directed = DIRECTION in settings and settings[DIRECTION] == "directed"
+    shown = SHOWN[family] if family in SHOWN else None
     kinds, relations, held, result = field["named"], field["relations"], None, None
     if entry.back:
         schema = bank.registry.schema
@@ -138,6 +139,13 @@ def cut(bank, entry, task, field, removed, unkept, directed):
             "directed reads a relation from its source to its target alone, so the actor reads none of them"
             % (held["relation"], DIRECTION)
         )
+    elif held is not None and shown is not None and not showing(settings[shown]):
+        result = "an edit makes it facts of the relation %s, and the setting %s %s shows the family %s no relation" % (
+            held["relation"],
+            shown,
+            settings[shown],
+            family,
+        )
     LOG.debug("guards cut exit field=%s cut=%s seconds=%.4f", field["name"], result is not None, time.perf_counter() - started)
     return result
 
@@ -148,33 +156,22 @@ def routed(bank, cfg):
     if name is None:
         LOG.debug("guards routed exit realisation=none seconds=%.4f", time.perf_counter() - started)
         return
-    entry, spec = realisation(name), cfg["model"]
-    back = entry.back
-    reason = ignored(spec, name) if not back or not edits(spec) else None
+    entry, spec, schema = realisation(name), cfg["model"], bank.registry.schema
+    reason = ignored(spec, name, schema)
     if reason is not None:
-        raise ValueError(
-            "the realisation of options %s puts options into the graph of the family of its model, and the family "
-            "%s reads no option put there: %s" % (name, spec["view"], reason)
-        )
-    schema = bank.registry.schema
+        raise ValueError(UNREAD % (name, spec["view"], reason))
     reason = refused(name, bank.registry)
     if reason is not None:
         raise ValueError(reason)
     _, steps, settings, _ = bank.stated(cfg)
     removed, unkept = emptied(bank.registry, steps), unrelated(bank.registry, steps)
-    directed = DIRECTION in settings and settings[DIRECTION] == "directed"
     for task in schema.decided():
         for field in fielded(schema, task):
             where = "the field %s of the kind of task %s has no route to the prediction under the realisation of options %s"
             where %= (field["name"], task, name)
-            reason = cut(bank, entry, task, field, removed, unkept, directed) if field["sort"] == "targets" else None
+            reason = cut(bank, entry, task, field, removed, unkept, settings, spec["view"]) if field["sort"] == "targets" else None
             if reason is not None:
                 raise ValueError("%s: %s" % (where, reason))
-            if back and NEEDS[field["sort"]] not in edits(spec):
-                raise ValueError(
-                    "%s: an edit makes it %s, which the family %s does not read; %s"
-                    % (where, MADE[field["sort"]], spec["view"], unedited(spec))
-                )
     LOG.info("guards routed exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
 
 

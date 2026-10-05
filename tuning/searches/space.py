@@ -16,7 +16,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.registries import carried, restored
-from tuning.families.heads import REALISATION
+from tuning.families.heads import DEPTH, REALISATION
 from tuning.families.model_spec import TRAINING, drawn, edited, groups, placed
 from tuning.families.model_spec import space as model_space
 
@@ -32,6 +32,7 @@ from .selector import (
 )
 
 CANDIDATES = 10000
+MODEL = "model/"
 RANKED = 25
 IMPORTANT = 20
 LOWER = {"predicted_mse"}
@@ -92,7 +93,7 @@ class Space:
             self.runtime.name: self.runtime,
         }
         self.width = sum(len(p.options) if p.options else 2 for p in self.parameters.values())
-        self.named, self.fixings = {p.name for p in self.pipeline}, {}
+        self.named, self.fixings, self.modellings = {p.name for p in self.pipeline}, {}, {}
 
     @timed("space.fixing")
     def fixing(self, fixed):
@@ -101,6 +102,14 @@ class Space:
         if key not in self.fixings:
             self.fixings[key] = specs.narrow(self.pipeline, held)
         return self.fixings[key]
+
+    @timed("space.modelling")
+    def modelling(self, fixed):
+        held = {name[len(MODEL) :]: value for name, value in fixed.items() if name.startswith(MODEL)}
+        key = json.dumps(held, sort_keys=True)
+        if key not in self.modellings:
+            self.modellings[key] = specs.narrow(self.models, held)
+        return self.modellings[key]
 
     @timed("space.Space.importance")
     def importance(self, weights):
@@ -118,8 +127,9 @@ class Space:
         if unknown:
             raise ValueError("random parameter names unknown parameters: " + ", ".join(unknown))
         names = [n for n in self.parameters if any(fnmatch.fnmatchcase(n, p) for p in patterns)]
-        if "model/" + REALISATION in names:
-            placed(self.models, "model/" + REALISATION)
+        fixed = [name for name in names if name in (MODEL + REALISATION, MODEL + DEPTH)]
+        if fixed:
+            placed(self.models, fixed, self.registry.schema)
         return names
 
     @timed("space.Space.encode")
@@ -153,7 +163,7 @@ class Space:
                 return parameter.check(fixed[name])
             return parameter.uniform(rng)
 
-        model = drawn(self.models, lambda p: choose("model/", p))
+        model = drawn(self.modelling(fixed), lambda p: choose(MODEL, p), self.registry.schema)
         key = groups(model), edited(model, self.registry.schema)
         if key not in self.graphs:
             self.graphs[key] = graph_space(self.registry, model, self.bounds)

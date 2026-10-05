@@ -12,7 +12,21 @@ from graphspec.operations import pipeline
 from graphspec.operations.negatives import needed
 from graphspec.operations.operation import Refused
 from graphspec.views.view import STEPS
-from tuning.families.model_spec import TRAINING, describe, drawn, groups, mapped, placed, realisable, turned
+from tuning.families.heads import DEPTH, REALISATION
+from tuning.families.model_spec import (
+    TRAINING,
+    deep,
+    describe,
+    drawn,
+    groups,
+    ignored,
+    mapped,
+    placed,
+    realisable,
+    realised,
+    turnable,
+    turned,
+)
 from tuning.families.model_spec import space as model_space
 from tuning.measures import objective
 
@@ -190,7 +204,9 @@ def check_bounds(registry, bounds, template):
     if unknown:
         raise ValueError("bounds name unknown parameters: " + ", ".join(unknown))
     specs.narrow(parameters, bounds)
-    placed(spaces(registry, bounds)[0], None)
+    models = spaces(registry, bounds)[0]
+    placed(models, (), registry.schema)
+    turnable(registry, models, narrow_group(specs.settings(registry, specs.GROUPS), bounds))
     graph = stepped(registry, narrow_group(specs.settings(registry, ()), bounds))
     held = pipeline_space(registry, template, bounds)
     pipeline.housing(registry, template, held, graph)
@@ -235,7 +251,7 @@ def observation(registry, config, value, bounds, template, **attrs):
         params[name], distributions[name] = value, distribution(parameter)
         return value
 
-    enter("model/", models, config["model"], drawn)
+    enter("model/", models, config["model"], lambda parameters, read: drawn(parameters, read, registry.schema))
     enter("", trainings, training(config), specs.draw)
     enter("graph/", graph_space(registry, config["model"], bounds), config["graph"], specs.draw)
     flat = pipeline.flattened(template, config["pipeline"])
@@ -265,12 +281,20 @@ def outside(parameters, spec, drawing):
     return names
 
 
+@timed("selector.unread")
+def unread(registry, model):
+    name = realised(model, registry.schema)
+    if name is None or ignored(model, name, registry.schema) is None:
+        return []
+    return [DEPTH if deep(model) else REALISATION]
+
+
 @timed("selector.excluded")
 def excluded(registry, config, bounds, template):
     models, trainings = spaces(registry, bounds)
     flat = pipeline.flattened(template, config["pipeline"])
     return (
-        (outside(models, config["model"], specs.draw) or outside(models, config["model"], drawn))
+        (outside(models, config["model"], specs.draw) or unread(registry, config["model"]))
         + outside(trainings, training(config), specs.draw)
         + outside(graph_space(registry, config["model"], bounds), config["graph"], specs.draw)
         + outside(pipeline_space(registry, template, bounds), flat, specs.draw)
@@ -303,7 +327,7 @@ def metadata(registry, config, seed, training_seed, bounds, template, **extra):
 @timed("selector.configuration")
 def configuration(registry, choose, training_seed, bounds, seconds, template):
     models, trainings = spaces(registry, bounds)
-    model = drawn(models, lambda parameter: choose("model/", parameter))
+    model = drawn(models, lambda parameter: choose("model/", parameter), registry.schema)
     config = dict(
         seed=training_seed, model=model, **specs.draw(trainings, lambda parameter: choose("", parameter))
     )

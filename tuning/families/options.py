@@ -7,7 +7,7 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 
-from .heads import ONE, coded, realisation
+from .heads import ONE, REALISATION, coded, realisation
 from .layers import mean, padded
 
 LOG = logging.getLogger(__name__)
@@ -94,12 +94,12 @@ class Vector(nn.Module):
 
 
 @timed("options.received")
-def received(spec, hidden, labels):
-    from .model_spec import depth, unstructured
+def received(spec, hidden, labels, schema):
+    from .model_spec import UNREAD, depth, ignored
 
-    reason = unstructured(spec)
+    reason = ignored(spec, spec[REALISATION], schema)
     if reason is not None:
-        raise ValueError("the family %s reads no option put into its graph: %s" % (spec["view"], reason))
+        raise ValueError(UNREAD % (spec[REALISATION], spec["view"], reason))
     rounds = depth(spec)
     return import_module("." + spec["view"], __package__).Received(spec, hidden, labels, rounds) if rounds else None
 
@@ -112,7 +112,7 @@ class Structured(nn.Module):
         self.place = nn.Linear(1, hidden, bias=False)
         self.action = nn.Sequential(nn.Linear(hidden + width, hidden), nn.SiLU(), nn.Linear(hidden, hidden))
         self.empty = nn.Parameter(torch.zeros(hidden))
-        self.received = received(spec, hidden, self.slot + actor)
+        self.received = received(spec, hidden, self.slot + actor, registry.schema)
 
     def forward(self, fields, structure):
         kind, owner = fields["kind"], structure["action_option"]
