@@ -374,7 +374,7 @@ def test_every_guard_holds_for_an_edit_and_one_refuses_a_field_whose_facts_the_f
         except ValueError as error:
             found[spatial] = str(error)
     assert found["relational"]["state"] == BACK and found["relational"]["unseen"] == UNSEEN
-    assert found["relational"]["sets"] > 0 and found["relational"]["pairs"] > 0 and found["relational"]["share"] == 0.0
+    assert found["relational"]["sets"] == 0 and found["relational"]["pairs"] > 0 and found["relational"]["share"] == 0.0
     stops = "with the weights drawn by the seed 5, the prediction does not move with the field %s of the kind of task turn for any option of the splits scored on, under the realisation of options edited"
     assert found["mean"] == stops % "kind" and found["relational_attention"] == stops % "parameter speed of go"
     assert (moved["mean"]["kind"], moved["mean"]["target to of go"]) == (False, True)
@@ -419,16 +419,20 @@ def test_the_facts_an_edit_adds_come_from_the_content_of_its_option_alone(banks)
     started = time.perf_counter()
     stated, flipped, moved = (opened(banks, name) for name in ("stated", "flipped", "moved"))
     assert not set(OFFERED) & {"option_" + name for name in ("available", "chosen", "order", "shown", "logged", "origin", "outcome")}
-    made, packed = [], []
+    made, packed, orders = [], [], []
     for held in (stated, flipped, moved):
         cfg = configured(held, "edited", "snapshot")
         made.append([])
         with forks.Forks(held):
             for part in parted(held, last(held, cfg, 1), cfg):
                 history = forks.trunk(held, cfg, part[0].graph, part[0].step)
-                edit = forks.made(held, cfg, history, part[0], forks.ordered(held, part[0].option))
+                order = forks.ordered(held, part[0].option)
+                edit, turned = (forks.made(held, cfg, history, part[0], given) for given in (order, order[::-1]))
                 made[-1].append([np.asarray(values) for side in edit.added.values() for values in side.values()])
+                again = [np.asarray(values) for side in turned.added.values() for values in side.values()]
+                orders.append((len(order), all(np.array_equal(left, right, equal_nan=left.dtype.kind == "f") for left, right in zip(made[-1][-1], again, strict=True))))
         packed.append(canonical(held, [pack_batch(held, last(held, cfg, 2), cfg, "cpu")]))
+    assert any(count > 1 for count, _ in orders) and all(same for _, same in orders)
     assert all([len(edit) for edit in found] == [len(edit) for edit in made[0]] for found in made) and any(len(edit[-4]) for edit in made[0])
     assert all(
         np.array_equal(left, right, equal_nan=left.dtype.kind == "f")

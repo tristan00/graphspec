@@ -8,7 +8,7 @@ from torch import nn
 
 from graphspec.infra.timing import timed
 from graphspec.operations.pipeline import emptied, unrelated
-from tuning.bank.forks import Forks, made, trunk
+from tuning.bank.forks import Forks
 from tuning.bank.options import offered
 from tuning.batches.batching import batches, pack_batch, pack_parts
 from tuning.families.heads import NONE, REALISATION, coded, fielded, realisation, refused
@@ -609,35 +609,6 @@ class Forked(Guard):
                 raise ValueError(PLACED % (self.kinds[int(np.asarray(held["kind"])[moved[wrong[0]]])], name, self.name))
         LOG.debug("forked guard placed exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
 
-    def ordered(self, b):
-        started = time.perf_counter()
-        held, found = b["options"], self.found
-        for place, option in enumerate(np.asarray(held["option"], np.int64).tolist()):
-            first, count = int(found.actions[0][option]), int(found.actions[1][option])
-            if bool(held["sequence"][place]) or count < 2:
-                continue
-            part = held["block"][place][0]
-            history = trunk(self.bank, self.cfg, part.graph, part.step)
-            stated = np.arange(first, first + count)
-            edit = made(self.bank, self.cfg, history, part, stated.tolist())
-            self.sets += 1
-            for name, step in ORDERS.items():
-                again = made(self.bank, self.cfg, history, part, stated[step(np.arange(count), count)].tolist())
-                same = all(
-                    np.array_equal(edit.added[side][array], again.added[side][array], equal_nan=array in ("x", "values"))
-                    for side in edit.added
-                    for array in edit.added[side]
-                )
-                if not same:
-                    kind = self.kinds[int(held["kind"][place])]
-                    named = [self.actions[code][1] for code in found.action["kind"][first : first + count].tolist()]
-                    raise ValueError(
-                        "the facts of an option of the kind of task %s whose actions, %s, are a set change when its "
-                        "actions are %s, under the realisation of options %s; a set makes the same facts in any order"
-                        % (kind, ", ".join(named), name, self.name)
-                    )
-        LOG.debug("forked guard ordered exit sets=%d seconds=%.4f", self.sets, time.perf_counter() - started)
-
     def checked(self, b):
         started = time.perf_counter()
         if len(b["options"]["row"]):
@@ -646,7 +617,6 @@ class Forked(Guard):
             self.derived(b, values, mask)
             self.apart(b, values, mask)
             self.placed(b, values, mask)
-            self.ordered(b)
             self.alike(b, values, mask)
             self.options += len(values)
         LOG.debug("forked guard checked exit seconds=%.4f", time.perf_counter() - started)
