@@ -49,6 +49,37 @@ class Owner:
     pass
 
 
+class Late:
+    version = 1
+    reads = ("kind",)
+    together = False
+    back = False
+    structure = False
+    actor = False
+
+    @timed("selector_tests.Late.refusal")
+    def refusal(self, registry):
+        return None
+
+    @timed("selector_tests.Late.module")
+    def module(self, hidden, width, spec, registry):
+        return None
+
+
+class Pool:
+    @timed("selector_tests.Pool.__init__")
+    def __init__(self, workers, initializer, initargs):
+        self.initargs, self.down = initargs, False
+
+    @timed("selector_tests.Pool.shutdown")
+    def shutdown(self, wait, cancel_futures):
+        self.down = True
+
+    @timed("selector_tests.Pool.carried")
+    def carried(self):
+        return {label: [name for name, _, _ in held or ()] for label, _, held in self.initargs[0][0]}
+
+
 @timed("selector_tests.reached")
 def reached(importing, name, owner):
     return importing(name)
@@ -64,6 +95,25 @@ def suggest(*arguments):
 
 def test_the_template_of_the_suite_is_the_seven_in_their_order():
     assert read_json(PIPELINE) == TEMPLATE
+
+
+def test_the_pool_of_candidates_starts_again_with_the_registries_whenever_they_change(monkeypatch):
+    from tuning import REALISATIONS
+    from tuning.searches import space as searching
+
+    monkeypatch.setattr(searching, "ProcessPoolExecutor", Pool)
+    monkeypatch.setattr(searching, "POOL", {})
+    first = searching.pool()
+    assert searching.pool() is first and "late" not in first.carried()["realisation of options"]
+    REALISATIONS.register("late", Late())
+    try:
+        second = searching.pool()
+        assert searching.pool() is second
+    finally:
+        del REALISATIONS.held["late"]
+    assert first.down and not second.down and "late" in second.carried()["realisation of options"]
+    third = searching.pool()
+    assert second.down and "late" not in third.carried()["realisation of options"]
 
 
 def test_the_search_imports_optuna_on_a_thread_of_its_own_so_no_frame_of_its_caller_outlives_the_import(tmp_path, monkeypatch):

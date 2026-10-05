@@ -433,7 +433,7 @@ def closed(held):
 def warmup(request):
     if WORKER:
         return
-    for name in ("packers", "candidate_pool"):
+    for name in ("packers", "candidate_workers"):
         if any(name in item.fixturenames for item in request.session.items):
             request.getfixturevalue(name)
 
@@ -442,7 +442,7 @@ def warmup(request):
 def processes_early(request):
     started = time.perf_counter()
     grouped = request.node.get_closest_marker("xdist_group")
-    early = dict(workers="packers", candidates="candidate_pool")
+    early = dict(workers="packers", candidates="candidate_workers")
     if WORKER and grouped is not None and grouped.args[0] in early:
         request.getfixturevalue(early[grouped.args[0]])
     LOG.debug("processes early exit seconds=%.4f", time.perf_counter() - started)
@@ -519,13 +519,23 @@ def varied_packed(varied, monkeypatch):
 
 
 @pytest.fixture(scope="session")
-def candidate_pool():
-    from tuning.searches import space
-
+def candidate_workers():
+    started = time.perf_counter()
     executor = ProcessPoolExecutor(2)
     for _ in range(2):
         executor.submit(import_module, "tuning.searches.space")
-    space.POOL["executor"] = executor
+    LOG.debug("candidate workers started seconds=%.4f", time.perf_counter() - started)
     yield executor
     executor.shutdown()
-    del space.POOL["executor"]
+
+
+@pytest.fixture
+def candidate_pool(candidate_workers):
+    from graphspec import registries
+    from tuning.searches import space
+
+    started = time.perf_counter()
+    space.POOL.update(executor=candidate_workers, generation=registries.GENERATION)
+    LOG.debug("candidate pool held generation=%d seconds=%.4f", registries.GENERATION, time.perf_counter() - started)
+    yield candidate_workers
+    space.POOL.clear()

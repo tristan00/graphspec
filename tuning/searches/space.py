@@ -10,6 +10,7 @@ from itertools import repeat
 
 import numpy as np
 
+from graphspec import registries
 from graphspec.infra.log import emit
 from graphspec.infra.processes.processes import guarded, spawned
 from graphspec.infra.timing import timed
@@ -186,10 +187,13 @@ POOL = {}
 
 @timed("space.pool")
 def pool():
+    if "executor" in POOL and POOL["generation"] != registries.GENERATION:
+        POOL.pop("executor").shutdown(wait=False, cancel_futures=True)
     if "executor" not in POOL:
         started = time.perf_counter()
-        POOL["executor"] = ProcessPoolExecutor(os.cpu_count(), **spawned(None, (), carried, restored))
-        atexit.register(POOL["executor"].shutdown, wait=False, cancel_futures=True)
+        executor = ProcessPoolExecutor(os.cpu_count(), **spawned(None, (), carried, restored))
+        POOL.update(executor=executor, generation=registries.GENERATION)
+        atexit.register(executor.shutdown, wait=False, cancel_futures=True)
         emit("candidate_pool_started", workers=os.cpu_count(), seconds=time.perf_counter() - started)
     return POOL["executor"]
 
