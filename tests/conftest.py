@@ -30,11 +30,13 @@ def suite_singleton(name, message):
 
 
 def suited():
+    from graphspec.infra import compute
     from graphspec.infra.processes import locks
 
     started = time.perf_counter()
     ORIGINAL.update(singleton=locks.singleton, heavy_job=locks.heavy_job)
     locks.singleton, locks.heavy_job = suite_singleton, shared_heavy_job
+    compute.THREADS = 1
     LOG.debug("suited exit seconds=%.4f", time.perf_counter() - started)
 
 

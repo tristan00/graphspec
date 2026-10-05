@@ -15,7 +15,7 @@ LOG = logging.getLogger(__name__)
 ALIVE = []
 RUNS = "runs.lock"
 CORES = 2
-THREADS = dict(NUMBA_NUM_THREADS="1")
+THREADS = dict(NUMBA_NUM_THREADS="1", OMP_NUM_THREADS="1")
 
 
 def pinned(cores):

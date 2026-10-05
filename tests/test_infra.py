@@ -133,10 +133,12 @@ def test_every_process_of_the_run_and_every_child_of_a_test_holds_to_the_cores_a
     import psutil
     import torch
 
+    from graphspec.infra import compute
+
     started = time.perf_counter()
     held = rooted(request)
     controller = psutil.Process(int(os.environ["GRAPHSPEC_SUITE_CONTROLLER"]))
-    reading = "import os, sys; sys.stdin.read(); print(os.environ['NUMBA_NUM_THREADS'])"
+    reading = "import os, sys; sys.stdin.read(); print(os.environ['NUMBA_NUM_THREADS'], os.environ['OMP_NUM_THREADS'])"
     child = subprocess.Popen([sys.executable, "-c", reading], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     try:
         found = allowed([controller, *controller.children(recursive=True)])
@@ -144,8 +146,8 @@ def test_every_process_of_the_run_and_every_child_of_a_test_holds_to_the_cores_a
         told = child.communicate(b"", timeout=30)[0].split()
     assert held.CORES == 2 and {os.getpid(), child.pid} <= set(found)
     assert {pid: cores for pid, cores in found.items() if not 1 <= cores <= held.CORES} == {}
-    assert held.THREADS == dict(NUMBA_NUM_THREADS="1") and told == [b"1"]
-    assert numba.config.NUMBA_NUM_THREADS == numba.get_num_threads() == 1 and torch.get_num_threads() <= held.CORES
+    assert held.THREADS == dict(NUMBA_NUM_THREADS="1", OMP_NUM_THREADS="1") and told == [b"1", b"1"]
+    assert numba.config.NUMBA_NUM_THREADS == numba.get_num_threads() == torch.get_num_threads() == compute.THREADS == 1
     LOG.info("cores test exit processes=%d seconds=%.4f", len(found), time.perf_counter() - started)
 
 
