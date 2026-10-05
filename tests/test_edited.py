@@ -196,6 +196,10 @@ def test_an_edit_is_offered_only_under_settings_its_facts_reach_the_actor_and_a_
     unbased = support.configuration(held.registry, dict(modelled("snapshot"), **{REALISATION: "edited"}), dict(PLAIN, **{"relations/base/keep": False}), 5, SPLITS)
     with pytest.raises(ValueError, match="target at of put of the kind of task turn has no route .* the pipeline removes the relation base, which it may name, by relations/base/keep False of the entry graphspec.relations$"):
         routed(held, unbased)
+    bounded = "the bounds leave relations/direction the values directed alone, and the family snapshot of a model the bounds leave the realisation of options edited reads the facts its edit adds under none of them"
+    with pytest.raises(ValueError, match="^" + re.escape(bounded) + "$"):
+        check_bounds(held.registry, {"relations/direction": ["directed"]}, support.template())
+    check_bounds(held.registry, {"relations/direction": ["directed"], REALISATION: ["none", "vector"]}, support.template())
     found = {parameter.name: parameter for parameter in pipeline_space(held.registry, support.template(), {})}
     assert found["pipeline/graphspec.relations/relations/base/keep"].options == (True,)
     assert found["pipeline/graphspec.edges/edges/base/persistence"].high == 1
