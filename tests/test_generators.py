@@ -102,7 +102,6 @@ def pool(found, drawn, place, chosen, name):
         for option in found[other]["options"]:
             if (
                 option["origin"] == "recorded"
-                and option["actions"]
                 and all(action["actor"] in own["actors"] and action["kind"] != "put" for action in option["actions"])
                 and generated.observed(graph, option, own["time"], own["observer"])
                 and generated.content(option) not in present
@@ -183,6 +182,9 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
                 assert generated.observed(own["graph"], option, own["time"], own["observer"])
                 assert option["origin"]["drawn"] in {1 / count for count in range(1, 10)}
                 counts[name] += 1
+        idle = [option for option in own["options"] + drawn[place] if not option["actions"]]
+        assert len(idle) == 1 and (idle[0]["origin"] == "recorded") == ("wait" in [option["key"] for option in own["options"]])
+        counts["idle"] += len(idle) - len([option for option in own["options"] if not option["actions"]])
         present = [generated.content(option) for option in own["options"]]
         for option in drawn[place]:
             assert generated.content(option) not in present or option["origin"]["generator"] == "crossings"
@@ -200,11 +202,12 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=5, probabilities=False),
+        changed=dict(version=6, probabilities=False),
         crossings=dict(version=1, probabilities=True),
-        nearest=dict(version=5, probabilities=True),
-        others=dict(version=5, probabilities=True),
-        ruled=dict(version=5, probabilities=True),
+        idle=dict(version=1, probabilities=False),
+        nearest=dict(version=6, probabilities=True),
+        others=dict(version=6, probabilities=True),
+        ruled=dict(version=6, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -293,13 +296,16 @@ def test_an_option_recorded_is_made_canonical_at_most_twice_per_graph_however_ma
 def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_statement_refuses_stops_naming_it(banks):
     started = time.perf_counter()
     held = opened(banks, "base")
-    truth = Facts.load(held.truth(0))
+    truth = generated.undrawn(Facts.load(held.truth(0)))
     where = "the generator of options faulty "
+    drew = "the option %d the generator of options faulty drew for the decision 11 of the kind turn of graph g0 "
     faults = (
         ("unread", where + "reads the rule of the decision 11 of the kind turn of graph g0, which it does not state among what it reads: chosen, state"),
         ("unobserved", "names in its action 0 under the role along the edge \\['s0', 'near', 's4'\\], which does not hold at the step of its decision"),
         ("probability", "states the probability of its draw as 0.5, and faulty states none, having none"),
-        ("repeated", "the option 0 the generator of options faulty drew for the decision 11 of the kind turn of graph g0 equals an option already present"),
+        ("repeated", drew % 0 + "equals an option already present"),
+        ("twice", drew % 1 + "equals an option already present"),
+        ("idle", drew % 0 + "holds no action, and its kind of task states no option that does nothing"),
     )
     trained = tuple(held.splits.index(name) for name in held.manifest["trained"])
     assert held.manifest["trained"] == ["train"] and set(held.splits) == {"train", "validation"}
@@ -310,6 +316,8 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
         declared["schema"]["tasks"]["kinds"][generated.KIND]["target"]["generators"] = [
             dict(name="faulty", seed=1, repeats=False, parameters=dict(fault=fault))
         ]
+        if fault == "idle":
+            declared["schema"]["tasks"]["kinds"][generated.KIND]["target"]["nothing"] = None
         registry = Registry.from_declaration(declared)
         with pytest.raises(ValueError, match=message):
             regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1])

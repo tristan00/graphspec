@@ -27,6 +27,7 @@ STATED = [
     dict(name="ruled", seed=14, repeats=False, parameters=dict(count=2)),
     dict(name="around", seed=15, repeats=False, parameters={}),
     dict(name="crossings", seed=16, repeats=True, parameters=dict(count=1, mode="fast")),
+    dict(name="idle", seed=17, repeats=False, parameters={}),
 ]
 ORIGIN = "around"
 CASES = ("base", "later", "turned")
@@ -133,6 +134,8 @@ class Faulty:
         if fault == "kept":
             KEPT.append(seen)
             return []
+        if fault in ("idle", "twice"):
+            return [dict(actions=[], together=together, drawn=None) for together in ("set", "sequence")[: 1 + (fault == "twice")]]
         if fault == "unread":
             return seen.rule
         if fault == "unobserved":
@@ -165,8 +168,14 @@ def around(seen, parameters):
     return found
 
 
+@timed("generated.idle")
+def idle(seen, parameters):
+    return [option for option in [dict(actions=[], together="sequence", drawn=None)] if seen.fresh(option)]
+
+
 ENTRIES = (
     (GENERATORS, ORIGIN, Scripted(around, ("state", "chosen"), True, 1)),
+    (GENERATORS, "idle", Scripted(idle, (), False, 1)),
     (GENERATORS, "crossings", Crossings()),
     (GENERATORS, "faulty", Faulty()),
     (RULES, "spots", Spots()),
@@ -215,6 +224,8 @@ def tied(graph, place):
             for option in target["options"]:
                 option.update(chosen=False, order=None)
             made[1]["chosen"] = True
+        if moment % 2:
+            target["options"] = [option for option in target["options"] if option["chosen"] or option["actions"]]
         target["options"] += made
     LOG.debug("generated tied exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
 
@@ -467,7 +478,8 @@ def content(option):
     for action in option["actions"]:
         targets = {role: sorted(aim[::2]) + [aim[1]] if isinstance(aim, list) else aim for role, aim in action["targets"].items()}
         actions.append(repr((action["kind"], action["actor"], sorted(targets.items()), sorted(action["parameters"].items()))))
-    return (option["together"], tuple(sorted(actions) if option["together"] == "set" else actions))
+    together = option["together"] if len(actions) > 1 else "set"
+    return (together, tuple(sorted(actions) if together == "set" else actions))
 
 
 @timed("generated.ours")

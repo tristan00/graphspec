@@ -53,9 +53,10 @@ def written(option, symmetric):
         )
         for action in option["actions"]
     ]
-    if option["together"] == "set":
+    together = option["together"] if len(actions) > 1 else "set"
+    if together == "set":
         actions.sort(key=lambda action: json.dumps(action, sort_keys=True))
-    result = json.dumps(dict(actions=actions, together=option["together"]), sort_keys=True)
+    result = json.dumps(dict(actions=actions, together=together), sort_keys=True)
     LOG.debug("written exit actions=%d seconds=%.6f", len(actions), time.perf_counter() - started)
     return result
 
@@ -293,7 +294,7 @@ class Frame:
             statement,
             world.truth.name,
             shown,
-            copy.deepcopy(target["actions"]),
+            target,
             *self.admitted(step, shown["kind"]),
             frozenset(
                 (roles[action["kind"]][role]["kinds"][0], aim)
@@ -432,10 +433,11 @@ class Past:
 
 
 class Check:
-    def __init__(self, name, statement, graph, shown, actions, nodes, edges, created, relations, symmetric, columns, present):
+    def __init__(self, name, statement, graph, shown, target, nodes, edges, created, relations, symmetric, columns, present):
         started = time.perf_counter()
         self.name, self.seed, self.repeats, self.graph = name, statement["seed"], statement["repeats"], graph
-        self.key, self.actors, self.actions = shown["key"], frozenset(shown["actors"]), actions
+        self.key, self.actors, self.actions = shown["key"], frozenset(shown["actors"]), copy.deepcopy(target["actions"])
+        self.nothing = target["nothing"] is not None
         self.nodes, self.edges, self.created = nodes, edges, created
         self.relations, self.symmetric, self.columns, self.present = relations, symmetric, columns, present
         LOG.debug("check exit generator=%s decision=%d seconds=%.6f", name, self.key, time.perf_counter() - started)
@@ -499,7 +501,7 @@ class Check:
     @timed("generators.Check.closed")
     def closed(self, option):
         if not option["actions"]:
-            return "holds no action"
+            return None if self.nothing else "holds no action, and its kind of task states no option that does nothing"
         for place, action in enumerate(option["actions"]):
             reason = self.unfit(action)
             if reason is not None:
@@ -673,7 +675,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 5
+    version = 6
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -696,7 +698,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 5
+    version = 6
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -762,7 +764,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 5
+    version = 6
     reads = ("chosen",)
     probable = False
 
@@ -825,7 +827,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 5
+    version = 6
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

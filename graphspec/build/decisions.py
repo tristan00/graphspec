@@ -185,12 +185,15 @@ class Decided:
     def nothing(self, options, actions):
         started = time.perf_counter()
         counts = np.bincount(actions["action_option"], minlength=len(options["keys"]))
+        drawn = options["option_generator"].tolist()
         for option, (task, key) in enumerate(zip(options["option_task"].tolist(), options["keys"])):
             idle = self.aims[self.tasks["task_kind"][task]]["nothing"]
-            if (key == idle) != (counts[option] == 0):
+            empty = counts[option] == 0
+            if (key == idle and not empty) or (empty and key != idle and (idle is None or drawn[option] < 0)):
                 raise ValueError(
-                    "the option %s of %s holds %d actions; the option that does nothing, %s, holds none and every "
-                    "other option holds one at least" % (key, self.where(task), counts[option], idle)
+                    "the option %s of %s holds %d actions; the option that does nothing, %s, and one a generator drew "
+                    "for it hold none, and every other option holds one at least"
+                    % (key, self.where(task), counts[option], idle)
                 )
         LOG.debug("decided nothing exit options=%d seconds=%.4f", len(counts), time.perf_counter() - started)
 
