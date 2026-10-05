@@ -15,6 +15,7 @@ LOG = logging.getLogger(__name__)
 ALIVE = []
 RUNS = "runs.lock"
 CORES = 2
+THREADS = dict(NUMBA_NUM_THREADS="1")
 
 
 def pinned(cores):
@@ -160,6 +161,7 @@ def finished(suite, run, alive):
 
 
 pinned(CORES)
+os.environ.update(THREADS)
 if "GRAPHSPEC_SUITE_CONTROLLER" not in os.environ:
     os.environ["GRAPHSPEC_SUITE_CONTROLLER"] = str(os.getpid())
 if "GRAPHSPEC_SUITE_HOME" not in os.environ:
