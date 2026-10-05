@@ -121,7 +121,7 @@ class Crossings:
 
 class Faulty:
     version = 1
-    reads = ("chosen", "state")
+    reads = ("chosen", "decisions", "state")
     probable = False
 
     @timed("generated.Faulty.checked")

@@ -322,7 +322,12 @@ class Frame:
             parts["state"] = pickle.loads(self.pickled(step))
             parts["at"] = Past(name, where, {int(self.moments[at]): self.pickled(at) for at in range(step + 1)}).at
         if "decisions" in reads:
-            parts["decisions"] = [world.shown(other) for other in self.before(task)]
+            concurrent, parts["decisions"] = set(world.decided[task]["concurrent"]), []
+            for other in self.before(task):
+                found = world.shown(other)
+                for option in found["options"] if found["key"] in concurrent else ():
+                    del option["chosen"]
+                parts["decisions"].append(found)
         if "chosen" in reads:
             parts["chosen"] = [option for option in shown["options"] if option["chosen"]]
         if "rule" in reads:
@@ -675,7 +680,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 6
+    version = 7
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -698,7 +703,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 6
+    version = 7
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -764,7 +769,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 6
+    version = 7
     reads = ("chosen",)
     probable = False
 
@@ -827,7 +832,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 6
+    version = 7
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

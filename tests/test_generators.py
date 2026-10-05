@@ -202,12 +202,12 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=6, probabilities=False),
+        changed=dict(version=7, probabilities=False),
         crossings=dict(version=1, probabilities=True),
         idle=dict(version=1, probabilities=False),
-        nearest=dict(version=6, probabilities=True),
-        others=dict(version=6, probabilities=True),
-        ruled=dict(version=6, probabilities=True),
+        nearest=dict(version=7, probabilities=True),
+        others=dict(version=7, probabilities=True),
+        ruled=dict(version=7, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -300,7 +300,7 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
     where = "the generator of options faulty "
     drew = "the option %d the generator of options faulty drew for the decision 11 of the kind turn of graph g0 "
     faults = (
-        ("unread", where + "reads the rule of the decision 11 of the kind turn of graph g0, which it does not state among what it reads: chosen, state"),
+        ("unread", where + "reads the rule of the decision 11 of the kind turn of graph g0, which it does not state among what it reads: chosen, decisions, state"),
         ("unobserved", "names in its action 0 under the role along the edge \\['s0', 'near', 's4'\\], which does not hold at the step of its decision"),
         ("probability", "states the probability of its draw as 0.5, and faulty states none, having none"),
         ("repeated", drew % 0 + "equals an option already present"),
@@ -358,18 +358,24 @@ def test_a_generator_holds_the_parts_it_states_and_reaches_nothing_else_of_the_b
     generated.KEPT.clear()
     assert regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1]) == []
     assert len(generated.KEPT) > 5
-    parts = ("decision", "unit", "closed", "fresh", "content", "formed", "kept", "chosen", "state", "at", "generator", "reads", "where")
+    parts = ("decision", "unit", "closed", "fresh", "content", "formed", "kept", "chosen", "decisions", "state", "at")
     typed = {type(TYPES.named(name)) for name in TYPES.names()}
+    back = held.back[truth.name]
+    concurrent = {key: set(decision["concurrent"]) for key, decision in zip(back["tasks"]["key"], back["decisions"]) if decision}
+    unknown = Counter()
     for seen in generated.KEPT:
-        assert sorted(vars(seen)) == sorted(parts)
+        assert sorted(vars(seen)) == sorted(parts + ("generator", "reads", "where"))
         assert not any(hasattr(seen, name) for name in ("world", "frame", "task", "statement", "present"))
-        for part in ("decisions", "rule"):
-            with pytest.raises(ValueError, match="reads the %s of the decision" % part):
-                getattr(seen, part)
-        found = {type(held) for held in reached(seen) if type(held).__module__.split(".")[0] in ("graphspec", "tuning")}
+        with pytest.raises(ValueError, match="reads the rule of the decision"):
+            seen.rule
+        found = {type(entry) for entry in reached(seen) if type(entry).__module__.split(".")[0] in ("graphspec", "tuning")}
         assert {Seen, Check, Past} <= found <= {Seen, Check, Past} | typed
         past = seen.at.__self__.held
         assert max(past) == seen.decision["time"] and all(type(state) is bytes for state in past.values())
+        for other in seen.decisions:
+            unknown[other["key"] in concurrent[seen.decision["key"]]] += 1
+            assert all(("chosen" in option) != (other["key"] in concurrent[seen.decision["key"]]) for option in other["options"])
+    assert unknown[True] and unknown[False], unknown
     generated.KEPT.clear()
     LOG.info("parts of generators exit seconds=%.3f", time.perf_counter() - started)
 
