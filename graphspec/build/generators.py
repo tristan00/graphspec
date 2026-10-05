@@ -11,7 +11,7 @@ from graphspec.facts.stored import stated as valued
 from graphspec.infra.hashing import token, unit
 from graphspec.infra.timing import timed
 from graphspec.registries import Names, version
-from graphspec.schema.decisions import GENERATORS, RECORDED, RULES, TOGETHER, deciding, generator
+from graphspec.schema.decisions import GENERATORS, PARTS, RECORDED, RULES, TOGETHER, deciding, generator
 from graphspec.schema.fields import fields
 from graphspec.schema.schema import VALUE
 from graphspec.schema.targets import real
@@ -37,6 +37,29 @@ def keyed(column):
     return np.asarray(column, np.int64)
 
 
+def written(option, symmetric):
+    started = time.perf_counter()
+    actions = [
+        dict(
+            kind=action["kind"],
+            actor=action["actor"],
+            targets={
+                role: [min(aim[0], aim[2]), aim[1], max(aim[0], aim[2])]
+                if isinstance(aim, list) and aim[1] in symmetric
+                else aim
+                for role, aim in sorted(action["targets"].items())
+            },
+            parameters={name: plain(value) for name, value in sorted(action["parameters"].items())},
+        )
+        for action in option["actions"]
+    ]
+    if option["together"] == "set":
+        actions.sort(key=lambda action: json.dumps(action, sort_keys=True))
+    result = json.dumps(dict(actions=actions, together=option["together"]), sort_keys=True)
+    LOG.debug("written exit actions=%d seconds=%.6f", len(actions), time.perf_counter() - started)
+    return result
+
+
 class World:
     def __init__(self, truth, registry):
         started = time.perf_counter()
@@ -46,6 +69,18 @@ class World:
         self.decided = truth.decided(registry)
         kinds = np.asarray(truth.kinds).tolist()
         self.lookup = {(kind, key): entity for entity, (kind, key) in enumerate(zip(kinds, truth.keys))}
+        self.named = {}
+        for kind, key in self.lookup:
+            self.named.setdefault(key, []).append(kind)
+        self.relations = frozenset(registry.tables)
+        self.symmetric = frozenset(name for name in registry.tables if registry.by_code[registry.code(name)].symmetric)
+        self.ends = {}
+        for edge in (registry.by_code[registry.code(name)] for name in registry.tables):
+            pairs = {(registry.kind(first), registry.kind(second)) for first, second in edge.pairs}
+            if edge.symmetric:
+                pairs |= {(second, first) for first, second in pairs}
+            for first, second in pairs:
+                self.ends.setdefault(edge.code, {}).setdefault(first, set()).add(second)
         names, self.acting = list(schema.tasks["references"]), {}
         for task, name, source in zip(
             *(np.asarray(truth.arrays[part]).tolist() for part in ("member_task", "member_name", "member_source"))
@@ -114,7 +149,7 @@ class World:
 
     @timed("generators.World.content")
     def content(self, option):
-        return json.dumps(self.canonical(option), sort_keys=True)
+        return token(written(option, self.symmetric))
 
 
 class Frame:
@@ -152,7 +187,7 @@ class Frame:
         LOG.debug("frame holding exit step=%d seconds=%.6f", step, time.perf_counter() - started)
         return self.held[("holding", step)]
 
-    def state(self, step):
+    def pickled(self, step):
         started = time.perf_counter()
         if ("state", step) not in self.held:
             world, view = self.world, self.view
@@ -185,9 +220,44 @@ class Frame:
                     )
                     for at, row in enumerate(chosen.tolist())
                 ]
-            self.held[("state", step)] = dict(nodes=nodes, edges=edges)
-        LOG.debug("frame state exit step=%d seconds=%.4f", step, time.perf_counter() - started)
-        return copy.deepcopy(self.held[("state", step)])
+            self.held[("state", step)] = pickle.dumps(dict(nodes=nodes, edges=edges))
+        LOG.debug("frame pickled exit step=%d seconds=%.4f", step, time.perf_counter() - started)
+        return self.held[("state", step)]
+
+    def admitted(self, step, kind):
+        started = time.perf_counter()
+        if ("admitted", step, kind) not in self.held:
+            world = self.world
+            registry, keys, named = world.registry, world.truth.keys, world.named
+            kinds = np.asarray(world.truth.kinds).tolist()
+            observed, holding = self.observed(step), self.holding(step)
+            nodes, edges = {}, {}
+            for action, declared in world.schema.tasks["kinds"][kind]["target"]["actions"].items():
+                for role, entry in declared["roles"].items():
+                    codes = {registry.kind(name) for name in entry["kinds"]}
+                    if entry["sort"] == "node":
+                        nodes[(action, role)] = frozenset(
+                            keys[source]
+                            for source in observed
+                            if kinds[source] in codes and len(codes.intersection(named[keys[source]])) == 1
+                        )
+                    elif entry["sort"] == "edge":
+                        found = set()
+                        for code, source, other in holding:
+                            edge = registry.by_code[code]
+                            if edge.code != code or edge.name not in world.relations or kinds[source] not in codes:
+                                continue
+                            ends = world.ends[code].get(kinds[source], set())
+                            if (
+                                len(codes.intersection(named[keys[source]])) == 1
+                                and kinds[other] in ends
+                                and len(ends.intersection(named[keys[other]])) == 1
+                            ):
+                                found.add((keys[source], edge.name, keys[other]))
+                        edges[(action, role)] = frozenset(found)
+            self.held[("admitted", step, kind)] = nodes, edges
+        LOG.debug("frame admitted exit step=%d kind=%s seconds=%.4f", step, kind, time.perf_counter() - started)
+        return self.held[("admitted", step, kind)]
 
     @timed("generators.Frame.before")
     def before(self, task):
@@ -196,6 +266,96 @@ class Frame:
             for other in self.tasks.tolist()
             if other != task and self.step[other] <= self.step[task] and self.world.decided[other] is not None
         ]
+
+    def seen(self, task, statement, present):
+        started = time.perf_counter()
+        world, name = self.world, statement["name"]
+        reads, step, target = GENERATORS.named(name).reads, self.step[task], world.target(task)
+        where, shown = world.where(task), world.shown(task)
+        roles = {action: declared["roles"] for action, declared in target["actions"].items()}
+        dictionaries = world.registry.encoding.dictionaries
+        columns = {}
+        for declared in target["actions"].values():
+            for column in declared["parameters"]:
+                columns[column] = (
+                    world.schema.columns[column]["type"],
+                    tuple(dictionaries[column]) if world.schema.kind(column).symbols else None,
+                )
+        check = Check(
+            name,
+            statement,
+            world.truth.name,
+            shown,
+            copy.deepcopy(target["actions"]),
+            *self.admitted(step, shown["kind"]),
+            frozenset(
+                (roles[action["kind"]][role]["kinds"][0], aim)
+                for option in world.decided[task]["options"]
+                if option["origin"] == RECORDED
+                for action in option["actions"]
+                for role, aim in action["targets"].items()
+                if roles[action["kind"]][role]["sort"] == "new"
+            ),
+            world.relations,
+            world.symmetric,
+            columns,
+            frozenset(present),
+        )
+        parts = dict(
+            decision={part: value for part, value in shown.items() if part != "options"},
+            unit=check.unit,
+            closed=check.closed,
+            fresh=check.fresh,
+            content=check.content,
+            formed=check.formed,
+        )
+        if "state" in reads:
+            parts["state"] = pickle.loads(self.pickled(step))
+            parts["at"] = Past(name, where, {int(self.moments[at]): self.pickled(at) for at in range(step + 1)}).at
+        if "decisions" in reads:
+            parts["decisions"] = [world.shown(other) for other in self.before(task)]
+        if "chosen" in reads:
+            parts["chosen"] = [option for option in shown["options"] if option["chosen"]]
+        if "rule" in reads:
+            parts["rule"] = copy.deepcopy(target["rule"])
+        result = check, Seen(name, reads, where, parts)
+        LOG.debug("frame seen exit generator=%s task=%d seconds=%.6f", name, task, time.perf_counter() - started)
+        return result
+
+    def taken(self, task, statement, check, drawn, present):
+        started = time.perf_counter()
+        world, name = self.world, statement["name"]
+        entry, decision = GENERATORS.named(name), world.where(task)
+        if not isinstance(drawn, list):
+            raise ValueError("the generator of options %s gives for %s a list of options, found %r" % (name, decision, drawn))
+        result = []
+        for number, option in enumerate(drawn):
+            where = "the option %d the generator of options %s drew for %s" % (number, name, decision)
+            check.formed(option, DRAWN, where)
+            reason = check.closed(option)
+            if reason is not None:
+                raise ValueError("%s %s" % (where, reason))
+            probability = option["drawn"]
+            if entry.probable != (probability is not None) or (
+                probability is not None and not (real(probability) and 0 < probability <= 1)
+            ):
+                raise ValueError(
+                    "%s states the probability of its draw as %r, and %s states %s"
+                    % (
+                        where,
+                        probability,
+                        name,
+                        "the probability of each draw, above 0 and at most 1" if entry.probable else "none, having none",
+                    )
+                )
+            held = world.canonical(option)
+            content = world.content(held)
+            if not statement["repeats"] and content in present:
+                raise ValueError("%s equals an option already present, which its statement does not allow" % where)
+            present.append(content)
+            result.append(dict(held, drawn=None if probability is None else float(probability)))
+        LOG.debug("frame taken exit generator=%s drawn=%d seconds=%.4f", name, len(result), time.perf_counter() - started)
+        return result
 
     @timed("generators.Frame.generated")
     def generated(self, task):
@@ -206,8 +366,9 @@ class Frame:
         present = [world.content(option) for option in world.decided[task]["options"]]
         result = []
         for place, statement in enumerate(target["generators"]):
-            seen = Seen(self, task, statement, present)
-            for number, option in enumerate(seen.taken(generator(statement["name"])(seen, statement["parameters"]))):
+            check, seen = self.seen(task, statement, present)
+            drawn = generator(statement["name"])(seen, statement["parameters"])
+            for number, option in enumerate(self.taken(task, statement, check, drawn, present)):
                 result.append(
                     dict(
                         task=int(world.truth.task_key[task]),
@@ -229,79 +390,66 @@ class Frame:
 
 
 class Seen:
-    def __init__(self, frame, task, statement, present):
+    def __init__(self, generator, reads, where, parts):
         started = time.perf_counter()
-        world = frame.world
-        self.frame, self.world, self.task, self.statement, self.present = frame, world, task, statement, present
-        self.entry, self.step = GENERATORS.named(statement["name"]), frame.step[task]
-        self.target, self.where = world.target(task), world.where(task)
-        self.decision = {name: value for name, value in world.shown(task).items() if name != "options"}
-        roles = {name: action["roles"] for name, action in self.target["actions"].items()}
-        self.created = {
-            (roles[action["kind"]][role]["kinds"][0], aim)
-            for option in world.decided[task]["options"]
-            if option["origin"] == RECORDED
-            for action in option["actions"]
-            for role, aim in action["targets"].items()
-            if roles[action["kind"]][role]["sort"] == "new"
-        }
-        LOG.debug("seen exit generator=%s task=%d seconds=%.6f", statement["name"], task, time.perf_counter() - started)
+        self.__dict__.update(parts, generator=generator, reads=reads, where=where)
+        LOG.debug("seen exit generator=%s parts=%d seconds=%.6f", generator, len(parts), time.perf_counter() - started)
 
-    def reading(self, part):
+    @timed("generators.Seen.__getattr__")
+    def __getattr__(self, name):
+        part = "state" if name == "at" else name
+        if part not in PARTS:
+            raise AttributeError(name)
+        held = vars(self)
+        raise ValueError(
+            "the generator of options %s reads the %s of %s, which it does not state among what it reads: %s"
+            % (held["generator"], part, held["where"], ", ".join(held["reads"]) or "nothing")
+        )
+
+
+class Past:
+    def __init__(self, generator, where, held):
         started = time.perf_counter()
-        if part not in self.entry.reads:
-            raise ValueError(
-                "the generator of options %s reads the %s of %s, which it does not state among what it reads: %s"
-                % (self.statement["name"], part, self.where, ", ".join(self.entry.reads) or "nothing")
-            )
-        LOG.debug("seen reading exit part=%s seconds=%.6f", part, time.perf_counter() - started)
+        self.generator, self.where, self.held = generator, where, held
+        LOG.debug("past exit generator=%s steps=%d seconds=%.6f", generator, len(held), time.perf_counter() - started)
 
-    @property
-    @timed("generators.Seen.state")
-    def state(self):
-        self.reading("state")
-        return self.frame.state(self.step)
-
+    @timed("generators.Past.at")
     def at(self, moment):
-        started = time.perf_counter()
-        self.reading("state")
-        moments = self.frame.moments
-        step = int(np.searchsorted(moments, moment))
-        if step > self.step or step >= len(moments) or moments[step] != moment:
+        if moment not in self.held:
             raise ValueError(
                 "the generator of options %s reads the state of %s at %r, which is no step its task sees at or before "
-                "its own" % (self.statement["name"], self.where, moment)
+                "its own" % (self.generator, self.where, moment)
             )
-        LOG.debug("seen at exit step=%d seconds=%.6f", step, time.perf_counter() - started)
-        return self.frame.state(step)
+        return pickle.loads(self.held[moment])
 
-    @property
-    @timed("generators.Seen.decisions")
-    def decisions(self):
-        self.reading("decisions")
-        return [self.world.shown(other) for other in self.frame.before(self.task)]
 
-    @property
-    @timed("generators.Seen.chosen")
-    def chosen(self):
-        self.reading("chosen")
-        return [option for option in self.world.shown(self.task)["options"] if option["chosen"]]
+class Check:
+    def __init__(self, name, statement, graph, shown, actions, nodes, edges, created, relations, symmetric, columns, present):
+        started = time.perf_counter()
+        self.name, self.seed, self.repeats, self.graph = name, statement["seed"], statement["repeats"], graph
+        self.key, self.actors, self.actions = shown["key"], frozenset(shown["actors"]), actions
+        self.nodes, self.edges, self.created = nodes, edges, created
+        self.relations, self.symmetric, self.columns, self.present = relations, symmetric, columns, present
+        LOG.debug("check exit generator=%s decision=%d seconds=%.6f", name, self.key, time.perf_counter() - started)
 
-    @property
-    @timed("generators.Seen.rule")
-    def rule(self):
-        self.reading("rule")
-        return copy.deepcopy(self.target["rule"])
-
-    @timed("generators.Seen.unit")
+    @timed("generators.Check.unit")
     def unit(self, *columns):
         count = len(columns[0])
         return unit(
-            self.statement["seed"],
-            self.statement["name"],
-            np.full(count, token(self.world.truth.name), np.uint64),
-            np.full(count, self.decision["key"], np.int64),
+            self.seed,
+            self.name,
+            np.full(count, token(self.graph), np.uint64),
+            np.full(count, self.key, np.int64),
             *(keyed(column) for column in columns),
+        )
+
+    @timed("generators.Check.held")
+    def held(self, name, value):
+        kind, dictionary = self.columns[name]
+        return (
+            (kind == "number" and real(value))
+            or (kind == "flag" and type(value) is bool)
+            or (kind == "category" and type(value) is str and value in dictionary)
         )
 
     def formed(self, option, names, where):
@@ -309,7 +457,6 @@ class Seen:
         option = fields(option, names, where)
         if option["together"] not in TOGETHER or not isinstance(option["actions"], list):
             raise ValueError("%s states its actions as a list, and as one of %s" % (where, ", ".join(TOGETHER)))
-        columns, dictionaries = self.world.schema.columns, self.world.registry.encoding.dictionaries
         for place, action in enumerate(option["actions"]):
             inner = "the action %d of %s" % (place, where)
             action = fields(action, ACTED, inner)
@@ -321,18 +468,15 @@ class Seen:
             ):
                 raise ValueError("%s states its kind, its actor, its targets and its parameters" % inner)
             for name, value in action["parameters"].items():
-                kind = columns[name]["type"] if name in columns else None
-                if value is not None and not (
-                    (kind == "number" and real(value))
-                    or (kind == "flag" and type(value) is bool)
-                    or (kind == "category" and type(value) is str and value in dictionaries[name])
-                ):
+                if name not in self.columns:
+                    raise ValueError("%s states the parameter %s, which no kind of action of its kind of task states" % (inner, name))
+                if value is not None and not self.held(name, value):
                     raise ValueError(
                         "%s states the parameter %s as %r, not a value of its column the bank holds" % (inner, name, value)
                     )
-        LOG.debug("seen formed exit actions=%d seconds=%.6f", len(option["actions"]), time.perf_counter() - started)
+        LOG.debug("check formed exit actions=%d seconds=%.6f", len(option["actions"]), time.perf_counter() - started)
 
-    @timed("generators.Seen.closed")
+    @timed("generators.Check.closed")
     def closed(self, option):
         if not option["actions"]:
             return "holds no action"
@@ -342,96 +486,46 @@ class Seen:
                 return "names in its action %d %s" % (place, reason)
         return None
 
-    @timed("generators.Seen.unfit")
+    @timed("generators.Check.unfit")
     def unfit(self, action):
-        if action["kind"] not in self.target["actions"]:
+        if action["kind"] not in self.actions:
             return "the kind %s, which its kind of task does not state" % action["kind"]
-        declared = self.target["actions"][action["kind"]]
-        if action["actor"] not in self.decision["actors"]:
+        declared = self.actions[action["kind"]]
+        if action["actor"] not in self.actors:
             return "the actor %s, not an actor of its decision" % action["actor"]
         if set(action["targets"]) != set(declared["roles"]) or set(action["parameters"]) != set(declared["parameters"]):
             return "other roles or parameters than its kind %s states" % action["kind"]
         for role, aim in action["targets"].items():
-            reason = self.aimless(declared["roles"][role], aim)
+            reason = self.aimless(action["kind"], role, declared["roles"][role], aim)
             if reason is not None:
                 return "under the role %s %s" % (role, reason)
         return None
 
-    def node(self, codes, key):
-        started = time.perf_counter()
-        lookup = self.world.lookup
-        found = [lookup[(code, key)] for code in codes if type(key) is str and (code, key) in lookup]
-        result = found[0] if len(found) == 1 else None
-        LOG.debug("seen node exit found=%s seconds=%.6f", result is not None, time.perf_counter() - started)
-        return result
-
-    @timed("generators.Seen.aimless")
-    def aimless(self, role, aim):
-        registry = self.world.registry
-        codes = [registry.kind(kind) for kind in role["kinds"]]
-        if role["sort"] == "new":
-            if (role["kinds"][0], aim) in self.created:
+    @timed("generators.Check.aimless")
+    def aimless(self, kind, role, declared, aim):
+        if declared["sort"] == "new":
+            if type(aim) is str and (declared["kinds"][0], aim) in self.created:
                 return None
             return "the element %r, which no option recorded for its decision creates" % (aim,)
-        if role["sort"] == "node":
-            source = self.node(codes, aim)
-            if source is not None and source in self.frame.observed(self.step):
+        if declared["sort"] == "node":
+            if type(aim) is str and aim in self.nodes[(kind, role)]:
                 return None
             return "the node %r, which is not one node of its kinds observed at the step of its decision" % (aim,)
-        if not (isinstance(aim, list) and len(aim) == 3 and aim[1] in registry.tables):
+        if not (
+            isinstance(aim, list) and len(aim) == 3 and all(type(part) is str for part in aim) and aim[1] in self.relations
+        ):
             return "%r, which is not the first node, a relation stated and the second node of an edge" % (aim,)
-        source, code = self.node(codes, aim[0]), registry.code(aim[1])
-        edge = registry.by_code[code]
-        pairs = {(registry.kind(first), registry.kind(second)) for first, second in edge.pairs}
-        if edge.symmetric:
-            pairs |= {(second, first) for first, second in pairs}
-        ends = [] if source is None else sorted({second for first, second in pairs if first == int(self.world.truth.kinds[source])})
-        other = self.node(ends, aim[2])
-        if other is not None and (code, source, other) in self.frame.holding(self.step):
+        if tuple(aim) in self.edges[(kind, role)]:
             return None
         return "the edge %r, which does not hold at the step of its decision" % (aim,)
 
-    @timed("generators.Seen.fresh")
+    @timed("generators.Check.content")
+    def content(self, option):
+        return token(written(option, self.symmetric))
+
+    @timed("generators.Check.fresh")
     def fresh(self, option):
-        return self.novel(self.world.content(option))
-
-    @timed("generators.Seen.novel")
-    def novel(self, content):
-        return self.statement["repeats"] or content not in self.present
-
-    def taken(self, drawn):
-        started = time.perf_counter()
-        name, entry = self.statement["name"], self.entry
-        if not isinstance(drawn, list):
-            raise ValueError("the generator of options %s gives for %s a list of options, found %r" % (name, self.where, drawn))
-        result = []
-        for number, option in enumerate(drawn):
-            where = "the option %d the generator of options %s drew for %s" % (number, name, self.where)
-            self.formed(option, DRAWN, where)
-            reason = self.closed(option)
-            if reason is not None:
-                raise ValueError("%s %s" % (where, reason))
-            probability = option["drawn"]
-            if entry.probable != (probability is not None) or (
-                probability is not None and not (real(probability) and 0 < probability <= 1)
-            ):
-                raise ValueError(
-                    "%s states the probability of its draw as %r, and %s states %s"
-                    % (
-                        where,
-                        probability,
-                        name,
-                        "the probability of each draw, above 0 and at most 1" if entry.probable else "none, having none",
-                    )
-                )
-            held = self.world.canonical(option)
-            content = json.dumps(held, sort_keys=True)
-            if not self.novel(content):
-                raise ValueError("%s equals an option already present, which its statement does not allow" % where)
-            self.present.append(content)
-            result.append(dict(held, drawn=None if probability is None else float(probability)))
-        LOG.debug("seen taken exit generator=%s drawn=%d seconds=%.4f", name, len(result), time.perf_counter() - started)
-        return result
+        return self.repeats or self.content(option) not in self.present
 
 
 @timed("generators.looking")
@@ -528,15 +622,13 @@ class Pooled:
         started = time.perf_counter()
         pool = {}
         for option in candidates:
-            held = dict(actions=option["actions"], together=option["together"])
-            content = json.dumps(held, sort_keys=True)
-            if content not in pool and seen.closed(option) is None and seen.novel(content):
-                pool[content] = held
-        contents = sorted(pool)
-        tokens = np.asarray([token(content) for content in contents], np.uint64)
+            content = seen.content(option)
+            if content not in pool and seen.closed(option) is None and seen.fresh(option):
+                pool[content] = dict(actions=option["actions"], together=option["together"])
+        tokens = np.asarray(sorted(pool), np.uint64)
         order = np.lexsort((tokens, seen.unit(tokens)))[:count].tolist()
-        result = [dict(pool[contents[at]], drawn=min(count, len(contents)) / len(contents)) for at in order]
-        LOG.debug("pooled drawn exit pool=%d drawn=%d seconds=%.4f", len(contents), len(result), time.perf_counter() - started)
+        result = [dict(pool[int(tokens[at])], drawn=min(count, len(tokens)) / len(tokens)) for at in order]
+        LOG.debug("pooled drawn exit pool=%d drawn=%d seconds=%.4f", len(tokens), len(result), time.perf_counter() - started)
         return result
 
 
@@ -560,7 +652,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 2
+    version = 3
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -583,7 +675,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 2
+    version = 3
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -644,7 +736,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 2
+    version = 3
     reads = ("chosen",)
     probable = False
 
@@ -702,7 +794,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 2
+    version = 3
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")
@@ -723,7 +815,7 @@ class Ruled(Pooled):
             raise ValueError("the rule of options %s gives for %s a list of options, found %r" % (rule["name"], seen.where, found))
         for place, option in enumerate(found):
             seen.formed(option, ("actions", "together"), "the option %d the rule %s gives %s" % (place, rule["name"], seen.where))
-        return self.drawn(seen, [seen.world.canonical(option) for option in found], parameters["count"])
+        return self.drawn(seen, found, parameters["count"])
 
 
 GENERATORS.register("others", Others())

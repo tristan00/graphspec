@@ -29,6 +29,7 @@ STATED = [
 ]
 ORIGIN = "around"
 CASES = ("base", "later", "turned")
+KEPT = []
 NORTH, SOUTH = "north", "south"
 WATCHED = "a0"
 GAUGE = dict(kind="number", series="level", about=None, utility=synthetic.valued(["level"]))
@@ -97,7 +98,7 @@ class Crossings:
 
 class Faulty:
     version = 1
-    reads = ("chosen",)
+    reads = ("chosen", "state")
     probable = False
 
     @timed("generated.Faulty.checked")
@@ -107,8 +108,11 @@ class Faulty:
     @timed("generated.Faulty.__call__")
     def __call__(self, seen, parameters):
         fault = parameters["fault"]
+        if fault == "kept":
+            KEPT.append(seen)
+            return []
         if fault == "unread":
-            return seen.state
+            return seen.rule
         if fault == "unobserved":
             cut = dict(kind="cut", actor=sorted(seen.decision["actors"])[0], targets=dict(along=["s0", "near", "s4"]), parameters=dict(mode="fast"))
             return [dict(actions=[cut], together="set", drawn=None)]

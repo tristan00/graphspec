@@ -1,6 +1,7 @@
 import copy
 import logging
 import time
+import types
 from collections import Counter
 
 import generated
@@ -10,7 +11,7 @@ import support
 
 from conftest import shared
 from graphspec import GENERATORS, Registry
-from graphspec.build.generators import World, looking, regenerated
+from graphspec.build.generators import Check, Past, Seen, World, looking, regenerated
 from graphspec.engine.transform import shown, validate
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
@@ -186,11 +187,11 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=2, probabilities=False),
+        changed=dict(version=3, probabilities=False),
         crossings=dict(version=1, probabilities=True),
-        nearest=dict(version=2, probabilities=True),
-        others=dict(version=2, probabilities=True),
-        ruled=dict(version=2, probabilities=True),
+        nearest=dict(version=3, probabilities=True),
+        others=dict(version=3, probabilities=True),
+        ruled=dict(version=3, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -282,7 +283,7 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
     truth = Facts.load(held.truth(0))
     where = "the generator of options faulty "
     faults = (
-        ("unread", where + "reads the state of the decision 11 of the kind turn of graph g0, which it does not state among what it reads: chosen"),
+        ("unread", where + "reads the rule of the decision 11 of the kind turn of graph g0, which it does not state among what it reads: chosen, state"),
         ("unobserved", "names in its action 0 under the role along the edge \\['s0', 'near', 's4'\\], which does not hold at the step of its decision"),
         ("probability", "states the probability of its draw as 0.5, and faulty states none, having none"),
         ("repeated", "the option 0 the generator of options faulty drew for the decision 11 of the kind turn of graph g0 equals an option already present"),
@@ -300,6 +301,54 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
         with pytest.raises(ValueError, match=message):
             regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1])
     LOG.info("faulty generators exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("generators.reached")
+def reached(start):
+    found, waiting, visited = [], [start], set()
+    while waiting:
+        held = waiting.pop()
+        if id(held) in visited or isinstance(held, (type, types.ModuleType, logging.Logger, str, bytes, int, float, np.ndarray, np.generic)) or held is None:
+            continue
+        visited.add(id(held))
+        found.append(held)
+        if isinstance(held, dict):
+            waiting += list(held) + list(held.values())
+        elif isinstance(held, (list, tuple, set, frozenset)):
+            waiting += list(held)
+        elif isinstance(held, types.MethodType):
+            waiting += [held.__self__, held.__func__]
+        elif isinstance(held, types.FunctionType):
+            waiting += [cell.cell_contents for cell in held.__closure__ or ()] + list(held.__defaults__ or ()) + [vars(held)]
+        elif hasattr(held, "__dict__"):
+            waiting.append(vars(held))
+    return found
+
+
+def test_a_generator_holds_the_parts_it_states_and_reaches_nothing_else_of_the_build(banks):
+    started = time.perf_counter()
+    held = opened(banks, "base")
+    truth = generated.undrawn(Facts.load(held.truth(0)))
+    declared = copy.deepcopy(held.manifest["spec"])
+    declared["schema"]["tasks"]["kinds"][generated.KIND]["target"]["generators"] = [
+        dict(name="faulty", seed=1, repeats=False, parameters=dict(fault="kept"))
+    ]
+    registry = Registry.from_declaration(declared)
+    generated.KEPT.clear()
+    assert regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1]) == []
+    assert len(generated.KEPT) > 5
+    parts = ("decision", "unit", "closed", "fresh", "content", "formed", "chosen", "state", "at", "generator", "reads", "where")
+    for seen in generated.KEPT:
+        assert sorted(vars(seen)) == sorted(parts)
+        assert not any(hasattr(seen, name) for name in ("world", "frame", "task", "statement", "present"))
+        for part in ("decisions", "rule"):
+            with pytest.raises(ValueError, match="reads the %s of the decision" % part):
+                getattr(seen, part)
+        assert {type(found) for found in reached(seen) if type(found).__module__.split(".")[0] in ("graphspec", "tuning")} == {Seen, Check, Past}
+        past = seen.at.__self__.held
+        assert max(past) == seen.decision["time"] and all(type(state) is bytes for state in past.values())
+    generated.KEPT.clear()
+    LOG.info("parts of generators exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_statement_of_generators_is_checked_with_the_schema_and_a_rule_is_drawn_only_by_a_generator_that_reads_it(
