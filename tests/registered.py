@@ -24,6 +24,7 @@ class Count:
     written = pa.int32()
     symbols = False
     ordered = True
+    numeric = True
 
     def read(self, column):
         return np.asarray(column.to_numpy(zero_copy_only=False), np.float32)
