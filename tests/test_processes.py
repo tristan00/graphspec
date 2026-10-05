@@ -46,9 +46,11 @@ def accept_processes(listener):
 
 
 def test_windows_timeout_joins_worker_and_descendants(tmp_path):
+    import _winapi
+
     script = tmp_path / "probe.py"
     script.write_text(PROBE, encoding="utf-8")
-    connections = []
+    connections, handles = [], []
     with socket.socket() as listener, (tmp_path / "worker.log").open("w") as stream:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -58,11 +60,17 @@ def test_windows_timeout_joins_worker_and_descendants(tmp_path):
                 connections, processes = accept_processes(listener)
                 descendants = psutil.Process(worker.pid).children(recursive=True)
                 assert all(process.pid in worker.group.members() for process in processes)
+                handles = [
+                    _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, process.pid)
+                    for process in [*processes, *descendants]
+                ]
                 with pytest.raises(subprocess.TimeoutExpired):
                     worker.wait(timeout=0)
-            for process in [*processes, *descendants]:
-                process.wait(timeout=0)
+            ended = [_winapi.WaitForSingleObject(handle, 0) for handle in handles]
+            assert ended == [_winapi.WAIT_OBJECT_0] * len(handles)
         finally:
+            for handle in handles:
+                _winapi.CloseHandle(handle)
             for connection in connections:
                 connection.close()
 
