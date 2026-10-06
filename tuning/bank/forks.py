@@ -96,17 +96,24 @@ def room(bank):
     return int(np.bincount(found.action["option"][found.role["action"][created]], minlength=1).max())
 
 
+def members(bank, cfg, graph):
+    started = time.perf_counter()
+    indices = bank.groups(cfg)[graph] if bank.joining(cfg) else [graph]
+    registry = bank.fitted(cfg)
+    result = indices, [widened(Graph.load(bank.view(member, cfg)).dense(), registry) for member in indices]
+    LOG.debug("forks members exit graph=%d members=%d seconds=%.4f", graph, len(indices), time.perf_counter() - started)
+    return result
+
+
 def begun(bank, cfg, graph):
     started = time.perf_counter()
     _, steps, spec, chosen = bank.variant(cfg)
-    indices = bank.groups(cfg)[graph] if bank.joining(cfg) else [graph]
-    registry = bank.fitted(cfg)
-    members = [widened(Graph.load(bank.view(member, cfg)).dense(), registry) for member in indices]
+    indices, held = members(bank, cfg, graph)
     beside = bank.seconds(steps, indices, cfg, False)
     result = Derivation.begun(
-        members, beside, registry, steps, spec, chosen, bank.seed, bank.limits(), bank.partitions(cfg), room(bank)
+        held, beside, bank.fitted(cfg), steps, spec, chosen, bank.seed, bank.limits(), bank.partitions(cfg), room(bank)
     )
-    LOG.debug("forks begun exit graph=%d members=%d seconds=%.4f", graph, len(members), time.perf_counter() - started)
+    LOG.debug("forks begun exit graph=%d members=%d seconds=%.4f", graph, len(held), time.perf_counter() - started)
     return result
 
 

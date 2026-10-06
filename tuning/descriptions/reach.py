@@ -15,9 +15,8 @@ from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline as pipelines
 from graphspec.operations.operation import Refused
 from graphspec.schema.decisions import ROLES
-from graphspec.views.graph import Graph
 from tuning.bank.bank import Deriver
-from tuning.bank.forks import UNMOVED, Part, made, ordered, room
+from tuning.bank.forks import UNMOVED, Part, made, members, ordered, room
 from tuning.bank.options import TOKEN, offered
 from tuning.families.heads import REALISATION, fielded, realisation
 from tuning.families.model_spec import realised
@@ -231,11 +230,9 @@ class Reached:
     def loaded(self, group):
         started = time.perf_counter()
         if group not in self.members:
-            indices = self.deriver.groups(self.config)[group] if self.deriver.joining(self.config) else [group]
-            views = [Graph.load(self.deriver.view(index, self.config)) for index in indices]
-            for view in views:
+            self.members[group] = members(self.deriver, self.config, group)
+            for view in self.members[group][1]:
                 self.names.update(zip(masked(view.entity_token).tolist(), view.keys))
-            self.members[group] = indices, [view.dense() for view in views]
         LOG.debug("reached loaded exit group=%d seconds=%.4f", group, time.perf_counter() - started)
         return self.members[group]
 

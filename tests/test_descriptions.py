@@ -1483,8 +1483,11 @@ def crossing():
     decided = dict(turn, actions=dict(go=dict(turn["actions"]["go"], roles=roles), stay=stay), generators=[])
     references = dict(agents=dict(sort="nodes", kinds=["agent"]), over=dict(sort="edge", kinds=["agent"]))
     kinds = dict(turn=synthetic.kind(["agents", "over"], [], decided, None))
-    edges = dict(held["edges"], base=synthetic.edge("agent", "spot", [], directed=False))
-    return dict(held, edges=edges, tasks=dict(held["tasks"], references=references, kinds=kinds))
+    edges = dict(
+        near=synthetic.edge("spot", "spot", [], directed=False), base=synthetic.edge("agent", "spot", [], directed=False)
+    )
+    columns = dict(load=NUMBER, speed=NUMBER)
+    return dict(held, columns=columns, edges=edges, tasks=dict(held["tasks"], references=references, kinds=kinds))
 
 
 @timed("descriptions.acted")
@@ -1531,7 +1534,7 @@ def crossed_case():
         [("a0", 0, None, 1.0)],
         [("s0", 0, None, 1.0), ("s1", 0, None, 2.0), ("s2", 0, None, 2.0)],
         [
-            ("near", ("spot", "spot"), NEAR, [("s1", "s0", True, 0, None, 1.0)]),
+            ("near", ("spot", "spot"), BASE, [("s1", "s0", True, 0, None)]),
             ("base", ("agent", "spot"), BASE, [("a0", "s0", True, 0, None)]),
         ],
         [],
@@ -1681,10 +1684,12 @@ def test_reach_reads_an_edge_without_direction_stated_either_way_a_reference_tha
     LOG.info("descriptions reach crossed exit seconds=%.3f", time.perf_counter() - started)
 
 
-def test_under_an_edit_the_entry_that_removes_the_node_an_option_targets_in_its_own_fork_is_named_with_what_gives_it_back(
+def test_under_an_edit_on_a_bank_whose_relations_hold_no_column_the_entry_that_removes_a_node_in_a_fork_is_named_with_what_gives_it_back(
     crossed, walking, monkeypatch
 ):
     started = time.perf_counter()
+    stated = Registry.from_declaration(read_json(crossed / "manifest.json")["spec"]).schema.edges
+    assert [list(entry["columns"]) for entry in stated.values()] == [[], []] and WENT_ADDED["went"]["columns"] == ("speed",)
     monkeypatch.setattr(filtering, "unit", halved)
     config = lined(crossed, THINNER, THINNED, "stepped")
     record = reach(crossed, config, STATED)
@@ -2115,6 +2120,15 @@ def test_a_plain_list_of_configurations_is_described_beside_its_bank_and_variant
     with pytest.raises(AssertionError, match="the description was computed again"):
         reach_over(crossed, [wider, config], STATED)
     LOG.info("descriptions reach over a list exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_trial_under_an_edit_on_a_bank_whose_relations_hold_no_column_has_its_row_in_the_table(crossed, walking):
+    started = time.perf_counter()
+    record = reach_over(crossed, [lined(crossed, THINNER, KEPT, "stepped")], STATED)
+    (row,) = record["trials"]
+    assert (row["reason"], row["realisation"], row["graphs"]) == (None, "stepped", 1)
+    assert (row["tasks"]["turn"]["decisions"], row["tasks"]["turn"]["options"]) == (3, 5)
+    LOG.info("descriptions reach over an edit without columns exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_another_bank_and_a_set_that_is_no_list(
