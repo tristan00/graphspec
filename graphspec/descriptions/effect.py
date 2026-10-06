@@ -249,7 +249,13 @@ def graphed(name, first, found, steps, registry, low, high, kinds, names):
 
 def described(members, beside, registry, steps, spec, groups, seed, limits, partitions):
     started = time.perf_counter()
-    graphs = derived(members, beside, registry, steps, spec, groups, seed, limits, partitions)
+    result = told(derived(members, beside, registry, steps, spec, groups, seed, limits, partitions), members, registry, steps)
+    LOG.info("effect described exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
+    return result
+
+
+def told(graphs, members, registry, steps):
+    started = time.perf_counter()
     names, found = related([nodes(graph) + (edges(graph, registry),) for graph in graphs], registry)
     kinds, member = list(registry.nodes), np.asarray(graphs[0].step_graph, np.int64)
     result = []
@@ -258,7 +264,7 @@ def described(members, beside, registry, steps, spec, groups, seed, limits, part
         result.append(
             graphed(graph.name, graphs[0], found, steps, registry, int(inside[0]), int(inside[-1]) + 1, kinds, names)
         )
-    LOG.info("effect described exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
+    LOG.debug("effect told exit graphs=%d states=%d seconds=%.4f", len(result), len(graphs), time.perf_counter() - started)
     return result
 
 

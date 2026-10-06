@@ -57,6 +57,24 @@ def reach(bank, config, statement):
     return result
 
 
+def reach_over(bank, configs, statement):
+    from .descriptions.reaches import over
+
+    started = time.perf_counter()
+    result = over(bank, configs, statement)
+    LOG.info("reach_over exit seconds=%.3f bank=%s", time.perf_counter() - started, bank)
+    return result
+
+
+def reach_search(bank, search):
+    from .descriptions.reaches import search as searched
+
+    started = time.perf_counter()
+    result = searched(bank, search)
+    LOG.info("reach_search exit seconds=%.3f bank=%s search=%s", time.perf_counter() - started, bank, search)
+    return result
+
+
 @exclusive
 def fit(bank, config, output, statement):
     from graphspec.infra import compute

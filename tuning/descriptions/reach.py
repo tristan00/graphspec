@@ -532,9 +532,9 @@ class Reached:
         )
         return result
 
-    def cut(self, decision, option, name):
+    def stopped(self, decision, option, name):
         started = time.perf_counter()
-        last = next(
+        result = next(
             (
                 count
                 for count in range(len(self.steps) - 1, -1, -1)
@@ -542,6 +542,12 @@ class Reached:
             ),
             None,
         )
+        LOG.debug("reached stopped exit field=%s entry=%s seconds=%.4f", name, result, time.perf_counter() - started)
+        return result
+
+    def cut(self, decision, option, name):
+        started = time.perf_counter()
+        last = self.stopped(decision, option, name)
         result = dict(entry=None, operation=None, settings=[])
         if last is not None:
             step = self.steps[last]
@@ -562,27 +568,40 @@ class Reached:
         LOG.debug("reached option exit option=%d seconds=%.4f", option, time.perf_counter() - started)
         return result
 
+    def optioned(self, decision):
+        started = time.perf_counter()
+        first, count = int(self.found.first[decision["decision"]]), int(self.found.count[decision["decision"]])
+        result = sorted(range(first, first + count), key=lambda option: self.found.keys[option])
+        LOG.debug("reached optioned exit options=%d seconds=%.4f", count, time.perf_counter() - started)
+        return result
+
+    @timed("reached.decision_done")
+    def decision_done(self):
+        for done in (self.histories, self.walks, self.options):
+            done.clear()
+
+    @timed("reached.group_done")
+    def group_done(self):
+        for done in (self.graphs, self.besides, self.members):
+            done.clear()
+
     def graphed(self):
         started = time.perf_counter()
-        found, held = self.found, {}
+        held = {}
         for group in self.deriver.graphs(self.config):
             trunk = self.derived(None, len(self.steps), group)
             for decision in self.decided(trunk, group):
-                first, count = int(found.first[decision["decision"]]), int(found.count[decision["decision"]])
-                options = sorted(range(first, first + count), key=lambda option: found.keys[option])
                 held.setdefault(decision["view"], []).append(
                     dict(
                         task=decision["key"],
                         kind=self.registry.tasks[decision["kind"]],
                         time=decision["time"],
                         references=self.references(trunk, decision),
-                        options=[self.option(decision, option) for option in options],
+                        options=[self.option(decision, option) for option in self.optioned(decision)],
                     )
                 )
-                for done in (self.histories, self.walks, self.options):
-                    done.clear()
-            for done in (self.graphs, self.besides, self.members):
-                done.clear()
+                self.decision_done()
+            self.group_done()
         result = [
             dict(name=graph["name"], decisions=held[graph["index"]] if graph["index"] in held else [])
             for graph in self.deriver.viewed(self.config).graphs
@@ -640,6 +659,11 @@ def realising(deriver, config):
     return name
 
 
+@timed("reach.stemmed")
+def stemmed(key, name):
+    return sha256_json(dict(variant=key, realisation=dict(name=name, version=realisation(name).version), version=truth.VERSION))
+
+
 def reach(bank, config, statement):
     started = time.perf_counter()
     truth.manifested(bank)
@@ -648,8 +672,7 @@ def reach(bank, config, statement):
     deriver = Deriver(bank, stated.device, stated.derivation_seed, RESIDENT)
     name = realising(deriver, config)
     key = specs.digest(deriver.identity(config))
-    stem = sha256_json(dict(variant=key, realisation=dict(name=name, version=realisation(name).version), version=truth.VERSION))
-    held = Path(bank) / "descriptions" / "reach" / stem
+    held = Path(bank) / "descriptions" / "reach" / stemmed(key, name)
     result = truth.kept(held, lambda: recorded(deriver, config, key, name), text)
     LOG.info("reach exit variant=%s realisation=%s seconds=%.3f", key[:10], name, time.perf_counter() - started)
     return result

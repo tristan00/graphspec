@@ -1,4 +1,4 @@
-from .api import build_bank, configuration, describe, fit, open_bank, reach
+from .api import build_bank, configuration, describe, fit, open_bank, reach, reach_over, reach_search
 from .families.heads import HEADS, REALISATIONS, Edited
 from .fits.losses import LOSSES
 from .measures.measures import MEASURES
@@ -14,5 +14,7 @@ __all__ = [
     "configuration",
     "describe",
     "reach",
+    "reach_over",
+    "reach_search",
     "fit",
 ]

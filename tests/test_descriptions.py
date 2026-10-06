@@ -3,6 +3,7 @@ import logging
 import shutil
 import sys
 import time
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -20,12 +21,14 @@ from graphspec.operations.operation import Need
 from graphspec.operations.parameters import choice, equals, number
 from graphspec.schema.schema import VERSION as SCHEMA
 from graphspec.sources import synthetic
-from tuning import REALISATIONS, Edited, configuration, reach
+from tuning import REALISATIONS, Edited, configuration, reach, reach_over, reach_search
 from tuning import describe as variant
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 from tuning.descriptions import reach as reaching
+from tuning.descriptions import reaches
 from tuning.descriptions import variant as varying
+from tuning.families import heads
 from tuning.statement import VERSION as STATEMENT
 
 LOG = logging.getLogger(__name__)
@@ -1711,3 +1714,432 @@ def test_a_reference_the_pipeline_puts_in_a_node_it_adds_is_named_by_the_kind_of
     ):
         held.ended(trunk, decision, edge, 0, 2, where)
     LOG.info("descriptions reach contracted exit seconds=%.3f", time.perf_counter() - started)
+
+
+NEAR_TURN = {"cut/relation": "near", "cut/kind": "turn"}
+NEAR_VISIT = {"cut/relation": "near", "cut/kind": "visit"}
+PART_NEAR = {"cut/relation": "near", "cut/times": "all"}
+PART_VISIT = {"cut/relation": "base", "cut/times": "tasks", "cut/kind": "visit"}
+STARVED = dict(NODES, **{"nodes/agent/min_degree": 16})
+HALTED = "the entry test.halt derives no graph"
+UNSTARTED = "the trial holds no statement.json"
+UNREALISED = (
+    "the model of the configuration states options/realisation none, which puts no option before it; reach describes "
+    "the options of decisions as a realisation puts them before a model"
+)
+SEEDED = "the seed of the configuration is 6 and the seed of the statement is 5"
+
+
+@timed("descriptions.halted")
+def halted(graph, registry, settings, seed, limits, carry, held):
+    raise ValueError(HALTED)
+
+
+@timed("descriptions.unstated")
+def unstated(registry):
+    return ()
+
+
+HALT = Operation("test", "halt", (Phase("halt", halted, None, None),), unstated, (), (), (), ("facts",), None, None, 1, 1)
+
+
+class Aimed(heads.Built):
+    version = 1
+    reads = ("targets",)
+
+
+@pytest.fixture
+def searching(cutting, walking):
+    started = time.perf_counter()
+    OPERATIONS.register(HALT.name, HALT)
+    REALISATIONS.register("aimed", Aimed())
+    LOG.debug("descriptions searching registered seconds=%.4f", time.perf_counter() - started)
+    yield HALT
+    del OPERATIONS.held[HALT.name]
+    del REALISATIONS.held["aimed"]
+
+
+@timed("descriptions.entry")
+def entry(operation, parameters):
+    return dict(operation=operation, parameters=parameters)
+
+
+@timed("descriptions.modelled")
+def modelled(bank, name):
+    depth = {"options/depth": 1} if name == "actor_edge" else {}
+    model = dict(MODEL, **{"options/realisation": name}, **depth)
+    return configuration(bank, model, None, pipeline=pipelined(CUTTING), graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+
+
+def tried(bank):
+    started = time.perf_counter()
+    models = {name: modelled(bank, name) for name in ("vector", "walked", "actor_edge", "aimed", "none")}
+    nodes, forms = entry("graphspec.nodes", NODES), entry("graphspec.relation_forms", FORMS)
+    joined = dict(models["vector"]["graph"], **JOINED)
+    stated = [
+        ("vector", [nodes, entry("test.cut", CUTTING), forms], {}),
+        ("vector", [nodes, entry("test.cut", CUTTING), forms], dict(seed=6)),
+        ("vector", [nodes, entry("test.cut", NEAR_TURN), forms], {}),
+        ("vector", [nodes, entry("test.cut", SEVERING), forms], {}),
+        ("vector", [nodes, entry("test.cut", NEAR_VISIT), forms], {}),
+        ("vector", [nodes, forms], {}),
+        ("walked", [nodes, entry("test.cut", CUTTING), forms], {}),
+        ("actor_edge", [nodes, entry("test.cut", CUTTING), forms], {}),
+        ("vector", [nodes, entry("test.sever", CUTTING), forms], {}),
+        ("vector", [nodes, entry("test.sever", SEVERING), forms], {}),
+        ("vector", [nodes, entry("test.part", PARTING), forms], {}),
+        ("vector", [nodes, entry("test.part", PART_NEAR), forms], {}),
+        ("vector", [nodes, entry("test.part", PART_VISIT), forms], {}),
+        ("vector", [entry("graphspec.nodes", STARVED), forms], {}),
+        ("none", [nodes, entry("test.cut", CUTTING), forms], {}),
+        ("vector", [nodes, forms], dict(seed=8)),
+        ("aimed", [nodes, entry("test.cut", SEVERING), forms], {}),
+        ("vector", [nodes, entry("test.cut", CUTTING), forms], dict(graph=joined)),
+        ("walked", [nodes, entry("test.cut", NEAR_TURN), forms], {}),
+        ("vector", [nodes, entry("test.halt", {})], {}),
+    ]
+    result = [dict(models[name], pipeline=pipeline, **changes) for name, pipeline, changes in stated]
+    LOG.debug("descriptions tried exit trials=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+@timed("descriptions.trial")
+def trial(place):
+    return "trial_%06d" % place
+
+
+def laid(folder, bank, configs, unstarted):
+    started = time.perf_counter()
+    for place, config in enumerate(configs):
+        (folder / trial(place)).mkdir(parents=True)
+        write_json(folder / trial(place) / "config.json", config)
+        if place not in unstarted:
+            write_json(folder / trial(place) / "statement.json", dict(STATED, seed=config["seed"]))
+    stored = read_json(bank / "manifest.json")["stored_sha256"]
+    trials = [dict(directory=trial(place)) for place in range(len(configs))]
+    write_json(folder / "plan.json", dict(bank_stored_sha256=stored, trials=trials))
+    LOG.debug("descriptions laid exit trials=%d seconds=%.4f", len(configs), time.perf_counter() - started)
+    return folder
+
+
+@pytest.fixture
+def searched(bank, searching):
+    started = time.perf_counter()
+    result = shared("searched", lambda root: laid(root / "search", bank, tried(bank), (15,))) / "search"
+    LOG.debug("descriptions searched exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
+@timed("descriptions.tallying")
+def tallying(held, connected, apart, absent, least, most, *cut):
+    return dict(
+        held=held,
+        connected=connected,
+        apart=apart,
+        absent=absent,
+        least=least,
+        most=most,
+        cut=[dict(entry=name, operation=name, options=options) for name, options in cut],
+    )
+
+
+NEVER = (None, 1)
+UNMADE = tallying(1, 0, 0, 1, None, None, NEVER)
+FAR = tallying(1, 1, 0, 0, 2, 2)
+MOSTLY = tallying(13, 12, 1, 0, 1, 1, NEVER)
+EVERY = tallying(13, 13, 0, 0, 1, 1)
+ONE = tallying(1, 1, 0, 0, 1, 1)
+WHOLE = [MOSTLY, FAR, UNMADE, MOSTLY]
+EDITED = [EVERY, ONE, ONE, EVERY]
+BASE_TURN = ("relation", "base", "turn", 2)
+BASE_VISIT = ("relation", "base", "visit", 2)
+NEAR_AT_TURN = ("relation", "near", "turn", 1)
+NEAR_AT_VISIT = ("relation", "near", "visit", 1)
+AGENTS = (("kind", "agent", "turn", 2), ("kind", "agent", "visit", 2))
+
+
+@timed("descriptions.gone_by")
+def gone_by(name):
+    every = tallying(13, 0, 13, 0, None, None, (name, 12), NEVER)
+    return [every, tallying(1, 0, 0, 1, None, None, (name, 1)), UNMADE, every]
+
+
+@timed("descriptions.near_by")
+def near_by(name):
+    return [MOSTLY, tallying(1, 0, 1, 0, None, None, (name, 1)), UNMADE, MOSTLY]
+
+
+@timed("descriptions.visited_by")
+def visited_by(name):
+    some = tallying(13, 9, 4, 0, 1, 1, (name, 3), NEVER)
+    return [some, FAR, UNMADE, some]
+
+
+@timed("descriptions.left_by")
+def left_by(name, *found):
+    return [
+        dict(entry=name, operation=name, sort=sort, name=held, task=task, graphs=graphs) for sort, held, task, graphs in found
+    ]
+
+
+SEARCHED = (
+    ("vector", gone_by("test.cut"), left_by("test.cut", BASE_TURN)),
+    ("vector", gone_by("test.cut"), left_by("test.cut", BASE_TURN)),
+    ("vector", near_by("test.cut"), left_by("test.cut", NEAR_AT_TURN)),
+    ("vector", visited_by("test.cut"), left_by("test.cut", BASE_VISIT)),
+    ("vector", WHOLE, left_by("test.cut", NEAR_AT_VISIT)),
+    ("vector", WHOLE, []),
+    ("walked", EDITED, left_by("test.cut", BASE_TURN)),
+    ("actor_edge", gone_by("test.cut"), left_by("test.cut", BASE_TURN)),
+    (None, REFUSAL),
+    ("vector", visited_by("test.sever"), left_by("test.sever", BASE_VISIT)),
+    ("vector", gone_by("test.part"), left_by("test.part", BASE_TURN, BASE_VISIT)),
+    ("vector", near_by("test.part"), left_by("test.part", NEAR_AT_TURN, NEAR_AT_VISIT)),
+    ("vector", visited_by("test.part"), left_by("test.part", BASE_VISIT)),
+    ("vector", gone_by("graphspec.nodes"), left_by("graphspec.nodes", *AGENTS, BASE_TURN, BASE_VISIT)),
+    (None, UNREALISED),
+    (None, UNSTARTED),
+    ("aimed", visited_by("test.cut")[:3] + [None], left_by("test.cut", BASE_VISIT)),
+    ("vector", gone_by("test.cut"), left_by("test.cut", BASE_TURN)),
+    ("walked", EDITED, left_by("test.cut", NEAR_AT_TURN)),
+    ("vector", HALTED),
+)
+SEARCHED_TEXT = """reach over 20 trials on the bank stored as %(stored)s, described at version %(version)d
+described 16, of 15 variants and realisations; not described 4
+one row per trial, in the order of the trials; %(reading)s
+    trial         variant     realisation  turn: options in decisions  turn: target to of go                                      turn: target along of go                 turn: target made of go           turn: parameter speed of go                                nothing left at the steps of tasks
+    trial_000000  %(v0)s  vector       13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
+    trial_000001  %(v1)s  vector       13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
+    trial_000002  %(v2)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  0/1, apart 1, cut by test.cut 1          0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  test.cut: relation near at turn 1/2
+    trial_000003  %(v3)s  vector       13 in 4                     9/13, hops 1, apart 4, cut by test.cut 3 and no entry 1    1/1, hops 2                              0/1, absent 1, cut by no entry 1  9/13, hops 1, apart 4, cut by test.cut 3 and no entry 1    test.cut: relation base at visit 2/2
+    trial_000004  %(v4)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  1/1, hops 2                              0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  test.cut: relation near at visit 1/2
+    trial_000005  %(v5)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  1/1, hops 2                              0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  none
+    trial_000006  %(v6)s  walked       13 in 4                     13/13, hops 1                                              1/1, hops 1                              1/1, hops 1                       13/13, hops 1                                              test.cut: relation base at turn 2/2
+    trial_000007  %(v7)s  actor_edge   13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
+    trial_000008  -           -            not described: the entry test.sever of the pipeline states cut/kind turn, which decides, and the entry cuts only at the times of the tasks of kinds that decide nothing
+    trial_000009  %(v9)s  vector       13 in 4                     9/13, hops 1, apart 4, cut by test.sever 3 and no entry 1  1/1, hops 2                              0/1, absent 1, cut by no entry 1  9/13, hops 1, apart 4, cut by test.sever 3 and no entry 1  test.sever: relation base at visit 2/2
+    trial_000010  %(v10)s  vector       13 in 4                     0/13, apart 13, cut by test.part 12 and no entry 1         0/1, absent 1, cut by test.part 1        0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.part 12 and no entry 1         test.part: relation base at turn 2/2, relation base at visit 2/2
+    trial_000011  %(v11)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  0/1, apart 1, cut by test.part 1         0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  test.part: relation near at turn 1/2, relation near at visit 1/2
+    trial_000012  %(v12)s  vector       13 in 4                     9/13, hops 1, apart 4, cut by test.part 3 and no entry 1   1/1, hops 2                              0/1, absent 1, cut by no entry 1  9/13, hops 1, apart 4, cut by test.part 3 and no entry 1   test.part: relation base at visit 2/2
+    trial_000013  %(v13)s  vector       13 in 4                     0/13, apart 13, cut by graphspec.nodes 12 and no entry 1   0/1, absent 1, cut by graphspec.nodes 1  0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by graphspec.nodes 12 and no entry 1   graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
+    trial_000014  -           -            not described: the model of the configuration states options/realisation none, which puts no option before it; reach describes the options of decisions as a realisation puts them before a model
+    trial_000015  -           -            not described: the trial holds no statement.json
+    trial_000016  %(v16)s  aimed        13 in 4                     9/13, hops 1, apart 4, cut by test.cut 3 and no entry 1    1/1, hops 2                              0/1, absent 1, cut by no entry 1  unread                                                     test.cut: relation base at visit 2/2
+    trial_000017  %(v17)s  vector       13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
+    trial_000018  %(v18)s  walked       13 in 4                     13/13, hops 1                                              1/1, hops 1                              1/1, hops 1                       13/13, hops 1                                              test.cut: relation near at turn 1/2
+    trial_000019  %(v19)s  vector       not described: the entry test.halt derives no graph
+"""
+ROW_TEXT = """reach of the options of the variant %s of the bank stored as %s in one row, described at version %d
+%s
+    variant     realisation  turn: options in decisions  turn: target to of go                                     turn: target along of go                 turn: target made of go           turn: parameter speed of go                               nothing left at the steps of tasks
+    %s  vector       13 in 4                     0/13, apart 13, cut by graphspec.nodes 12 and no entry 1  0/1, absent 1, cut by graphspec.nodes 1  0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by graphspec.nodes 12 and no entry 1  graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
+"""
+STOPPED_TEXT = """reach of the options of the variant %s of the bank stored as %s in one row, described at version %d
+%s
+    variant     realisation  turn: options in decisions  turn: target to of go  turn: target along of go  turn: target made of go  turn: parameter speed of go  nothing left at the steps of tasks
+    %s  vector       not described: the entry test.halt derives no graph
+"""
+CROSSED_ROW = dict(
+    turn=dict(
+        decisions=3,
+        options=5,
+        fields={
+            FIELDS[0]: tallying(5, 4, 1, 0, 0, 1, NEVER),
+            FIELDS[1]: tallying(3, 2, 1, 0, 0, 1, NEVER),
+            FIELDS[2]: tallying(2, 2, 0, 0, 0, 0),
+            FIELDS[3]: tallying(0, 0, 0, 0, None, None),
+            FIELDS[4]: tallying(2, 2, 0, 0, 0, 1),
+            FIELDS[5]: tallying(3, 2, 1, 0, 0, 0, NEVER),
+        },
+    )
+)
+
+
+def over_search(bank, configs, stated):
+    started = time.perf_counter()
+    deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
+    rows = []
+    for place, (config, held) in enumerate(zip(configs, stated)):
+        key = None if held[0] is None else specs.digest(deriver.identity(config))
+        row = dict(trial=trial(place), variant=key, realisation=held[0], reason=None, graphs=None, tasks=None, cuts=None)
+        if len(held) == 2:
+            row["reason"] = held[1]
+        else:
+            fields = dict(zip(GO, held[1]))
+            row.update(graphs=2, tasks=dict(turn=dict(decisions=4, options=13, fields=fields)), cuts=held[2])
+        rows.append(row)
+    stored = read_json(bank / "manifest.json")["stored_sha256"]
+    result = dict(version=describing.VERSION, stored_sha256=stored, fields=dict(turn=list(GO)), trials=rows)
+    LOG.debug("descriptions over search exit trials=%d seconds=%.4f", len(rows), time.perf_counter() - started)
+    return result
+
+
+def tabled(folder, record):
+    started = time.perf_counter()
+    trials = [
+        dict(
+            trial=row["trial"],
+            row=None if row["variant"] is None else reaching.stemmed(row["variant"], row["realisation"]),
+            reason=row["reason"] if row["variant"] is None else None,
+        )
+        for row in record["trials"]
+    ]
+    key = sha256_json(dict(stored=record["stored_sha256"], version=describing.VERSION, trials=trials))
+    LOG.debug("descriptions tabled exit trials=%d seconds=%.4f", len(trials), time.perf_counter() - started)
+    return folder / "descriptions" / "reaches" / key
+
+
+def test_reach_over_the_twenty_trials_of_a_search_equals_the_table_written_out_here_and_keeps_the_row_of_each_variant(
+    bank, searched
+):
+    started = time.perf_counter()
+    record = reach_search(bank, searched)
+    assert record == over_search(bank, tried(bank), SEARCHED)
+    assert json.loads(json.dumps(record)) == record
+    rows = record["trials"]
+    assert rows[0]["variant"] == rows[1]["variant"] == rows[7]["variant"] != rows[17]["variant"]
+    assert rows[3]["variant"] == rows[16]["variant"] and rows[5]["variant"] is not None and rows[15]["variant"] is None
+    described = [row for row in rows if row["reason"] is None]
+    assert len(described) == 16 and len({(row["variant"], row["realisation"]) for row in described}) == 15
+    for place, written in ((13, ROW_TEXT), (19, STOPPED_TEXT)):
+        key = rows[place]["variant"]
+        stem = bank / "descriptions" / "reach_rows" / reaching.stemmed(key, "vector")
+        kept = {name: value for name, value in rows[place].items() if name != "trial"}
+        assert read_json(stem.with_suffix(".json")) == dict(
+            kept, version=describing.VERSION, stored_sha256=record["stored_sha256"], fields=record["fields"]
+        )
+        assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written % (
+            key,
+            record["stored_sha256"],
+            describing.VERSION,
+            reaches.READING,
+            key[:10],
+        )
+    LOG.info("descriptions reach over a search exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_text_of_the_table_holds_one_line_per_trial_of_its_record_and_the_verb_prints_what_the_call_writes(
+    bank, searched, capsys, monkeypatch
+):
+    from tuning.__main__ import main
+
+    started = time.perf_counter()
+    record = reach_search(bank, searched)
+    shown = {"v%d" % place: row["variant"][:10] for place, row in enumerate(record["trials"]) if row["variant"] is not None}
+    written = SEARCHED_TEXT % dict(
+        shown, stored=record["stored_sha256"], version=describing.VERSION, reading=reaches.READING
+    )
+    assert reaches.text(record) == written
+    stem = tabled(searched, record)
+    assert read_json(stem.with_suffix(".json")) == record
+    assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--reach", str(bank), str(searched)])
+    main()
+    assert capsys.readouterr().out == written
+    LOG.info("descriptions reach over a search text exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_second_call_reads_the_file_of_the_table_and_a_search_that_gains_a_trial_is_described_anew_from_the_rows_kept(
+    bank, searching, tmp_path, monkeypatch
+):
+    started = time.perf_counter()
+    configs = tried(bank)
+    folder = laid(tmp_path / "search", bank, configs[:2], ())
+    record = reach_search(bank, folder)
+    assert record == over_search(bank, configs[:2], SEARCHED[:2])
+    assert tabled(folder, record).with_suffix(".json").exists()
+    monkeypatch.setattr(reaches, "recorded", refused)
+    assert reach_search(bank, folder) == record
+    (folder / trial(2)).mkdir()
+    write_json(folder / trial(2) / "config.json", configs[5])
+    write_json(folder / trial(2) / "statement.json", STATED)
+    plan = read_json(folder / "plan.json")
+    write_json(folder / "plan.json", dict(plan, trials=plan["trials"] + [dict(directory=trial(2))]))
+    with pytest.raises(AssertionError, match="the description was computed again"):
+        reach_search(bank, folder)
+    monkeypatch.undo()
+    rowed = Mock(wraps=reaches.rowed)
+    monkeypatch.setattr(reaches, "rowed", rowed)
+    gained = reach_search(bank, folder)
+    assert gained == over_search(bank, configs[:2] + [configs[5]], SEARCHED[:2] + (SEARCHED[5],))
+    assert [call.args[2] for call in rowed.call_args_list] in ([], [gained["trials"][2]["variant"]])
+    assert tabled(folder, gained) != tabled(folder, record) and tabled(folder, gained).with_suffix(".txt").exists()
+    monkeypatch.setattr(reaches, "recorded", refused)
+    assert reach_search(bank, folder) == gained
+    LOG.info("descriptions reach over a search served exit seconds=%.3f", time.perf_counter() - started)
+
+
+CROSSED_OVER = """reach over 3 trials on the bank stored as %s, described at version %d
+described 2, of 1 variants and realisations; not described 1
+one row per trial, in the order of the trials; %s
+    trial  variant     realisation  turn: options in decisions  turn: kind                                    turn: target to of go                         turn: target along of go  turn: target made of go  turn: target by of stay  turn: parameter speed of go              nothing left at the steps of tasks
+    0      %s  vector       5 in 3                      4/5, hops 0 to 1, apart 1, cut by no entry 1  2/3, hops 0 to 1, apart 1, cut by no entry 1  2/2, hops 0               held by none             2/2, hops 0 to 1         2/3, hops 0, apart 1, cut by no entry 1  none
+    1      %s  vector       5 in 3                      4/5, hops 0 to 1, apart 1, cut by no entry 1  2/3, hops 0 to 1, apart 1, cut by no entry 1  2/2, hops 0               held by none             2/2, hops 0 to 1         2/3, hops 0, apart 1, cut by no entry 1  none
+    2      -           -            not described: the seed of the configuration is 6 and the seed of the statement is 5
+"""
+
+
+def test_a_plain_list_of_configurations_is_described_beside_its_bank_and_variants_alike_are_derived_once(
+    crossed, monkeypatch
+):
+    started = time.perf_counter()
+    config = lined(crossed, THINNER, KEPT, "vector")
+    wider = dict(config, model=dict(config["model"], hidden=config["model"]["hidden"] + 1))
+    rowed = Mock(wraps=reaches.rowed)
+    monkeypatch.setattr(reaches, "rowed", rowed)
+    record = reach_over(crossed, [config, wider, dict(config, seed=6)], STATED)
+    stored, key = read_json(crossed / "manifest.json")["stored_sha256"], keyed(crossed, config)
+    described = dict(variant=key, realisation="vector", reason=None, graphs=1, tasks=CROSSED_ROW, cuts=[])
+    unread = dict(variant=None, realisation=None, reason=SEEDED, graphs=None, tasks=None, cuts=None)
+    assert record == dict(
+        version=describing.VERSION,
+        stored_sha256=stored,
+        fields=dict(turn=list(FIELDS)),
+        trials=[dict(described, trial=0), dict(described, trial=1), dict(unread, trial=2)],
+    )
+    assert json.loads(json.dumps(record)) == record and rowed.call_count == 1
+    written = CROSSED_OVER % (stored, describing.VERSION, reaches.READING, key[:10], key[:10])
+    stem = tabled(crossed, record)
+    assert reaches.text(record) == written == stem.with_suffix(".txt").read_text(encoding="utf-8")
+    assert read_json(stem.with_suffix(".json")) == record
+    assert (crossed / "descriptions" / "reach_rows" / reaching.stemmed(key, "vector")).with_suffix(".json").exists()
+    monkeypatch.setattr(reaches, "recorded", refused)
+    assert reach_over(crossed, [config, wider, dict(config, seed=6)], STATED) == record
+    with pytest.raises(AssertionError, match="the description was computed again"):
+        reach_over(crossed, [wider, config], STATED)
+    LOG.info("descriptions reach over a list exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_another_bank_and_a_set_that_is_no_list(
+    bank, path_bank, tmp_path, capsys, monkeypatch
+):
+    from tuning.__main__ import main
+
+    started = time.perf_counter()
+    stored = read_json(bank / "manifest.json")["stored_sha256"]
+    with pytest.raises(FileNotFoundError, match="holds no plan.json; reach over a search reads the folder of a search"):
+        reach_search(bank, tmp_path)
+    write_json(tmp_path / "plan.json", dict(trials=[]))
+    with pytest.raises(KeyError, match="lacks bank_stored_sha256"):
+        reach_search(bank, tmp_path)
+    write_json(tmp_path / "plan.json", dict(bank_stored_sha256="0" * 64, trials=[]))
+    with pytest.raises(ValueError, match="searches the bank whose build stored 0{64}, and the bank .* stored %s$" % stored):
+        reach_search(bank, tmp_path)
+    write_json(tmp_path / "plan.json", dict(bank_stored_sha256=stored, trials=[]))
+    empty = dict(version=describing.VERSION, stored_sha256=stored, fields=dict(turn=list(GO)), trials=[])
+    assert reach_search(bank, tmp_path) == empty == reach_over(bank, [], STATED)
+    with pytest.raises(TypeError, match="reads a list of the configurations of fits, found {}"):
+        reach_over(bank, {}, STATED)
+    with pytest.raises(KeyError, match="the statement lacks alike"):
+        reach_over(bank, [], {name: value for name, value in STATED.items() if name != "alike"})
+    with pytest.raises(ValueError, match="holds no kind of task that decides; reach describes the options of decisions$"):
+        reach_over(path_bank, [], STATED)
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--reach", str(bank), str(tmp_path / "plan.json")])
+    with pytest.raises(SystemExit):
+        main()
+    assert "plan.json is no folder; describe --reach reads the folder of a search" in capsys.readouterr().err
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--reach", str(bank)])
+    with pytest.raises(SystemExit):
+        main()
+    assert "found 0 paths after the bank" in capsys.readouterr().err
+    LOG.info("descriptions reach over a search refused exit seconds=%.3f", time.perf_counter() - started)
