@@ -7,7 +7,6 @@ import numpy as np
 from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 from graphspec.operations.difference import valued
-from graphspec.operations.rows import counted as offsets
 from graphspec.operations.rows import fact_keys
 from graphspec.schema.declaration import Registry
 
@@ -33,7 +32,8 @@ STEPPED = (
 )
 LAST = (
     "each of the two graphs is read as it holds once every correction is known, a fact a correction replaced "
-    "holding nothing"
+    "holding nothing and an edge of a table that is about a set edge held as a view holds it, by the rule its table "
+    "states for where the set edge it is about holds nothing"
 )
 HELD = (
     PLACED + "; " + LAST + "; the %(many)s are those of either graph, and before stands for before every one of "
@@ -93,23 +93,16 @@ def counted(keys, steps, size):
     return np.bincount(keys[:, 0] * size + keys[:, 1], minlength=steps * size).reshape(steps, size)
 
 
-def spread(begun, ended):
-    started = time.perf_counter()
-    counts = ended - begun
-    rows = np.repeat(np.arange(len(counts)), counts)
-    result = rows, begun[rows] + offsets(counts)
-    LOG.debug("differences spread exit facts=%d rows=%d seconds=%.4f", len(counts), len(rows), time.perf_counter() - started)
-    return result
-
-
 def lasting(registry, facts, moments):
     started = time.perf_counter()
-    rows, steps = spread(*truth.shown(facts, "obs", moments))
+    rows, steps = truth.spread(*truth.shown(facts, "obs", moments))
     nodes = np.unique(np.stack((steps, np.asarray(facts.obs_entity, np.int64)[rows]), 1), axis=0)
     present = np.flatnonzero(np.asarray(facts.fact_present, bool))
     begun, ended = truth.shown(facts, "fact", moments)
-    rows, steps = spread(begun[present], ended[present])
+    rows, steps = truth.spread(begun[present], ended[present])
     rows = present[rows]
+    kept = truth.lapsing(registry, facts, nodes[:, 0] * len(facts.kinds) + nodes[:, 1], rows, steps, moments)
+    rows, steps = rows[kept], steps[kept]
     ends = [np.asarray(facts.arrays[name], np.int64)[rows] for name in ("fact_code", "fact_source", "fact_target")]
     result = dict(
         registry=registry,

@@ -51,13 +51,21 @@ pytestmark = pytest.mark.xdist_group("descriptions")
 NUMBER = dict(type="number", encoder="value")
 CHANGED = dict(name="changed", seed=13, repeats=False, parameters=dict(count=1, ranges=dict(speed=[0.25, 0.5])))
 HELD = dict(
-    near=dict(table="near", ends=[["spot", "spot"]], columns=["weight"]),
-    base=dict(table="base", ends=[["agent", "spot"]], columns=[]),
+    near=dict(table="near", ends=[["spot", "spot"]], columns=["weight"], about=None, lapsed=0),
+    base=dict(table="base", ends=[["agent", "spot"]], columns=[], about=None, lapsed=0),
 )
 NONE = dict(least=None, most=None, mean=None)
 CLOCKED = dict(model="clock", units=["tick"])
 UNBEGUN = dict(nodes_before=0, observations_before=0)
 BEGUN = dict(nodes_before=1, observations_before=1)
+WHOLE_KIND = dict(created=0, unstated=0)
+UNREAD = dict(
+    later=dict(nodes=0, edges=0, gap=None, last=None),
+    watched=dict(nodes=0, edges=0, observers={}),
+    sets={},
+    held={},
+    entities=dict(agent=WHOLE_KIND, spot=WHOLE_KIND),
+)
 FIRST = dict(
     name="g0",
     unit="tick",
@@ -111,6 +119,7 @@ FIRST = dict(
             recorded=7,
             regenerated=3,
             generators=dict(changed=3),
+            rule=None,
             each=[
                 dict(key=10, time=1, options=3, recorded=2, regenerated=1, generators=dict(changed=1)),
                 dict(key=30, time=3, options=4, recorded=3, regenerated=1, generators=dict(changed=1)),
@@ -118,6 +127,7 @@ FIRST = dict(
             ],
         )
     ),
+    unread=UNREAD,
 )
 SECOND = dict(
     name="g1",
@@ -156,9 +166,11 @@ SECOND = dict(
             recorded=2,
             regenerated=1,
             generators=dict(changed=1),
+            rule=None,
             each=[dict(key=10, time=2, options=3, recorded=2, regenerated=1, generators=dict(changed=1))],
         )
     ),
+    unread=UNREAD,
 )
 TEXT = """truth graphs of the bank stored as %s, described at version %d
 time: one clock, units tick
@@ -181,9 +193,11 @@ graph g0, unit tick, times 8 from 0 to 7
     5       2            2                   2           2                  1           2
     6       2            2                   2           2                  0           1
     7       2            2                   2           2                  0           1
+  shown to some tasks only: no fact known later than it holds from; no fact naming observers
+  not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 3; train 2, validation 1, no split 0
   kind of task visit: tasks 4; train 2, validation 1, no split 1
-  decisions of turn: decisions 3, options 10, recorded 7, regenerated 3; changed 3
+  decisions of turn: decisions 3, options 10, recorded 7, regenerated 3; changed 3; no rule of options
     task  time  options  recorded  regenerated  changed
     10    1     3        2         1            1
     30    3     4        3         1            1
@@ -200,9 +214,11 @@ graph g1, unit tick, times 3 from 1 to 3
     1       1            1                   2           2                  0           1
     2       1            1                   2           2                  0           1
     3       1            1                   1           1                  0           0
+  shown to some tasks only: no fact known later than it holds from; no fact naming observers
+  not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 1; train 1, validation 0, no split 0
   kind of task visit: tasks 1; train 0, validation 1, no split 0
-  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1
+  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1; no rule of options
     task  time  options  recorded  regenerated  changed
     10    2     3        2         1            1
 """
@@ -3534,6 +3550,8 @@ RETRACTED = dict(
     table="near",
     ends=[["spot", "spot"]],
     columns=[],
+    about=None,
+    lapsed=0,
     edges=1,
     facts=1,
     absent=1,
@@ -3551,6 +3569,8 @@ EITHER_WAY = dict(
     table="base",
     ends=[["agent", "spot"], ["spot", "agent"]],
     columns=[],
+    about=None,
+    lapsed=0,
     edges=1,
     facts=2,
     absent=0,
@@ -3578,6 +3598,7 @@ THIRD = dict(
             recorded=6,
             regenerated=0,
             generators={},
+            rule=None,
             each=[
                 dict(key=10, time=0, options=2, recorded=2, regenerated=0, generators={}),
                 dict(key=20, time=1, options=2, recorded=2, regenerated=0, generators={}),
@@ -3586,6 +3607,7 @@ THIRD = dict(
             ],
         )
     ),
+    unread=dict(UNREAD, later=dict(nodes=0, edges=1, gap=4, last=4)),
 )
 THIRD_TEXT = """
 graph h0, unit tick, times 4 from 0 to 3
@@ -3600,8 +3622,10 @@ graph h0, unit tick, times 4 from 0 to 3
     1       1            1                   3           3                  1           1
     2       1            1                   3           3                  1           1
     3       1            1                   3           3                  1           1
+  shown to some tasks only: facts known later than they hold from, about nodes 0 and about edges 1, by 4 at most, the last known from time 4, before which a task is not shown them; no fact naming observers
+  not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 4; train 2, validation 2, no split 0
-  decisions of turn: decisions 4, options 6, recorded 6, regenerated 0; no generator
+  decisions of turn: decisions 4, options 6, recorded 6, regenerated 0; no generator; no rule of options
     task  time  options  recorded  regenerated
     10    0     2        2         0
     20    1     2        2         0
@@ -3682,9 +3706,11 @@ ORDERED_SECOND = """graph g1, no unit, positions 3 from 1 to 3
     1         1            1                   2           2                  0           1
     2         1            1                   2           2                  0           1
     3         1            1                   1           1                  0           0
+  shown to some tasks only: no fact known later than it holds from; no fact naming observers
+  not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 1; train 1, validation 0, no split 0
   kind of task visit: tasks 1; train 0, validation 1, no split 0
-  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1
+  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1; no rule of options
     task  position  options  recorded  regenerated  changed
     10    2         3        2         1            1
 """
@@ -3708,9 +3734,11 @@ STILL_SECOND = """graph g1, no unit, no time
   held always:
     agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
     1            1                   2           2                  0           1
+  shown to some tasks only: no fact known later than it holds from; no fact naming observers
+  not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 1; train 1, validation 0, no split 0
   kind of task visit: tasks 1; train 0, validation 1, no split 0
-  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1
+  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1; no rule of options
     task  time  options  recorded  regenerated  changed
     10    none  3        2         1            1
 """
@@ -3834,3 +3862,406 @@ def test_without_time_a_description_states_no_time_and_counts_once_what_holds_al
     unlike_steps = diverging.paired(first, second)
     assert (unlike_steps["times"], unlike_steps["alone"]) == ([None, None, None], UNSHARED)
     LOG.info("descriptions without time exit seconds=%.3f", time.perf_counter() - started)
+
+
+SEEN = ("key", "since", "until", "load", "known", "observers")
+OWNED = ("key", "since", "until", "weight", "known", "observers")
+WEIGHED = ("source", "target", "present", "since", "until", "weight", "known", "observers")
+JOINING = ("source", "target", "present", "since", "until", "known", "observers")
+NOTED = ("source", "target", "present", "since", "until", "mark", "known", "observers")
+MEMBERS = ("set", "member", "role", "share")
+PIECES = ("owner", "kind", "key", "mass")
+JOINTS = ("owner", "source", "target", "relation")
+UNWATCHED = dict(north=dict(nodes=0, edges=0), south=dict(nodes=0, edges=0))
+WATCHED_FIRST = dict(
+    name="w0",
+    unit="tick",
+    times=[0, 1, 2, 3, 4, 5, 6],
+    kinds=dict(
+        agent=dict(UNBEGUN, nodes=2, observations=2, replaced=0, nodes_at=[2] * 7, observations_at=[2] * 7),
+        spot=dict(
+            UNBEGUN, nodes=5, observations=5, replaced=0, nodes_at=[4, 4, 5, 5, 5, 5, 5], observations_at=[4, 4, 5, 5, 5, 5, 5]
+        ),
+        group=dict(
+            UNBEGUN, nodes=2, observations=2, replaced=0, nodes_at=[2, 2, 2, 2, 1, 1, 1], observations_at=[2, 2, 2, 2, 1, 1, 1]
+        ),
+    ),
+    relations=dict(
+        near=dict(
+            table="near",
+            ends=[["spot", "spot"]],
+            columns=["weight"],
+            about=None,
+            lapsed=0,
+            edges=3,
+            facts=3,
+            absent=0,
+            replaced=0,
+            edges_before=0,
+            edges_at=[3] * 7,
+            runs=3,
+            bounded=0,
+            **NONE,
+        ),
+        base=dict(
+            table="base",
+            ends=[["agent", "spot"]],
+            columns=[],
+            about=None,
+            lapsed=0,
+            edges=3,
+            facts=3,
+            absent=0,
+            replaced=0,
+            edges_before=0,
+            edges_at=[2, 2, 2, 3, 3, 3, 3],
+            runs=3,
+            bounded=0,
+            **NONE,
+        ),
+        back=dict(
+            table="back",
+            ends=[["spot", "agent"]],
+            columns=[],
+            about=None,
+            lapsed=0,
+            edges=1,
+            facts=1,
+            absent=0,
+            replaced=0,
+            edges_before=0,
+            edges_at=[1] * 7,
+            runs=1,
+            bounded=0,
+            **NONE,
+        ),
+        note=dict(
+            table="note",
+            ends=[["group", "spot"]],
+            columns=["mark"],
+            about="lapse",
+            lapsed=2,
+            edges=2,
+            facts=2,
+            absent=0,
+            replaced=0,
+            edges_before=0,
+            edges_at=[1, 2, 2, 2, 1, 1, 1],
+            runs=2,
+            bounded=1,
+            least=3,
+            most=3,
+            mean=3.0,
+        ),
+    ),
+    tasks=dict(turn=dict(tasks=3, splits=dict(train=2, validation=1), unsplit=0)),
+    decisions=dict(
+        turn=dict(
+            decisions=3,
+            options=4,
+            recorded=4,
+            regenerated=0,
+            generators={},
+            rule=None,
+            each=[
+                dict(key=10, time=1, options=2, recorded=2, regenerated=0, generators={}),
+                dict(key=20, time=3, options=1, recorded=1, regenerated=0, generators={}),
+                dict(key=30, time=5, options=1, recorded=1, regenerated=0, generators={}),
+            ],
+        )
+    ),
+    unread=dict(
+        later=dict(nodes=1, edges=1, gap=3, last=5),
+        watched=dict(nodes=1, edges=2, observers=dict(north=dict(nodes=1, edges=1), south=dict(nodes=0, edges=1))),
+        sets=dict(group=dict(edges=2, members=5, least=2, most=3)),
+        held=dict(agent=dict(graphs=2, nodes=2, edges=1, least=0, most=2)),
+        entities=dict(agent=WHOLE_KIND, spot=dict(created=1, unstated=1), group=WHOLE_KIND),
+    ),
+)
+UNHELD_RELATION = dict(
+    ends=[], about=None, lapsed=0, edges=0, facts=0, absent=0, replaced=0, edges_before=0, edges_at=[], runs=0, bounded=0, **NONE
+)
+WATCHED_SECOND = dict(
+    name="w1",
+    unit="tick",
+    times=[],
+    kinds=dict(
+        agent=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[], observations_at=[]),
+        spot=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[], observations_at=[]),
+        group=dict(UNBEGUN, nodes=0, observations=0, replaced=0, nodes_at=[], observations_at=[]),
+    ),
+    relations=dict(
+        near=dict(UNHELD_RELATION, table="near", columns=["weight"]),
+        base=dict(
+            UNHELD_RELATION, table="base", ends=[["agent", "spot"]], columns=[], edges=1, facts=1, edges_before=1, runs=1
+        ),
+        back=dict(UNHELD_RELATION, table="back", columns=[]),
+        note=dict(UNHELD_RELATION, table="note", columns=["mark"], about="lapse"),
+    ),
+    tasks=dict(turn=dict(tasks=0, splits=dict(train=0, validation=0), unsplit=0)),
+    decisions=dict(turn=dict(decisions=0, options=0, recorded=0, regenerated=0, generators={}, rule=None, each=[])),
+    unread=dict(
+        later=dict(nodes=0, edges=0, gap=None, last=None),
+        watched=dict(nodes=0, edges=0, observers=UNWATCHED),
+        sets=dict(group=dict(edges=0, members=0, least=None, most=None)),
+        held=dict(agent=dict(graphs=1, nodes=0, edges=0, least=0, most=0)),
+        entities=dict(agent=WHOLE_KIND, spot=WHOLE_KIND, group=WHOLE_KIND),
+    ),
+)
+UNSAID_TEXT = """truth graphs of the bank stored as %s, described at version %d
+time: two clocks, units tick
+splits: train, validation
+%s
+
+graph w0, unit tick, times 7 from 0 to 6
+  kind agent: nodes 2, observations 2, replaced 0
+  kind spot: nodes 5, observations 5, replaced 0
+  set edge group: set edges 2, facts 2, replaced 0
+  relation near of the table near: ends spot to spot; columns weight; edges 3, facts 3, absent 0, replaced 0; runs 3, bounded 0
+  relation base of the table base: ends agent to spot; no columns; edges 3, facts 3, absent 0, replaced 0; runs 3, bounded 0
+  relation back of the table back: ends spot to agent; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
+  relation note of the table note: ends group to spot; columns mark; edges 2, facts 2, absent 0, replaced 0; runs 2, bounded 1, lasting 3 to 3, mean 3.0; about a set edge under the rule lapse, lapsed 2
+  held before every time and at each time:
+    time    agent nodes  agent observations  spot nodes  spot observations  group set edges  group facts  near edges  base edges  back edges  note edges
+    before  0            0                   0           0                  0                0            0           0           0           0
+    0       2            2                   4           4                  2                2            3           2           1           1
+    1       2            2                   4           4                  2                2            3           2           1           2
+    2       2            2                   5           5                  2                2            3           2           1           2
+    3       2            2                   5           5                  2                2            3           3           1           2
+    4       2            2                   5           5                  1                1            3           3           1           1
+    5       2            2                   5           5                  1                1            3           3           1           1
+    6       2            2                   5           5                  1                1            3           3           1           1
+  shown to some tasks only: facts known later than they hold from, about nodes 1 and about edges 1, by 3 at most, the last known from time 5, before which a task is not shown them; facts naming observers, which a task naming another observer is not shown, about nodes 1 and about edges 2, naming north 1 and 1, south 0 and 1
+  not counted above: members of set edges, group 5 in 2 set edges of 2 to 3; graphs nodes hold, agent 2 of 0 to 2 nodes, 2 nodes and 1 edges in all; entities no fact is about, spot 1 an option would create and 1 other
+  kind of task turn: tasks 3; train 2, validation 1, no split 0
+  decisions of turn: decisions 3, options 4, recorded 4, regenerated 0; no generator; no rule of options
+    task  time  options  recorded  regenerated
+    10    1     2        2         0
+    20    3     1        1         0
+    30    5     1        1         0
+
+graph w1, unit tick, no time
+  kind agent: nodes 1, observations 1, replaced 0
+  kind spot: nodes 1, observations 1, replaced 0
+  set edge group: set edges 0, facts 0, replaced 0
+  relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
+  relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
+  relation back of the table back: no ends; no columns; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
+  relation note of the table note: no ends; columns mark; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0; about a set edge under the rule lapse, lapsed 0
+  held before every time and at each time:
+    time    agent nodes  agent observations  spot nodes  spot observations  group set edges  group facts  near edges  base edges  back edges  note edges
+    before  1            1                   1           1                  0                0            0           1           0           0
+  shown to some tasks only: no fact known later than it holds from; no fact naming observers
+  not counted above: members of set edges, group 0 in 0 set edges; graphs nodes hold, agent 1 of 0 to 0 nodes, 0 nodes and 0 edges in all; no entity without a fact
+  kind of task turn: tasks 0; train 0, validation 0, no split 0
+  decisions of turn: decisions 0, options 0, recorded 0, regenerated 0; no generator; no rule of options
+"""
+
+
+@timed("descriptions.unsaid_schema")
+def unsaid_schema():
+    roles = dict(
+        to=dict(sort="node", kinds=["spot"], count=[1, 2]),
+        along=dict(sort="edge", kinds=["spot"], count=[0, None]),
+        made=dict(sort="new", kinds=["spot"], count=[0, 1]),
+    )
+    decided = dict(
+        kind="decision",
+        series=["gain"],
+        about=None,
+        utility=synthetic.valued(["gain"]),
+        actors="agents",
+        actions=dict(go=dict(roles=roles, parameters=["speed"])),
+        nothing=None,
+        rule=None,
+        generators=[],
+    )
+    pieces = dict(
+        nodes=dict(piece=dict(columns=["mass"])),
+        edges=dict(joint=dict(endpoints=[["piece", "piece"]], directed=False, columns=[])),
+        encoder="pooled",
+    )
+    noting = dict(endpoints=[["group", "spot"]], directed=True, columns=["mark"], relation="declared", about="lapse")
+    return dict(
+        version=SCHEMA,
+        time=dict(model="clocks", units=["tick"], ties="key"),
+        observers=True,
+        columns=dict(load=NUMBER, speed=NUMBER, weight=NUMBER, share=NUMBER, mass=NUMBER, mark=NUMBER),
+        graph=dict(columns=[]),
+        nodes=dict(agent=dict(columns=["load"], holds=pieces), spot=dict(columns=["load"], holds=None)),
+        sets=dict(group=dict(kinds=["spot"], roles=["lead", "other"], members=["share"], columns=["weight"])),
+        edges=dict(
+            near=synthetic.edge("spot", "spot", ["weight"], directed=False),
+            base=synthetic.edge("agent", "spot", []),
+            back=synthetic.edge("spot", "agent", []),
+            note=noting,
+        ),
+        tasks=dict(
+            key="ticket",
+            grouping=None,
+            signals=0,
+            references=dict(agents=dict(sort="nodes", kinds=["agent"])),
+            kinds=dict(turn=synthetic.kind(["agents"], [], decided, None)),
+        ),
+    )
+
+
+@timed("descriptions.valued_rows")
+def valued_rows(kind, names, *stated):
+    return dict(form="state", parameters={}, rows=rows(names, *stated), kind=kind)
+
+
+@timed("descriptions.joined_rows")
+def joined_rows(table, ends, names, *stated):
+    return dict(form="state", parameters={}, rows=rows(names, *stated), table=table, ends=ends)
+
+
+@timed("descriptions.going")
+def going(key, to, along, made, speed):
+    targets = dict(to=to, along=along, made=made)
+    return synthetic.offered(key, [synthetic.acting("go", "a0", targets, dict(speed=speed))], "set", "recorded")
+
+
+def unwatched(stated):
+    started = time.perf_counter()
+    names = ("key", "kind", "time", "observer", "split", "weight", "target", "known")
+    result = dict({name: [] for name in names}, references=dict(agents=[]))
+    for key, moment, split, gain, options in stated:
+        options[0].update(chosen=True, outcome=dict(gain=gain))
+        target = dict(options=options, concurrent=[], next={}, ended=None, discount=None)
+        for name, value in zip(names, (key, "turn", moment, None, split, None, target, moment + 1)):
+            result[name].append(value)
+        result["references"]["agents"].append(["a0"])
+    LOG.debug("descriptions unwatched exit tasks=%d seconds=%.4f", len(stated), time.perf_counter() - started)
+    return result
+
+
+@timed("descriptions.unsaid_first")
+def unsaid_first():
+    values = [
+        valued_rows("agent", SEEN, ("a0", 0, None, 1.0, None, None), ("a1", 0, None, 2.0, None, None)),
+        valued_rows(
+            "spot",
+            SEEN,
+            ("s0", 0, None, 1.0, None, None),
+            ("s1", 0, None, None, None, None),
+            ("s2", 0, None, 3.0, None, None),
+            ("s3", 2, None, 4.0, 5, None),
+            ("s4", 0, None, 5.0, None, ["north"]),
+        ),
+        valued_rows("group", OWNED, ("g0", 0, None, 1.0, None, None), ("g1", 0, 4, 2.0, None, None)),
+    ]
+    edges = [
+        joined_rows(
+            "near",
+            ("spot", "spot"),
+            WEIGHED,
+            ("s0", "s1", True, 0, None, 0.5, None, None),
+            ("s1", "s2", True, 0, None, 0.75, None, None),
+            ("s0", "s2", True, 0, None, 0.25, None, ["south"]),
+        ),
+        joined_rows(
+            "base",
+            ("agent", "spot"),
+            JOINING,
+            ("a0", "s0", True, 0, None, None, None),
+            ("a0", "s3", True, 3, None, 5, None),
+            ("a1", "s4", True, 0, None, None, ["north"]),
+        ),
+        joined_rows("back", ("spot", "agent"), JOINING, ("s1", "a0", True, 0, None, None, None)),
+        joined_rows(
+            "note",
+            ("group", "spot"),
+            NOTED,
+            ("g0", "s0", True, 0, None, 1.0, None, None),
+            ("g1", "s2", True, 1, 6, 2.0, None, None),
+        ),
+    ]
+    members = rows(
+        MEMBERS,
+        ("g0", "s0", "lead", 0.5),
+        ("g0", "s1", "other", 0.3),
+        ("g0", "s2", "other", 0.2),
+        ("g1", "s0", "lead", 0.6),
+        ("g1", "s1", "other", 0.4),
+    )
+    inner = dict(
+        nodes=rows(PIECES, ("a0", "piece", "p0", 1.0), ("a0", "piece", "p1", 2.0)),
+        edges=rows(JOINTS, ("a0", "p0", "p1", "joint")),
+    )
+    tasks = unwatched(
+        [
+            (10, 1, "train", 1.0, [going("o0", ["s0"], [], [], 1.0), going("o1", ["s2"], [["s0", "near", "s1"]], ["s9"], 2.0)]),
+            (20, 3, "train", 2.0, [going("o0", ["s1"], [["s1", "back", "a0"]], [], 1.0)]),
+            (30, 5, "validation", 3.0, [going("o0", ["s3"], [], [], 3.0)]),
+        ]
+    )
+    return dict(
+        name="w0",
+        unit="tick",
+        columns={},
+        nodes=dict(agent=["a0", "a1"], spot=["s0", "s1", "s2", "s3", "s4", "s8"], group=["g0", "g1"]),
+        values=values,
+        edges=edges,
+        sets=dict(group=members),
+        held=dict(agent=inner),
+        tasks=tasks,
+    )
+
+
+@timed("descriptions.unsaid_second")
+def unsaid_second():
+    values = [
+        valued_rows("agent", SEEN, ("a0", None, None, 1.0, None, None)),
+        valued_rows("spot", SEEN, ("s0", None, None, 1.0, None, None)),
+    ]
+    edges = [joined_rows("base", ("agent", "spot"), JOINING, ("a0", "s0", True, None, None, None, None))]
+    return dict(
+        name="w1",
+        unit="tick",
+        columns={},
+        nodes=dict(agent=["a0"], spot=["s0"], group=[]),
+        values=values,
+        edges=edges,
+        sets=dict(group=rows(MEMBERS)),
+        held=dict(agent=dict(nodes=rows(PIECES), edges=rows(JOINTS))),
+        tasks=unwatched([]),
+    )
+
+
+@timed("descriptions.unsaid_made")
+def unsaid_made(root):
+    case = dict(schema=unsaid_schema(), graphs=[unsaid_first(), unsaid_second()])
+    build(synthetic.stage(root, "unsaid", case), root / "bank", 1, ("train",))
+
+
+@pytest.fixture(scope="module")
+def unsaid():
+    started = time.perf_counter()
+    result = shared("unsaid", unsaid_made) / "bank"
+    LOG.debug("descriptions unsaid exit seconds=%.4f", time.perf_counter() - started)
+    return result
+
+
+def test_a_truth_description_counts_what_it_leaves_out_and_holds_an_edge_about_a_set_edge_as_a_view_does(unsaid):
+    started = time.perf_counter()
+    manifest = read_json(unsaid / "manifest.json")
+    record = describe(unsaid)
+    assert record == dict(
+        version=describing.VERSION,
+        stored_sha256=manifest["stored_sha256"],
+        time=dict(model="clocks", units=["tick"]),
+        splits=["train", "validation"],
+        graphs=[WATCHED_FIRST, WATCHED_SECOND],
+    )
+    assert json.loads(json.dumps(record)) == record
+    assert describing.text(record) == UNSAID_TEXT % (manifest["stored_sha256"], describing.VERSION, describing.READING["clocks"])
+    registry = Registry.from_declaration(manifest["spec"])
+    held = describing.stored(unsaid, manifest["graphs"][0])
+    side = differing.lasting(registry, held, describing.placed(describing.clocked(registry, held)))
+    noted = side["facts"][side["facts"][:, 1] == registry.code("note")]
+    assert sorted(map(tuple, noted[:, [0, 2, 3]].tolist())) == sorted(
+        [(place, held.keys.index("g0"), held.keys.index("s0")) for place in range(1, 8)]
+        + [(place, held.keys.index("g1"), held.keys.index("s2")) for place in (2, 3, 4)]
+    )
+    LOG.info("descriptions unsaid truth exit seconds=%.3f", time.perf_counter() - started)
