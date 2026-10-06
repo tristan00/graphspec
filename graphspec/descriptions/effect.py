@@ -17,8 +17,13 @@ READING = (
     "because a reference of a task of the step names it; an edge, two ends a present fact of its relation joins at "
     "the step, in either order for a relation without direction; before, removed, added and after count what is held, "
     "summed over the steps of the view; a share is of what was held before the entry, rounded to four places, and is "
-    "nothing where nothing was held"
+    "nothing where nothing was held; an entry that leaves no node of a kind or no edge of a relation at the steps of "
+    "the tasks of a kind of task where one was held before it is named as removing every one; alone: a later entry "
+    "named so too, which leaves none where the pipeline is derived without the entries named before it for the same, "
+    "or, where the pipeline is refused without one of them, with the one parameter of it re-stated after which the "
+    "graph holds the most"
 )
+ALONE = dict(absent="without the entry", least="with one parameter re-stated of the entry")
 
 
 def begun(members, beside, registry, steps, spec, groups, seed, limits, partitions, room):
@@ -37,18 +42,6 @@ def ended(members, beside, registry, steps, spec, groups, seed, limits, partitio
     start = begun(members, beside, registry, steps, spec, groups, seed, limits, partitions, 0)
     result = start.continued(total, None).derived()
     LOG.debug("effect ended exit entries=%d steps=%d seconds=%.4f", len(steps), total, time.perf_counter() - started)
-    return result
-
-
-def derived(members, beside, registry, steps, spec, groups, seed, limits, partitions):
-    started = time.perf_counter()
-    result = [
-        ended(members, beside, registry, steps[:count], spec, groups, seed, limits, partitions)
-        for count in range(len(steps) + 1)
-    ]
-    LOG.info(
-        "effect derived exit graphs=%d states=%d seconds=%.3f", len(members), len(result), time.perf_counter() - started
-    )
     return result
 
 
@@ -162,9 +155,19 @@ def cuts(sort, name, before, after, tasks, times):
                     task=task,
                     times=[times[step] for step in steps[holding].tolist()],
                     everywhere=not after.any(),
+                    without=[],
                 )
             )
     LOG.debug("effect cuts exit %s=%s cuts=%d seconds=%.4f", sort, name, len(result), time.perf_counter() - started)
+    return result
+
+
+def left(graph, sort, name, task):
+    started = time.perf_counter()
+    held = graph["held"]["kinds" if sort == "kind" else "relations"]
+    steps = [place for place, moment in enumerate(graph["times"]) if moment in graph["tasks"][task]]
+    result = name in held and any(held[name]["nodes" if sort == "kind" else "edges"][place] for place in steps)
+    LOG.debug("effect left exit %s=%s left=%s seconds=%.4f", sort, name, result, time.perf_counter() - started)
     return result
 
 
@@ -235,13 +238,6 @@ def graphed(name, first, found, steps, registry, low, high, kinds, names, places
         ],
     )
     LOG.debug("effect graphed exit graph=%s steps=%d seconds=%.4f", name, size, time.perf_counter() - started)
-    return result
-
-
-def described(members, beside, registry, steps, spec, groups, seed, limits, partitions):
-    started = time.perf_counter()
-    result = told(derived(members, beside, registry, steps, spec, groups, seed, limits, partitions), members, registry, steps)
-    LOG.info("effect described exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
     return result
 
 
@@ -327,10 +323,15 @@ def stepping(named):
     return "step" if named is None else named["one"]
 
 
+@timed("effect.lifted")
+def lifted(without):
+    return ", ".join("%s %s" % (ALONE[held["how"]], held["entry"]) for held in without)
+
+
 @timed("effect.cut_text")
 def cut_text(effect, found, named):
     one = stepping(named)
-    return "  entry %s, of the operation %s, removes every %s %s at the %s of the tasks of %s; %s" % (
+    return "  entry %s, of the operation %s, removes every %s %s at the %s of the tasks of %s; %s%s" % (
         effect["entry"],
         effect["operation"],
         "node of the kind" if found["sort"] == "kind" else "edge of the relation",
@@ -338,6 +339,7 @@ def cut_text(effect, found, named):
         one if named is None else named["many"],
         found["task"] if named is None else "%s: %s" % (found["task"], ", ".join(map(str, found["times"]))),
         ("and at every %s" if found["everywhere"] else "not at every %s") % one,
+        "; alone, %s" % lifted(found["without"]) if found["without"] else "",
     )
 
 

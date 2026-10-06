@@ -22,7 +22,10 @@ PLANNED = ("bank_stored_sha256", "trials")
 SHOWN = 10
 READING = (
     "variant: the first %d characters of the key of the variant of the trial, trials of one key and one realisation "
-    "being described once; realisation: the realisation of options the model of the trial states; per kind of task "
+    "being described once; realisation: the realisation of options the model of the trial states; a fit, in the "
+    "table of several trials: refused where the check of the routes from the options to the prediction, which a fit "
+    "of the trial runs before it starts, refuses its configuration, for the reason in the last column, and what the "
+    "row says of its options is then what such a fit would have been given had it not been refused; per kind of task "
     "that decides, options held/stated in decisions described/shown: the options the batches of a fit of the trial "
     "hold, by the rule that packs them, over the options stated by the decisions described, those of which an option "
     "holds a point, over the decisions the graphs of the view show; an option a fit leaves out is put before no "
@@ -40,7 +43,10 @@ READING = (
     "joins to no reference stop being joined, each with its targets; unread: a field of a sort the realisation does "
     "not read; stated by none: a field no option states; nothing left at the steps of tasks: the entries of the "
     "pipeline that leave no node of a kind or no edge of a relation at the steps of the tasks of a kind of task where "
-    "one was held before them, each with the graphs of the view in which it does over the graphs of the view; not "
+    "one was held before them, each with the graphs of the view in which it does over the graphs of the view, and, "
+    "as doing so alone, each later entry that leaves none where the pipeline is derived without the entries named "
+    "before it for the same, or with one parameter of such an entry re-stated where the pipeline is refused without "
+    "it; not "
     "described: in place of the columns of a trial, what its statement refuses of its configuration, what the trial "
     "lacks, or what stopped the derivation of its variant, with no variant and no realisation where its statement "
     "names none; the settings under which an option, a field or a target comes back are in the reach of one trial, "
@@ -61,17 +67,19 @@ def named(bank, derivers, config, statement):
     deriver = derivers[held]
     name = reaching.realising(deriver, config)
     key = specs.digest(deriver.identity(config))
+    refused = reaching.unrouted(deriver, config)
     LOG.debug("reaches named exit variant=%s realisation=%s seconds=%.4f", key[:SHOWN], name, time.perf_counter() - started)
-    return deriver, name, key
+    return deriver, name, key, refused
 
 
-def severed(reached, group, states, cuts):
+def severed(reached, group, cuts):
     started = time.perf_counter()
-    told = effect.told(states, reached.loaded(group)[1], reached.registry, reached.steps)
+    told = reached.effects(group)
     for graph in told:
         for held in graph["effects"]:
             for found in held["cuts"]:
-                cut = (held["entry"], held["operation"], found["sort"], found["name"], found["task"])
+                without = tuple((lifted["entry"], lifted["how"]) for lifted in found["without"])
+                cut = (held["entry"], held["operation"], found["sort"], found["name"], found["task"], without)
                 cuts[cut] = cuts.get(cut, 0) + 1
     LOG.debug("reaches severed exit group=%d graphs=%d seconds=%.4f", group, len(told), time.perf_counter() - started)
     return len(told)
@@ -79,7 +87,7 @@ def severed(reached, group, states, cuts):
 
 @timed("reaches.stopping")
 def stopping(reached, decision, option, site, found):
-    place = reached.stopped(decision, option, site)
+    place = reached.stopped(None, decision, option, site)
     found[place] = found.get(place, 0) + 1
 
 
@@ -161,12 +169,12 @@ def summed(deriver, config, name):
     }
     cuts, graphs = {}, 0
     for group in deriver.graphs(config):
-        states = [reached.derived(None, count, group) for count in range(len(steps) + 1)]
-        graphs += severed(reached, group, states, cuts)
-        for shown in reached.counted(states[-1], group).values():
+        graphs += severed(reached, group, cuts)
+        trunk = reached.derived(None, len(steps), group)
+        for shown in reached.counted(trunk, group).values():
             for task, count in shown.items():
                 tasks[task]["decisions"] += count
-        for decision in reached.decided(states[-1], group):
+        for decision in reached.decided(trunk, group):
             tallied(reached, decision, tasks[reached.registry.tasks[decision["kind"]]])
             reached.decision_done()
         reached.group_done()
@@ -182,8 +190,16 @@ def summed(deriver, config, name):
             for task, held in tasks.items()
         },
         cuts=[
-            dict(entry=entry, operation=operation, sort=sort, name=held, task=task, graphs=count)
-            for (entry, operation, sort, held, task), count in sorted(
+            dict(
+                entry=entry,
+                operation=operation,
+                sort=sort,
+                name=held,
+                task=task,
+                without=[dict(entry=lifted, how=how) for lifted, how in without],
+                graphs=count,
+            )
+            for (entry, operation, sort, held, task, without), count in sorted(
                 cuts.items(), key=lambda pair: (places[pair[0][0]], pair[0][2:])
             )
         ],
@@ -215,12 +231,12 @@ def recorded(bank, manifest, fields, stated):
     started = time.perf_counter()
     rows = []
     for trial, config, found, reason in stated:
-        row = dict(trial=trial, variant=None, realisation=None, reason=reason, graphs=None, tasks=None, cuts=None)
+        row = dict(trial=trial, variant=None, realisation=None, refused=None, reason=reason, graphs=None, tasks=None, cuts=None)
         if found is not None:
-            deriver, name, key = found
-            held = Path(bank) / "descriptions" / "reach_rows" / reaching.stemmed(key, name)
+            deriver, name, key, refused = found
+            held = Path(bank) / "descriptions" / "reach_rows" / reaching.stemmed(key, name, None)
             kept = truth.kept(held, lambda: rowed(deriver, config, key, name, fields), row_text)
-            row.update({part: kept[part] for part in row if part != "trial"})
+            row.update({part: kept[part] for part in kept if part in row}, refused=refused)
         rows.append(row)
     result = dict(version=truth.VERSION, stored_sha256=manifest["stored_sha256"], fields=fields, trials=rows)
     LOG.info("reaches recorded exit trials=%d seconds=%.3f", len(rows), time.perf_counter() - started)
@@ -246,7 +262,12 @@ def tabled(bank, manifest, trials, folder):
             stored=manifest["stored_sha256"],
             version=truth.VERSION,
             trials=[
-                dict(trial=trial, row=None if found is None else reaching.stemmed(found[2], found[1]), reason=reason)
+                dict(
+                    trial=trial,
+                    row=None if found is None else reaching.stemmed(found[2], found[1], None),
+                    refused=None if found is None else found[3],
+                    reason=reason,
+                )
                 for trial, _, found, reason in stated
             ],
         )
@@ -344,10 +365,20 @@ def field_cell(cell):
 def cut_cell(cuts, graphs):
     entries = {}
     for held in cuts:
+        alone = " alone %s" % effect.lifted(held["without"]) if held["without"] else ""
         entries.setdefault(held["entry"], []).append(
-            "%s %s at %s %d/%d" % (held["sort"], held["name"], held["task"], held["graphs"], graphs)
+            "%s %s at %s %d/%d%s" % (held["sort"], held["name"], held["task"], held["graphs"], graphs, alone)
         )
     return "; ".join("%s: %s" % (entry, ", ".join(found)) for entry, found in entries.items()) or "none"
+
+
+@timed("reaches.fitted")
+def fitted(row, held):
+    if row["reason"] is not None:
+        return held
+    if row["refused"] is None:
+        return held[:2] + ["not refused"] + held[2:]
+    return held[:2] + ["refused"] + held[2:] + [row["refused"]]
 
 
 def cells(row, fields):
@@ -396,6 +427,8 @@ def text(record):
         % (len(described), len({(row["variant"], row["realisation"]) for row in described}), len(rows) - len(described)),
         "one row per trial, in the order of the trials; " + READING,
     ]
-    lines += lined(["trial"] + heads(fields), [[str(row["trial"])] + cells(row, fields) for row in rows])
+    header = heads(fields)
+    header = ["trial"] + header[:2] + ["a fit"] + header[2:] + ["a fit is refused because"]
+    lines += lined(header, [[str(row["trial"])] + fitted(row, cells(row, fields)) for row in rows])
     LOG.debug("reaches text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"

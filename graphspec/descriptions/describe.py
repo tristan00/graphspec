@@ -14,7 +14,7 @@ from graphspec.schema.time import ALWAYS, NEVER, UNITED
 from graphspec.views import visible
 
 LOG = logging.getLogger(__name__)
-VERSION = 15
+VERSION = 16
 UNNAMED = -1
 LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")

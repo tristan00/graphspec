@@ -126,6 +126,7 @@ VERSIONED = {
         "tuning/descriptions/differences.py",
         "tuning/descriptions/reach.py",
         "tuning/descriptions/reaches.py",
+        "tuning/descriptions/restated.py",
     ),
 }
 UNVERSIONED = (
@@ -176,7 +177,7 @@ RECORDED = {
     "views": (76, "0f0bd79cf95236f3be67ec725a878d22b37e4a9ad62fac1bca8937fab2a1ba50"),
     "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
     "index": (6, "a6ad6b5034763801ebfb30ec58db4be41f482f0ff61717a64e76250e55ce4ec0"),
-    "description": (15, "4d16735bb4b46ccd72a85e84d95d47aaedfdac3a8532d9b303e8367fcdf3e544"),
+    "description": (16, "9022c53bc0fdc1e6ac07ea86dc0bea7d571a157af63fc50d46e301a6912da3b4"),
     "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
     "sort of reference graph": (1, "24c024a38804e098c970eb76d2c06bb0529d30901259df6aa5e098c9696ca51e"),
     "sort of reference node": (1, "5130e549da2053ab17d7ad3ddb45baaf74b38153c74af98f470f297b7c42489c"),

@@ -15,6 +15,7 @@ from tuning.statement import agreed, state
 
 from . import reach as reaching
 from . import reaches
+from .restated import Derived
 
 LOG = logging.getLogger(__name__)
 
@@ -33,9 +34,10 @@ def grouped(deriver, config):
 
 def graphed(deriver, config):
     started = time.perf_counter()
-    found = {}
-    for indices, given in grouped(deriver, config):
-        found.update(zip(indices, effect.described(*given)))
+    held, found = Derived(deriver, config), {}
+    for group in deriver.graphs(config):
+        found.update(zip(held.loaded(group)[0], held.effects(group)))
+        held.group_done()
     result = [found[graph["index"]] for graph in deriver.viewed(config).graphs]
     LOG.info("variant graphed exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
     return result
