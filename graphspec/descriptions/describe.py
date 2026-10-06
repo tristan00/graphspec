@@ -8,12 +8,13 @@ from graphspec.facts.stored import GROUPS, Facts, admitted
 from graphspec.infra.files import read_json, sha256_json, write_json
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
+from graphspec.operations.rows import fact_keys
 from graphspec.schema.declaration import Registry
 from graphspec.schema.time import ALWAYS, NEVER
 from graphspec.views import visible
 
 LOG = logging.getLogger(__name__)
-VERSION = 13
+VERSION = 14
 UNNAMED = -1
 LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
@@ -22,9 +23,10 @@ CORRECTED = (
     "any time and is counted apart, as replaced"
 )
 READING = (
-    CORRECTED + "; at a time: the nodes observed and their observations, and the edges a present fact holds; a run: a "
-    "stretch of time over which one edge holds without a break, bounded where it has a start and an end, lasting in "
-    "the unit of its graph"
+    CORRECTED + "; at a time: the nodes observed and their observations, and the edges a present fact holds, an edge "
+    "being its relation and its two ends, in either order for a relation without direction, as the difference of two "
+    "graphs meets them; a run: a stretch of time over which one edge holds without a break, bounded where it has a "
+    "start and an end, lasting in the unit of its graph"
 )
 
 
@@ -133,13 +135,14 @@ def relations(registry, facts, places):
     source, target = np.asarray(facts.fact_source, np.int64), np.asarray(facts.fact_target, np.int64)
     begun, ended = shown(facts, "fact", places)
     last, steps, bounds = ended > begun, np.arange(len(places)), np.r_[places, np.int64(NEVER)]
+    (edge,) = fact_keys(registry, (np.zeros(len(code), np.int64), code, source, target))
     result = {}
     for table, entry in registry.schema.edges.items():
         for name in registry.encoding.relations[table]:
             rows = code == registry.code(name)
             said = rows & last
             held = said & present
-            pairs = source[held] * len(owner) + target[held]
+            pairs = edge[held]
             first, stop = runs(pairs, begun[held], ended[held])
             ends = sorted(set(zip(owner[source[said]].tolist(), owner[target[said]].tolist())))
             result[name] = dict(

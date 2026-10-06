@@ -1729,9 +1729,8 @@ def crossing():
     decided = dict(turn, actions=dict(go=dict(turn["actions"]["go"], roles=roles), stay=stay), generators=[])
     references = dict(agents=dict(sort="nodes", kinds=["agent"]), over=dict(sort="edge", kinds=["agent"]))
     kinds = dict(turn=synthetic.kind(["agents", "over"], [], decided, None))
-    edges = dict(
-        near=synthetic.edge("spot", "spot", [], directed=False), base=synthetic.edge("agent", "spot", [], directed=False)
-    )
+    either = dict(synthetic.edge("agent", "spot", [], directed=False), endpoints=[["agent", "spot"], ["spot", "agent"]])
+    edges = dict(near=synthetic.edge("spot", "spot", [], directed=False), base=either)
     columns, clocks = dict(load=NUMBER, speed=NUMBER), dict(held["time"], model="clocks")
     return dict(held, time=clocks, columns=columns, edges=edges, tasks=dict(held["tasks"], references=references, kinds=kinds))
 
@@ -1784,6 +1783,7 @@ def crossed_case():
             ("near", ("spot", "spot"), BASE, [("s1", "s0", True, 0, None)]),
             ("near", ("spot", "spot"), LATER, [("s1", "s2", True, 0, None, 3, 4), ("s1", "s2", False, 0, None, 4, None)]),
             ("base", ("agent", "spot"), BASE, [("a0", "s0", True, 0, None)]),
+            ("base", ("spot", "agent"), BASE, [("s0", "a0", True, 3, None)]),
         ],
         [],
     )
@@ -3162,7 +3162,7 @@ RETRACTED = dict(
     facts=1,
     absent=1,
     replaced=1,
-    edges_at=[1, 1, 1],
+    edges_at=[1, 1, 1, 1],
     runs=1,
     bounded=0,
     **NONE,
@@ -3170,6 +3170,92 @@ RETRACTED = dict(
 RETRACTED_TEXT = (
     "  relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 1, replaced 1; runs 1, bounded 0\n"
 )
+EITHER_WAY = dict(
+    table="base",
+    ends=[["agent", "spot"], ["spot", "agent"]],
+    columns=[],
+    edges=1,
+    facts=2,
+    absent=0,
+    replaced=0,
+    edges_at=[1, 1, 1, 1],
+    runs=1,
+    bounded=0,
+    **NONE,
+)
+THIRD = dict(
+    name="h0",
+    unit="tick",
+    times=[0, 1, 2, 3],
+    kinds=dict(
+        agent=dict(nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1, 1], observations_at=[1, 1, 1, 1]),
+        spot=dict(nodes=3, observations=3, replaced=0, nodes_at=[3, 3, 3, 3], observations_at=[3, 3, 3, 3]),
+    ),
+    relations=dict(near=RETRACTED, base=EITHER_WAY),
+    tasks=dict(turn=dict(tasks=4, splits=dict(train=2, validation=2), unsplit=0)),
+    decisions=dict(
+        turn=dict(
+            decisions=4,
+            options=6,
+            recorded=6,
+            regenerated=0,
+            generators={},
+            each=[
+                dict(key=10, time=0, options=2, recorded=2, regenerated=0, generators={}),
+                dict(key=20, time=1, options=2, recorded=2, regenerated=0, generators={}),
+                dict(key=30, time=2, options=1, recorded=1, regenerated=0, generators={}),
+                dict(key=40, time=2, options=1, recorded=1, regenerated=0, generators={}),
+            ],
+        )
+    ),
+)
+THIRD_TEXT = """
+graph h0, unit tick, times 4 from 0 to 3
+  kind agent: nodes 1, observations 1, replaced 0
+  kind spot: nodes 3, observations 3, replaced 0
+  relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 1, replaced 1; runs 1, bounded 0
+  relation base of the table base: ends agent to spot, spot to agent; no columns; edges 1, facts 2, absent 0, replaced 0; runs 1, bounded 0
+  held at each time:
+    time  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
+    0     1            1                   3           3                  1           1
+    1     1            1                   3           3                  1           1
+    2     1            1                   3           3                  1           1
+    3     1            1                   3           3                  1           1
+  kind of task turn: tasks 4; train 2, validation 2, no split 0
+  decisions of turn: decisions 4, options 6, recorded 6, regenerated 0; no generator
+    task  time  options  recorded  regenerated
+    10    0     2        2         0
+    20    1     2        2         0
+    30    2     1        1         0
+    40    2     1        1         0
+"""
+
+
+def test_an_edge_without_direction_stated_from_both_ends_is_one_edge_and_a_truth_graph_holds_at_a_time_what_its_view_shows(
+    crossed,
+):
+    started = time.perf_counter()
+    record = describe(crossed)
+    stored = read_json(crossed / "manifest.json")["stored_sha256"]
+    assert record == dict(
+        version=describing.VERSION,
+        stored_sha256=stored,
+        time=dict(model="clocks", units=["tick"]),
+        splits=["train", "validation"],
+        graphs=[THIRD],
+    )
+    assert describing.text(record).split("\n", 4)[4] == THIRD_TEXT
+    (told,) = record["graphs"]
+    (shown,) = variant(crossed, lined(crossed, THINNER, KEPT, "vector"), STATED)["graphs"]
+    assert shown["times"] == [0, 1, 2, 3, 4]
+    steps = [shown["times"].index(moment) for moment in told["times"]]
+    edges = {name: [held["edges"][step] for step in steps] for name, held in shown["held"]["relations"].items()}
+    nodes = {name: [held["nodes"][step] for step in steps] for name, held in shown["held"]["kinds"].items()}
+    assert nodes == {name: held["nodes_at"] for name, held in told["kinds"].items()}
+    assert edges["base"] == told["relations"]["base"]["edges_at"] == [1, 1, 1, 1]
+    assert (edges["near"], told["relations"]["near"]["edges_at"]) == ([1, 1, 1, 2], [1, 1, 1, 1])
+    assert shown["held"]["relations"]["near"]["edges"] == [1, 1, 1, 2, 1]
+    LOG.info("descriptions either way exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_fact_a_correction_replaced_holds_nothing_is_counted_apart_and_alone_tells_a_graph_from_its_uncorrected_twin(
@@ -3178,7 +3264,7 @@ def test_a_fact_a_correction_replaced_holds_nothing_is_counted_apart_and_alone_t
     started = time.perf_counter()
     record = describe(crossed)
     (told,) = record["graphs"]
-    assert told["times"] == [0, 1, 2] and told["relations"]["near"] == RETRACTED
+    assert told["times"] == [0, 1, 2, 3] and told["relations"]["near"] == RETRACTED
     assert [held["replaced"] for held in told["kinds"].values()] == [0, 0] and told["relations"]["base"]["replaced"] == 0
     assert RETRACTED_TEXT in describing.text(record)
     manifest = read_json(crossed / "manifest.json")
@@ -3195,9 +3281,9 @@ def test_a_fact_a_correction_replaced_holds_nothing_is_counted_apart_and_alone_t
         second="h0",
         unit="tick",
         differs=True,
-        times=[0, 1, 2],
+        times=[0, 1, 2, 3],
         kinds={},
-        relations=dict(near=unlike(EDGED, "both", (3, 0, 0), (0, 1, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0))),
+        relations=dict(near=unlike(EDGED, "both", (4, 0, 0), (0, 1, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0), (3, 1, 0, 0))),
         equal=dict(kinds=2, relations=1),
     )
     LOG.info("descriptions corrected exit seconds=%.3f", time.perf_counter() - started)
