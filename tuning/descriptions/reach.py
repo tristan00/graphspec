@@ -215,15 +215,18 @@ class Reached:
         picked = chosen[np.unique(decision[chosen], return_index=True)[1]]
         picked = picked[np.argsort(tasks[picked], kind="stable")]
         indices = self.loaded(group)[0]
+        titles = {held["index"]: held["name"] for held in self.deriver.viewed(self.config).graphs}
         result = []
         for at in picked.tolist():
             task = int(tasks[at])
             step = int(graph.task_step[task])
+            view = indices[int(graph.step_graph[step])]
             result.append(
                 dict(
                     decision=int(decision[at]),
                     group=group,
-                    view=indices[int(graph.step_graph[step])],
+                    view=view,
+                    graph=titles[view],
                     step=step,
                     time=int(graph.step_time[step]),
                     key=int(graph.task_key[task]),
@@ -233,6 +236,16 @@ class Reached:
         LOG.debug("reached decided exit group=%d decisions=%d seconds=%.4f", group, len(result), time.perf_counter() - started)
         return result
 
+    def keyed(self, token, where):
+        started = time.perf_counter()
+        if token not in self.names:
+            raise ValueError(
+                "%s names the node of the token %d, which no graph of the view holds; reach names each node by its key "
+                "in the view" % (where, token)
+            )
+        LOG.debug("reached keyed exit token=%d seconds=%.6f", token, time.perf_counter() - started)
+        return self.names[token]
+
     def referred(self, graph, decision):
         started = time.perf_counter()
         task = np.flatnonzero(
@@ -240,6 +253,12 @@ class Reached:
             & (np.asarray(graph.task_key) == decision["key"])
             & (np.asarray(graph.task_kind) == decision["kind"])
         )
+        if len(task) != 1:
+            raise ValueError(
+                "reach reads the references of the decision %d of the kind %s of graph %s from its task at the step %d, "
+                "and the graph derived for it holds %d tasks of that key and kind there"
+                % (decision["key"], self.registry.tasks[decision["kind"]], decision["graph"], decision["step"], len(task))
+            )
         rows = np.flatnonzero(
             (np.asarray(graph.member_task) == task[0]) & (np.asarray(graph.member_name) < len(self.registry.references))
         )
@@ -254,9 +273,15 @@ class Reached:
         started = time.perf_counter()
         tokens, result = masked(graph.entity_token), {}
         for name, source, target, code in self.referred(graph, decision):
-            spoken = self.names[int(tokens[source])]
+            where = "the reference %s of the decision %d of the kind %s of graph %s" % (
+                self.registry.references[name],
+                decision["key"],
+                self.registry.tasks[decision["kind"]],
+                decision["graph"],
+            )
+            spoken = self.keyed(int(tokens[source]), where)
             if target >= 0:
-                spoken = "%s %s %s" % (spoken, self.registry.by_code[code].name, self.names[int(tokens[target])])
+                spoken = "%s %s %s" % (spoken, self.registry.by_code[code].name, self.keyed(int(tokens[target]), where))
             result.setdefault(self.registry.references[name], []).append(spoken)
         LOG.debug("reached references exit references=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result
@@ -320,13 +345,13 @@ class Reached:
             if sorts[role] == "new":
                 source, element = int(found.role["source"][role]), int(found.role["element"][role])
                 elements[source] = min(elements[source], element) if source in elements else element
-        result = []
+        result, where = [], "a target of the option %s" % self.found.keys[option]
         for action, role in rows:
             source, target = int(found.role["source"][role]), int(found.role["target"][role])
             relation, sort = int(found.role["relation"][role]), sorts[role]
-            spoken = self.names[source]
+            spoken = self.keyed(source, where)
             if sort == "edge":
-                spoken = "%s %s %s" % (spoken, bank[relation].name, self.names[target])
+                spoken = "%s %s %s" % (spoken, bank[relation].name, self.keyed(target, where))
             if sort == "new" and not self.entry.back:
                 placed = dict(state=ABSENT, hops=None, relations=None, features=[])
             elif sort == "new":
