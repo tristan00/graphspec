@@ -1319,7 +1319,7 @@ def turned(moment, place, actors, generator):
                 acting(
                     "put",
                     actor,
-                    dict(at=[beside, spot] if (moment + place) % 2 == 0 else [spot], made=[] if moment % 3 == 2 else [made]),
+                    dict(at=[beside, spot] if (moment + place) % 2 else [spot], made=[] if moment % 3 == 2 else [made]),
                     dict(lit=moment % 2 == 0),
                 ),
             ],

@@ -180,6 +180,10 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
             dict(actions=[dict(kind="hold", actor=actor, targets=dict(of=[[generated.HOME[actor], "base", actor]]), parameters=dict(speed=1.25))], together="set")
             for actor in own["actors"]
         ]
+        spots += [
+            dict(actions=[dict(kind="put", actor=actor, targets=dict(at=spotted[:2], made=[]), parameters=dict(lit=True))], together="set")
+            for actor in own["actors"]
+        ]
         counts["ruled"] += checked(found, drawn, place, "ruled", {generated.content(option): option for option in spots}, 2)
         changed, recorded = of(drawn[place], "changed"), [option for option in own["options"] if option["chosen"] and any(action["parameters"].get("speed") is not None for action in option["actions"])]
         assert len(changed) == len(recorded)
@@ -225,7 +229,7 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
         for action in option["actions"]
         for aims in action["targets"].values()
     }
-    assert {(name, count) for name in ("others", "nearest") for count in (0, 2)} <= shapes, shapes
+    assert {(name, count) for name in ("others", "nearest", "changed", "ruled", generated.ORIGIN) for count in (0, 2)} <= shapes, shapes
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),

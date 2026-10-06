@@ -77,6 +77,9 @@ class Spots:
             for actor in sorted(seen.decision["actors"])
             for spot in sorted(state["nodes"]["spot"])
         ] + [
+            dict(actions=[dict(kind="put", actor=actor, targets=dict(at=sorted(state["nodes"]["spot"])[:2], made=[]), parameters=dict(lit=True))], together="set")
+            for actor in sorted(seen.decision["actors"])
+        ] + [
             dict(
                 actions=[dict(kind="hold", actor=actor, targets=dict(of=[[actor, "base", spot]]), parameters=dict(speed=parameters["speed"]))],
                 together="set",
@@ -165,7 +168,12 @@ def around(seen, parameters):
             made = [held for held in made if seen.fresh(held)]
             if made:
                 draws = seen.unit([held["actions"][0]["targets"]["to"][0] for held in made])
-                found.append(dict(made[int(np.argmin(draws))], drawn=1 / len(made)))
+                chosen = made[int(np.argmin(draws))]
+                found.append(dict(chosen, drawn=1 / len(made)))
+                at = sorted([spot, chosen["actions"][0]["targets"]["to"][0]])
+                put = dict(actions=[dict(kind="put", actor=action["actor"], targets=dict(at=at, made=[]), parameters=dict(lit=False))], together="set")
+                if seen.fresh(put) and seen.content(put) not in {seen.content(held) for held in found}:
+                    found.append(dict(put, drawn=1 / len(made)))
     return found
 
 
@@ -221,7 +229,7 @@ def tied(graph, place):
             synthetic.offered("tie", [synthetic.acting("tie", actor, dict(by=[[actor, "base", HOME[actor]]]), dict(speed=0.25 * moment))], "set", "recorded"),
             synthetic.offered("hold", [synthetic.acting("hold", actor, dict(of=[[HOME[actor], "base", actor]]), dict(speed=0.5 * moment + place))], "set", "recorded"),
         ]
-        if (moment + place) % 3 == 0:
+        if (moment + place) % 3 == 0 and not any(option["chosen"] and option["key"] == "put" for option in target["options"]):
             for option in target["options"]:
                 option.update(chosen=False, order=None)
             made[1]["chosen"] = True
