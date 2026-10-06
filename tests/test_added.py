@@ -10,7 +10,7 @@ from support import SEED
 
 from conftest import SPLITS
 from graphspec import NEGATIVES, OPERATIONS, REPRESENTATIONS, Representation
-from graphspec.budgets import GraphLimits
+from graphspec.budgets import GraphLimits, Refused
 from graphspec.engine import segments
 from graphspec.engine.edits import Edit, edited, sliced
 from graphspec.infra.arrays import RESIDENT
@@ -217,7 +217,7 @@ def test_a_merge_takes_the_graph_it_names_on_keys_at_the_steps_of_the_graph_it_c
         segments.whole(graph, {}, registry, resolved(registry, [entry]), SEED, LIMITS, None)
     with pytest.raises(ValueError, match="shows other times than the graph"):
         segments.whole(graph, {names[1]: sliced(second, 3)}, registry, resolved(registry, [entry]), SEED, LIMITS, None)
-    with pytest.raises(KeyError, match="the bank holds no graph named absent to show beside graph"):
+    with pytest.raises(Refused, match="^the bank holds no graph named absent to show beside graph"):
         support.beside(held, 0, "absent")
     LOG.info("merge exit seconds=%.3f", time.perf_counter() - started)
 

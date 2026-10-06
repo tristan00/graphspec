@@ -3,6 +3,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from graphspec.budgets import Refused
 from graphspec.infra.log import emit
 from graphspec.infra.processes import processes
 from graphspec.infra.timing import timed
@@ -147,22 +148,22 @@ class Statement:
         started = time.perf_counter()
         absent = [name for name in names() if name not in mapping]
         if absent:
-            raise KeyError("the statement lacks " + ", ".join(absent))
+            raise Refused("the statement lacks " + ", ".join(absent))
         unknown = sorted(set(mapping) - set(names()))
         if unknown:
-            raise KeyError("the statement holds fields it does not know: " + ", ".join(unknown))
+            raise Refused("the statement holds fields it does not know: " + ", ".join(unknown))
         for entry in dataclasses.fields(self):
             value = mapping[entry.name]
             if not entry.metadata["check"](value):
-                raise ValueError(
+                raise Refused(
                     "the statement's %s is %r and must be %s" % (entry.name, value, entry.metadata["meaning"])
                 )
             object.__setattr__(self, entry.name, value)
         both = sorted(set(self.trained) & set(self.scored))
         if both:
-            raise ValueError("the statement trains on and scores on the same splits: %s" % ", ".join(both))
+            raise Refused("the statement trains on and scores on the same splits: %s" % ", ".join(both))
         if sorted(self.sees) != sorted(self.trained + self.scored):
-            raise ValueError(
+            raise Refused(
                 "the statement's sees names the splits %s and must name the splits trained on and scored on, %s"
                 % (", ".join(sorted(self.sees)) or "none", ", ".join(sorted(self.trained + self.scored)))
             )
@@ -199,7 +200,7 @@ def names():
 def state(mapping):
     started = time.perf_counter()
     if not isinstance(mapping, dict):
-        raise TypeError("the statement is read from a mapping of its fields, found %r" % (mapping,))
+        raise Refused("the statement is read from a mapping of its fields, found %r" % (mapping,))
     result = Statement(**mapping)
     LOG.debug("state exit fields=%d seconds=%.4f", len(mapping), time.perf_counter() - started)
     return result
@@ -216,17 +217,17 @@ def stated(value):
 def agreed(config, value):
     started = time.perf_counter()
     if type(config) is not dict:
-        raise TypeError("a configuration is a mapping of its fields, found %r" % (config,))
+        raise Refused("a configuration is a mapping of its fields, found %r" % (config,))
     if "seed" not in config:
-        raise KeyError("the configuration states no seed")
+        raise Refused("the configuration states no seed")
     if config["seed"] != value.seed:
-        raise ValueError(
+        raise Refused(
             "the seed of the configuration is %r and the seed of the statement is %r" % (config["seed"], value.seed)
         )
     if "splits" not in config:
-        raise KeyError("the configuration states no splits to train on and to score on")
+        raise Refused("the configuration states no splits to train on and to score on")
     if config["splits"] != value.splits():
-        raise ValueError(
+        raise Refused(
             "the splits of the configuration are %r and those of the statement are %r"
             % (config["splits"], value.splits())
         )

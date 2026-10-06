@@ -6,10 +6,10 @@ from pathlib import Path
 
 import numpy as np
 
+from graphspec.budgets import Refused
 from graphspec.descriptions import describe as truth
 from graphspec.descriptions import effect
 from graphspec.facts.stored import GROUPS, Facts
-from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import load_arrays, sha256_json
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
@@ -18,16 +18,15 @@ from graphspec.schema.decisions import ROLES
 from graphspec.views import visible
 from graphspec.views.view import sequences
 from tuning.bank import forks
-from tuning.bank.bank import Deriver, editing
+from tuning.bank.bank import editing
 from tuning.bank.options import offered
 from tuning.bank.routes import routed
 from tuning.batches.inputs import aimed
 from tuning.families.heads import REALISATION, fielded, realisation
 from tuning.families.model_spec import realised
-from tuning.statement import agreed, state
 
 from . import restated
-from .restated import ABSENT, KEPT, REFUSED, STOPPED, STOPS, Derived, halted, masked, values
+from .restated import ABSENT, KEPT, REFUSED, STOPPED, STOPS, Derived, halted, lined, masked, opened, values
 
 LOG = logging.getLogger(__name__)
 HELD, PUT, JOINED, UNJOINED, UNHELD, CREATED = "held", "put", "joined", "unjoined", "unheld", "created"
@@ -299,7 +298,7 @@ class Reached(Derived):
             & (np.asarray(graph.task_kind) == decision["kind"])
         )
         if len(task) != 1:
-            raise ValueError(
+            raise Refused(
                 "reach reads the references of the decision %d of the kind %s of graph %s from its task at the step %d, "
                 "and the graph derived for it holds %d tasks of that key and kind there"
                 % (decision["key"], self.registry.tasks[decision["kind"]], decision["graph"], decision["step"], len(task))
@@ -324,7 +323,7 @@ class Reached(Derived):
             view = self.derived(None, 0, decision["group"])
             stated = self.referred(view, decision)
             if [held[0] for held in stated] != [held[0] for held in members]:
-                raise ValueError(
+                raise Refused(
                     "%s names a node of the kind %s, which the pipeline adds, and the references of its task hold %d "
                     "members after the pipeline and %d in the view, or the same in another order, so reach cannot say "
                     "in place of which node of the view that node stands" % (where, kind, len(members), len(stated))
@@ -984,13 +983,13 @@ def realising(deriver, config):
         )
     name = realised(config["model"], schema)
     if name is None:
-        raise ValueError(
+        raise Refused(
             "the model of the configuration states %s none, which puts no option before it; reach describes the "
             "options of decisions as a realisation puts them before a model" % REALISATION
         )
     reason = realisation(name).refusal(deriver.registry)
     if reason is not None:
-        raise ValueError("the realisation of options %s cannot read the options of this bank: %s" % (name, reason))
+        raise Refused("the realisation of options %s cannot read the options of this bank: %s" % (name, reason))
     LOG.debug("reach realising exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
     return name
 
@@ -1000,10 +999,19 @@ def unrouted(deriver, config):
     result = None
     try:
         routed(deriver, config)
-    except ValueError as error:
-        result = str(error)
+    except Refused as error:
+        result = lined(error)
     LOG.debug("reach unrouted exit refused=%s seconds=%.4f", result is not None, time.perf_counter() - started)
     return result
+
+
+def named(bank, derivers, config, statement):
+    started = time.perf_counter()
+    deriver, key = opened(bank, derivers, config, statement)
+    name = realising(deriver, config)
+    refused = unrouted(deriver, config)
+    LOG.debug("reach named exit variant=%s realisation=%s seconds=%.4f", key[:10], name, time.perf_counter() - started)
+    return deriver, name, key, refused
 
 
 @timed("reach.stemmed")
@@ -1013,13 +1021,7 @@ def stemmed(key, name, refused):
 
 def reach(bank, config, statement):
     started = time.perf_counter()
-    truth.manifested(bank)
-    stated = state(statement)
-    agreed(config, stated)
-    deriver = Deriver(bank, stated.device, stated.derivation_seed, RESIDENT)
-    name = realising(deriver, config)
-    key = specs.digest(deriver.identity(config))
-    refused = unrouted(deriver, config)
+    deriver, name, key, refused = named(bank, {}, config, statement)
     held = Path(bank) / "descriptions" / "reach" / stemmed(key, name, refused)
     result = truth.kept(held, lambda: recorded(deriver, config, key, name, refused), text)
     LOG.info("reach exit variant=%s realisation=%s seconds=%.3f", key[:10], name, time.perf_counter() - started)

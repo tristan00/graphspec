@@ -7,12 +7,13 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 
+from graphspec.budgets import Refused
 from graphspec.infra.timing import timed
 from graphspec.schema.schema import ENCODERS, TYPES
 from graphspec.schema.targets import pointed
 
 from . import edges, nodes, relation_forms, relations
-from .operation import OPERATIONS, Refused, Stored
+from .operation import OPERATIONS, Stored
 from .parameters import Parameter, flag
 from .sets import PARAMETER, STORAGE
 
@@ -110,7 +111,7 @@ class Local:
 
 def checked(entries, fields):
     if type(entries) is not list:
-        raise TypeError("a pipeline is a list of its operations in the order they apply, found %r" % (entries,))
+        raise Refused("a pipeline is a list of its operations in the order they apply, found %r" % (entries,))
     required = tuple(field for field in fields if field not in OPTIONAL)
     found, names = [], set()
     for place, entry in enumerate(entries):
@@ -122,6 +123,11 @@ def checked(entries, fields):
         lacking = [field for field in required if field not in entry]
         if lacking:
             raise Refused("the entry %d of the pipeline states no %s" % (place, " and no ".join(lacking)))
+        if entry["operation"] not in OPERATIONS.names():
+            raise Refused(
+                "the entry %d of the pipeline names the operation %s, and no operation is registered under that name"
+                % (place, entry["operation"])
+            )
         operation = OPERATIONS.named(entry["operation"])
         label = entry["label"] if "label" in entry else None
         if label is not None and (type(label) is not str or not label or "/" in label or "." in label):
@@ -234,7 +240,7 @@ class Growing:
 
 def given(name, parameters, values, context):
     if type(values) is not dict:
-        raise TypeError("the entry %s of the pipeline states its parameters as a mapping, found %r" % (name, values))
+        raise Refused("the entry %s of the pipeline states its parameters as a mapping, found %r" % (name, values))
     result = {}
     view = ChainMap(result, context)
     for parameter in parameters:

@@ -10,7 +10,7 @@ import support
 
 from conftest import SPLITS, Inline
 from graphspec import ABOUT, HELD, NEGATIVES, STORAGE, inspect
-from graphspec.budgets import GraphLimits
+from graphspec.budgets import GraphLimits, Refused
 from graphspec.engine import segments
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
@@ -20,7 +20,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline, sets
 from graphspec.operations.nodes import NODES
-from graphspec.operations.operation import Count, Refused
+from graphspec.operations.operation import Count
 from graphspec.schema.schema import VERSION, Encoding, Schema, fitted
 from graphspec.sources import synthetic
 from graphspec.views.graph import Graph
@@ -518,14 +518,14 @@ def test_an_operation_that_counts_states_how_it_treats_sets_and_edges_about_edge
     refusing = Count("nodes/degree", "degree", degree.active, "refuses", "stored")
     monkeypatch.setattr(NODES, "requires", (refusing,))
     with pytest.raises(
-        ValueError,
+        Refused,
         match="the count nodes/degree of the operation graphspec.nodes counts degree and refuses the edges "
         "joining sets of the kind gathering",
     ):
         segments.whole(dense, {}, registry, steps, support.SEED, GraphLimits("cpu"), None)
     monkeypatch.setattr(NODES, "requires", (Count("nodes/degree", "degree", degree.active, "stored", "refuses"),))
     with pytest.raises(
-        ValueError,
+        Refused,
         match="nodes/degree of the operation graphspec.nodes counts degree and refuses the edges of the table "
         "note, which are about edges",
     ):

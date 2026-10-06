@@ -564,7 +564,7 @@ def test_a_copy_in_the_plan_that_differs_from_the_statement_stops_naming_the_fie
     before = read_json(output / "plan.json")
     with pytest.raises(ValueError, match=re.escape("plan.json holds %s %r and" % (field, before[field]))):
         run(arguments(bank, output, **{"seconds": 1200, flag: value}))
-    with pytest.raises(KeyError, match="the statement lacks"):
+    with pytest.raises(Refused, match="^the statement lacks"):
         run(arguments(bank, output, **{"seconds": 1200, flag: None}))
     assert read_json(output / "plan.json") == before
     run(arguments(bank, output, seconds=1200))

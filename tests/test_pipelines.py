@@ -27,7 +27,7 @@ from graphspec import (
     Phase,
     Representation,
 )
-from graphspec.budgets import GraphLimits
+from graphspec.budgets import GraphLimits, Refused
 from graphspec.engine import segments, transform
 from graphspec.engine.segments import Derivation
 from graphspec.infra.arrays import RESIDENT
@@ -36,7 +36,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline
 from graphspec.operations.negatives import Rule
-from graphspec.operations.operation import Need, Refused
+from graphspec.operations.operation import Need
 from graphspec.views.graph import Dense
 from tuning.bank.bank import Bank, Deriver
 from tuning.fits.training import fit
@@ -160,33 +160,35 @@ def test_a_pipeline_is_stated_as_its_operations_in_order_and_read_back_as_stated
         (step["operation"], step["label"], step["version"]) for step in opened.identity(cfg)["pipeline"]
     ] == [(name, None, OPERATIONS.named(name).version) for name in support.SEVEN]
     lacking = {name: value for name, value in cfg.items() if name != "pipeline"}
-    with pytest.raises(KeyError, match="the configuration states no pipeline"):
+    with pytest.raises(Refused, match="^the configuration states no pipeline$"):
         opened.stated(lacking)
-    with pytest.raises(KeyError, match="the configuration states no pipeline"):
+    with pytest.raises(Refused, match="^the configuration states no pipeline$"):
         fit(bank, tmp_path, lacking, [], 8, time.perf_counter() + 30, state(statement))
     window = copy.deepcopy(cfg["pipeline"][1])
     wrong = [
-        ("a list", dict(window), TypeError, "a pipeline is a list of its operations in the order they apply"),
-        ("unknown", [dict(window, operation="graphspec.nothing")], KeyError, "no operation is registered"),
-        ("twice", [window, window], ValueError, "the pipeline holds graphspec.window twice"),
-        ("slash", [dict(window, label="a/b")], ValueError, "is a word without a slash or a dot, found 'a/b'"),
-        ("same", [dict(window, label="x"), dict(window, label="x")], ValueError, "the pipeline holds x twice"),
-        ("bare", [dict(operation="graphspec.window")], ValueError, "the entry 0 of the pipeline states no parameters"),
+        ("a list", dict(window), "a pipeline is a list of its operations in the order they apply"),
+        (
+            "unknown",
+            [dict(window, operation="graphspec.nothing")],
+            "the entry 0 of the pipeline names the operation graphspec.nothing, and no operation is registered under",
+        ),
+        ("twice", [window, window], "the pipeline holds graphspec.window twice"),
+        ("slash", [dict(window, label="a/b")], "is a word without a slash or a dot, found 'a/b'"),
+        ("same", [dict(window, label="x"), dict(window, label="x")], "the pipeline holds x twice"),
+        ("bare", [dict(operation="graphspec.window")], "the entry 0 of the pipeline states no parameters"),
         (
             "lacking",
             [dict(window, parameters={"time/scheme": "window", "time/unit": "step"})],
-            ValueError,
             "the entry graphspec.window of the pipeline states no time/window, which is active",
         ),
         (
             "inactive",
             [dict(window, parameters=dict(window["parameters"], **{"time/past_periods": 1}))],
-            ValueError,
             "the entry graphspec.window of the pipeline states time/past_periods, which are inactive or unknown",
         ),
     ]
-    for _, stated, error, message in wrong:
-        with pytest.raises(error, match=message):
+    for _, stated, message in wrong:
+        with pytest.raises(Refused, match=message):
             pipeline.resolved(registry, stated)
     labelled = [window, dict(window, label="again")]
     assert [step.name for step in pipeline.resolved(registry, labelled)] == ["graphspec.window", "again"]

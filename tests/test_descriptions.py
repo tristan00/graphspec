@@ -11,7 +11,7 @@ import pytest
 from conftest import SPLITS, shared
 from graphspec import OPERATIONS, RULES, Operation, Phase, Registry, describe
 from graphspec import differences as between
-from graphspec.budgets import GraphCapacityError
+from graphspec.budgets import GraphCapacityError, Refused
 from graphspec.descriptions import describe as describing
 from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
@@ -35,6 +35,7 @@ from tuning.bank import forks
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 from tuning.bank.options import offered
+from tuning.bank.routes import routed
 from tuning.batches import batching
 from tuning.batches.tensors import Host
 from tuning.descriptions import differences as diverging
@@ -46,6 +47,7 @@ from tuning.families import heads
 from tuning.families.options import slots
 from tuning.families.periods import blocks as windows
 from tuning.statement import VERSION as STATEMENT
+from tuning.statement import agreed, state
 
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("descriptions")
@@ -2099,7 +2101,7 @@ def test_reach_stops_naming_a_node_no_graph_of_the_view_holds_and_a_decision_who
     with pytest.raises(ValueError, match="^%s names the node of the token 7, which no graph of the view holds; " % where):
         held.keyed(7, where)
     with pytest.raises(
-        ValueError,
+        Refused,
         match="^reach reads the references of the decision 10 of the kind turn of graph g0 from its task at the step 0, "
         "and the graph derived for it holds 0 tasks of that key and kind there$",
     ):
@@ -2507,7 +2509,7 @@ def test_a_reference_the_pipeline_puts_in_a_node_it_adds_is_named_by_the_kind_of
     where = "the reference over of the decision 10 of the kind turn of graph h0"
     assert held.ended(trunk, decision, edge, 0, 1, where) == "a0"
     with pytest.raises(
-        ValueError,
+        Refused,
         match="^%s names a node of the kind contract, which the pipeline adds, and the references of its task hold 1 "
         "members after the pipeline and 2 in the view, or the same in another order, so reach cannot say in place of "
         "which node of the view that node stands$" % where,
@@ -2521,7 +2523,11 @@ NEAR_VISIT = {"cut/relation": "near", "cut/kind": "visit"}
 PART_NEAR = {"cut/relation": "near", "cut/times": "all"}
 PART_VISIT = {"cut/relation": "base", "cut/times": "tasks", "cut/kind": "visit"}
 STARVED = dict(NODES, **{"nodes/agent/min_degree": 16})
-HALTED = "the entry test.halt derives no graph"
+HALTED = "the entry test.halt derives no graph\nand says so on a second line"
+STOPPED = (
+    "the derivation of its variant stopped with GraphCapacityError: the entry test.halt derives no graph and says so on "
+    "a second line"
+)
 UNSTARTED = "the trial holds no statement.json"
 UNREALISED = (
     "the model of the configuration states options/realisation none, which puts no option before it; reach describes "
@@ -2536,7 +2542,7 @@ AIMLESS = (
 
 @timed("descriptions.halted")
 def halted(graph, registry, settings, seed, limits, carry, held):
-    raise ValueError(HALTED)
+    raise GraphCapacityError(HALTED)
 
 
 @timed("descriptions.unstated")
@@ -2739,7 +2745,7 @@ SEARCHED = (
     ("aimed", unsped(visited_by("test.cut")), left_by("test.cut", BASE_VISIT), AIMLESS),
     ("vector", gone_by("test.cut"), left_by("test.cut", BASE_TURN)),
     ("walked", EDITED, left_by("test.cut", NEAR_AT_TURN)),
-    ("vector", HALTED),
+    ("vector", STOPPED),
 )
 SEARCHED_TEXT = """reach over 20 trials on the bank stored as %(stored)s, described at version %(version)d
 described 16, of 15 variants and realisations; not described 4
@@ -2764,17 +2770,12 @@ one row per trial, in the order of the trials; %(reading)s
     trial_000016  %(v16)s  aimed        refused      13/13 in 4/4                                            13/13/13, joined 10/14, hops 1 to 2, no path cut by test.cut 3 and no entry 1    1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         unread                                        test.cut: relation base at visit 2/2  %(aimless)s
     trial_000017  %(v17)s  vector       not refused  12/13 in 4/4, left out cut by test.cut 1                12/12/13, joined 0/12, no path cut by test.cut 11 and no entry 1                 0/0/1                                          0/0/1                                     12/12/13                                      test.cut: relation base at turn 2/2
     trial_000018  %(v18)s  walked       not refused  13/13 in 4/4                                            13/13/13, joined 14/14, hops 1                                                   1/1/1, joined 1/1, hops 1                      1/1/1, joined 1/1, hops 1                 13/13/13                                      test.cut: relation near at turn 1/2
-    trial_000019  %(v19)s  vector       not described: the entry test.halt derives no graph
+    trial_000019  %(v19)s  vector       not described: %(stopped)s
 """
 ROW_TEXT = """reach of the options of the variant %s of the bank stored as %s in one row, described at version %d
 %s
     variant     realisation  turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated                                   turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
     %s  vector       12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1  0/0/1                                      0/0/1                                     12/12/13                                      graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
-"""
-STOPPED_TEXT = """reach of the options of the variant %s of the bank stored as %s in one row, described at version %d
-%s
-    variant     realisation  turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated  turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
-    %s  vector       not described: the entry test.halt derives no graph
 """
 CROSSED_ROW = dict(
     turn=dict(
@@ -2842,20 +2843,22 @@ def test_reach_over_the_twenty_trials_of_a_search_equals_the_table_written_out_h
     assert rows[3]["variant"] == rows[16]["variant"] and rows[5]["variant"] is not None and rows[15]["variant"] is None
     described = [row for row in rows if row["reason"] is None]
     assert len(described) == 16 and len({(row["variant"], row["realisation"]) for row in described}) == 15
-    for place, written in ((13, ROW_TEXT), (19, STOPPED_TEXT)):
-        key = rows[place]["variant"]
-        stem = bank / "descriptions" / "reach_rows" / reaching.stemmed(key, "vector", None)
-        kept = {name: value for name, value in rows[place].items() if name not in ("trial", "refused")}
-        assert read_json(stem.with_suffix(".json")) == dict(
-            kept, version=describing.VERSION, stored_sha256=record["stored_sha256"], fields=record["fields"]
-        )
-        assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written % (
-            key,
-            record["stored_sha256"],
-            describing.VERSION,
-            reaches.READING,
-            key[:10],
-        )
+    key = rows[13]["variant"]
+    stem = bank / "descriptions" / "reach_rows" / reaching.stemmed(key, "vector", None)
+    kept = {name: value for name, value in rows[13].items() if name not in ("trial", "refused", "reason")}
+    assert read_json(stem.with_suffix(".json")) == dict(
+        kept, version=describing.VERSION, stored_sha256=record["stored_sha256"], fields=record["fields"]
+    )
+    assert stem.with_suffix(".txt").read_text(encoding="utf-8") == ROW_TEXT % (
+        key,
+        record["stored_sha256"],
+        describing.VERSION,
+        reaches.READING,
+        key[:10],
+    )
+    assert rows[19]["variant"] is not None and rows[19]["reason"] == STOPPED and "\n" not in rows[19]["reason"]
+    halted = bank / "descriptions" / "reach_rows" / reaching.stemmed(rows[19]["variant"], "vector", None)
+    assert not halted.with_suffix(".json").exists() and not halted.with_suffix(".txt").exists()
     LOG.info("descriptions reach over a search exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2868,9 +2871,9 @@ def test_the_text_of_the_table_holds_one_line_per_trial_of_its_record_and_the_ve
     record = reach_search(bank, searched)
     shown = {"v%d" % place: row["variant"][:10] for place, row in enumerate(record["trials"]) if row["variant"] is not None}
     written = SEARCHED_TEXT % dict(
-        shown, stored=record["stored_sha256"], version=describing.VERSION, reading=reaches.READING, aimless=AIMLESS
+        shown, stored=record["stored_sha256"], version=describing.VERSION, reading=reaches.READING, aimless=AIMLESS, stopped=STOPPED
     )
-    assert reaches.text(record) == written
+    assert reaches.text(record) == written and len(written.split("\n")) == 4 + len(record["trials"]) + 1
     stem = tabled(searched, record)
     assert read_json(stem.with_suffix(".json")) == record
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
@@ -2965,6 +2968,133 @@ def test_a_trial_under_an_edit_on_a_bank_whose_relations_hold_no_column_has_its_
     assert record["trials"] == [row]
     assert reaches.text(record).split("\n", 3)[3] == STEPPED_OVER % key[:10]
     LOG.info("descriptions reach over an edit without columns exit seconds=%.3f", time.perf_counter() - started)
+
+
+VIEWLESS = (
+    "the model of the configuration states no view, the family of its model, one of snapshot, mixed, event_graph, "
+    "memory, projection, sequence, tree, walks, affinity, signal"
+)
+STEPLESS = "the graph of the configuration states no time/steps, which is active under what it states"
+UNKNOWN = "the entry 0 of the pipeline names the operation graphspec.nope, and no operation is registered under that name"
+GHOST = (
+    "the model of the family snapshot states options/realisation ghost, and the realisations of options registered in "
+    "tuning.REALISATIONS are %s"
+)
+MODELLESS = "the configuration states no model"
+HIDDENLESS = "the model of the configuration states no hidden, which is active under what it states"
+UNSTATED_REALISATION = (
+    "the model of the family snapshot states no options/realisation, which a model of a family that reads options "
+    "states on a bank that decides: none or a realisation registered in tuning.REALISATIONS"
+)
+UNLISTED = "a pipeline is a list of its operations in the order they apply, found 'graphspec.nodes'"
+LACKING = "the statement lacks alike"
+UNMAPPED = "the statement is read from a mapping of its fields, found [1, 2]"
+FAULTY = "a fault in the code of an operation"
+KEYLESS = "a lookup of the library that fails"
+
+
+@timed("descriptions.faulted")
+def faulted(graph, registry, settings, seed, limits, carry, held):
+    raise ValueError(FAULTY)
+
+
+FAULT = Operation("test", "fault", (Phase("fault", faulted, None, None),), unstated, (), (), (), ("facts",), None, None, 1, 1)
+
+
+@timed("descriptions.keyless")
+def keyless(*args):
+    raise KeyError(KEYLESS)
+
+
+@timed("descriptions.without")
+def without(held, name):
+    return {key: value for key, value in held.items() if key != name}
+
+
+def test_a_trial_is_not_described_only_for_what_the_checks_of_its_statement_and_its_configuration_refuse(
+    bank, searching, tmp_path, monkeypatch
+):
+    started = time.perf_counter()
+    good = dict(modelled(bank, "vector"), pipeline=[entry("graphspec.nodes", NODES)])
+    model = good["model"]
+    refused = [
+        (dict(good, model=without(model, "view")), VIEWLESS),
+        (dict(good, graph=without(good["graph"], "time/steps")), STEPLESS),
+        (dict(good, pipeline=[entry("graphspec.nope", {})]), UNKNOWN),
+        (dict(good, model=dict(model, **{"options/realisation": "ghost"})), GHOST % ", ".join(REALISATIONS.names())),
+        (without(good, "model"), MODELLESS),
+        (dict(good, model=without(model, "hidden")), HIDDENLESS),
+        (dict(good, model=without(model, "options/realisation")), UNSTATED_REALISATION),
+        (dict(good, pipeline="graphspec.nodes"), UNLISTED),
+    ]
+    for config, message in refused:
+        with pytest.raises(Refused) as raised:
+            reach(bank, config, STATED)
+        assert str(raised.value) == message
+    folder = laid(tmp_path / "search", bank, [good] + [config for config, _ in refused] + [good, good], ())
+    write_json(folder / trial(9) / "statement.json", without(STATED, "alike"))
+    write_json(folder / trial(10) / "statement.json", [1, 2])
+    record = reach_search(bank, folder)
+    assert [row["reason"] for row in record["trials"]] == [None] + [message for _, message in refused] + [LACKING, UNMAPPED]
+    assert [row["variant"] is None for row in record["trials"]] == [False] + [True] * 10
+    assert len(reaches.text(record).split("\n")) == 4 + len(record["trials"]) + 1
+    OPERATIONS.register(FAULT.name, FAULT)
+    try:
+        faulty = dict(good, pipeline=good["pipeline"] + [entry("test.fault", {})])
+        with pytest.raises(ValueError, match="^%s$" % FAULTY) as raised:
+            reach_over(bank, [good, faulty], STATED)
+        assert type(raised.value) is ValueError
+    finally:
+        del OPERATIONS.held[FAULT.name]
+    monkeypatch.setattr(reaching, "realising", keyless)
+    with pytest.raises(KeyError, match=KEYLESS):
+        reach_over(bank, [good], STATED)
+    LOG.info("descriptions a trial's own exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_every_check_of_a_statement_a_configuration_a_pipeline_and_a_realisation_refuses_with_the_one_class(bank, searching):
+    started = time.perf_counter()
+    held, stated = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), state(STATED)
+    config = modelled(bank, "vector")
+    graph, turned = config["graph"], dict(trained=["validation"], scored=["train"], sees=dict(train=[], validation=[]))
+    absent = dict(SPLITS, scored=["absent"], sees=dict(train=[], absent=[]))
+    cases = [
+        (lambda: state(without(STATED, "alike")), LACKING),
+        (lambda: state(dict(STATED, colour="red")), "the statement holds fields it does not know: colour"),
+        (lambda: state(dict(STATED, seed=-1)), "the statement's seed is -1 and must be an integer from 0 to 4294967295"),
+        (lambda: state([1, 2]), UNMAPPED),
+        (lambda: agreed([1, 2], stated), "a configuration is a mapping of its fields, found [1, 2]"),
+        (lambda: agreed(without(config, "seed"), stated), "the configuration states no seed"),
+        (lambda: agreed(dict(config, seed=6), stated), SEEDED),
+        (lambda: agreed(without(config, "splits"), stated), "the configuration states no splits to train on and to score on"),
+        (lambda: held.stated(without(config, "graph")), "the configuration states no graph"),
+        (lambda: held.stated(without(without(config, "graph"), "pipeline")), "the configuration states no pipeline and no graph"),
+        (lambda: held.stated(dict(config, graph=dict(graph, **{"time/history": 0}))), "time/history must be an integer in 1..32, found 0"),
+        (
+            lambda: held.stated(dict(config, graph=dict(graph, colour=1))),
+            "the graph of the configuration states colour, which are inactive or unknown",
+        ),
+        (
+            lambda: held.stated(dict(config, pipeline=[dict(operation="graphspec.nodes", parameters=[1])])),
+            "the entry graphspec.nodes of the pipeline states its parameters as a mapping, found [1]",
+        ),
+        (
+            lambda: held.looking(dict(config, splits=absent)),
+            "the splits scored on name absent, and the bank holds the splits train, validation",
+        ),
+        (
+            lambda: held.looking(dict(config, splits=turned)),
+            "the scaling of the targets of the bank was fitted on the splits train, and the fit trains on validation",
+        ),
+        (lambda: held.viewed(config).second(held, 0, "absent"), "the bank holds no graph named absent to show beside graph g0"),
+        (lambda: routed(held, modelled(bank, "aimed")), AIMLESS),
+        (lambda: routed(held, without(config, "model")), MODELLESS),
+    ]
+    for call, message in cases:
+        with pytest.raises(Refused) as raised:
+            call()
+        assert str(raised.value) == message
+    LOG.info("descriptions the one class exit cases=%d seconds=%.3f", len(cases), time.perf_counter() - started)
 
 
 @timed("descriptions.plain")
@@ -3131,7 +3261,7 @@ def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_anot
     with pytest.raises(FileNotFoundError, match="holds no plan.json; reach over a search reads the folder of a search"):
         reach_search(bank, tmp_path)
     write_json(tmp_path / "plan.json", dict(trials=[]))
-    with pytest.raises(KeyError, match="lacks bank_stored_sha256"):
+    with pytest.raises(ValueError, match="^the plan.json of .* lacks bank_stored_sha256$"):
         reach_search(bank, tmp_path)
     write_json(tmp_path / "plan.json", dict(bank_stored_sha256="0" * 64, trials=[]))
     with pytest.raises(ValueError, match="searches the bank whose build stored 0{64}, and the bank .* stored %s$" % stored):
@@ -3141,7 +3271,7 @@ def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_anot
     assert reach_search(bank, tmp_path) == empty == reach_over(bank, [], STATED)
     with pytest.raises(TypeError, match="reads a list of the configurations of fits, found {}"):
         reach_over(bank, {}, STATED)
-    with pytest.raises(KeyError, match="the statement lacks alike"):
+    with pytest.raises(Refused, match="^the statement lacks alike$"):
         reach_over(bank, [], {name: value for name, value in STATED.items() if name != "alike"})
     with pytest.raises(ValueError, match="holds no kind of task that decides; reach describes the options of decisions$"):
         reach_over(path_bank, [], STATED)

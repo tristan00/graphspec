@@ -6,16 +6,13 @@ from pathlib import Path
 from graphspec.descriptions import describe as truth
 from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
-from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, sha256_json
 from graphspec.operations import parameters as specs
 from graphspec.views.graph import Graph
-from tuning.bank.bank import Deriver
-from tuning.statement import agreed, state
 
 from . import reach as reaching
 from . import reaches
-from .restated import Derived, unviewed, viewed
+from .restated import Derived, opened, unviewed, viewed
 
 LOG = logging.getLogger(__name__)
 
@@ -71,19 +68,6 @@ def recorded(deriver, config, key):
     )
     LOG.info("variant recorded exit graphs=%d seconds=%.3f", len(result["graphs"]), time.perf_counter() - started)
     return result
-
-
-def opened(bank, derivers, config, statement):
-    started = time.perf_counter()
-    truth.manifested(bank)
-    stated = state(statement)
-    agreed(config, stated)
-    held = (stated.device, stated.derivation_seed)
-    if held not in derivers:
-        derivers[held] = Deriver(bank, *held, RESIDENT)
-    key = specs.digest(derivers[held].identity(config))
-    LOG.debug("variant opened exit variant=%s seconds=%.4f", key[:10], time.perf_counter() - started)
-    return derivers[held], key
 
 
 def describe(bank, config, statement):

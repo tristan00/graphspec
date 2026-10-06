@@ -1,6 +1,7 @@
 import logging
 import time
 
+from graphspec.budgets import Refused
 from graphspec.operations.pipeline import emptied, unrelated
 from tuning.families.heads import fielded, realisation, refused
 from tuning.families.model_spec import DIRECTION, SHOWN, UNREAD, ignored, realised, sending, showing
@@ -54,6 +55,7 @@ def cut(bank, entry, task, field, removed, unkept, settings, family):
 
 def routed(bank, cfg):
     started = time.perf_counter()
+    _, steps, settings, _ = bank.stated(cfg)
     name = realised(cfg["model"], bank.registry.schema)
     if name is None:
         LOG.debug("routes routed exit realisation=none seconds=%.4f", time.perf_counter() - started)
@@ -61,11 +63,10 @@ def routed(bank, cfg):
     entry, spec, schema = realisation(name), cfg["model"], bank.registry.schema
     reason = ignored(spec, name, schema)
     if reason is not None:
-        raise ValueError(UNREAD % (name, spec["view"], reason))
+        raise Refused(UNREAD % (name, spec["view"], reason))
     reason = refused(name, bank.registry)
     if reason is not None:
-        raise ValueError(reason)
-    _, steps, settings, _ = bank.stated(cfg)
+        raise Refused(reason)
     removed, unkept = emptied(bank.registry, steps), unrelated(bank.registry, steps)
     for task in schema.decided():
         for field in fielded(schema, task):
@@ -73,5 +74,5 @@ def routed(bank, cfg):
             where %= (field["name"], task, name)
             reason = cut(bank, entry, task, field, removed, unkept, settings, spec["view"]) if field["sort"] == "targets" else None
             if reason is not None:
-                raise ValueError("%s: %s" % (where, reason))
+                raise Refused("%s: %s" % (where, reason))
     LOG.info("routes routed exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)

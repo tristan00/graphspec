@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from graphspec.budgets import Refused
 from graphspec.infra import compute
 from graphspec.infra.code import digest as code_digest
 from graphspec.infra.files import sha256_bytes, sha256_file, write_json
@@ -467,26 +468,16 @@ def fit(bank_directory, directory, config, training_blocks, batch_size, deadline
     from graphspec.infra.arrays import RESIDENT
     from tuning.bank.bank import Deriver
     from tuning.batches.inputs import drawing
+    from tuning.statement import agreed
     from tuning.statement import stated as checked
 
     from .budget import FitBudget
 
     stated = checked(statement)
     compute.require(stated.device)
-    if config["seed"] != stated.seed:
-        raise ValueError(
-            "the seed of the configuration is %r and the seed of the statement is %r"
-            % (config["seed"], stated.seed)
-        )
-    if "splits" not in config:
-        raise KeyError("the configuration states no splits to train on and to score on")
-    if config["splits"] != stated.splits():
-        raise ValueError(
-            "the splits of the configuration are %r and those of the statement are %r"
-            % (config["splits"], stated.splits())
-        )
+    agreed(config, stated)
     if "pipeline" not in config:
-        raise KeyError("the configuration states no pipeline")
+        raise Refused("the configuration states no pipeline")
     with measure("bank_load"):
         bank = Deriver(bank_directory, stated.device, stated.derivation_seed, RESIDENT)
     drawn(bank.registry.schema)

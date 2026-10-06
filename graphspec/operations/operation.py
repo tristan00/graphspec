@@ -6,6 +6,7 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from graphspec import registries
+from graphspec.budgets import Refused
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema.added import Added
@@ -29,10 +30,6 @@ SEGMENT = dict(
     x_global="its rows of values of nodes",
     value_global="its rows of values of facts",
 )
-
-
-class Refused(ValueError):
-    pass
 
 
 class Count:
@@ -335,7 +332,7 @@ class Operation:
                     continue
                 for part, found in met.items():
                     if found and getattr(count, part) == "refuses":
-                        raise ValueError(
+                        raise Refused(
                             "the count %s of the operation %s counts %s and refuses %s"
                             % (count.name, self.name, count.counts, EDGES[part] % found[0])
                         )

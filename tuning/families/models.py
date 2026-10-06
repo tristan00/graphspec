@@ -7,7 +7,7 @@ from .affinity import AffinityNet
 from .event_graph import EventGraphNet
 from .memory import MemoryNet
 from .mixed import MixedNet
-from .model_spec import describe, space
+from .model_spec import MODEL, describe, space
 from .projection import ProjectionNet
 from .sequence import SequenceNet
 from .signal import SignalNet
@@ -32,7 +32,7 @@ NETS = dict(
 
 def build(cfg, registry):
     started = time.perf_counter()
-    spec = canonical(space(registry), cfg["model"])
+    spec = canonical(space(registry), cfg["model"], MODEL)
     cfg = dict(cfg, model=spec)
     net = NETS[spec["view"]](cfg, registry)
     LOG.info(

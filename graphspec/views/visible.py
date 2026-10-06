@@ -3,6 +3,7 @@ import time
 
 import numpy as np
 
+from graphspec.budgets import Refused
 from graphspec.facts.stored import GROUPS
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
@@ -70,7 +71,7 @@ class Looking:
                 raise ValueError("the splits %s are a list of distinct names, found %r" % (label, names))
             strangers = [name for name in names if name not in self.splits]
             if strangers:
-                raise ValueError(
+                raise Refused(
                     "the splits %s name %s, and the bank holds the splits %s"
                     % (label, ", ".join(map(str, strangers)), ", ".join(self.splits))
                 )

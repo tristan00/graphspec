@@ -2,6 +2,7 @@ import logging
 import time
 
 from graphspec import registries
+from graphspec.budgets import Refused
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations.parameters import GROUPS, among, choice, equals, flag, narrow, number, real
@@ -11,6 +12,7 @@ from graphspec.representations.registry import REPRESENTATIONS as REGISTERED
 from .heads import DEPTH, DEPTHS, NONE, REALISATION, REALISATIONS, fielded, reading, realisation, refused
 
 LOG = logging.getLogger(__name__)
+MODEL, GRAPH = "the model of the configuration", "the graph of the configuration"
 UNREAD = (
     "the realisation of options %s puts options into the graph of the family of its model, and the family %s does not "
     "read them there: %s"
@@ -178,14 +180,24 @@ def optioned(spec, families):
 
 @timed("model_spec.realised")
 def realised(spec, schema):
-    if not schema.decided() or not optioned(spec, OPTIONED):
+    if not schema.decided():
+        return None
+    if not isinstance(spec, dict) or "view" not in spec:
+        raise Refused("%s states no view, the family of its model, one of %s" % (MODEL, ", ".join(VIEWS)))
+    if not optioned(spec, OPTIONED):
         return None
     if REALISATION not in spec:
-        raise ValueError(
+        raise Refused(
             "the model of the family %s states no %s, which a model of a family that reads options states on a bank "
             "that decides: %s or a realisation registered in tuning.REALISATIONS" % (spec["view"], REALISATION, NONE)
         )
-    return None if spec[REALISATION] == NONE else spec[REALISATION]
+    name = spec[REALISATION]
+    if name != NONE and name not in REALISATIONS.names():
+        raise Refused(
+            "the model of the family %s states %s %s, and the realisations of options registered in "
+            "tuning.REALISATIONS are %s" % (spec["view"], REALISATION, name, ", ".join(REALISATIONS.names()))
+        )
+    return None if name == NONE else name
 
 
 def deep(spec):
@@ -656,7 +668,7 @@ def configuration(registry, values, pipeline, graph, seed, splits):
     started = time.perf_counter()
     spec = configured(registry, values)
     resolved(registry, pipeline)
-    graph = specs.canonical(specs.settings(registry, groups(spec)), graph)
+    graph = specs.canonical(specs.settings(registry, groups(spec)), graph, GRAPH)
     result = dict(
         seed=seed, model=spec, pipeline=pipeline, graph=graph, splits=splits, **specs.default(TRAINING)
     )

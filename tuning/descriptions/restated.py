@@ -5,16 +5,20 @@ from functools import partial
 
 import numpy as np
 
-from graphspec.budgets import GraphCapacityError
+from graphspec.budgets import GraphCapacityError, Refused
+from graphspec.descriptions import describe as truth
 from graphspec.descriptions import effect
 from graphspec.facts.stored import Facts
+from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.timing import timed
+from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline as pipelines
 from graphspec.operations import sets
-from graphspec.operations.operation import Refused
 from graphspec.views.view import stepped
 from tuning.bank import forks
+from tuning.bank.bank import Deriver
 from tuning.bank.options import TOKEN
+from tuning.statement import agreed, state
 
 LOG = logging.getLogger(__name__)
 REFUSED, STOPPED = "refused", "stopped"
@@ -57,9 +61,27 @@ def stating(config, name, stated, dropped):
     return dict(config, pipeline=pipeline)
 
 
+@timed("restated.lined")
+def lined(error):
+    return " ".join(str(error).splitlines())
+
+
 @timed("restated.halted")
 def halted(error):
-    return STOPPED, dict(error=type(error).__name__, reason=str(error))
+    return STOPPED, dict(error=type(error).__name__, reason=lined(error))
+
+
+def opened(bank, derivers, config, statement):
+    started = time.perf_counter()
+    stated = state(statement)
+    agreed(config, stated)
+    held = (stated.device, stated.derivation_seed)
+    if held not in derivers:
+        truth.manifested(bank)
+        derivers[held] = Deriver(bank, *held, RESIDENT)
+    key = specs.digest(derivers[held].identity(config))
+    LOG.debug("restated opened exit variant=%s seconds=%.4f", key[:10], time.perf_counter() - started)
+    return derivers[held], key
 
 
 def unsettled(registry, entries):
@@ -164,7 +186,7 @@ class Derived:
                     try:
                         self.entered(key, cfg)
                     except Refused as error:
-                        tried.append((added, None, (REFUSED, dict(reason=str(error)))))
+                        tried.append((added, None, (REFUSED, dict(reason=lined(error)))))
                     except GraphCapacityError as error:
                         tried.append((added, None, halted(error)))
                     else:

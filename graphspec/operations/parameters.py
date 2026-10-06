@@ -5,6 +5,7 @@ import math
 import time
 from collections import Counter
 
+from graphspec.budgets import Refused
 from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 from graphspec.schema.time import SEVERAL
@@ -16,6 +17,7 @@ LOG = logging.getLogger(__name__)
 GROUPS = ("coupling", "events", "neighbors", "walks", "mixed")
 PACKING = ("time/history", "time/context", "neighbors/order", "neighbors/decay")
 DIRECTIONS = ("inverse", "symmetric", "directed")
+LACKING = "%s states no %s, which is active under what it states"
 
 
 class Parameter:
@@ -306,18 +308,32 @@ def default(parameters):
     return result
 
 
-def canonical(parameters, spec):
+def complete(parameters, spec, what):
+    started = time.perf_counter()
+    held = {}
+    for parameter in parameters:
+        if parameter.active(held):
+            if parameter.name not in spec:
+                raise Refused(LACKING % (what, parameter.name))
+            held[parameter.name] = spec[parameter.name]
+    LOG.debug("complete exit seconds=%.4f parameters=%d", time.perf_counter() - started, len(held))
+
+
+def canonical(parameters, spec, what):
     started = time.perf_counter()
 
     def read(parameter):
         if parameter.name not in spec:
-            raise ValueError("spec lacks the active parameter " + parameter.name)
-        return parameter.check(spec[parameter.name])
+            raise Refused(LACKING % (what, parameter.name))
+        try:
+            return parameter.check(spec[parameter.name])
+        except ValueError as error:
+            raise Refused(str(error)) from error
 
     result = draw(parameters, read)
     extra = sorted(set(spec) - set(result))
     if extra:
-        raise ValueError("spec sets inactive or unknown parameters: " + ", ".join(extra))
+        raise Refused("%s states %s, which are inactive or unknown" % (what, ", ".join(extra)))
     LOG.debug("canonical exit seconds=%.4f parameters=%d", time.perf_counter() - started, len(result))
     return result
 

@@ -7,6 +7,10 @@ class GraphCapacityError(ValueError):
     pass
 
 
+class Refused(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class GraphLimits:
     device: str

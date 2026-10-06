@@ -87,7 +87,7 @@ def test_all_model_samples_are_canonical_and_cover_each_available_view():
     declaration = registry()
     offered = samples(declaration)
     assert {model["view"] for model in offered} == set(views(declaration))
-    assert all(specs.canonical(space(declaration), model) == model for model in offered)
+    assert all(specs.canonical(space(declaration), model, "the model") == model for model in offered)
     assert {model["memory/update"] for model in offered if model["view"] == "memory"} == {
         "mailbox_gru",
         "mutual_rnn",
@@ -156,7 +156,7 @@ def test_variant_cache_reads_mutated_configuration(monkeypatch, tmp_path):
         ),
     )
     cfg = {
-        "model": {"view": "signal"},
+        "model": configured(stated, {"view": "signal"}),
         "pipeline": [],
         "graph": {"time/history": 1, "time/steps": "tasks"},
         "splits": SPLITS,
@@ -230,7 +230,7 @@ def test_a_model_space_is_built_once_and_a_bank_derives_the_representations_of_a
     found = recorded(model_spec, "derived", monkeypatch)
     chosen = [held.stated(cfg)[0][0] for _ in range(20)]
     assert len(found) == 1 and chosen == [found[0][1]] * 20
-    cfg["model"]["snapshot/temporal"] = "coupling_edges"
+    cfg["model"].update(configured(held.registry, {"view": "snapshot", "snapshot/temporal": "coupling_edges"}))
     assert held.chosen(cfg["model"]) == ("coupling",) and len(found) == 2
     registries.changed()
     assert held.chosen(cfg["model"]) == ("coupling",) and len(found) == 3

@@ -13,7 +13,7 @@ import torch
 from numba import njit
 
 from graphspec import Registry, registries
-from graphspec.budgets import GraphLimits
+from graphspec.budgets import GraphLimits, Refused
 from graphspec.engine import join, schedule, segments, transform
 from graphspec.engine.edits import sliced
 from graphspec.facts.stored import PACKED, Facts, admitted, inputs
@@ -53,7 +53,8 @@ ROWS = 1024
 JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
-VIEW = 76
+STATED = ("model", "pipeline", "graph")
+VIEW = 77
 TOKEN = (1 << 62) - 1
 
 
@@ -287,10 +288,10 @@ class Viewed:
         started = time.perf_counter()
         entry, graphs = self.graphs[index], {graph["name"]: graph for graph in bank.manifest["graphs"]}
         if name not in graphs:
-            raise KeyError("the bank holds no graph named %s to show beside graph %s" % (name, entry["name"]))
+            raise Refused("the bank holds no graph named %s to show beside graph %s" % (name, entry["name"]))
         named, source = graphs[name], bank.manifest["graphs"][entry["source"]]
         if named["unit"] != source["unit"]:
-            raise ValueError(
+            raise Refused(
                 "the graph %s counts time in %s and the graph %s it would be shown beside in %s"
                 % (name, named["unit"], source["name"], source["unit"])
             )
@@ -438,16 +439,16 @@ class Bank:
     def looking(self, cfg):
         started = time.perf_counter()
         if "splits" not in cfg:
-            raise KeyError("the configuration states no splits to train on and to score on")
+            raise Refused("the configuration states no splits to train on and to score on")
         stated = cfg["splits"]
         key = self.digested("splits", stated, stated)
         if key not in self._looking:
             lacking = [name for name in STATEMENT if name not in stated]
             if lacking or len(stated) != len(STATEMENT):
-                raise KeyError("the splits of the configuration state exactly " + ", ".join(STATEMENT))
+                raise Refused("the splits of the configuration state exactly " + ", ".join(STATEMENT))
             held = Looking(self.splits, stated["trained"], stated["scored"], stated["sees"])
             if sorted(stated["trained"]) != sorted(self.manifest["trained"]):
-                raise ValueError(
+                raise Refused(
                     "the scaling of the targets of the bank was fitted on the splits %s, and the fit trains on %s"
                     % (", ".join(self.manifest["trained"]), ", ".join(stated["trained"]))
                 )
@@ -606,21 +607,19 @@ class Bank:
         return result
 
     def chosen(self, model):
-        from tuning.families.model_spec import derived, edited
+        from tuning.families.model_spec import MODEL, derived, edited, space
 
         held = self.choices.get(id(model))
         if held is None or held[0] != model or held[1] != registries.GENERATION:
-            held = self.choices[id(model)] = (
-                dict(model),
-                registries.GENERATION,
-                derived(model),
-                edited(model, self.registry.schema),
-            )
+            name = edited(model, self.registry.schema)
+            specs.complete(space(self.registry), model, MODEL)
+            held = self.choices[id(model)] = (dict(model), registries.GENERATION, derived(model), name)
         return held[2]
 
     def stated(self, cfg):
-        if "pipeline" not in cfg:
-            raise KeyError("the configuration states no pipeline")
+        lacking = [name for name in STATED if name not in cfg]
+        if lacking:
+            raise Refused("the configuration states no " + " and no ".join(lacking))
         chosen = self.chosen(cfg["model"])
         stated = dict(pipeline=cfg["pipeline"], graph=cfg["graph"])
         key = (
@@ -634,12 +633,12 @@ class Bank:
         return key, *self.variants[key]
 
     def settled(self, cfg, chosen):
-        from tuning.families.model_spec import groups
+        from tuning.families.model_spec import GRAPH, groups
 
         started = time.perf_counter()
         result = (
             resolved(self.registry, cfg["pipeline"]),
-            specs.canonical(specs.settings(self.registry, groups(cfg["model"])), cfg["graph"]),
+            specs.canonical(specs.settings(self.registry, groups(cfg["model"])), cfg["graph"], GRAPH),
             chosen,
         )
         agreed(self.registry, *result[:2])

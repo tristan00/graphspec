@@ -9,6 +9,7 @@ import pytest
 import torch
 from support import SEED
 
+from graphspec.budgets import Refused
 from graphspec.infra import compute
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json
@@ -157,9 +158,9 @@ def test_the_device_is_not_carried_by_the_environment():
 @pytest.mark.parametrize("name", names())
 def test_fit_with_a_field_absent_stops_naming_the_field(tmp_path, statement, name):
     given = {key: value for key, value in statement.items() if key != name}
-    with pytest.raises(KeyError, match="the statement lacks " + name):
+    with pytest.raises(Refused, match="^the statement lacks " + name):
         api.fit.__wrapped__(tmp_path / "bank", {}, tmp_path / "fit", given)
-    with pytest.raises(KeyError, match="the statement lacks " + name):
+    with pytest.raises(Refused, match="^the statement lacks " + name):
         Statement(**given)
     with pytest.raises(TypeError, match="a statement built by tuning.statement.state is required"):
         fit(tmp_path / "bank", tmp_path, {}, [], 8, time.perf_counter() + 30, given)
@@ -242,7 +243,7 @@ def test_a_statement_is_built_only_through_its_checks(monkeypatch, statement):
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
     with pytest.raises(TypeError):
         Statement(*statement.values())
-    with pytest.raises(TypeError, match="read from a mapping"):
+    with pytest.raises(Refused, match="^the statement is read from a mapping of its fields, found "):
         state(list(statement.items()))
     held = state(dict(statement, device="cuda:1", seed=2**32 - 1, workers=processors()))
     assert (held.device, held.seed, held.workers) == ("cuda:1", 2**32 - 1, processors())
@@ -256,12 +257,12 @@ def test_search_with_a_field_absent_stops_naming_the_field(bank, tmp_path, state
     given = flags(args)
     assert state(given).mapping() == statement
     del given[name]
-    with pytest.raises(KeyError, match="the statement lacks " + name):
+    with pytest.raises(Refused, match="^the statement lacks " + name):
         state(given)
     flag = dict(variant_cache_bytes="variant_gb")[name] if name == "variant_cache_bytes" else name
     if hasattr(args, flag):
         setattr(args, flag, None)
-        with pytest.raises(KeyError, match="the statement lacks " + name):
+        with pytest.raises(Refused, match="^the statement lacks " + name):
             run.__wrapped__(args)
         assert not (tmp_path / "run").exists()
 
@@ -270,7 +271,7 @@ def test_statement_holds_every_field_and_no_other(statement):
     assert set(names()) == set(statement)
     assert state(statement).mapping() == statement
     assert state(statement).replace(seed=9).seed == 9
-    with pytest.raises(KeyError, match="does not know: colour"):
+    with pytest.raises(Refused, match="^the statement holds fields it does not know: colour$"):
         state(dict(statement, colour="red"))
     with pytest.raises(ValueError, match="the statement's version is 0"):
         state(dict(statement, version=0))
@@ -295,7 +296,7 @@ def test_fit_rejects_a_configuration_whose_splits_are_not_the_statements(tmp_pat
     from conftest import SPLITS
 
     given = dict(seed=statement["seed"])
-    with pytest.raises(KeyError, match="the configuration states no splits"):
+    with pytest.raises(Refused, match="^the configuration states no splits to train on and to score on$"):
         fit(tmp_path / "bank", tmp_path, given, [], 8, time.perf_counter() + 30, state(statement))
     other = dict(SPLITS, sees=dict(train=["without_targets"], validation=[]))
     with pytest.raises(ValueError, match="the splits of the configuration are"):

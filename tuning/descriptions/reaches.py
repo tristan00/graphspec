@@ -2,23 +2,22 @@ import logging
 import time
 from pathlib import Path
 
+from graphspec.budgets import Refused
 from graphspec.descriptions import describe as truth
 from graphspec.descriptions import effect
-from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, sha256_json
 from graphspec.infra.timing import timed
-from graphspec.operations import parameters as specs
-from tuning.bank.bank import Bank, Deriver
+from tuning.bank.bank import Bank
 from tuning.families.heads import fielded
-from tuning.statement import agreed, state
+from tuning.statement import state
 
 from . import reach as reaching
+from .restated import STOPS, lined
 
 LOG = logging.getLogger(__name__)
-REFUSALS = (KeyError, TypeError, ValueError)
-STATED = ("model", "pipeline", "graph")
 FILES = ("config.json", "statement.json")
 PLANNED = ("bank_stored_sha256", "trials")
+STOPPED = "the derivation of its variant stopped with %s: %s"
 SHOWN = 10
 READING = (
     "variant: the first %d characters of the key of the variant of the trial, trials of one key and one realisation "
@@ -47,29 +46,12 @@ READING = (
     "as doing so alone, each later entry that leaves none where the pipeline is derived without the entries named "
     "before it for the same, or with one parameter of such an entry re-stated where the pipeline is refused without "
     "it; not "
-    "described: in place of the columns of a trial, what its statement refuses of its configuration, what the trial "
-    "lacks, or what stopped the derivation of its variant, with no variant and no realisation where its statement "
-    "names none; the settings under which an option, a field or a target comes back are in the reach of one trial, "
+    "described: in place of the columns of a trial, the file the trial lacks, what the checks of its statement and of "
+    "its configuration refuse, with no variant and no realisation, or the error of the library's own that stopped the "
+    "derivation of its variant, after the name of its class; any other error stops the table and is no reason of a "
+    "trial; the settings under which an option, a field or a target comes back are in the reach of one trial, "
     "which the verb describe --reach prints for the bank and the config.json and statement.json of the trial" % SHOWN
 )
-
-
-def named(bank, derivers, config, statement):
-    started = time.perf_counter()
-    stated = state(statement)
-    agreed(config, stated)
-    lacking = [name for name in STATED if name not in config]
-    if lacking:
-        raise KeyError("the configuration states no " + " and no ".join(lacking))
-    held = (stated.device, stated.derivation_seed)
-    if held not in derivers:
-        derivers[held] = Deriver(bank, *held, RESIDENT)
-    deriver = derivers[held]
-    name = reaching.realising(deriver, config)
-    key = specs.digest(deriver.identity(config))
-    refused = reaching.unrouted(deriver, config)
-    LOG.debug("reaches named exit variant=%s realisation=%s seconds=%.4f", key[:SHOWN], name, time.perf_counter() - started)
-    return deriver, name, key, refused
 
 
 def severed(reached, group, cuts):
@@ -210,20 +192,15 @@ def summed(deriver, config, name):
 
 def rowed(deriver, config, key, name, fields):
     started = time.perf_counter()
-    try:
-        held, reason = summed(deriver, config, name), None
-    except ValueError as error:
-        held, reason = dict(graphs=None, tasks=None, cuts=None), str(error)
     result = dict(
         version=truth.VERSION,
         variant=key,
         stored_sha256=deriver.source,
         realisation=name,
         fields=fields,
-        reason=reason,
-        **held,
+        **summed(deriver, config, name),
     )
-    LOG.info("reaches rowed exit variant=%s described=%s seconds=%.3f", key[:SHOWN], reason is None, time.perf_counter() - started)
+    LOG.info("reaches rowed exit variant=%s seconds=%.3f", key[:SHOWN], time.perf_counter() - started)
     return result
 
 
@@ -234,9 +211,13 @@ def recorded(bank, manifest, fields, stated):
         row = dict(trial=trial, variant=None, realisation=None, refused=None, reason=reason, graphs=None, tasks=None, cuts=None)
         if found is not None:
             deriver, name, key, refused = found
+            row.update(variant=key, realisation=name, refused=refused)
             held = Path(bank) / "descriptions" / "reach_rows" / reaching.stemmed(key, name, None)
-            kept = truth.kept(held, lambda: rowed(deriver, config, key, name, fields), row_text)
-            row.update({part: kept[part] for part in kept if part in row}, refused=refused)
+            try:
+                kept = truth.kept(held, lambda: rowed(deriver, config, key, name, fields), row_text)
+                row.update({part: kept[part] for part in ("graphs", "tasks", "cuts")})
+            except STOPS as error:
+                row.update(reason=STOPPED % (type(error).__name__, lined(error)))
         rows.append(row)
     result = dict(version=truth.VERSION, stored_sha256=manifest["stored_sha256"], fields=fields, trials=rows)
     LOG.info("reaches recorded exit trials=%d seconds=%.3f", len(rows), time.perf_counter() - started)
@@ -253,9 +234,9 @@ def tabled(bank, manifest, trials, folder):
         found = None
         if reason is None:
             try:
-                found = named(bank, derivers, config, statement)
-            except REFUSALS as error:
-                reason = str(error.args[0])
+                found = reaching.named(bank, derivers, config, statement)
+            except Refused as error:
+                reason = lined(error)
         stated.append((trial, config, found, reason))
     key = sha256_json(
         dict(
@@ -302,7 +283,7 @@ def search(bank, folder):
     plan = read_json(found)
     lacking = [name for name in PLANNED if name not in plan]
     if lacking:
-        raise KeyError("the plan.json of %s lacks %s" % (folder, " and ".join(lacking)))
+        raise ValueError("the plan.json of %s lacks %s" % (folder, " and ".join(lacking)))
     if plan["bank_stored_sha256"] != manifest["stored_sha256"]:
         raise ValueError(
             "the search %s searches the bank whose build stored %s, and the bank %s stored %s"
@@ -373,9 +354,11 @@ def cut_cell(cuts, graphs):
 
 
 @timed("reaches.fitted")
-def fitted(row, held):
+def fitted(row, fields):
     if row["reason"] is not None:
-        return held
+        named = ["-" if row[part] is None else row[part] for part in ("variant", "realisation")]
+        return [named[0][:SHOWN], named[1], "not described: " + row["reason"]]
+    held = cells(row, fields)
     if row["refused"] is None:
         return held[:2] + ["not refused"] + held[2:]
     return held[:2] + ["refused"] + held[2:] + [row["refused"]]
@@ -383,21 +366,18 @@ def fitted(row, held):
 
 def cells(row, fields):
     started = time.perf_counter()
-    result = ["-" if row["variant"] is None else row["variant"][:SHOWN], "-" if row["realisation"] is None else row["realisation"]]
-    if row["reason"] is None:
-        for task, names in fields.items():
-            held = row["tasks"][task]
-            result.append(task_cell(held))
-            result += [field_cell(held["fields"][name]) for name in names]
-        result.append(cut_cell(row["cuts"], row["graphs"]))
-    else:
-        result.append("not described: " + row["reason"])
+    result = [row["variant"][:SHOWN], row["realisation"]]
+    for task, names in fields.items():
+        held = row["tasks"][task]
+        result.append(task_cell(held))
+        result += [field_cell(held["fields"][name]) for name in names]
+    result.append(cut_cell(row["cuts"], row["graphs"]))
     LOG.debug("reaches cells exit cells=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 
-@timed("reaches.lined")
-def lined(header, rows):
+@timed("reaches.tabled_lines")
+def tabled_lines(header, rows):
     held = [header] + rows
     aligned = [row if len(row) == len(header) else row[:-1] for row in held]
     widths = [max(len(row[at]) for row in aligned if at < len(row)) for at in range(len(header))]
@@ -411,7 +391,7 @@ def row_text(record):
         % (record["variant"], record["stored_sha256"], record["version"]),
         READING,
     ]
-    lines += lined(heads(record["fields"]), [cells(record, record["fields"])])
+    lines += tabled_lines(heads(record["fields"]), [cells(record, record["fields"])])
     LOG.debug("reaches row text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"
 
@@ -429,6 +409,6 @@ def text(record):
     ]
     header = heads(fields)
     header = ["trial"] + header[:2] + ["a fit"] + header[2:] + ["a fit is refused because"]
-    lines += lined(header, [[str(row["trial"])] + fitted(row, cells(row, fields)) for row in rows])
+    lines += tabled_lines(header, [[str(row["trial"])] + fitted(row, fields) for row in rows])
     LOG.debug("reaches text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"
