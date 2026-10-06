@@ -53,16 +53,19 @@ HELD = dict(
     base=dict(table="base", ends=[["agent", "spot"]], columns=[]),
 )
 NONE = dict(least=None, most=None, mean=None)
+CLOCKED = dict(model="clock", units=["tick"])
+UNBEGUN = dict(nodes_before=0, observations_before=0)
+BEGUN = dict(nodes_before=1, observations_before=1)
 FIRST = dict(
     name="g0",
     unit="tick",
     times=[0, 1, 2, 3, 4, 5, 6, 7],
     kinds=dict(
         agent=dict(
-            nodes=2, observations=3, replaced=0, nodes_at=[2, 2, 2, 2, 2, 2, 2, 2], observations_at=[2, 2, 2, 3, 2, 2, 2, 2]
+            UNBEGUN, nodes=2, observations=3, replaced=0, nodes_at=[2, 2, 2, 2, 2, 2, 2, 2], observations_at=[2, 2, 2, 3, 2, 2, 2, 2]
         ),
         spot=dict(
-            nodes=3, observations=3, replaced=0, nodes_at=[2, 2, 3, 3, 3, 2, 2, 2], observations_at=[2, 2, 3, 3, 3, 2, 2, 2]
+            UNBEGUN, nodes=3, observations=3, replaced=0, nodes_at=[2, 2, 3, 3, 3, 2, 2, 2], observations_at=[2, 2, 3, 3, 3, 2, 2, 2]
         ),
     ),
     relations=dict(
@@ -72,6 +75,7 @@ FIRST = dict(
             facts=3,
             absent=1,
             replaced=0,
+            edges_before=0,
             edges_at=[1, 1, 2, 2, 1, 1, 0, 0],
             runs=2,
             bounded=2,
@@ -85,6 +89,7 @@ FIRST = dict(
             facts=3,
             absent=0,
             replaced=0,
+            edges_before=0,
             edges_at=[1, 2, 1, 1, 2, 2, 1, 1],
             runs=3,
             bounded=2,
@@ -117,12 +122,26 @@ SECOND = dict(
     unit="tick",
     times=[1, 2, 3],
     kinds=dict(
-        agent=dict(nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1], observations_at=[1, 1, 1]),
-        spot=dict(nodes=2, observations=2, replaced=0, nodes_at=[2, 2, 1], observations_at=[2, 2, 1]),
+        agent=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1], observations_at=[1, 1, 1]),
+        spot=dict(BEGUN, nodes=2, observations=2, replaced=0, nodes_at=[2, 2, 1], observations_at=[2, 2, 1]),
     ),
     relations=dict(
-        near=dict(HELD["near"], ends=[], edges=0, facts=0, absent=0, replaced=0, edges_at=[0, 0, 0], runs=0, bounded=0, **NONE),
-        base=dict(HELD["base"], edges=1, facts=1, absent=0, replaced=0, edges_at=[1, 1, 0], runs=1, bounded=0, **NONE),
+        near=dict(
+            HELD["near"],
+            ends=[],
+            edges=0,
+            facts=0,
+            absent=0,
+            replaced=0,
+            edges_before=0,
+            edges_at=[0, 0, 0],
+            runs=0,
+            bounded=0,
+            **NONE,
+        ),
+        base=dict(
+            HELD["base"], edges=1, facts=1, absent=0, replaced=0, edges_before=1, edges_at=[1, 1, 0], runs=1, bounded=0, **NONE
+        ),
     ),
     tasks=dict(
         turn=dict(tasks=1, splits=dict(train=1, validation=0), unsplit=0),
@@ -149,16 +168,17 @@ graph g0, unit tick, times 8 from 0 to 7
   kind spot: nodes 3, observations 3, replaced 0
   relation near of the table near: ends spot to spot; columns weight; edges 2, facts 3, absent 1, replaced 0; runs 2, bounded 2, lasting 2 to 6, mean 4.0
   relation base of the table base: ends agent to spot; no columns; edges 2, facts 3, absent 0, replaced 0; runs 3, bounded 2, lasting 1 to 2, mean 1.5
-  held at each time:
-    time  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    0     2            2                   2           2                  1           1
-    1     2            2                   2           2                  1           2
-    2     2            2                   3           3                  2           1
-    3     2            3                   3           3                  2           1
-    4     2            2                   3           3                  1           2
-    5     2            2                   2           2                  1           2
-    6     2            2                   2           2                  0           1
-    7     2            2                   2           2                  0           1
+  held before every time and at each time:
+    time    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
+    before  0            0                   0           0                  0           0
+    0       2            2                   2           2                  1           1
+    1       2            2                   2           2                  1           2
+    2       2            2                   3           3                  2           1
+    3       2            3                   3           3                  2           1
+    4       2            2                   3           3                  1           2
+    5       2            2                   2           2                  1           2
+    6       2            2                   2           2                  0           1
+    7       2            2                   2           2                  0           1
   kind of task turn: tasks 3; train 2, validation 1, no split 0
   kind of task visit: tasks 4; train 2, validation 1, no split 1
   decisions of turn: decisions 3, options 10, recorded 7, regenerated 3; changed 3
@@ -172,11 +192,12 @@ graph g1, unit tick, times 3 from 1 to 3
   kind spot: nodes 2, observations 2, replaced 0
   relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
   relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
-  held at each time:
-    time  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    1     1            1                   2           2                  0           1
-    2     1            1                   2           2                  0           1
-    3     1            1                   1           1                  0           0
+  held before every time and at each time:
+    time    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
+    before  1            1                   1           1                  0           1
+    1       1            1                   2           2                  0           1
+    2       1            1                   2           2                  0           1
+    3       1            1                   1           1                  0           0
   kind of task turn: tasks 1; train 1, validation 0, no split 0
   kind of task visit: tasks 1; train 0, validation 1, no split 0
   decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1
@@ -377,7 +398,7 @@ def test_the_text_holds_every_number_of_the_record_and_the_verb_prints_what_the_
 
     stored = read_json(bank / "manifest.json")["stored_sha256"]
     record = describe(bank)
-    written = TEXT % (stored, describing.VERSION, describing.READING)
+    written = TEXT % (stored, describing.VERSION, describing.READING["clock"])
     assert describing.text(record) == written
     found, shown = files(bank, stored)
     assert read_json(found) == record and shown.read_text(encoding="utf-8") == written
@@ -857,6 +878,7 @@ def varied(bank, config):
         version=describing.VERSION,
         variant=key,
         stored_sha256=stored,
+        time=CLOCKED,
         seed=STATED["derivation_seed"],
         device="cpu",
         splits=SPLITS,
@@ -2714,12 +2736,13 @@ TRUTHS = dict(
     second="g1",
     unit="tick",
     differs=True,
-    times=[0, 1, 2, 3, 4, 5, 6, 7],
+    times=[None, 0, 1, 2, 3, 4, 5, 6, 7],
     kinds=dict(
         agent=unlike(
             NODAL,
             "both",
-            (8, 0, 0, 0),
+            (8, 1, 0, 0),
+            (None, 0, 1, 0, 0),
             (0, 1, 0, 0, 0),
             (1, 1, 0, 0, 0),
             (2, 1, 0, 0, 0),
@@ -2732,7 +2755,8 @@ TRUTHS = dict(
         spot=unlike(
             NODAL,
             "both",
-            (9, 0, 0, 0),
+            (9, 1, 0, 0),
+            (None, 0, 1, 0, 0),
             (0, 1, 0, 0, 0),
             (2, 1, 0, 0, 0),
             (3, 2, 0, 0, 0),
@@ -2749,7 +2773,8 @@ TRUTHS = dict(
         base=unlike(
             EDGED,
             "both",
-            (10, 2, 0),
+            (10, 3, 0),
+            (None, 0, 1, 0),
             (0, 1, 1, 0),
             (1, 1, 0, 0),
             (2, 1, 1, 0),
@@ -2824,25 +2849,27 @@ SAME_TEXT = "nothing differs: the two hold the same nodes, anchors and edges at 
 TRUTHS_TEXT = """difference of the truth graphs g0, the first, and g1, the second, of the bank stored as %s, described at version %d
 unit tick, times 8 from 0 to 7
 %s
-  kind agent: nodes only the first holds 8, only the second 0; anchors only the first holds 0, only the second 0
-    time  first nodes  second nodes  first anchors  second anchors
-    0     1            0             0              0
-    1     1            0             0              0
-    2     1            0             0              0
-    3     1            0             0              0
-    4     1            0             0              0
-    5     1            0             0              0
-    6     1            0             0              0
-    7     1            0             0              0
-  kind spot: nodes only the first holds 9, only the second 0; anchors only the first holds 0, only the second 0
-    time  first nodes  second nodes  first anchors  second anchors
-    0     1            0             0              0
-    2     1            0             0              0
-    3     2            0             0              0
-    4     2            0             0              0
-    5     1            0             0              0
-    6     1            0             0              0
-    7     1            0             0              0
+  kind agent: nodes only the first holds 8, only the second 1; anchors only the first holds 0, only the second 0
+    time    first nodes  second nodes  first anchors  second anchors
+    before  0            1             0              0
+    0       1            0             0              0
+    1       1            0             0              0
+    2       1            0             0              0
+    3       1            0             0              0
+    4       1            0             0              0
+    5       1            0             0              0
+    6       1            0             0              0
+    7       1            0             0              0
+  kind spot: nodes only the first holds 9, only the second 1; anchors only the first holds 0, only the second 0
+    time    first nodes  second nodes  first anchors  second anchors
+    before  0            1             0              0
+    0       1            0             0              0
+    2       1            0             0              0
+    3       2            0             0              0
+    4       2            0             0              0
+    5       1            0             0              0
+    6       1            0             0              0
+    7       1            0             0              0
   relation near: edges only the first holds 8, only the second 0, held by both with other values 0
     time  first  second  other values
     0     1      0       0
@@ -2851,16 +2878,17 @@ unit tick, times 8 from 0 to 7
     3     2      0       0
     4     1      0       0
     5     1      0       0
-  relation base: edges only the first holds 10, only the second 2, held by both with other values 0
-    time  first  second  other values
-    0     1      1       0
-    1     1      0       0
-    2     1      1       0
-    3     1      0       0
-    4     2      0       0
-    5     2      0       0
-    6     1      0       0
-    7     1      0       0
+  relation base: edges only the first holds 10, only the second 3, held by both with other values 0
+    time    first  second  other values
+    before  0      1       0
+    0       1      1       0
+    1       1      0       0
+    2       1      1       0
+    3       1      0       0
+    4       2      0       0
+    5       2      0       0
+    6       1      0       0
+    7       1      0       0
   equal at every time: kinds 0, relations 0
 """
 ALONE_TEXT = """difference of the truth graphs g1, the first, and g1, the second, of the bank stored as %s, described at version %d
@@ -2871,17 +2899,17 @@ unit tick, times 3 from 1 to 3
 TIMELESS_TEXT = """unit tick, no time
 %s
   kind agent: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
-    time  first nodes  second nodes  first anchors  second anchors
-    none  1            0             0              0
+    time    first nodes  second nodes  first anchors  second anchors
+    before  1            0             0              0
   kind spot: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
-    time  first nodes  second nodes  first anchors  second anchors
-    none  1            0             0              0
+    time    first nodes  second nodes  first anchors  second anchors
+    before  1            0             0              0
   relation near: edges only the first holds 2, only the second 0, held by both with other values 0
-    time  first  second  other values
-    none  2      0       0
+    time    first  second  other values
+    before  2      0       0
   relation base: edges only the first holds 1, only the second 0, held by both with other values 0
-    time  first  second  other values
-    none  1      0       0
+    time    first  second  other values
+    before  1      0       0
   equal at every time: kinds 0, relations 0
 """
 
@@ -2922,7 +2950,13 @@ def diverged(bank, degrees, differs, graphs):
         for degree in degrees
     ]
     record = dict(
-        version=describing.VERSION, stored_sha256=stored, first=sides[0], second=sides[1], differs=differs, graphs=graphs
+        version=describing.VERSION,
+        stored_sha256=stored,
+        time=CLOCKED,
+        first=sides[0],
+        second=sides[1],
+        differs=differs,
+        graphs=graphs,
     )
     versions = [OPERATIONS.named(name).version for name in ("graphspec.nodes", "graphspec.relation_forms")]
     written = HEAD_TEXT % (
@@ -2930,7 +2964,7 @@ def diverged(bank, degrees, differs, graphs):
         sides[1]["variant"],
         stored,
         describing.VERSION,
-        differing.READING,
+        differing.READING["clock"],
         *[SIDE_TEXT % (versions[0], degree, versions[1]) for degree in degrees],
     )
     key = dict(version=describing.VERSION, first=dict(variant=sides[0]["variant"]), second=dict(variant=sides[1]["variant"]))
@@ -2942,7 +2976,7 @@ def truths(bank, first, second, found):
     stored = read_json(bank / "manifest.json")["stored_sha256"]
     key = dict(stored=stored, version=describing.VERSION, first=dict(graph=first), second=dict(graph=second))
     return (
-        dict(version=describing.VERSION, stored_sha256=stored, **found),
+        dict(version=describing.VERSION, stored_sha256=stored, time=CLOCKED, **found),
         bank / "descriptions" / "differences" / sha256_json(key),
     )
 
@@ -2979,12 +3013,13 @@ def test_two_truth_graphs_of_a_bank_differ_by_what_is_written_out_here_and_a_gra
     record = between(bank, "g0", "g1")
     assert record == expected and json.loads(json.dumps(record)) == record
     assert between(bank, "g1", "g0") == turned_over(expected)
-    assert turned_over(expected)["relations"]["base"]["at"][0] == dict(time=0, first=1, second=1, valued=0)
-    assert turned_over(expected)["relations"]["base"]["at"][1] == dict(time=1, first=0, second=1, valued=0)
-    alone = dict(first="g1", second="g1", unit="tick", differs=False, times=[1, 2, 3], kinds={}, relations={})
+    assert turned_over(expected)["relations"]["base"]["at"][0] == dict(time=None, first=1, second=0, valued=0)
+    assert turned_over(expected)["relations"]["base"]["at"][1] == dict(time=0, first=1, second=1, valued=0)
+    assert turned_over(expected)["relations"]["base"]["at"][2] == dict(time=1, first=0, second=1, valued=0)
+    alone = dict(first="g1", second="g1", unit="tick", differs=False, times=[None, 1, 2, 3], kinds={}, relations={})
     alone, stem = truths(bank, "g1", "g1", dict(alone, equal=dict(kinds=2, relations=2)))
     assert between(bank, "g1", "g1") == alone
-    written = ALONE_TEXT % (alone["stored_sha256"], describing.VERSION, differing.TRUTH)
+    written = ALONE_TEXT % (alone["stored_sha256"], describing.VERSION, differing.TRUTH["clock"])
     assert differing.text(alone) == written == stem.with_suffix(".txt").read_text(encoding="utf-8")
     with pytest.raises(KeyError, match="holds no graph named g9; its graphs are g0, g1"):
         between(bank, "g0", "g9")
@@ -3012,7 +3047,7 @@ def test_the_text_of_a_difference_holds_its_record_and_the_verb_prints_what_the_
     assert capsys.readouterr().out == head + DIFFERENCE
     record = between(bank, "g0", "g1")
     expected, stem = truths(bank, "g0", "g1", TRUTHS)
-    written = TRUTHS_TEXT % (expected["stored_sha256"], describing.VERSION, differing.TRUTH)
+    written = TRUTHS_TEXT % (expected["stored_sha256"], describing.VERSION, differing.TRUTH["clock"])
     assert differing.text(record) == written
     assert read_json(stem.with_suffix(".json")) == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
@@ -3074,6 +3109,7 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
     assert record == dict(
         version=describing.VERSION,
         stored_sha256=manifest["stored_sha256"],
+        time=CLOCKED,
         first="g0",
         second="g1",
         unit="tick",
@@ -3088,7 +3124,7 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         ),
         equal=dict(kinds=0, relations=0),
     )
-    assert differing.text(record).split("\n", 1)[1] == TIMELESS_TEXT % differing.TRUTH
+    assert differing.text(record).split("\n", 1)[1] == TIMELESS_TEXT % differing.TRUTH["clock"]
     config = leaned(bank, 1)
     name, graph, grown, low, high = diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), config)[0]
     assert (name, low, high) == ("g0", 0, 8)
@@ -3113,7 +3149,7 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
     assert [(graph["kinds"], graph["equal"]) for graph in found] == [({}, dict(kinds=2, relations=2))] * 2
     assert found[1]["relations"] == {LOOPS: unlike(EDGED, "first", (7, 0, 0), (1, 3, 0, 0), (2, 3, 0, 0), (3, 1, 0, 0))}
     assert "  relation relation_forms.loops, which only the first states: edges only the first holds 7," in "\n".join(
-        differing.graph_text(found[1])
+        differing.graph_text(found[1], describing.NAMED["clock"])
     )
     LOG.info("descriptions difference apart exit seconds=%.3f", time.perf_counter() - started)
 
@@ -3162,6 +3198,7 @@ RETRACTED = dict(
     facts=1,
     absent=1,
     replaced=1,
+    edges_before=0,
     edges_at=[1, 1, 1, 1],
     runs=1,
     bounded=0,
@@ -3178,6 +3215,7 @@ EITHER_WAY = dict(
     facts=2,
     absent=0,
     replaced=0,
+    edges_before=0,
     edges_at=[1, 1, 1, 1],
     runs=1,
     bounded=0,
@@ -3188,8 +3226,8 @@ THIRD = dict(
     unit="tick",
     times=[0, 1, 2, 3],
     kinds=dict(
-        agent=dict(nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1, 1], observations_at=[1, 1, 1, 1]),
-        spot=dict(nodes=3, observations=3, replaced=0, nodes_at=[3, 3, 3, 3], observations_at=[3, 3, 3, 3]),
+        agent=dict(UNBEGUN, nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1, 1], observations_at=[1, 1, 1, 1]),
+        spot=dict(UNBEGUN, nodes=3, observations=3, replaced=0, nodes_at=[3, 3, 3, 3], observations_at=[3, 3, 3, 3]),
     ),
     relations=dict(near=RETRACTED, base=EITHER_WAY),
     tasks=dict(turn=dict(tasks=4, splits=dict(train=2, validation=2), unsplit=0)),
@@ -3215,12 +3253,13 @@ graph h0, unit tick, times 4 from 0 to 3
   kind spot: nodes 3, observations 3, replaced 0
   relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 1, replaced 1; runs 1, bounded 0
   relation base of the table base: ends agent to spot, spot to agent; no columns; edges 1, facts 2, absent 0, replaced 0; runs 1, bounded 0
-  held at each time:
-    time  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    0     1            1                   3           3                  1           1
-    1     1            1                   3           3                  1           1
-    2     1            1                   3           3                  1           1
-    3     1            1                   3           3                  1           1
+  held before every time and at each time:
+    time    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
+    before  0            0                   0           0                  0           0
+    0       1            1                   3           3                  1           1
+    1       1            1                   3           3                  1           1
+    2       1            1                   3           3                  1           1
+    3       1            1                   3           3                  1           1
   kind of task turn: tasks 4; train 2, validation 2, no split 0
   decisions of turn: decisions 4, options 6, recorded 6, regenerated 0; no generator
     task  time  options  recorded  regenerated
@@ -3277,13 +3316,181 @@ def test_a_fact_a_correction_replaced_holds_nothing_is_counted_apart_and_alone_t
     assert differing.recorded(crossed, manifest, dict(index=0), dict(index=1)) == dict(
         version=describing.VERSION,
         stored_sha256=manifest["stored_sha256"],
+        time=dict(model="clocks", units=["tick"]),
         first="uncorrected",
         second="h0",
         unit="tick",
         differs=True,
-        times=[0, 1, 2, 3],
+        times=[None, 0, 1, 2, 3],
         kinds={},
         relations=dict(near=unlike(EDGED, "both", (4, 0, 0), (0, 1, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0), (3, 1, 0, 0))),
         equal=dict(kinds=2, relations=1),
     )
     LOG.info("descriptions corrected exit seconds=%.3f", time.perf_counter() - started)
+
+
+ORDERED = dict(model="order", units=[])
+STILL = dict(model="none", units=[])
+ORDERED_SECOND = """graph g1, no unit, positions 3 from 1 to 3
+  kind agent: nodes 1, observations 1, replaced 0
+  kind spot: nodes 2, observations 2, replaced 0
+  relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
+  relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
+  held before every position and at each position:
+    position  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
+    before    1            1                   1           1                  0           1
+    1         1            1                   2           2                  0           1
+    2         1            1                   2           2                  0           1
+    3         1            1                   1           1                  0           0
+  kind of task turn: tasks 1; train 1, validation 0, no split 0
+  kind of task visit: tasks 1; train 0, validation 1, no split 0
+  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1
+    task  position  options  recorded  regenerated  changed
+    10    2         3        2         1            1
+"""
+ORDERED_ALONE = """no unit, positions 3 from 1 to 3
+%s
+  nothing differs; equal at every position: kinds 2, relations 2
+"""
+ORDERED_CUT = (
+    "  entry test.cut, of the operation test.cut, removes every edge of the relation base at the positions of the tasks "
+    "of turn: 1, 3, 5; not at every position\n"
+)
+UNMET = (
+    "^the graphs g0 and g1 state when their facts hold as positions, each in an order of its own; the positions of two "
+    "graphs are never met, so under the model order a graph is compared only with itself$"
+)
+STILL_SECOND = """graph g1, no unit, no time
+  kind agent: nodes 1, observations 1, replaced 0
+  kind spot: nodes 2, observations 2, replaced 0
+  relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
+  relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
+  held always:
+    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
+    1            1                   2           2                  0           1
+  kind of task turn: tasks 1; train 1, validation 0, no split 0
+  kind of task visit: tasks 1; train 0, validation 1, no split 0
+  decisions of turn: decisions 1, options 3, recorded 2, regenerated 1; changed 1
+    task  time  options  recorded  regenerated  changed
+    10    none  3        2         1            1
+"""
+STILL_APART = """no unit, no time
+%s
+  kind agent: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
+    first nodes  second nodes  first anchors  second anchors
+    1            0             0              0
+  kind spot: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
+    first nodes  second nodes  first anchors  second anchors
+    1            0             0              0
+  relation near: edges only the first holds 2, only the second 0, held by both with other values 0
+    first  second  other values
+    2      0       0
+  relation base: edges only the first holds 1, only the second 0, held by both with other values 0
+    first  second  other values
+    1      0       0
+  equal: kinds 0, relations 0
+"""
+STILL_VARIANT = """
+graph g1, 3 steps, no time
+  tasks: turn at the step; visit at the step
+  held at each step before the first entry:
+    agent nodes  agent anchors  spot nodes  spot anchors  near edges  base edges  relation_forms.loops edges
+    1            0              2           0             0           1           3
+    1            0              2           0             0           0           3
+    0            0              1           0             0           0           1
+"""
+
+
+@timed("descriptions.restated")
+def restated(manifest, stated, ties):
+    spec = manifest["spec"]
+    return dict(manifest, spec=dict(spec, schema=dict(spec["schema"], time=dict(stated, ties=ties))))
+
+
+@timed("descriptions.unclocked")
+def unclocked(facts):
+    return Facts(facts.name, facts.keys, None, facts.inner, facts.observers, facts.options, facts.generators, **facts.arrays)
+
+
+def test_under_order_a_description_states_positions_and_no_length_and_the_orders_of_two_graphs_are_not_met(
+    bank, cutting, monkeypatch
+):
+    started = time.perf_counter()
+    manifest = restated(read_json(bank / "manifest.json"), ORDERED, "key")
+    held = [unclocked(describing.stored(bank, graph)) for graph in manifest["graphs"]]
+    monkeypatch.setattr(describing, "stored", lambda path, graph: held[graph["index"]])
+    record = describing.recorded(bank, manifest)
+    first, second = record["graphs"]
+    unmeasured = {name: dict(found, **NONE) for name, found in FIRST["relations"].items()}
+    assert record["time"] == ORDERED and second == dict(SECOND, unit=None)
+    assert first == dict(FIRST, unit=None, relations=unmeasured) and FIRST["relations"]["near"]["mean"] == 4.0
+    written = describing.text(record)
+    assert written.split("\n")[1:4] == ["time: order without a clock, no unit", "splits: train, validation", describing.READING["order"]]
+    assert written.split("\n\n")[2] == ORDERED_SECOND
+    assert not {"time", "lasting", "unit"} & set(describing.READING["order"].split() + written.split("\n\n", 1)[1].split()) - {"unit,"}
+    with pytest.raises(ValueError, match=UNMET):
+        differing.recorded(bank, manifest, *manifest["graphs"])
+    alone = differing.recorded(bank, manifest, manifest["graphs"][1], manifest["graphs"][1])
+    assert alone == dict(
+        version=describing.VERSION,
+        stored_sha256=manifest["stored_sha256"],
+        time=ORDERED,
+        first="g1",
+        second="g1",
+        unit=None,
+        differs=False,
+        times=[None, 1, 2, 3],
+        kinds={},
+        relations={},
+        equal=dict(kinds=2, relations=2),
+    )
+    assert differing.text(alone).split("\n", 1)[1] == ORDERED_ALONE % differing.TRUTH["order"]
+    assert "time" not in differing.TRUTH["order"] + differing.READING["order"]
+    config = configured(bank, CUTTING)
+    stated = effect.text(dict(variant(bank, config, STATED), time=ORDERED))
+    body = stated[stated.index("\ngraph ") :]
+    assert body.startswith("\ngraph g0, 8 steps from position 0 to 7\n  tasks: turn at 1, 3, 5; visit at 2, 4, 5, 6\n")
+    assert "  held at each position before the first entry:\n    position  agent nodes  agent anchors  spot nodes" in body
+    assert ORDERED_CUT in body and "time" not in body
+    LOG.info("descriptions under order exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_without_time_a_description_states_no_time_and_counts_once_what_holds_always(bank, cutting, monkeypatch):
+    started = time.perf_counter()
+    manifest = restated(read_json(bank / "manifest.json"), STILL, None)
+    held = [unclocked(timeless(describing.stored(bank, graph))) for graph in manifest["graphs"]]
+    monkeypatch.setattr(describing, "stored", lambda path, graph: held[graph["index"]])
+    record = describing.recorded(bank, manifest)
+    second, turn = record["graphs"][1], SECOND["decisions"]["turn"]
+    assert record["time"] == STILL and second == dict(
+        SECOND,
+        unit=None,
+        times=[],
+        kinds=dict(
+            agent=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[], observations_at=[]),
+            spot=dict(nodes=2, observations=2, replaced=0, nodes_before=2, observations_before=2, nodes_at=[], observations_at=[]),
+        ),
+        relations={name: dict(found, edges_at=[]) for name, found in SECOND["relations"].items()},
+        decisions=dict(turn=dict(turn, each=[dict(turn["each"][0], time=None)])),
+    )
+    written = describing.text(record)
+    assert written.split("\n")[1:4] == ["time: no time, no unit", "splits: train, validation", describing.READING["none"]]
+    assert written.split("\n\n")[2] == STILL_SECOND
+    apart = differing.recorded(bank, manifest, *manifest["graphs"])
+    assert (apart["time"], apart["unit"], apart["times"], apart["differs"]) == (STILL, None, [None], True)
+    assert apart["relations"]["near"] == unlike(EDGED, "both", (2, 0, 0), (None, 2, 0, 0))
+    assert differing.text(apart).split("\n", 1)[1] == STILL_APART % differing.TRUTH["none"]
+    name, graph, grown, low, high = diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), leaned(bank, 1))[1]
+    assert (name, low, high, np.asarray(graph.step_time).tolist()) == ("g1", 0, 3, [1, 2, 3])
+    monkeypatch.setattr(grown.schema, "model", "none")
+    (told,) = effect.told([graph], [graph], grown, ())
+    assert (told["times"], told["tasks"]) == ([None, None, None], dict(turn=[None], visit=[None]))
+    stated = effect.text(dict(variant(bank, configured(bank, CUTTING), STATED), time=STILL, graphs=[told]))
+    assert stated[stated.index("\ngraph ") :] == STILL_VARIANT
+    monkeypatch.undo()
+    first, second = (diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), leaned(bank, degree))[1] for degree in (1, 2))
+    for side in (first, second):
+        monkeypatch.setattr(side[2].schema, "model", "none")
+    unlike_steps = diverging.paired(first, second)
+    assert (unlike_steps["times"], unlike_steps["alone"]) == ([None, None, None], UNSHARED)
+    LOG.info("descriptions without time exit seconds=%.3f", time.perf_counter() - started)

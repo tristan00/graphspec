@@ -67,11 +67,12 @@ def paired(first, second):
     sides = [
         taken(graph, registry, low, high, held, width) for (_, graph, registry, low, high), held in zip(both, steps)
     ]
+    placed = [None] * len(times) if first[2].schema.model == "none" else times.tolist()
     result = dict(
         name=name,
-        times=times.tolist(),
+        times=placed,
         alone=dict(first=np.setdiff1d(*shown).tolist(), second=np.setdiff1d(*shown[::-1]).tolist()),
-        **differing.differed(*sides, times.tolist()),
+        **differing.differed(*sides, placed),
     )
     LOG.debug("differences paired exit graph=%s times=%d seconds=%.4f", name, len(times), time.perf_counter() - started)
     return result
@@ -90,6 +91,7 @@ def recorded(sides, configs):
     result = dict(
         version=truth.VERSION,
         stored_sha256=sides[0][0].source,
+        time=truth.modelled(sides[0][0].registry),
         first=varying.headed(sides[0][0], configs[0], sides[0][1]),
         second=varying.headed(sides[1][0], configs[1], sides[1][1]),
         differs=any(differing.unequal(graph) for graph in graphs),
@@ -114,10 +116,12 @@ def differences(bank, config, statement, other, other_statement):
 
 def text(record):
     started = time.perf_counter()
+    model = record["time"]["model"]
+    named = truth.NAMED[model]
     lines = [
         "difference of the variants %s, the first, and %s, the second, of the bank stored as %s, described at version %d"
         % (record["first"]["variant"], record["second"]["variant"], record["stored_sha256"], record["version"]),
-        differing.READING,
+        differing.READING[model],
     ]
     for side in differing.SIDES:
         lines.append("the %s:" % side)
@@ -125,11 +129,11 @@ def text(record):
         lines += [effect.entry_text(entry) for entry in record[side]["entries"]]
     if record["differs"]:
         for graph in record["graphs"]:
-            lines += differing.graph_text(graph)
+            lines += differing.graph_text(graph, named)
     else:
         lines.append(
-            "nothing differs: the two hold the same nodes, anchors and edges at every time of each of the %d graphs "
-            "of the view" % len(record["graphs"])
+            "nothing differs: the two hold the same nodes, anchors and edges at %s of each of the %d graphs of the view"
+            % ("the step" if named is None else "every " + named["one"], len(record["graphs"]))
         )
     LOG.debug("differences text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"

@@ -61,6 +61,7 @@ def recorded(deriver, config, key):
     result = dict(
         version=truth.VERSION,
         stored_sha256=deriver.source,
+        time=truth.modelled(deriver.registry),
         **headed(deriver, config, key),
         graphs=graphed(deriver, config),
     )

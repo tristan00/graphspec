@@ -10,24 +10,41 @@ from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.operations.rows import fact_keys
 from graphspec.schema.declaration import Registry
-from graphspec.schema.time import ALWAYS, NEVER
+from graphspec.schema.time import ALWAYS, NEVER, UNITED
 from graphspec.views import visible
 
 LOG = logging.getLogger(__name__)
-VERSION = 14
+VERSION = 15
 UNNAMED = -1
 LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
+BEFORE = "before"
+NAMED = dict(
+    none=None,
+    order=dict(one="position", many="positions", stretch="positions"),
+    clock=dict(one="time", many="times", stretch="time"),
+)
+NAMED["clocks"] = NAMED["clock"]
 CORRECTED = (
-    "a graph is described as it holds once every correction is known: a fact a correction replaced holds nothing at "
-    "any time and is counted apart, as replaced"
+    "a graph is described as it holds once every correction is known: a fact a correction replaced holds nothing and "
+    "is counted apart, as replaced"
 )
-READING = (
-    CORRECTED + "; at a time: the nodes observed and their observations, and the edges a present fact holds, an edge "
-    "being its relation and its two ends, in either order for a relation without direction, as the difference of two "
-    "graphs meets them; a run: a stretch of time over which one edge holds without a break, bounded where it has a "
-    "start and an end, lasting in the unit of its graph"
+HELD = (
+    "the nodes observed and their observations, and the edges a present fact holds, an edge being its relation and "
+    "its two ends, in either order for a relation without direction, as the difference of two graphs meets them"
 )
+PLACED = (
+    CORRECTED + "; at a %(one)s: " + HELD + "; before: before every %(one)s of the graph, where what states no start "
+    "holds; a run: a stretch of %(stretch)s over which one edge holds without a break, bounded where it has a start "
+    "and an end"
+)
+READING = dict(
+    none=CORRECTED + "; no fact states a time, so every fact holds always: held always, " + HELD + "; a run: an edge "
+    "that holds, without start or end",
+    order=PLACED % NAMED["order"] + "; nothing is counted between two positions, so no run has a length",
+    clock=PLACED % NAMED["clock"] + ", lasting in the unit of its graph",
+)
+READING["clocks"] = READING["clock"]
 
 
 @timed("describe.stem")
@@ -66,9 +83,9 @@ def runs(groups, since, until):
 
 
 @timed("describe.lasting")
-def lasting(since, until):
+def lasting(since, until, measured):
     lengths = (until - since)[(since > ALWAYS) & (until < NEVER)]
-    held = len(lengths) > 0
+    held = measured and len(lengths) > 0
     return dict(
         runs=len(since),
         bounded=len(lengths),
@@ -117,12 +134,16 @@ def kinds(registry, facts, places):
     for kind in registry.nodes:
         rows = owner[entity] == registry.kind(kind)
         held = rows & last
+        found = counted(*runs(entity[held], begun[held], ended[held]), steps)
+        stated = counted(begun[held], ended[held], steps)
         result[kind] = dict(
             nodes=int((owner == registry.kind(kind)).sum()),
             observations=int(held.sum()),
             replaced=int((rows & ~last).sum()),
-            nodes_at=counted(*runs(entity[held], begun[held], ended[held]), steps)[1:],
-            observations_at=counted(begun[held], ended[held], steps)[1:],
+            nodes_before=found[0],
+            observations_before=stated[0],
+            nodes_at=found[1:],
+            observations_at=stated[1:],
         )
     LOG.debug("describe kinds exit graph=%s kinds=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started)
     return result
@@ -136,7 +157,7 @@ def relations(registry, facts, places):
     begun, ended = shown(facts, "fact", places)
     last, steps, bounds = ended > begun, np.arange(len(places)), np.r_[places, np.int64(NEVER)]
     (edge,) = fact_keys(registry, (np.zeros(len(code), np.int64), code, source, target))
-    result = {}
+    measured, result = registry.schema.model in UNITED, {}
     for table, entry in registry.schema.edges.items():
         for name in registry.encoding.relations[table]:
             rows = code == registry.code(name)
@@ -144,6 +165,7 @@ def relations(registry, facts, places):
             held = said & present
             pairs = edge[held]
             first, stop = runs(pairs, begun[held], ended[held])
+            found = counted(first, stop, steps)
             ends = sorted(set(zip(owner[source[said]].tolist(), owner[target[said]].tolist())))
             result[name] = dict(
                 table=table,
@@ -153,8 +175,9 @@ def relations(registry, facts, places):
                 facts=int(held.sum()),
                 absent=int((said & ~present).sum()),
                 replaced=int((rows & ~last).sum()),
-                edges_at=counted(first, stop, steps)[1:],
-                **lasting(bounds[first], bounds[stop]),
+                edges_before=found[0],
+                edges_at=found[1:],
+                **lasting(bounds[first], bounds[stop], measured),
             )
     LOG.debug(
         "describe relations exit graph=%s relations=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started
@@ -254,13 +277,18 @@ def graphed(registry, facts, splits):
     return result
 
 
+@timed("describe.modelled")
+def modelled(registry):
+    return dict(model=registry.schema.model, units=list(registry.schema.units))
+
+
 def recorded(path, manifest):
     started = time.perf_counter()
     registry = Registry.from_declaration(manifest["spec"])
     result = dict(
         version=VERSION,
         stored_sha256=manifest["stored_sha256"],
-        time=dict(model=registry.schema.model, units=list(registry.schema.units)),
+        time=modelled(registry),
         splits=list(manifest["splits"]),
         graphs=[graphed(registry, stored(path, graph), manifest["splits"]) for graph in manifest["graphs"]],
     )
@@ -288,11 +316,18 @@ def related(name, entry):
         entry["replaced"],
         entry["runs"],
         entry["bounded"],
-        ", lasting %d to %d, mean %s" % (entry["least"], entry["most"], entry["mean"]) if entry["bounded"] else "",
+        "" if entry["least"] is None else ", lasting %d to %d, mean %s" % (entry["least"], entry["most"], entry["mean"]),
     )
 
 
-def decided(name, entry):
+@timed("describe.spanned")
+def spanned(named, times):
+    if named is None:
+        return "no time"
+    return "%s %d from %d to %d" % (named["many"], len(times), times[0], times[-1]) if times else "no " + named["one"]
+
+
+def decided(name, entry, named):
     started = time.perf_counter()
     lines = [
         "  decisions of %s: decisions %d, options %d, recorded %d, regenerated %d; %s"
@@ -307,7 +342,7 @@ def decided(name, entry):
     ]
     if entry["each"]:
         lines += table(
-            ["task", "time", "options", "recorded", "regenerated"] + list(entry["generators"]),
+            ["task", "time" if named is None else named["one"], "options", "recorded", "regenerated"] + list(entry["generators"]),
             [
                 [held["key"], "none" if held["time"] is None else held["time"]]
                 + [held[part] for part in ("options", "recorded", "regenerated")]
@@ -319,33 +354,33 @@ def decided(name, entry):
     return lines
 
 
-def graph_text(graph):
+def graph_text(graph, named):
     started = time.perf_counter()
     times = graph["times"]
     lines = [
         "",
         "graph %s, %s, %s"
-        % (
-            graph["name"],
-            "no unit" if graph["unit"] is None else "unit " + graph["unit"],
-            "times %d from %d to %d" % (len(times), times[0], times[-1]) if times else "no time",
-        ),
+        % (graph["name"], "no unit" if graph["unit"] is None else "unit " + graph["unit"], spanned(named, times)),
     ]
     lines += [
         "  kind %s: nodes %d, observations %d, replaced %d" % (name, entry["nodes"], entry["observations"], entry["replaced"])
         for name, entry in graph["kinds"].items()
     ]
     lines += [related(name, entry) for name, entry in graph["relations"].items()]
-    if times:
-        columns = [
-            pair
-            for name, entry in graph["kinds"].items()
-            for pair in ((name + " nodes", entry["nodes_at"]), (name + " observations", entry["observations_at"]))
-        ] + [(name + " edges", entry["edges_at"]) for name, entry in graph["relations"].items()]
-        lines.append("  held at each time:")
+    columns = [
+        (name + " " + part, entry[part + "_before"], entry[part + "_at"])
+        for name, entry in graph["kinds"].items()
+        for part in ("nodes", "observations")
+    ] + [(name + " edges", entry["edges_before"], entry["edges_at"]) for name, entry in graph["relations"].items()]
+    headers, first = [header for header, _, _ in columns], [before for _, before, _ in columns]
+    if named is None:
+        lines.append("  held always:")
+        lines += table(headers, [first])
+    else:
+        lines.append("  held before every %(one)s and at each %(one)s:" % named)
         lines += table(
-            ["time"] + [header for header, _ in columns],
-            [[moment] + [values[at] for _, values in columns] for at, moment in enumerate(times)],
+            [named["one"]] + headers,
+            [[BEFORE] + first] + [[moment] + [values[at] for _, _, values in columns] for at, moment in enumerate(times)],
         )
     lines += [
         "  kind of task %s: tasks %d; %s"
@@ -357,7 +392,7 @@ def graph_text(graph):
         for name, entry in graph["tasks"].items()
     ]
     for name, entry in graph["decisions"].items():
-        lines += decided(name, entry)
+        lines += decided(name, entry, named)
     LOG.debug("describe graph text exit graph=%s lines=%d seconds=%.4f", graph["name"], len(lines), time.perf_counter() - started)
     return lines
 
@@ -369,10 +404,10 @@ def text(record):
         "truth graphs of the bank stored as %s, described at version %d" % (record["stored_sha256"], record["version"]),
         "time: %s, %s" % (MODELS[held["model"]], "units " + ", ".join(held["units"]) if held["units"] else "no unit"),
         "splits: %s" % (", ".join(record["splits"]) or "none"),
-        READING,
+        READING[held["model"]],
     ]
     for graph in record["graphs"]:
-        lines += graph_text(graph)
+        lines += graph_text(graph, NAMED[held["model"]])
     LOG.debug("describe text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"
 

@@ -8,7 +8,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations.operation import Stored
 from graphspec.operations.sets import PARAMETER
 
-from .describe import table
+from .describe import NAMED, table
 from .differences import compared, counted, distinct, numbered, tokens, unmatched
 
 LOG = logging.getLogger(__name__)
@@ -215,7 +215,7 @@ def tasked(graph, registry, low, high):
 def graphed(name, first, found, steps, registry, low, high, kinds, names, places):
     started = time.perf_counter()
     size = high - low
-    times = np.asarray(first.step_time, np.int64)[low:high].tolist()
+    times = [None] * size if registry.schema.model == "none" else np.asarray(first.step_time, np.int64)[low:high].tolist()
     tasks = tasked(first, registry, low, high)
     own = []
     for keys, anchored, ends in found:
@@ -306,35 +306,42 @@ def entry_text(entry):
     )
 
 
-def stepped(times, state):
+def stepped(times, state, named):
     started = time.perf_counter()
     columns = [
         pair
         for kind, entry in state["kinds"].items()
         for pair in ((kind + " nodes", entry["nodes"]), (kind + " anchors", entry["anchors"]))
     ] + [(name + " edges", entry["edges"]) for name, entry in state["relations"].items()]
-    result = table(
-        ["time"] + [header for header, _ in columns],
-        [[moment] + [values[at] for _, values in columns] for at, moment in enumerate(times)],
-    )
+    counts = [[values[at] for _, values in columns] for at in range(len(times))]
+    if named is None:
+        result = table([header for header, _ in columns], counts)
+    else:
+        result = table([named["one"]] + [header for header, _ in columns], [[moment] + row for moment, row in zip(times, counts)])
     LOG.debug("effect stepped exit rows=%d seconds=%.4f", len(times), time.perf_counter() - started)
     return result
 
 
+@timed("effect.stepping")
+def stepping(named):
+    return "step" if named is None else named["one"]
+
+
 @timed("effect.cut_text")
-def cut_text(effect, found):
-    return "  entry %s, of the operation %s, removes every %s %s at the times of the tasks of %s: %s; %s" % (
+def cut_text(effect, found, named):
+    one = stepping(named)
+    return "  entry %s, of the operation %s, removes every %s %s at the %s of the tasks of %s; %s" % (
         effect["entry"],
         effect["operation"],
         "node of the kind" if found["sort"] == "kind" else "edge of the relation",
         found["name"],
-        found["task"],
-        ", ".join(map(str, found["times"])),
-        "and at every time" if found["everywhere"] else "not at every time",
+        one if named is None else named["many"],
+        found["task"] if named is None else "%s: %s" % (found["task"], ", ".join(map(str, found["times"]))),
+        ("and at every %s" if found["everywhere"] else "not at every %s") % one,
     )
 
 
-def effect_text(effect, times):
+def effect_text(effect, times, named):
     started = time.perf_counter()
     rows = [(kind + " nodes", entry) for kind, entry in effect["kinds"].items()]
     rows += [(name + " edges", entry) for name, entry in effect["relations"].items()]
@@ -354,30 +361,35 @@ def effect_text(effect, times):
             for label, entry in rows
         ],
     )
-    lines.append("  held at each time after it:")
-    lines += stepped(times, effect)
-    lines += [cut_text(effect, found) for found in effect["cuts"]]
+    lines.append("  held at each %s after it:" % stepping(named))
+    lines += stepped(times, effect, named)
+    lines += [cut_text(effect, found, named) for found in effect["cuts"]]
     LOG.debug(
         "effect entry text exit entry=%s lines=%d seconds=%.4f", effect["entry"], len(lines), time.perf_counter() - started
     )
     return lines
 
 
-def graph_text(graph):
+@timed("effect.tasked_text")
+def tasked_text(task, moments, named):
+    if named is None:
+        return "%s at %s" % (task, "the step" if moments else "no step")
+    return "%s at %s" % (task, ", ".join(map(str, moments)) or "no " + named["one"])
+
+
+def graph_text(graph, named):
     started = time.perf_counter()
     times = graph["times"]
+    spanned = ", no time" if named is None else " from %s %d to %d" % (named["one"], times[0], times[-1])
     lines = [
         "",
-        "graph %s, %d steps from time %d to %d" % (graph["name"], len(times), times[0], times[-1]),
-        "  tasks: %s"
-        % "; ".join(
-            "%s at %s" % (task, ", ".join(map(str, moments)) or "no time") for task, moments in graph["tasks"].items()
-        ),
-        "  held at each time before the first entry:",
+        "graph %s, %d steps%s" % (graph["name"], len(times), spanned),
+        "  tasks: %s" % "; ".join(tasked_text(task, moments, named) for task, moments in graph["tasks"].items()),
+        "  held at each %s before the first entry:" % stepping(named),
     ]
-    lines += stepped(times, graph["held"])
+    lines += stepped(times, graph["held"], named)
     for effect in graph["effects"]:
-        lines += effect_text(effect, times)
+        lines += effect_text(effect, times, named)
     LOG.debug("effect graph text exit graph=%s lines=%d seconds=%.4f", graph["name"], len(lines), time.perf_counter() - started)
     return lines
 
@@ -409,6 +421,6 @@ def text(record):
     ]
     lines += [entry_text(entry) for entry in record["entries"]]
     for graph in record["graphs"]:
-        lines += graph_text(graph)
+        lines += graph_text(graph, NAMED[record["time"]["model"]])
     LOG.debug("effect text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"

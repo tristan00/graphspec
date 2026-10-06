@@ -18,20 +18,43 @@ SIDES = ("first", "second")
 NODES = ("first", "second", "first_anchors", "second_anchors")
 EDGES = ("first", "second", "valued")
 STATED = dict(both="", first=", which only the first states", second=", which only the second states")
-READING = (
-    "first and second: at a time, what the first holds that the second does not, and what the second holds that the "
-    "first does not, the entities of the two met by kind and key; a node is held where it is observed other than as "
-    "an anchor; an anchor, a node observed only because a reference of a task names it, is counted apart; an edge is "
-    "two ends a present fact of its relation joins, in either order for a relation without direction, met as the "
-    "difference of two graphs meets them; other values: the edges both hold of which one holds a fact whose values "
-    "the other holds no fact of, as that difference tells them under difference/match values; the times are those of "
-    "either side, and at a time only one side shows the other holds nothing; only what differs is listed, time by "
-    "time, and a kind or a relation equal at every time is counted"
+OWNED = (
+    "what the first holds that the second does not, and what the second holds that the first does not, the entities "
+    "of the two met by kind and key; a node is held where it is observed other than as an anchor; an anchor, a node "
+    "observed only because a reference of a task names it, is counted apart; an edge is two ends a present fact of "
+    "its relation joins, in either order for a relation without direction, met as the difference of two graphs meets "
+    "them; other values: the edges both hold of which one holds a fact whose values the other holds no fact of, as "
+    "that difference tells them under difference/match values"
 )
-TRUTH = (
-    READING + "; each of the two graphs is read as it holds once every correction is known: a fact a correction "
-    "replaced holds nothing at any time"
+PLACED = "first and second: at a %(one)s, " + OWNED
+STEPPED = (
+    PLACED + "; the %(many)s are those of either side, and at a %(one)s only one side shows the other holds nothing; "
+    "only what differs is listed, %(one)s by %(one)s, and a kind or a relation equal at every %(one)s is counted"
 )
+LAST = (
+    "each of the two graphs is read as it holds once every correction is known, a fact a correction replaced "
+    "holding nothing"
+)
+HELD = (
+    PLACED + "; " + LAST + "; the %(many)s are those of either graph, and before stands for before every one of "
+    "them; at each a graph holds what a fact of it holds then, whether or not the %(one)s is one of its own, so what "
+    "states no start is held before every %(one)s and on until it ends; only what differs is listed, %(one)s by "
+    "%(one)s, and a kind or a relation equal before and at every %(one)s is counted"
+)
+READING = dict(
+    none="first and second: " + OWNED + "; the graphs hold no time and each side shows a graph at one step, where the "
+    "two are compared once; only what differs is listed, and a kind or a relation equal there is counted",
+    order=STEPPED % truth.NAMED["order"],
+    clock=STEPPED % truth.NAMED["clock"],
+)
+READING["clocks"] = READING["clock"]
+TRUTH = dict(
+    none="first and second: " + OWNED + "; " + LAST + "; the graphs hold no time, so every fact holds always and the "
+    "two are compared once; only what differs is listed, and a kind or a relation equal is counted",
+    order=HELD % truth.NAMED["order"],
+    clock=HELD % truth.NAMED["clock"],
+)
+TRUTH["clocks"] = TRUTH["clock"]
 
 
 @timed("differences.tokens")
@@ -254,13 +277,19 @@ def recorded(path, manifest, first, second):
             "the graph %s counts time in %s and the graph %s in %s; times of graphs of different units are never "
             "compared" % (loaded[0].name, loaded[0].unit, loaded[1].name, loaded[1].unit)
         )
+    if registry.schema.model == "order" and loaded[0].name != loaded[1].name:
+        raise ValueError(
+            "the graphs %s and %s state when their facts hold as positions, each in an order of its own; the positions "
+            "of two graphs are never met, so under the model order a graph is compared only with itself"
+            % (loaded[0].name, loaded[1].name)
+        )
     moments = np.union1d(*[truth.clocked(registry, facts) for facts in loaded])
-    sampled = moments if len(moments) else np.zeros(1, np.int64)
-    times = moments.tolist() or [None]
-    found = differed(*[lasting(registry, facts, sampled) for facts in loaded], times)
+    times = [None] + moments.tolist()
+    found = differed(*[lasting(registry, facts, truth.placed(moments)) for facts in loaded], times)
     result = dict(
         version=truth.VERSION,
         stored_sha256=manifest["stored_sha256"],
+        time=truth.modelled(registry),
         first=loaded[0].name,
         second=loaded[1].name,
         unit=loaded[0].unit,
@@ -290,37 +319,34 @@ def differences(path, first, second):
     return record
 
 
-@timed("differences.spanned")
-def spanned(times):
-    return "no time" if times == [None] else "times %d from %d to %d" % (len(times), times[0], times[-1])
-
-
-@timed("differences.clock")
-def clock(moment):
-    return "none" if moment is None else moment
-
-
-def found_text(found):
+def tabled(named, headers, labels, rows):
     started = time.perf_counter()
-    equal, lines = "equal at every time: kinds %d, relations %d" % (found["equal"]["kinds"], found["equal"]["relations"]), []
+    counts = [[held[label] for label in labels] for held in rows]
+    if named is None:
+        result = truth.table(headers, counts)
+    else:
+        placed = [[truth.BEFORE if held["time"] is None else held["time"]] + found for held, found in zip(rows, counts)]
+        result = truth.table([named["one"]] + headers, placed)
+    LOG.debug("differences tabled exit rows=%d seconds=%.4f", len(rows), time.perf_counter() - started)
+    return result
+
+
+def found_text(found, named):
+    started = time.perf_counter()
+    equal, lines = "equal%s: kinds %d, relations %d", []
+    equal %= ("" if named is None else " at every " + named["one"], found["equal"]["kinds"], found["equal"]["relations"])
     for name, entry in found["kinds"].items():
         lines.append(
             "  kind %s%s: nodes only the first holds %d, only the second %d; anchors only the first holds %d, only the "
             "second %d" % (name, STATED[entry["stated"]], *[entry[label] for label in NODES])
         )
-        lines += truth.table(
-            ["time", "first nodes", "second nodes", "first anchors", "second anchors"],
-            [[clock(held["time"])] + [held[label] for label in NODES] for held in entry["at"]],
-        )
+        lines += tabled(named, ["first nodes", "second nodes", "first anchors", "second anchors"], NODES, entry["at"])
     for name, entry in found["relations"].items():
         lines.append(
             "  relation %s%s: edges only the first holds %d, only the second %d, held by both with other values %d"
             % (name, STATED[entry["stated"]], *[entry[label] for label in EDGES])
         )
-        lines += truth.table(
-            ["time", "first", "second", "other values"],
-            [[clock(held["time"])] + [held[label] for label in EDGES] for held in entry["at"]],
-        )
+        lines += tabled(named, ["first", "second", "other values"], EDGES, entry["at"])
     lines.append("  %s" % equal if lines else "  nothing differs; %s" % equal)
     LOG.debug("differences found text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return lines
@@ -328,28 +354,26 @@ def found_text(found):
 
 def text(record):
     started = time.perf_counter()
+    model = record["time"]["model"]
+    named = truth.NAMED[model]
     lines = [
         "difference of the truth graphs %s, the first, and %s, the second, of the bank stored as %s, described at "
         "version %d" % (record["first"], record["second"], record["stored_sha256"], record["version"]),
-        "%s, %s" % ("no unit" if record["unit"] is None else "unit " + record["unit"], spanned(record["times"])),
-        TRUTH,
+        "%s, %s" % ("no unit" if record["unit"] is None else "unit " + record["unit"], truth.spanned(named, record["times"][1:])),
+        TRUTH[model],
     ]
-    lines += found_text(record)
+    lines += found_text(record, named)
     LOG.debug("differences text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"
 
 
-def graph_text(graph):
+def graph_text(graph, named):
     started = time.perf_counter()
-    lines = [
-        "",
-        "graph %s, %s; times only the first shows: %s; times only the second shows: %s"
-        % (
-            graph["name"],
-            spanned(graph["times"]),
-            *[", ".join(map(str, graph["alone"][side])) or "none" for side in SIDES],
-        ),
-    ]
-    lines += found_text(graph)
+    head = "graph %s, %s" % (graph["name"], truth.spanned(named, graph["times"]))
+    if named is not None:
+        alone = [", ".join(map(str, graph["alone"][side])) or "none" for side in SIDES]
+        head += "; %s only the first shows: %s; %s only the second shows: %s" % (named["many"], alone[0], named["many"], alone[1])
+    lines = ["", head]
+    lines += found_text(graph, named)
     LOG.debug("differences graph text exit graph=%s lines=%d seconds=%.4f", graph["name"], len(lines), time.perf_counter() - started)
     return lines
