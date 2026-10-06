@@ -939,7 +939,6 @@ GROUNDED = Edited(dict(turn=dict(go=GROUND)), WENT_ADDED, 1)
 LOAD = ["load"]
 APART = dict(state="unjoined", hops=None, relations=None)
 CREATED = dict(state="created", hops=None, relations=None)
-UNHELD = dict(state="unheld", hops=None, relations=None)
 ADJACENT = dict(state="joined", hops=1, relations=[["base"]])
 WENT = dict(state="joined", hops=1, relations=[["went"]])
 FARTHER = dict(state="joined", hops=2, relations=[["base"], ["near"]])
@@ -1422,6 +1421,56 @@ def test_under_an_edit_a_field_is_put_before_the_model_only_where_the_fork_of_it
     assert options == [dict(key=key, **grounded(key)) for key in THREE]
     assert "".join(line + "\n" for option in options[1:] for line in reaching.option_text(option)) == GROUNDED_TEXT
     LOG.info("descriptions reach edit facts exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("descriptions.cutless")
+def cutless(found):
+    fields = {
+        name: dict(field, targets=[dict(target, cut=None) for target in field["targets"]]) if "targets" in field else dict(field, cut=None)
+        for name, field in found["fields"].items()
+    }
+    return dict(found, cut=None, fields=fields)
+
+
+def test_a_target_the_fork_of_its_option_does_not_hold_reads_as_not_held_and_its_fact_as_not_in_the_fork(bank, walking):
+    started = time.perf_counter()
+    thinned = dict(NODES, **{"nodes/spot/filter": "degree", "nodes/spot/min_degree": 2})
+    model = dict(MODEL, **{"options/realisation": "walked"})
+    pipeline = [dict(operation="graphspec.nodes", parameters=thinned)]
+    config = configuration(bank, model, None, pipeline=pipeline, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    held = reaching.Reached(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), config, "walked")
+    (decision,) = [found for found in held.decided(held.derived(None, 1, 0), 0) if found["key"] == 10]
+    option = held.optioned(decision)[2]
+    both = dict(state="joined", hops=1, relations=[["base", "went"]])
+    went = [("a0 went a1", True), ("a0 went s0", True), ("a0 went s1", True), ("a0 went s2", False)]
+    fields = {
+        GO[0]: role("fact", aim("s0", both, LOAD, None, went[1]), aim("s1", WENT, LOAD, None, went[2])),
+        GO[1]: role("fact", aim(EDGE, WENT, LOAD, None, went[0], went[2])),
+        GO[2]: role("fact", aim("s2", dict(state="unheld", hops=None, relations=None), [], None, went[3])),
+        GO[3]: own("fact", None, *went),
+    }
+    assert held.found.keys[option] == "o1" and cutless(held.read(None, 1, decision, option)) == kept(fields)
+    assert reaching.field_text(GO[2], fields[GO[2]]) + reaching.field_text(GO[3], fields[GO[3]]) == [
+        "      target made of go: not put before the model, its fork holding none of the facts its edit makes of it",
+        "        s2: fact a0 went s2 not in its fork; not held at the step",
+        "      parameter speed of go: put before the model as the facts its edit makes of it; facts a0 went a1, a0 went s0, "
+        "a0 went s1 in its fork, fact a0 went s2 not in its fork",
+    ]
+    LOG.info("descriptions reach unheld exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_an_option_whose_only_fact_the_variant_holds_without_its_edit_is_left_out_naming_that_fact(bank, walking):
+    started = time.perf_counter()
+    model = dict(MODEL, **{"options/realisation": "grounded"})
+    pipeline = [dict(operation="graphspec.relation_forms", parameters=dict(FORMS, **{"relation_forms/parallel": "first"}))]
+    config = configuration(bank, model, None, pipeline=pipeline, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    held = reaching.Reached(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), config, "grounded")
+    (decision,) = [found for found in held.decided(held.derived(None, 1, 0), 0) if found["key"] == 30]
+    lacking = lack(GO[0], "s1", "edit", "a1 base s1")
+    found = [dict(held.read(None, 1, decision, option), cut=None) for option in held.optioned(decision)]
+    assert found == [left([lacking], None, GO[0], GO[3])] * 4
+    assert reaching.lacking_text(lacking) == "a1 base s1 of s1, target to of go: in its fork and in the variant without the edit"
+    LOG.info("descriptions reach unshown exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_the_reach_of_a_joined_group_is_described_graph_by_graph_as_its_graphs_derived_apart_are(bank, cutting):
@@ -2517,12 +2566,13 @@ PACKED = (
     ("action_nodes", None, BESIDE_HELD),
     ("actor_edge", None, BESIDE_HELD),
     ("set_edge", None, BESIDE_HELD),
+    ("aimed", None, dict(BESIDE_HELD, put=12)),
     ("grounded", LASTING, dict(stated=13, held=10, put=12, facts=17, shown=12)),
 )
 
 
 def test_reach_says_of_every_option_and_field_what_the_batches_and_forks_a_fit_packs_hold_under_each_realisation(
-    bank, cutting, walking
+    bank, searching
 ):
     started = time.perf_counter()
     held = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
