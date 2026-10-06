@@ -76,10 +76,12 @@ def taken(graph, registry, low, high, steps, width, slots):
     started = time.perf_counter()
     moment = np.asarray(graph.obs_step, np.int64)
     seen = (moment >= low) & (moment < high)
-    nodes = np.stack((steps[moment[seen] - low], np.asarray(graph.obs_entity, np.int64)[seen]), 1)
+    place = steps[moment[seen] - low]
+    nodes = np.stack((np.asarray(graph.obs_entity, np.int64)[seen], place, place + 1), 1)
     moment = np.asarray(graph.fact_step, np.int64)
     held = np.asarray(graph.fact_present, bool) & (moment >= low) & (moment < high)
     ends = [np.asarray(graph.arrays[name], np.int64)[held] for name in ("fact_code", "fact_source", "fact_target")]
+    place = steps[moment[held] - low]
     result = dict(
         registry=registry,
         kinds=np.asarray(graph.kinds, np.int64),
@@ -88,7 +90,7 @@ def taken(graph, registry, low, high, steps, width, slots):
         anchored=np.asarray(graph.obs_anchor, bool)[seen],
         values=np.asarray(graph.x_table)[:, slots],
         valued=np.asarray(graph.obs_ref, np.int64)[seen],
-        facts=np.stack([steps[moment[held] - low]] + ends, 1),
+        facts=np.stack(ends + [place, place + 1], 1),
         table=padded(graph.value_table, width),
         reference=np.asarray(graph.fact_ref, np.int64)[held],
     )

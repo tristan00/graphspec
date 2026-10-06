@@ -24,7 +24,7 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 28
+VERSION = 29
 DIFFERENCE = "graphspec.difference"
 CODED = 16
 UNWRITTEN = "no file is written for the key"
@@ -297,15 +297,6 @@ def kinds(registry, facts, seen, labels):
     return result
 
 
-def spread(begun, ended):
-    started = time.perf_counter()
-    counts = ended - begun
-    rows = np.repeat(np.arange(len(counts)), counts)
-    result = rows, begun[rows] + offsets(counts)
-    LOG.debug("describe spread exit facts=%d rows=%d seconds=%.4f", len(counts), len(rows), time.perf_counter() - started)
-    return result
-
-
 def lapsing(registry, facts, lit, rows, steps, places):
     started = time.perf_counter()
     found = dict(
@@ -335,17 +326,28 @@ def ruled(registry, facts, places, seen):
     stated = np.isin(code[holding], np.fromiter(registry.about, np.int64, len(registry.about)))
     piece, first, stop = holding[~stated], begun[holding[~stated]], ended[holding[~stated]]
     if stated.any():
-        entity = np.asarray(facts.obs_entity, np.int64)
-        joined = np.flatnonzero(np.asarray([kind in registry.schema.sets for kind in registry.nodes], bool)[owner[entity]])
-        shown_rows, shown_steps = spread(seen["obs"][0][joined], seen["obs"][1][joined])
-        lit = np.unique(shown_steps * len(owner) + entity[joined[shown_rows]])
-        rows, steps = spread(begun[holding[stated]], ended[holding[stated]])
-        rows = holding[stated][rows]
-        kept = lapsing(registry, facts, lit, rows, steps, places)
-        rows, steps = rows[kept], steps[kept]
-        opened = np.flatnonzero(np.r_[True, (rows[1:] != rows[:-1]) | (steps[1:] != steps[:-1] + 1)][: len(rows)])
-        closed = np.r_[opened[1:], len(rows)][: len(opened)] - 1
-        piece, first, stop = np.r_[piece, rows[opened]], np.r_[first, steps[opened]], np.r_[stop, steps[closed] + 1]
+        rows, width = holding[stated], len(places) + 1
+        entity, (lit, unlit) = np.asarray(facts.obs_entity, np.int64), seen["obs"]
+        sets = np.asarray([kind in registry.schema.sets for kind in registry.nodes], bool)
+        joined = np.flatnonzero(sets[owner[entity]] & (unlit > lit))
+        whom, since, until = runs(entity[joined], lit[joined], unlit[joined])
+        held = entity[joined][whom]
+        ends = np.stack((np.asarray(facts.fact_source, np.int64)[rows], np.asarray(facts.fact_target, np.int64)[rows]), 1)
+        low, high = np.searchsorted(held, ends, "left"), np.searchsorted(held, ends, "right")
+        counts = (high - low).reshape(-1)
+        fact = np.repeat(np.repeat(np.arange(len(rows)), 2), counts)
+        span = np.repeat(low.reshape(-1), counts) + offsets(counts)
+        fact, bounds = np.r_[fact, fact], np.r_[since[span], until[span]]
+        inside = (bounds > begun[rows][fact]) & (bounds < ended[rows][fact])
+        cuts = np.unique(np.r_[np.arange(len(rows)) * width + begun[rows], fact[inside] * width + bounds[inside]])
+        fact, opened = cuts // width, cuts % width
+        closed = np.where(np.r_[fact[1:] == fact[:-1], False], np.r_[opened[1:], 0], ended[rows][fact])
+        asked = np.stack((opened, opened), 1) * len(owner) + ends[fact]
+        spot = np.searchsorted(held * width + since, ends[fact] * width + opened[:, None], "right") - 1
+        found = spot >= 0
+        found[found] = (held[spot[found]] == ends[fact][found]) & (asked[found] // len(owner) < until[spot[found]])
+        kept = lapsing(registry, facts, np.unique(asked[found]), rows[fact], opened, places)
+        piece, first, stop = np.r_[piece, rows[fact][kept]], np.r_[first, opened[kept]], np.r_[stop, closed[kept]]
     LOG.debug(
         "describe ruled exit graph=%s facts=%d pieces=%d seconds=%.4f",
         facts.name,

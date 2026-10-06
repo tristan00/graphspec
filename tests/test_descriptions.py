@@ -5037,11 +5037,10 @@ def test_a_truth_description_counts_what_it_leaves_out_and_holds_an_edge_about_a
     registry = Registry.from_declaration(manifest["spec"])
     held = describing.stored(unsaid, manifest["graphs"][0])
     side = differing.lasting(registry, held, describing.placed(describing.clocked(registry, held)))
-    noted = side["facts"][side["facts"][:, 1] == registry.code("note")]
-    assert sorted(map(tuple, noted[:, [0, 2, 3]].tolist())) == sorted(
-        [(place, held.keys.index("g0"), held.keys.index("s0")) for place in range(1, 8)]
-        + [(place, held.keys.index("g1"), held.keys.index("s2")) for place in (2, 3, 4)]
-    )
+    noted = side["facts"][side["facts"][:, 0] == registry.code("note")]
+    g0, g1, s0, s2 = (held.keys.index(key) for key in ("g0", "g1", "s0", "s2"))
+    assert sorted(map(tuple, noted[:, 1:].tolist())) == sorted([(g0, s0, 1, 8), (g1, s2, 2, 5)])
+    assert record["graphs"][0]["times"] == [0, 1, 2, 3, 4, 5, 6] and record["graphs"][0]["relations"]["note"]["lapsed"] == 2
     LOG.info("descriptions unsaid truth exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -5505,3 +5504,81 @@ def test_rows_are_met_as_one_integer_whatever_their_range_and_a_variant_is_descr
     reaching.Reached(deriver, config, "vector").derived(None, 3, 0)
     assert BEGUN_WITH == [chosen]
     LOG.info("descriptions keys and prefixes exit seconds=%.3f", time.perf_counter() - started)
+
+
+def beheld(registry, facts, place):
+    started = time.perf_counter()
+    moment = EARLIEST if place is None else place
+    kinds, keys, nodes, edges = np.asarray(facts.kinds).tolist(), list(facts.keys), {}, {}
+    names = ("obs_entity", "obs_since", "obs_until")
+    stated = zip(*[np.asarray(facts.arrays[name]).tolist() for name in names], np.asarray(facts.obs_values, np.float32))
+    for entity, since, until, values in stated:
+        if since <= moment < until:
+            nodes.setdefault((registry.nodes[kinds[entity]], keys[entity]), set()).add(values.tobytes())
+    names = ("fact_code", "fact_source", "fact_target", "fact_since", "fact_until", "fact_present")
+    stated = zip(*[np.asarray(facts.arrays[name]).tolist() for name in names], np.asarray(facts.fact_values, np.float32))
+    for code, source, target, since, until, present, values in stated:
+        if present and since <= moment < until:
+            ends = sorted((keys[source], keys[target])) if registry.by_code[code].symmetric else [keys[source], keys[target]]
+            edges.setdefault((registry.by_code[code].name, *ends), set()).add(values.tobytes())
+    LOG.debug("descriptions beheld exit nodes=%d edges=%d seconds=%.4f", len(nodes), len(edges), time.perf_counter() - started)
+    return nodes, edges
+
+
+def unlikeness(registry, first, second, places):
+    started = time.perf_counter()
+    found = {}
+    for place in places:
+        sides = [beheld(registry, facts, place) for facts in (first, second)]
+        for part, names, anchors in ((0, registry.nodes, [0, 0]), (1, ("near", "base"), [])):
+            mine, theirs = sides[0][part], sides[1][part]
+            for name in names:
+                own, other = ({key for key in held if key[0] == name} for held in (mine, theirs))
+                valued = sum(mine[key] != theirs[key] for key in own & other)
+                found.setdefault(name, []).append([len(own - other), len(other - own), *anchors, valued])
+    LOG.debug("descriptions unlikeness exit places=%d seconds=%.4f", len(places), time.perf_counter() - started)
+    return found
+
+
+def test_two_truth_graphs_are_told_apart_by_the_spans_over_which_their_facts_hold_and_never_fact_by_fact_at_each_time(bank):
+    started = time.perf_counter()
+    manifest = read_json(bank / "manifest.json")
+    registry = Registry.from_declaration(manifest["spec"])
+    held = [describing.stored(bank, graph) for graph in manifest["graphs"]]
+    fine = [
+        facts.replace(
+            obs_since=stretched(facts.obs_since, 7, shift),
+            obs_until=stretched(facts.obs_until, 13, 1 + shift),
+            fact_since=stretched(facts.fact_since, 11, 2 + shift),
+            fact_until=stretched(facts.fact_until, 17, 5 + shift),
+        )
+        for facts, shift in zip(held, (0, 40))
+    ]
+    loads, weights = np.array(held[0].obs_values), np.array(held[0].fact_values)
+    agents = np.asarray(held[0].kinds)[np.asarray(held[0].obs_entity)] == registry.kind("agent")
+    nears = (np.asarray(held[0].fact_code) == registry.code("near")) & np.asarray(held[0].fact_present, bool)
+    loads[np.flatnonzero(agents)[0]] += 1.0
+    weights[np.flatnonzero(nears)[0]] += 1.0
+    fine.append(fine[0].replace(obs_values=loads, fact_values=weights, obs_until=stretched(held[0].obs_until, 13, 90)))
+    assert not hasattr(describing, "spread") and not hasattr(differing, "single")
+    for first, second in ((0, 1), (1, 0), (0, 2), (2, 2)):
+        pair = fine[first], fine[second]
+        moments = np.union1d(*[describing.clocked(registry, facts) for facts in pair])
+        places = [None] + moments.tolist()
+        sides = [differing.lasting(registry, facts, describing.placed(moments)) for facts in pair]
+        assert [side["nodes"].shape for side in sides] == [(len(facts.obs_since), 3) for facts in pair]
+        present = [int(np.asarray(facts.fact_present, bool).sum()) for facts in pair]
+        assert [side["facts"].shape for side in sides] == [(count, 5) for count in present] and len(places) > 20
+        found, counted = differing.differed(*sides, places), unlikeness(registry, *pair, places)
+        for part, labels in (("kinds", NODAL), ("relations", EDGED)):
+            for name, entry in found[part].items():
+                told = np.asarray([held_at(entry["at"][label], places) for label in labels]).T.tolist()
+                assert told == counted[name] and [entry[label] for label in labels] == np.asarray(told).sum(0).tolist()
+                assert all(one[1] != other[1] for label in labels for one, other in zip(entry["at"][label], entry["at"][label][1:]))
+        differing_names = sorted(name for name, rows in counted.items() if np.asarray(rows).any())
+        assert sorted([*found["kinds"], *found["relations"]]) == differing_names
+        assert found["equal"] == dict(kinds=2 - len(found["kinds"]), relations=2 - len(found["relations"]))
+        assert (first != second) == bool(differing_names)
+        if (first, second) == (0, 2):
+            assert (found["kinds"]["agent"]["valued"] > 0, found["relations"]["near"]["valued"] > 0) == (True, True)
+    LOG.info("descriptions spans exit seconds=%.3f", time.perf_counter() - started)

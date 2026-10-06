@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
+from graphspec.facts.stored import GROUPS
 from graphspec.infra.timing import timed
 from graphspec.operations.difference import valued
 from graphspec.schema.declaration import Registry
@@ -94,11 +95,6 @@ def distinct(registry, facts):
     return facts[np.unique(truth.met(registry, facts)[0], return_index=True)[1]]
 
 
-@timed("differences.single")
-def single(rows):
-    return rows[np.unique(truth.packed(rows.T), return_index=True)[1]]
-
-
 @timed("differences.unmatched")
 def unmatched(registry, first, second):
     mine, theirs = truth.met(registry, first, second)
@@ -119,31 +115,27 @@ def counted(keys, steps, size):
 
 def lasting(registry, facts, moments):
     started = time.perf_counter()
-    stated, moment = truth.spread(*truth.shown(facts, "obs", moments))
-    nodes = np.stack((moment, np.asarray(facts.obs_entity, np.int64)[stated]), 1)
-    present = np.flatnonzero(np.asarray(facts.fact_present, bool))
-    begun, ended = truth.shown(facts, "fact", moments)
-    rows, steps = truth.spread(begun[present], ended[present])
-    rows = present[rows]
-    kept = truth.lapsing(registry, facts, np.unique(nodes[:, 0] * len(facts.kinds) + nodes[:, 1]), rows, steps, moments)
-    rows, steps = rows[kept], steps[kept]
+    seen = {group: truth.shown(facts, group, moments) for group in GROUPS}
+    begun, ended = seen["obs"]
+    stated = np.flatnonzero(ended > begun)
+    rows, opened, closed = truth.ruled(registry, facts, moments, seen)
     ends = [np.asarray(facts.arrays[name], np.int64)[rows] for name in ("fact_code", "fact_source", "fact_target")]
     result = dict(
         registry=registry,
         kinds=np.asarray(facts.kinds, np.int64),
         tokens=tokens(facts),
-        nodes=nodes,
-        anchored=np.zeros(len(nodes), bool),
+        nodes=np.stack((np.asarray(facts.obs_entity, np.int64)[stated], begun[stated], ended[stated]), 1),
+        anchored=np.zeros(len(stated), bool),
         values=np.asarray(facts.obs_values),
         valued=stated,
-        facts=np.stack([steps] + ends, 1),
+        facts=np.stack(ends + [opened, closed], 1),
         table=np.asarray(facts.fact_values),
         reference=rows,
     )
     LOG.debug(
         "differences lasting exit graph=%s nodes=%d facts=%d seconds=%.4f",
         facts.name,
-        len(nodes),
+        len(stated),
         len(rows),
         time.perf_counter() - started,
     )
@@ -170,99 +162,142 @@ def stating(holding):
     return "both" if all(holding) else SIDES[holding.index(True)]
 
 
-def tallied(labels, counts, places):
+def overlaid(first, second):
     started = time.perf_counter()
-    counts = np.asarray(counts, np.int64)
-    result = dict(
-        zip(labels, counts.sum(1).tolist()), at={label: truth.lasted(held, places) for label, held in zip(labels, counts)}
+    (mine, since, until), (theirs, begun, ended) = first, second
+    key, place = np.r_[mine, mine, theirs, theirs], np.r_[since, until, begun, ended]
+    one, none = np.ones(len(mine), np.int64), np.zeros(2 * len(mine), np.int64)
+    other, neither = np.ones(len(theirs), np.int64), np.zeros(2 * len(theirs), np.int64)
+    order = np.lexsort((place, key))
+    key, place = key[order], place[order]
+    last = np.r_[(key[1:] != key[:-1]) | (place[1:] != place[:-1]), True][: len(key)]
+    held, met = np.cumsum(np.r_[one, -one, neither][order])[last] > 0, np.cumsum(np.r_[none, other, -other][order])[last] > 0
+    key, place = key[last], place[last]
+    kept = np.r_[key[1:] == key[:-1], False][: len(key)] & (held | met)
+    result = key[kept], place[kept], np.r_[place[1:], 0][: len(key)][kept], held[kept], met[kept]
+    LOG.debug(
+        "differences overlaid exit spans=%d pieces=%d seconds=%.4f",
+        len(mine) + len(theirs),
+        len(result[0]),
+        time.perf_counter() - started,
     )
-    LOG.debug("differences tallied exit places=%d seconds=%.4f", len(places), time.perf_counter() - started)
-    return result, bool(counts.any())
+    return result
 
 
-def kinded(sides, numbers, kinds, times):
+def parted(first, second):
     started = time.perf_counter()
-    keys = [number[side["nodes"][:, 1]] for side, number in zip(sides, numbers)]
-    keys = [np.stack((side["nodes"][:, 0], held[:, 0], held[:, 1]), 1) for side, held in zip(sides, keys)]
-    counts = []
-    for anchored in (False, True):
-        held = [key[side["anchored"] == anchored] for key, side in zip(keys, sides)]
-        counts += [counted(single(table[alone]), len(times), len(kinds)) for table, alone in zip(held, compared(*held))]
+    sides = (first, second)
+    whole = [(key[whom], since, until) for (key, _, _, _), (whom, since, until) in zip(sides, [truth.runs(*held[:1], *held[2:]) for held in sides])]
+    key, start, stop, mine, theirs = overlaid(*whole)
+    width = max(int(value.max()) if len(value) else 0 for _, value, _, _ in sides) + 2
+    pairs = [(key * width + value + 1, since, until) for key, value, since, until in sides]
+    paired = [(pair[whom], since, until) for (pair, _, _), (whom, since, until) in zip(pairs, [truth.runs(*held) for held in pairs])]
+    odd, begun, ended, ours, others = overlaid(*paired)
+    unlike, both = ours != others, mine & theirs
+    whom, begun, ended = truth.runs(odd[unlike] // width, begun[unlike], ended[unlike])
+    valued_at = overlaid(((odd[unlike] // width)[whom], begun, ended), (key[both], start[both], stop[both]))
+    told = valued_at[3] & valued_at[4]
+    result = [
+        (key[mine & ~theirs], start[mine & ~theirs], stop[mine & ~theirs]),
+        (key[theirs & ~mine], start[theirs & ~mine], stop[theirs & ~mine]),
+        (valued_at[0][told], valued_at[1][told], valued_at[2][told]),
+    ]
+    LOG.debug("differences parted exit keys=%d seconds=%.4f", len(key), time.perf_counter() - started)
+    return result
+
+
+def tallied(labels, spans, family, names, places):
+    started = time.perf_counter()
+    totals = [np.bincount(family[key], stop - start, len(names)).astype(np.int64).tolist() for key, start, stop in spans]
+    held = [truth.counted(family[key], start, stop, len(names), places) for key, start, stop in spans]
+    result = {
+        name: dict(zip(labels, [found[at] for found in totals]), at=dict(zip(labels, [found[at] for found in held])))
+        for at, name in enumerate(names)
+    }
+    LOG.debug("differences tallied exit names=%d places=%d seconds=%.4f", len(names), len(places), time.perf_counter() - started)
+    return result
+
+
+def kinded(sides, shared, family, kinds, places):
+    started = time.perf_counter()
     values = valued(*[(side["values"], side["valued"]) for side in sides])
-    wide = [np.c_[key, value][~side["anchored"]] for key, value, side in zip(keys, values, sides)]
-    alone, unlike = compared(*[held[:, :3] for held in wide]), compared(*wide)
-    both = [held[~apart & other, :3] for held, apart, other in zip(wide, alone, unlike)]
-    counts.append(counted(single(np.concatenate(both)), len(times), len(kinds)))
+    held = [
+        (number[side["nodes"][:, 0]], value, side["nodes"][:, 1], side["nodes"][:, 2])
+        for side, number, value in zip(sides, shared, values)
+    ]
+    plain = parted(*[tuple(column[~side["anchored"]] for column in found) for found, side in zip(held, sides)])
+    anchors = parted(*[tuple(column[side["anchored"]] for column in found) for found, side in zip(held, sides)])
+    told = tallied(NODES, plain[:2] + anchors[:2] + plain[2:], family, kinds, places)
     declared = {name for side in sides for name in side["registry"].declared}
-    observed = set(np.unique(np.concatenate(keys)[:, 1]).tolist())
+    observed = {kinds[at] for at in np.unique(np.r_[family[held[0][0]], family[held[1][0]]]).tolist()}
     found, equal = {}, 0
-    for at, name in enumerate(kinds):
-        if name not in declared and at not in observed:
+    for name in kinds:
+        if name not in declared and name not in observed:
             continue
-        entry, differs = tallied(NODES, [held[:, at] for held in counts], times)
-        if differs:
-            found[name] = dict(stated=stating([name in side["registry"].nodes for side in sides]), **entry)
+        if any(told[name][label] for label in NODES):
+            found[name] = dict(stated=stating([name in side["registry"].nodes for side in sides]), **told[name])
         else:
             equal += 1
     LOG.debug("differences kinded exit differing=%d equal=%d seconds=%.4f", len(found), equal, time.perf_counter() - started)
     return found, equal
 
 
-def related(name, sides, facts, times):
+def joined(sides, shared, names):
     started = time.perf_counter()
-    holders = [side["registry"] for side in sides if name in side["registry"].by_name]
-    if len({registry.by_name[name].symmetric for registry in holders}) != 1:
-        raise ValueError(
-            "the relation %s has a direction on one side and none on the other; a difference meets the relations of "
-            "the two by name" % name
-        )
-    registry = holders[0]
-    rows = []
-    for side, held in zip(sides, facts):
-        own = side["registry"]
-        chosen = held[held[:, 1] == own.code(name)] if name in own.by_name else held[:0]
-        code = np.full((len(chosen), 1), registry.code(name), np.int64)
-        rows.append(np.concatenate((chosen[:, :1], code, chosen[:, 2:]), 1))
-    keyed = [held[:, :4] for held in rows]
-    alone, unlike = unmatched(registry, *keyed), unmatched(registry, *rows)
-    edges = [distinct(registry, held[apart]) for held, apart in zip(keyed, alone)]
-    both = [held[~apart & other] for held, apart, other in zip(keyed, alone, unlike)]
-    edges.append(distinct(registry, np.concatenate(both)))
-    result = tallied(EDGES, [np.bincount(held[:, 0], minlength=len(times)) for held in edges], times)
-    LOG.debug("differences related exit relation=%s differs=%s seconds=%.4f", name, result[1], time.perf_counter() - started)
-    return result
+    place = {name: at for at, name in enumerate(names)}
+    holder = np.asarray([[name in side["registry"].by_name for side in sides].index(True) for name in names], np.int64)
+    coded = np.asarray([sides[first]["registry"].code(name) for first, name in zip(holder.tolist(), names)], np.int64)
+    named, tables = [], []
+    for side, number in zip(sides, shared):
+        own, held = side["registry"], side["facts"]
+        index = np.full(own.relations, -1, np.int64)
+        for code in np.unique(held[:, 0]).tolist():
+            index[code] = place[own.by_code[code].name]
+        named.append(index[held[:, 0]])
+        tables.append(np.stack((np.zeros(len(held), np.int64), coded[named[-1]], number[held[:, 1]], number[held[:, 2]]), 1))
+    keys = [np.zeros(len(table), np.int64) for table in tables]
+    for first, side in enumerate(sides):
+        chosen = [holder[found] == first for found in named]
+        for key, mask, found in zip(keys, chosen, truth.met(side["registry"], *[table[mask] for table, mask in zip(tables, chosen)])):
+            key[mask] = found * len(sides) + first
+    edges = np.unique(np.concatenate(keys), return_inverse=True)[1].reshape(-1)
+    family = np.zeros(int(edges.max()) + 1 if len(edges) else 0, np.int64)
+    family[edges] = np.concatenate(named)
+    LOG.debug("differences joined exit edges=%d seconds=%.4f", len(family), time.perf_counter() - started)
+    return [edges[: len(keys[0])], edges[len(keys[0]) :]], family
 
 
-def edged(sides, numbers, times):
+def edged(sides, shared, places):
     started = time.perf_counter()
     values = valued(*[(side["table"], side["reference"]) for side in sides])
-    facts = [
-        np.concatenate((side["facts"][:, :2], number[side["facts"][:, 2:], 2], value[:, None]), 1)
-        for side, number, value in zip(sides, numbers, values)
-    ]
     stated = [
         name
         for side in sides
         for table in side["registry"].schema.edges
         for name in side["registry"].encoding.relations[table]
     ]
-    holding = [
-        side["registry"].by_code[code].name
-        for side, held in zip(sides, facts)
-        for code in np.unique(held[:, 1]).tolist()
-    ]
+    holding = [side["registry"].by_code[code].name for side in sides for code in np.unique(side["facts"][:, 0]).tolist()]
+    names = list(dict.fromkeys(stated + holding))
+    for name in names:
+        if len({side["registry"].by_name[name].symmetric for side in sides if name in side["registry"].by_name}) != 1:
+            raise ValueError(
+                "the relation %s has a direction on one side and none on the other; a difference meets the relations of "
+                "the two by name" % name
+            )
+    edges, family = joined(sides, shared, names)
+    held = [(key, value, side["facts"][:, 3], side["facts"][:, 4]) for key, value, side in zip(edges, values, sides)]
+    told = tallied(EDGES, parted(*held), family, names, places)
     found, equal = {}, 0
-    for name in dict.fromkeys(stated + holding):
-        entry, differs = related(name, sides, facts, times)
-        if differs:
-            found[name] = dict(stated=stating([name in side["registry"].by_name for side in sides]), **entry)
+    for name in names:
+        if any(told[name][label] for label in EDGES):
+            found[name] = dict(stated=stating([name in side["registry"].by_name for side in sides]), **told[name])
         else:
             equal += 1
     LOG.debug("differences edged exit differing=%d equal=%d seconds=%.4f", len(found), equal, time.perf_counter() - started)
     return found, equal
 
 
-def differed(first, second, times):
+def differed(first, second, places):
     started = time.perf_counter()
     sides = (first, second)
     kinds = list(dict.fromkeys(name for side in sides for name in side["registry"].nodes))
@@ -270,12 +305,14 @@ def differed(first, second, times):
         np.asarray([kinds.index(name) for name in side["registry"].nodes], np.int64)[side["kinds"]] for side in sides
     ]
     shared = numbered(*[np.stack((kind, side["tokens"]), 1) for kind, side in zip(owned, sides)])
-    numbers = [np.stack((kind, side["tokens"], number), 1) for kind, side, number in zip(owned, sides, shared)]
-    nodes, edges = kinded(sides, numbers, kinds, times), edged(sides, numbers, times)
+    family = np.zeros(max([int(number.max()) + 1 for number in shared if len(number)] + [0]), np.int64)
+    for kind, number in zip(owned, shared):
+        family[number] = kind
+    nodes, edges = kinded(sides, shared, family, kinds, places), edged(sides, shared, places)
     result = dict(kinds=nodes[0], relations=edges[0], equal=dict(kinds=nodes[1], relations=edges[1]))
     LOG.info(
-        "differences differed exit times=%d kinds=%d relations=%d seconds=%.3f",
-        len(times),
+        "differences differed exit places=%d kinds=%d relations=%d seconds=%.3f",
+        len(places),
         len(nodes[0]),
         len(edges[0]),
         time.perf_counter() - started,
