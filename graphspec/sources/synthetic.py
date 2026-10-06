@@ -1221,10 +1221,10 @@ BLIND = (1, TURNS[-1])
 def chooser(nothing):
     actions = dict(
         go=dict(roles=dict(to=dict(sort="node", kinds=["spot"], count=[1, 1])), parameters=["speed"]),
-        cut=dict(roles=dict(along=dict(sort="edge", kinds=["spot"], count=[1, 1])), parameters=["mode"]),
+        cut=dict(roles=dict(along=dict(sort="edge", kinds=["spot"], count=[1, None])), parameters=["mode"]),
         put=dict(
             roles=dict(
-                at=dict(sort="node", kinds=["spot"], count=[1, 1]), made=dict(sort="new", kinds=["mark"], count=[1, 1])
+                at=dict(sort="node", kinds=["spot"], count=[1, 2]), made=dict(sort="new", kinds=["mark"], count=[0, 1])
             ),
             parameters=["lit"],
         ),
@@ -1303,22 +1303,25 @@ def turned(moment, place, actors, generator):
     started = time.perf_counter()
     spot, edge_at = SPOTS[(moment + place) % 5], (moment + place) % 4
     along = [SPOTS[edge_at], "near", SPOTS[edge_at + 1]]
+    across = [SPOTS[(edge_at + 3) % 4 + 1], "near", SPOTS[(edge_at + 3) % 4]]
+    cuts = [along[::-1] if moment % 2 else along] + ([across] if moment % 3 == 0 else [])
+    beside = SPOTS[(moment + place + 2) % 5]
     actor = actors[0]
     made = "m0" if (place, moment, actor) == (0, 3, "a0") else "m0_%d_%s" % (moment, actor)
     options = [
         offered("wait", [], "set", RECORDED),
         offered("go", [acting("go", actor, dict(to=[spot]), dict(speed=0.5 * moment + place))], "set", RECORDED),
-        offered(
-            "cut",
-            [acting("cut", actor, dict(along=[along[::-1] if moment % 2 else along]), dict(mode=MODES[moment % 2]))],
-            "set",
-            RECORDED,
-        ),
+        offered("cut", [acting("cut", actor, dict(along=cuts), dict(mode=MODES[moment % 2]))], "set", RECORDED),
         offered(
             "put",
             [
                 acting("go", actor, dict(to=[spot]), dict(speed=1.5)),
-                acting("put", actor, dict(at=[spot], made=[made]), dict(lit=moment % 2 == 0)),
+                acting(
+                    "put",
+                    actor,
+                    dict(at=[beside, spot] if (moment + place) % 2 == 0 else [spot], made=[] if moment % 3 == 2 else [made]),
+                    dict(lit=moment % 2 == 0),
+                ),
             ],
             "sequence",
             RECORDED,

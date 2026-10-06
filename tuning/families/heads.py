@@ -192,7 +192,7 @@ def refused(name, registry):
 
 
 class Existing:
-    version = 8
+    version = 9
     reads = ("targets",)
     together = False
     back = False
@@ -216,6 +216,16 @@ class Existing:
                         action,
                         task,
                         ", ".join("%s of the sort %s" % (role, held["sort"]) for role, held in entry["roles"].items()),
+                        ONE,
+                    )
+                ((role, held),) = entry["roles"].items()
+                if held["count"] != [1, 1]:
+                    return "the kind of action %s of the kind of task %s states the role %s holding from %d to %s targets, and %s" % (
+                        action,
+                        task,
+                        role,
+                        held["count"][0],
+                        "no bound" if held["count"][1] is None else held["count"][1],
                         ONE,
                     )
         if registry.extras["acted"] > 1:
@@ -249,7 +259,7 @@ class Built:
 
 
 class Structural:
-    version = 6
+    version = 7
     reads = ("kind", "targets", "parameters")
     together = False
     back = False
@@ -275,6 +285,12 @@ class Structural:
                     return (
                         "the kind of action %s of the kind of task %s states no role, and the realisation joins the "
                         "actor of an action to each of its targets by an edge" % (action, task)
+                    )
+                if not any(held["count"][0] for held in entry["roles"].values()):
+                    return (
+                        "the kind of action %s of the kind of task %s states no role holding a target in every action, "
+                        "and the realisation joins the actor of an action to each of its targets by an edge, so an "
+                        "action holding none would put nothing of its kind and parameters before the model" % (action, task)
                     )
         return None
 

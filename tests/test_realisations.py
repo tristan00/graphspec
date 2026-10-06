@@ -215,7 +215,7 @@ REALISED = dict(
     palindrome=Realised(Palindrome),
 )
 FINITE = "with the moves drawn by the seed 5, the score of no option of the splits scored on changes when its own field %s of the kind of task turn moves by a finite amount, under the realisation of options %s$"
-APART = "the score of an option of the kind of task turn differs from its score where it is the only option of its decision, and the realisation of options %s does not state that it reads"
+APART = "the score of an option of the kind of task (turn|show) differs from its score where it is the only option of its decision, and the realisation of options %s does not state that it reads"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -518,6 +518,16 @@ def test_one_action_has_one_content_as_a_set_and_as_a_sequence_and_a_created_ele
     assert single.any() and created.any() and np.array_equal(view.contents(), found.option["content"])
     view.option = dict(found.option, sequence=found.option["sequence"] ^ several)
     assert several.any() and np.array_equal(view.contents() != found.option["content"], several)
+    action, code = found.role["action"], found.role["code"]
+    _, inverse, counts = np.unique(np.stack((action, code), 1), axis=0, return_inverse=True, return_counts=True)
+    view.option, view.action = found.option, dict(found.action)
+    view.role = {name: values[np.lexsort((-np.arange(len(action)), code, action))] for name, values in found.role.items()}
+    assert (counts[inverse.reshape(-1)] > 1).any() and np.array_equal(view.contents(), found.option["content"])
+    for dropped in (np.flatnonzero(created)[0], np.flatnonzero(counts[inverse.reshape(-1)] > 1)[0]):
+        kept = np.arange(len(action)) != dropped
+        view.role, view.action = {name: values[kept] for name, values in found.role.items()}, dict(found.action)
+        changed = view.contents() != found.option["content"]
+        assert np.flatnonzero(changed).tolist() == [found.action["option"][action[dropped]]]
     LOG.info("content of options exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -851,6 +861,8 @@ def test_the_node_realisation_reads_options_of_one_action_whose_one_target_is_a_
     for action, entry, columns, message in (
         ("cut", dict(roles=dict(along=dict(spot, sort="edge")), parameters=[]), {}, where + "of action cut of the kind of task turn states the roles along of the sort edge, and the realisation reads options of one action whose one target is a node"),
         ("put", dict(roles=dict(at=spot, made=dict(sort="new", kinds=["mark"], count=[1, 1])), parameters=[]), {}, where + "of action put of the kind of task turn states the roles at of the sort node, made of the sort new"),
+        ("go", dict(roles=dict(to=dict(spot, count=[1, None])), parameters=[]), {}, where + "of action go of the kind of task turn states the role to holding from 1 to no bound targets, and the realisation reads options of one action whose one target is a node"),
+        ("go", dict(roles=dict(to=dict(spot, count=[0, 1])), parameters=[]), {}, where + "of action go of the kind of task turn states the role to holding from 0 to 1 targets, and the realisation reads options of one action whose one target is a node"),
         ("stay", dict(roles=dict(at=spot), parameters=[]), {}, "the field kind " + routes + " reads no kind"),
         ("go", dict(roles=dict(to=spot), parameters=["speed"]), dict(speed=number), "the field parameter speed of go " + routes + " reads no parameters"),
     ):
@@ -909,24 +921,59 @@ def test_each_structural_realisation_puts_through_one_channel_the_elements_its_r
 
     monkeypatch.setattr(channel, "received", recording)
     targets, actors = [(0, 0), (0, 3), (1, 1)], [(0, 0), (0, 3), (0, slot), (1, 1), (1, slot)]
+    several, beside = [(0, 0), (0, 0), (1, 1)], [(0, 0), (0, 0), (0, slot), (1, 1), (1, slot)]
     wanted = dict(
-        action_nodes=(targets, slot, (2, [0, 1, 2], [0, 0, 1], [0, 3, 1])),
-        actor_edge=(actors, slot + 1, (3, [0, 1, 3, 2, 2, 4], [0, 1, 2, 0, 1, 2], [0, 3, 1, slot, slot, slot])),
-        set_edge=(actors, slot + 1, (2, [0, 1, 2, 3, 4], [0, 0, 0, 1, 1], [0, 3, slot, 1, slot])),
+        action_nodes=(
+            (targets, slot, (2, [0, 1, 2], [0, 0, 1], [0, 3, 1])),
+            (several, slot, (2, [0, 1, 2], [0, 0, 1], [0, 0, 1])),
+        ),
+        actor_edge=(
+            (actors, slot + 1, (3, [0, 1, 3, 2, 2, 4], [0, 1, 2, 0, 1, 2], [0, 3, 1, slot, slot, slot])),
+            (beside, slot + 1, (3, [0, 1, 3, 2, 2, 4], [0, 1, 2, 0, 1, 2], [0, 0, 1, slot, slot, slot])),
+        ),
+        set_edge=(
+            (actors, slot + 1, (2, [0, 1, 2, 3, 4], [0, 0, 0, 1, 1], [0, 3, slot, 1, slot])),
+            (beside, slot + 1, (2, [0, 1, 2, 3, 4], [0, 0, 0, 1, 1], [0, 0, slot, 1, slot])),
+        ),
     )
-    for name, (codes, labels, joined) in wanted.items():
-        module = REALISATIONS.named(name).module(4, 3, dict(view="snapshot"), held.registry)
-        fields = dict(kind=torch.ones(2, 4), targets=torch.ones(len(codes), 4), parameters=torch.ones(2, 3))
-        options, actions = module(fields, acted([0, 0], 2, codes, False, [0, 1]))
-        assert (found["labels"], found["module"].held) == (labels, [joined]), name
-        assert options.shape == actions.shape == (2, 4) and torch.equal(options[1], module.empty.detach())
+    for name, cases in wanted.items():
+        for codes, labels, joined in cases:
+            module = REALISATIONS.named(name).module(4, 3, dict(view="snapshot"), held.registry)
+            fields = dict(kind=torch.ones(2, 4), targets=torch.ones(len(codes), 4), parameters=torch.ones(2, 3))
+            options, actions = module(fields, acted([0, 0], 2, codes, False, [0, 1]))
+            assert (found["labels"], found["module"].held) == (labels, [joined]), name
+            assert options.shape == actions.shape == (2, 4) and torch.equal(options[1], module.empty.detach())
     bare = varied(held.registry, "stay", dict(roles={}, parameters=[]), {})
     assert refused("actor_edge", bare).startswith(
         "the realisation of options actor_edge cannot read the options of this bank: the kind of action stay of the "
         "kind of task turn states no role, and the realisation joins the actor of an action to each of its targets"
     )
     assert refused("action_nodes", bare) is None and refused("set_edge", bare) is None
+    optional = varied(held.registry, "stay", dict(roles=dict(at=dict(sort="node", kinds=["spot"], count=[0, 1])), parameters=[]), {})
+    assert refused("actor_edge", optional).startswith(
+        "the realisation of options actor_edge cannot read the options of this bank: the kind of action stay of the "
+        "kind of task turn states no role holding a target in every action, and the realisation joins the actor of an "
+        "action to each of its targets"
+    )
+    assert refused("action_nodes", optional) is None and refused("set_edge", optional) is None
     LOG.info("structure of realisations exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_vector_binds_the_targets_of_a_role_alike_in_any_order_and_reads_a_role_holding_none_as_nothing(banks):
+    started = time.perf_counter()
+    held, generator = opened(banks, "stated"), torch.Generator().manual_seed(5)
+    torch.manual_seed(5)
+    module = REALISATIONS.named("vector").module(8, 3, dict(view="snapshot"), held.registry).eval()
+    kind, parameters, targets = (torch.randn(count, width, generator=generator) for count, width in ((2, 8), (2, 3), (3, 8)))
+    with torch.no_grad():
+        actions = module(dict(kind=kind, targets=targets, parameters=parameters), acted([0, 1], 2, [(0, 0), (0, 0), (1, 1)], False, [0, 0]))[1]
+        turned = module(dict(kind=kind, targets=targets[[1, 0, 2]], parameters=parameters), acted([0, 1], 2, [(0, 0), (0, 0), (1, 1)], False, [0, 0]))[1]
+        fewer = module(dict(kind=kind, targets=targets[1:], parameters=parameters), acted([0, 1], 2, [(0, 0), (1, 1)], False, [0, 0]))[1]
+        empty = module(dict(kind=kind, targets=targets[2:], parameters=parameters), acted([0, 1], 2, [(1, 1)], False, [0, 0]))[1]
+        alone = module.action(torch.cat((kind, parameters), -1))
+    assert torch.allclose(turned, actions, rtol=1e-6, atol=1e-6) and torch.allclose(empty[0], alone[0], rtol=1e-6, atol=1e-6)
+    assert not torch.allclose(fewer[0], actions[0]) and not torch.allclose(empty[0], fewer[0]) and torch.allclose(empty[1], actions[1], rtol=1e-6, atol=1e-6)
+    LOG.info("targets of vector exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_through_each_family_that_reads_them_a_set_of_actions_encodes_alike_in_any_order_and_a_sequence_keeps_its_order(banks):

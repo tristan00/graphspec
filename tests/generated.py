@@ -363,6 +363,9 @@ def turned(graph):
         for option in target["options"]:
             if option["together"] == "set":
                 option["actions"].reverse()
+            for action in option["actions"]:
+                for aims in action["targets"].values():
+                    aims.reverse()
     LOG.debug("generated turned exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
 
 

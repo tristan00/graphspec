@@ -127,6 +127,12 @@ def moved(case):
                 chosen[0]["chosen"], others[-1]["chosen"] = False, True
             for option in options:
                 option["origin"] = RECORDED
+                for action in option["actions"]:
+                    for aims in action["targets"].values():
+                        aims.reverse()
+                        for aim in aims:
+                            if isinstance(aim, list):
+                                aim.reverse()
             unchosen = [option for option in options if not option["chosen"] and option["actions"]]
             unchosen[0]["origin"] = dict(generator=GENERATOR, seed=3, drawn=0.5)
             options.reverse()
@@ -186,6 +192,7 @@ def covered(case):
                 found.add(("origin", option["origin"] == RECORDED))
                 found.add(("outcome", type(option["outcome"]).__name__))
                 found |= {("target", sorts[action["kind"]][role]) for action in option["actions"] for role, aims in action["targets"].items() if aims}
+                found |= {("targets", sorts[action["kind"]][role], min(len(aims), 2)) for action in option["actions"] for role, aims in action["targets"].items()}
     return found
 
 
@@ -281,8 +288,17 @@ def test_the_synthetic_decisions_cover_every_case_of_the_check():
         ("target", "node"),
         ("target", "edge"),
         ("target", "new"),
+        ("targets", "node", 2),
+        ("targets", "edge", 2),
+        ("targets", "new", 0),
     }
     assert wanted <= found
+    roles = {
+        (action, role): entry["count"]
+        for action, held in synthetic.decision_schema()["tasks"]["kinds"]["turn"]["target"]["actions"].items()
+        for role, entry in held["roles"].items()
+    }
+    assert roles == {("go", "to"): [1, 1], ("cut", "along"): [1, None], ("put", "at"): [1, 2], ("put", "made"): [0, 1]}
 
 
 def test_every_decision_reads_back_as_stated_with_its_fields_in_the_type_of_their_column(banks):
@@ -511,7 +527,7 @@ def test_the_targets_of_a_role_are_a_set_stored_by_their_content_and_held_within
     for counts, given, message in (
         ({}, rows + [(0, "to", "s1", None, None)], where % ("to", "go", "go") + "names the node s1 twice; the targets of a role are a set"),
         ({}, rows + [(2, "along", "s0", "near", "s1")], where % ("along", "cut", "cut") + "names the edge of near from s0 to s1 twice; the targets of a role are a set"),
-        ({}, rows[:2] + rows[3:], where % ("at", "put", "put") + "holds 0 targets, and its kind states from 1 to 1"),
+        ({}, rows[:2] + rows[3:], where % ("at", "put", "put") + "holds 0 targets, and its kind states from 1 to 2"),
         ({("go", "to"): [3, None]}, rows, where % ("to", "go", "go") + "holds 2 targets, and its kind states from 3 to no bound"),
         ({("go", "to"): [1, 1]}, rows, where % ("to", "go", "go") + "holds 2 targets, and its kind states from 1 to 1"),
         ({}, rows + [(1, "made", "m8", None, None), (1, "made", "m9", None, None)], where % ("made", "put", "put") + "holds 2 targets, and its kind states from 0 to 1"),

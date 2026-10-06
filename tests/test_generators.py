@@ -103,7 +103,7 @@ def pool(found, drawn, place, chosen, name):
         for option in found[other]["options"]:
             if (
                 option["origin"] == "recorded"
-                and all(action["actor"] in own["actors"] and action["kind"] != "put" for action in option["actions"])
+                and all(action["actor"] in own["actors"] and not (action["kind"] == "put" and action["targets"]["made"]) for action in option["actions"])
                 and generated.observed(graph, option, own["time"], own["observer"])
                 and generated.content(option) not in present
             ):
