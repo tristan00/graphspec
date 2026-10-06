@@ -2,7 +2,11 @@ __pycache__/
 *.pyc
 .idea/
 
-.claude/review/
+.claude/
+CLAUDE.md
+Agents.md
+PLAN.md
+docs/
 local/
 .playwright-mcp/
 dur.txt
