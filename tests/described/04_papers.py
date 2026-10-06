@@ -9,7 +9,7 @@ works = source(
         id="identifier",
         year=dict(type="time", unit="year"),
         words=dict(type="vector", width=16),
-        venue=dict(type="category", outcome=None),
+        venue=dict(type="category", outcome="never"),
     ),
 )
 listed = source(
@@ -40,7 +40,7 @@ venue = tasks(
     target=dict(
         kind="class",
         value="venue",
-        known=None,
+        known="never",
         about="work",
         utility=dict(name="weighted", better="higher", weights=1.0),
     ),

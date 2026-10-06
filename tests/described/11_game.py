@@ -1,4 +1,4 @@
-from graphspec import decisions, edges, nodes, source
+from graphspec import decisions, nodes, source
 
 DESCRIPTION = "A game where several players act at once and each sees part of the state"
 
@@ -34,16 +34,7 @@ unit = nodes(
     key="unit",
     graph="game",
     features=dict(strength="standard"),
-    holds=dict(name="snapshot", at="turn", between="absent"),
-    known=None,
-    seen="watchers",
-)
-owned = edges(
-    sightings,
-    graph="game",
-    source=dict(of=unit, key="unit", absent="stop"),
-    target=dict(of=player, key="owner", absent="stop"),
-    directed=True,
+    links=dict(owner=dict(of=player, key="owner", absent="stop")),
     holds=dict(name="snapshot", at="turn", between="absent"),
     known=None,
     seen="watchers",
@@ -86,10 +77,7 @@ turn = decisions(
                 ),
                 parameters=dict(force="standard"),
             ),
-            hold=dict(
-                roles=dict(by=dict(sort="node", of=unit, keys="unit", count=[1, 1])),
-                parameters=dict(),
-            ),
+            hold=dict(roles=dict(by=dict(sort="node", of=unit, keys="unit", count=[1, 1]))),
         ),
     ),
 )

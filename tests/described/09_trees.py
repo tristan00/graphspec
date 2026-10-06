@@ -8,7 +8,7 @@ programs = source(
     columns=dict(
         program="identifier",
         root="nested",
-        name=dict(type="list", of="category", outcome=None),
+        name=dict(type="list", of="category", outcome="never"),
     ),
 )
 flows = source(
@@ -65,7 +65,7 @@ named = tasks(
         kind="sequence",
         length=5,
         value="name",
-        known=None,
+        known="never",
         about=None,
         utility=dict(name="weighted", better="higher", weights=1.0),
     ),

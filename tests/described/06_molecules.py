@@ -18,7 +18,7 @@ bonds = source(
 labels = source(
     "molecules.csv",
     reader="csv",
-    columns=dict(molecule="identifier", mutagenic=dict(type="category", outcome=None)),
+    columns=dict(molecule="identifier", mutagenic=dict(type="category", outcome="never")),
 )
 atom = nodes(
     atoms,
@@ -40,7 +40,7 @@ mutagenic = tasks(
     target=dict(
         kind="class",
         value="mutagenic",
-        known=None,
+        known="never",
         about=None,
         utility=dict(name="weighted", better="higher", weights=1.0),
     ),

@@ -36,7 +36,6 @@ impression = decisions(
         key="position",
         chosen="True",
         available="True",
-        together="'set'",
         order="position",
         logged="chance",
         outcome=dict(click="1.0 if click else 0.0"),
@@ -49,10 +48,7 @@ impression = decisions(
         kind="'show'",
         actor="policy",
         kinds=dict(
-            show=dict(
-                roles=dict(what=dict(sort="node", of=item, keys="item", count=[1, 1])),
-                parameters=dict(),
-            ),
+            show=dict(roles=dict(what=dict(sort="node", of=item, keys="item", count=[1, 1]))),
         ),
     ),
 )

@@ -1,4 +1,4 @@
-from graphspec import edges, nodes, order, source, tasks
+from graphspec import nodes, order, source, tasks
 
 DESCRIPTION = "Quarterly figures that are revised later; predict with what was believed on the day"
 
@@ -25,15 +25,7 @@ figure = nodes(
     versions,
     key=["firm", "quarter"],
     features=dict(sales="standard"),
-    holds=dict(name="state", since="closes", until=None),
-    known="reported",
-    replaced="revised",
-)
-reports = edges(
-    versions,
-    source=dict(of=figure, key=["firm", "quarter"], absent="stop"),
-    target=dict(of=firm, key="firm", absent="stop"),
-    directed=True,
+    links=dict(firm=dict(of=firm, key="firm", absent="stop")),
     holds=dict(name="state", since="closes", until=None),
     known="reported",
     replaced="revised",

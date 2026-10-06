@@ -10,7 +10,6 @@ works = source(
         lab="identifier",
         year=dict(type="time", unit="year"),
         authors=dict(type="list", of="identifier"),
-        roster=dict(type="list", of="identifier"),
     ),
 )
 bylines = expand(works, column="authors", into="author")
@@ -27,14 +26,15 @@ paper = sets(
 team = tasks(
     works,
     at="year",
-    references=dict(circle=dict(sort="nodes", of=author, keys="roster", absent="stop")),
+    references=dict(last=dict(sort="node", of=paper, key="id", absent="stop")),
     target=dict(
-        kind="nodes",
-        series="joins",
-        value="first(later.authors, by=later.year)",
+        kind="set",
+        series="next",
+        sets=paper,
+        value=dict(author="first(later.authors, by=later.year)"),
         later=dict(rows=works, on=dict(lab="lab"), at="year", within=None),
         known="min(later.year)",
-        about="circle",
+        about=None,
         utility=dict(name="weighted", better="higher", weights=1.0),
     ),
     split=dict(name="time", parts=dict(train=0.7, validation=0.15, test=0.15)),

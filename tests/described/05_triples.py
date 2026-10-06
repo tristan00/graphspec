@@ -45,7 +45,7 @@ tail = tasks(
         series="tail",
         relation=fact,
         value="tail",
-        known=None,
+        known="never",
         about="head",
         utility=dict(name="weighted", better="higher", weights=1.0),
     ),

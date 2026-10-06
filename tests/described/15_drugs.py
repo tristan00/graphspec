@@ -15,7 +15,7 @@ bonds = source(
 trials = source(
     "pairs.csv",
     reader="csv",
-    columns=dict(one="identifier", other="identifier", interact=dict(type="flag", outcome=None)),
+    columns=dict(one="identifier", other="identifier", interact=dict(type="flag", outcome="never")),
 )
 drug = nodes(atoms, distinct=["drug"], held="propagated")
 atom = nodes(
@@ -41,7 +41,7 @@ interacts = tasks(
     target=dict(
         kind="class",
         value="'interacts' if interact else 'apart'",
-        known=None,
+        known="never",
         about=None,
         utility=dict(name="weighted", better="higher", weights=dict(interacts=1.0, apart=0.0)),
     ),
