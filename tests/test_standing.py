@@ -7,6 +7,7 @@ import re
 import time
 import tomllib
 from functools import lru_cache
+from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
 
@@ -1085,6 +1086,8 @@ def shipped():
     from graphspec import OPERATIONS, registries
 
     started = time.perf_counter()
+    for package in CODE:
+        import_module(package)
     found = {
         "%s %s" % (registry.label, name): registry.named(name)
         for registry in registries.REGISTRIES
