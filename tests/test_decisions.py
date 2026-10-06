@@ -1,5 +1,6 @@
 import copy
 import logging
+import re
 import time
 
 import numpy as np
@@ -221,6 +222,14 @@ def test_a_decision_states_its_actors_kinds_of_action_and_the_option_that_does_n
         entry[path[-1]] = value
         with pytest.raises(ValueError, match=message):
             Schema(held)
+    first, aim = synthetic.decisions(GENERATOR)["graphs"][0]["tasks"]["target"][0], schema.tasks["kinds"]["turn"]["target"]
+    for key, outcome in (("put", [None, None]), ("wait", [])):
+        given = copy.deepcopy(first)
+        (place,) = [at for at, option in enumerate(given["options"]) if option["key"] == key]
+        given["options"][place]["outcome"] = outcome
+        message = "the option %d of the graph g0, the task 10, of the key %s, states as its outcome per action %r, " % (place, key, outcome)
+        with pytest.raises(ValueError, match="^" + re.escape(message + "the outcome of none of its actions; an option with no outcome states none") + "$"):
+            kind.staged(given, aim, "the graph g0, the task 10")
     held = copy.deepcopy(stated)
     held["tasks"]["kinds"]["turn"]["target"]["rule"] = dict(name="listed", parameters=dict(within=2))
     ruled = Schema(held)

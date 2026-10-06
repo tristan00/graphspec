@@ -203,6 +203,11 @@ def option(stated, series, where):
     if isinstance(held, list):
         if len(held) != len(stated["actions"]):
             raise ValueError("%s states an outcome per action, one for each of its actions" % where)
+        if all(part is None for part in held):
+            raise ValueError(
+                "%s, of the key %s, states as its outcome per action %r, the outcome of none of its actions; an option "
+                "with no outcome states none" % (where, stated["key"], held)
+            )
         for place, part in enumerate(held):
             outcome(part, series, "the action %d of %s" % (place, where))
     else:
