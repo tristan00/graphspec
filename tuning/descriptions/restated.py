@@ -7,9 +7,12 @@ import numpy as np
 
 from graphspec.budgets import GraphCapacityError
 from graphspec.descriptions import effect
+from graphspec.facts.stored import Facts
 from graphspec.infra.timing import timed
 from graphspec.operations import pipeline as pipelines
+from graphspec.operations import sets
 from graphspec.operations.operation import Refused
+from graphspec.views.view import stepped
 from tuning.bank import forks
 from tuning.bank.options import TOKEN
 
@@ -86,6 +89,46 @@ def unsettled(registry, entries):
             break
         stated[name] = own
     LOG.debug("restated unsettled exit entries=%d settled=%s seconds=%.4f", len(found), result is None, time.perf_counter() - started)
+    return result
+
+
+def viewed(deriver, config):
+    started = time.perf_counter()
+    held = deriver.viewed(config)
+    looking, observers = held.looking, deriver.manifest["observers"]
+    names = {graph["index"]: graph["name"] for graph in deriver.manifest["graphs"]}
+    ruled = [code for code, rules in looking.rules.items() if rules]
+    shared = [name for code, name in enumerate(looking.splits) if code not in ruled]
+    result = {
+        graph["index"]: dict(
+            graph=names[graph["source"]],
+            observer=None if graph["observer"] < 0 else observers[graph["observer"]],
+            splits=list(shared) if graph["split"] < 0 else [looking.splits[graph["split"]]],
+        )
+        for graph in held.graphs
+    }
+    LOG.debug("restated viewed exit views=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def unviewed(deriver, config):
+    started = time.perf_counter()
+    held = deriver.viewed(config)
+    looking, shown, result = held.looking, {graph["source"] for graph in held.graphs}, []
+    for graph in deriver.manifest["graphs"]:
+        if graph["index"] in shown:
+            continue
+        facts = sets.stored(Facts.load(deriver.truth(graph["index"])), deriver.registry, held.storage)
+        split = np.asarray(facts.task_split, np.int64)
+        result.append(
+            dict(
+                name=graph["name"],
+                tasks=len(split),
+                stated=int(np.isin(split, looking.trained + looking.scored).sum()),
+                sequences=len(stepped(facts, deriver.registry, held.steps, np.arange(len(split)))),
+            )
+        )
+    LOG.debug("restated unviewed exit graphs=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
 

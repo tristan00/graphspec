@@ -362,7 +362,7 @@ def text(record):
 
 def graph_text(graph, named):
     started = time.perf_counter()
-    head = "graph %s, %s" % (graph["name"], truth.spanned(named, graph["times"]))
+    head = "graph %s, %s, %s" % (graph["name"], truth.viewed_text(graph["view"]), truth.spanned(named, graph["times"]))
     if named is not None:
         alone = [", ".join(map(str, graph["alone"][side])) or "none" for side in SIDES]
         head += "; %s only the first shows: %s; %s only the second shows: %s" % (named["many"], alone[0], named["many"], alone[1])

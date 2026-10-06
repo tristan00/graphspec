@@ -682,8 +682,13 @@ def effected(entry, kinds, relations, cuts):
     return dict(entry=entry, operation=entry, kinds=kinds, relations=relations, cuts=cuts)
 
 
+EVERY = ["train", "validation"]
+VIEWED = {name: dict(graph=name, observer=None, splits=EVERY) for name in ("g0", "g1", "h0", "w0")}
+SEEN_BY = "the graph %s as the tasks of the splits train, validation see it"
+UNSHOWN = "graphs of the bank the view does not show: none"
 VARIED = dict(
     name="g0",
+    view=VIEWED["g0"],
     times=[0, 1, 2, 3, 4, 5, 6, 7],
     tasks=dict(turn=[1, 3, 5], visit=[2, 4, 5, 6]),
     held=holding([2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 3, 3, 3, 2, 2, 2], [1, 1, 2, 2, 1, 1, 0, 0], [1, 2, 1, 1, 2, 2, 1, 1], ZERO),
@@ -731,6 +736,7 @@ VARIED = dict(
 )
 VARIED_SECOND = dict(
     name="g1",
+    view=VIEWED["g1"],
     times=[1, 2, 3],
     tasks=dict(turn=[2], visit=[1]),
     held=holding([1, 1, 1], [2, 2, 1], EMPTY, [1, 1, 0], EMPTY),
@@ -782,12 +788,13 @@ VARIANT = """variant %s of the bank stored as %s, described at version %d
 derivation seed 7, device cpu
 splits trained on train, scored on validation; rules of what each sees: train none, validation none
 settings: graphs/join separate, nodes/untyped False, relations/direction inverse, time/steps changes, time/several last
+graphs of the bank the view does not show: none
 %s
 entry graphspec.nodes, of the operation graphspec.nodes at version %d: parameters nodes/agent/keep True, nodes/spot/keep True, nodes/referenced keep, nodes/agent/filter degree, nodes/agent/min_degree 1, nodes/spot/filter none; reads none; splits none; storage none; second graph none
 entry test.cut, of the operation test.cut at version 1: parameters cut/relation base, cut/kind turn; reads none; splits none; storage none; second graph none
 entry graphspec.relation_forms, of the operation graphspec.relation_forms at version %d: parameters relation_forms/types typed, relation_forms/parallel keep, relation_forms/reverse False, relation_forms/loops True; reads none; splits none; storage none; second graph none
 
-graph g0, 8 steps from time 0 to 7
+graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 steps from time 0 to 7
   tasks: turn at 1, 3, 5; visit at 2, 4, 5, 6
   held at each time before the first entry:
 %(steps)s
@@ -852,7 +859,7 @@ graph g0, 8 steps from time 0 to 7
     6     1            0              2           0             0           1           3
     7     1            0              2           0             0           1           3
 
-graph g1, 3 steps from time 1 to 3
+graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 steps from time 1 to 3
   tasks: turn at 2; visit at 1
   held at each time before the first entry:
 %(steps)s
@@ -948,6 +955,7 @@ def varied(bank, config):
         device="cpu",
         splits=SPLITS,
         settings=SETTLED,
+        unshown=[],
         entries=entries("test.cut", CUTTING),
         graphs=[VARIED, VARIED_SECOND],
     )
@@ -1161,6 +1169,7 @@ realisation of options vector at version %d, reading kind, targets, parameters; 
 derivation seed 7, device cpu
 splits trained on train, scored on validation; rules of what each sees: train none, validation none
 settings: graphs/join separate, nodes/untyped False, relations/direction inverse, time/steps changes, time/several last
+graphs of the bank the view does not show: none
 %s
 entry graphspec.nodes, of the operation graphspec.nodes at version %d: parameters nodes/agent/keep True, nodes/spot/keep True, nodes/referenced keep, nodes/agent/filter degree, nodes/agent/min_degree 1, nodes/spot/filter none; reads none; splits none; storage none; second graph none
 entry test.cut, of the operation test.cut at version 1: parameters cut/relation base, cut/kind turn; reads none; splits none; storage none; second graph none
@@ -1412,7 +1421,8 @@ def reached(stated):
             )
             for task, moment, actor, options, target, given in decisions
         ]
-        result.append(dict(name=graph, decided=dict(turn=dict(decisions=count, described=count)), cuts=cuts, decisions=found))
+        decided = dict(turn=dict(decisions=count, described=count))
+        result.append(dict(name=graph, view=VIEWED[graph], decided=decided, cuts=cuts, decisions=found))
     return result
 
 
@@ -1436,6 +1446,7 @@ def expected_reach(bank, config, name, fields):
         device="cpu",
         splits=SPLITS,
         settings=SETTLED,
+        unshown=[],
         entries=entries(cutter["operation"], cutter["parameters"]),
         tasks=dict(turn=dict(fields=list(GO), unread=[])),
         undecided=["visit"],
@@ -1459,7 +1470,7 @@ def spelled(record):
         )
     ]
     for (graph, decisions), counted in zip(DECIDED, ("decisions of turn 3, described 3", "decisions of turn 1, described 1")):
-        lines += ["", "graph %s, %s" % (graph, counted)] + SEVERED_TEXT[graph]
+        lines += ["", "graph %s, %s, %s" % (graph, SEEN_BY % graph, counted)] + SEVERED_TEXT[graph]
         for task, moment, actor, options, target, given in decisions:
             cut = "cut 1, by test.cut" if given else "cut 3, by test.cut"
             lines.append("  decision %d of turn at time %d, references agents %s" % (task, moment, actor))
@@ -2026,7 +2037,7 @@ UNSEEN_OPTION = (
 CROSSED_TEXT = """kind of task turn: fields kind, target to of go, target along of go, target made of go, target by of stay, parameter speed of go; not read by the realisation: none
 kinds of task that decide nothing, which hold no option: none
 
-graph h0, decisions of turn 4, described 3, 1 holding no point a fit reads
+graph h0, the graph h0 as the tasks of the splits train, validation see it, decisions of turn 4, described 3, 1 holding no point a fit reads
   cut 1, of being joined to a reference: by no entry, joined to a reference in no state, the view before the first entry included
     the truth joins it to no reference at the time of the task
   decision 10 of turn at time 0, references agents a0; over a0 base s0
@@ -2263,10 +2274,19 @@ def crossed_reach(bank, config, name, references, fields):
         device="cpu",
         splits=SPLITS,
         settings=CROSSED,
+        unshown=[],
         entries=entered(config["pipeline"]),
         tasks=dict(turn=dict(fields=list(FIELDS), unread=[])),
         undecided=[],
-        graphs=[dict(name="h0", decided=dict(turn=dict(decisions=4, described=3)), cuts=cuts, decisions=described)],
+        graphs=[
+            dict(
+                name="h0",
+                view=VIEWED["h0"],
+                decided=dict(turn=dict(decisions=4, described=3)),
+                cuts=cuts,
+                decisions=described,
+            )
+        ],
     )
 
 
@@ -3041,6 +3061,7 @@ def unlike(labels, stated, totals, *rows):
 
 LEANER = dict(
     name="g0",
+    view=VIEWED["g0"],
     times=[0, 1, 2, 3, 4, 5, 6, 7],
     alone=UNSHARED,
     kinds=dict(
@@ -3078,6 +3099,7 @@ LEANER = dict(
 )
 LEANER_SECOND = dict(
     name="g1",
+    view=VIEWED["g1"],
     times=[1, 2, 3],
     alone=UNSHARED,
     kinds=dict(agent=unlike(NODAL, "both", (2, 0, 0, 1), (1, 1, 0, 0, 0), (2, 1, 0, 0, 1))),
@@ -3146,6 +3168,7 @@ TRUTHS = dict(
 SIDE_TEXT = """derivation seed 7, device cpu
 splits trained on train, scored on validation; rules of what each sees: train none, validation none
 settings: graphs/join separate, nodes/untyped False, relations/direction inverse, time/steps changes, time/several last
+graphs of the bank the view does not show: none
 entry graphspec.nodes, of the operation graphspec.nodes at version %d: parameters nodes/agent/keep True, nodes/spot/keep True, nodes/referenced keep, nodes/agent/filter degree, nodes/agent/min_degree %d, nodes/spot/filter none; reads none; splits none; storage none; second graph none
 entry test.cut, of the operation test.cut at version 1: parameters cut/relation base, cut/kind turn; reads none; splits none; storage none; second graph none
 entry graphspec.relation_forms, of the operation graphspec.relation_forms at version %d: parameters relation_forms/types typed, relation_forms/parallel keep, relation_forms/reverse False, relation_forms/loops True; reads none; splits none; storage none; second graph none"""
@@ -3157,7 +3180,7 @@ the second:
 %s
 """
 DIFFERENCE = """
-graph g0, times 8 from 0 to 7; times only the first shows: none; times only the second shows: none
+graph g0, the graph g0 as the tasks of the splits train, validation see it, times 8 from 0 to 7; times only the first shows: none; times only the second shows: none
   kind agent: nodes only the first holds 11, only the second 0; anchors only the first holds 0, only the second 3
     time  first nodes  second nodes  first anchors  second anchors
     0     1            0             0              0
@@ -3187,7 +3210,7 @@ graph g0, times 8 from 0 to 7; times only the first shows: none; times only the 
     7     1      0       0
   equal at every time: kinds 1, relations 1
 
-graph g1, times 3 from 1 to 3; times only the first shows: none; times only the second shows: none
+graph g1, the graph g1 as the tasks of the splits train, validation see it, times 3 from 1 to 3; times only the first shows: none; times only the second shows: none
   kind agent: nodes only the first holds 2, only the second 0; anchors only the first holds 0, only the second 1
     time  first nodes  second nodes  first anchors  second anchors
     1     1            0             0              0
@@ -3301,6 +3324,7 @@ def diverged(bank, degrees, differs, graphs):
             device="cpu",
             splits=SPLITS,
             settings=SETTLED,
+            unshown=[],
             entries=entered(leaning(degree)),
         )
         for degree in degrees
@@ -3350,7 +3374,9 @@ def test_two_variants_that_differ_by_one_setting_differ_in_the_description_by_wh
     assert turned_over(record) == diverged(bank, (2, 1), True, [turned_over(LEANER), turned_over(LEANER_SECOND)])[0]
     assert turned_over(LEANER)["kinds"]["agent"]["at"][1] == dict(time=1, first=0, second=2, first_anchors=1, second_anchors=0)
     same = [
-        dict(name=name, times=times, alone=UNSHARED, kinds={}, relations={}, equal=dict(kinds=2, relations=3))
+        dict(
+            name=name, view=VIEWED[name], times=times, alone=UNSHARED, kinds={}, relations={}, equal=dict(kinds=2, relations=3)
+        )
         for name, times in (("g0", LEANER["times"]), ("g1", LEANER_SECOND["times"]))
     ]
     expected, written, _ = diverged(bank, (1, 1), False, same)
@@ -3759,7 +3785,7 @@ STILL_APART = """no unit, no time
   equal: kinds 0, relations 0
 """
 STILL_VARIANT = """
-graph g1, 3 steps, no time
+graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 steps, no time
   tasks: turn at the step; visit at the step
   held at each step before the first entry:
     agent nodes  agent anchors  spot nodes  spot anchors  near edges  base edges  relation_forms.loops edges
@@ -3817,7 +3843,8 @@ def test_under_order_a_description_states_positions_and_no_length_and_the_orders
     config = configured(bank, CUTTING)
     stated = effect.text(dict(variant(bank, config, STATED), time=ORDERED))
     body = stated[stated.index("\ngraph ") :]
-    assert body.startswith("\ngraph g0, 8 steps from position 0 to 7\n  tasks: turn at 1, 3, 5; visit at 2, 4, 5, 6\n")
+    head = "\ngraph g0, %s, 8 steps from position 0 to 7\n  tasks: turn at 1, 3, 5; visit at 2, 4, 5, 6\n" % (SEEN_BY % "g0")
+    assert body.startswith(head)
     assert "  held at each position before the first entry:\n    position  agent nodes  agent anchors  spot nodes" in body
     assert ORDERED_CUT in body and "time" not in body
     LOG.info("descriptions under order exit seconds=%.3f", time.perf_counter() - started)
@@ -3853,7 +3880,8 @@ def test_without_time_a_description_states_no_time_and_counts_once_what_holds_al
     monkeypatch.setattr(grown.schema, "model", "none")
     (told,) = effect.told([graph], [graph], grown, ())
     assert (told["times"], told["tasks"]) == ([None, None, None], dict(turn=[None], visit=[None]))
-    stated = effect.text(dict(variant(bank, configured(bank, CUTTING), STATED), time=STILL, graphs=[told]))
+    still = dict(variant(bank, configured(bank, CUTTING), STATED), time=STILL, graphs=[dict(told, view=VIEWED["g1"])])
+    stated = effect.text(still)
     assert stated[stated.index("\ngraph ") :] == STILL_VARIANT
     monkeypatch.undo()
     first, second = (diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), leaned(bank, degree))[1] for degree in (1, 2))
@@ -4265,3 +4293,44 @@ def test_a_truth_description_counts_what_it_leaves_out_and_holds_an_edge_about_a
         + [(place, held.keys.index("g1"), held.keys.index("s2")) for place in (2, 3, 4)]
     )
     LOG.info("descriptions unsaid truth exit seconds=%.3f", time.perf_counter() - started)
+
+
+WATCHING = dict(LONE, **{"sets/group/storage": "node"})
+UNSHOWN_TEXT = (
+    "\ngraphs of the bank the view does not show: w1, which holds 0 tasks, 0 of them of a split trained on or scored "
+    "on, and to which the choice of steps changes gives 0 sequences of steps\n"
+)
+RULED_VIEWS = {
+    0: dict(graph="g0", observer=None, splits=["validation"]),
+    1: dict(graph="g0", observer=None, splits=["train"]),
+    2: dict(graph="g1", observer=None, splits=["validation"]),
+    3: dict(graph="g1", observer=None, splits=["train"]),
+}
+
+
+def test_a_variant_names_the_graphs_of_the_bank_its_view_does_not_show_and_the_splits_whose_tasks_see_each_view(
+    unsaid, bank
+):
+    started = time.perf_counter()
+    pipeline = [dict(operation="graphspec.relation_forms", parameters=FORMS)]
+    config = configuration(unsaid, MODEL, None, pipeline=pipeline, graph=WATCHING, seed=STATED["seed"], splits=SPLITS)
+    record = variant(unsaid, config, STATED)
+    assert record["unshown"] == [dict(name="w1", tasks=0, stated=0, sequences=0)]
+    (shown,) = record["graphs"]
+    assert (shown["name"], shown["view"], shown["times"]) == ("w0", VIEWED["w0"], [0, 1, 2, 3, 4, 5, 6])
+    written = effect.text(record)
+    assert UNSHOWN_TEXT in written and "\ngraph w0, %s, 7 steps from time 0 to 6\n" % (SEEN_BY % "w0") in written
+    noted = WATCHED_FIRST["relations"]["note"]["edges_at"]
+    assert shown["held"]["relations"]["note"]["edges"] == noted == [1, 2, 2, 2, 1, 1, 1]
+    assert shown["held"]["kinds"]["group"]["nodes"] == WATCHED_FIRST["kinds"]["group"]["nodes_at"]
+    assert (shown["held"]["relations"]["base"]["edges"], WATCHED_FIRST["relations"]["base"]["edges_at"]) == (
+        [2, 2, 2, 2, 2, 3, 3],
+        [2, 2, 2, 3, 3, 3, 3],
+    )
+    deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
+    ruled = configuration(bank, MODEL, None, pipeline=[], graph=SETTINGS, seed=STATED["seed"], splits=SEEING)
+    assert restating.viewed(deriver, ruled) == RULED_VIEWS and restating.unviewed(deriver, ruled) == []
+    assert describing.viewed_text(RULED_VIEWS[1]) == "the graph g0 as the tasks of the split train see it"
+    north = dict(graph="w0", observer="north", splits=EVERY)
+    assert describing.viewed_text(north) == SEEN_BY % "w0" + ", those that name the observer north"
+    LOG.info("descriptions unsaid variant exit seconds=%.3f", time.perf_counter() - started)

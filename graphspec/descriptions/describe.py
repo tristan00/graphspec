@@ -17,7 +17,7 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 17
+VERSION = 18
 UNNAMED = -1
 LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
@@ -557,6 +557,14 @@ def uncounted_text(found):
     result = "  not counted above: " + "; ".join(parts)
     LOG.debug("describe uncounted text exit characters=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
+
+
+@timed("describe.viewed_text")
+def viewed_text(view):
+    splits = view["splits"]
+    whom = ("the split %s" if len(splits) == 1 else "the splits %s") % ", ".join(splits) if splits else "no split"
+    watching = "" if view["observer"] is None else ", those that name the observer %s" % view["observer"]
+    return "the graph %s as the tasks of %s see it%s" % (view["graph"], whom, watching)
 
 
 @timed("describe.spanned")

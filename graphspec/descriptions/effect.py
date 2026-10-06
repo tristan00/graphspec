@@ -8,7 +8,7 @@ from graphspec.infra.timing import timed
 from graphspec.operations.operation import Stored
 from graphspec.operations.sets import PARAMETER
 
-from .describe import NAMED, table
+from .describe import NAMED, table, viewed_text
 from .differences import compared, counted, distinct, numbered, tokens, unmatched
 
 LOG = logging.getLogger(__name__)
@@ -385,7 +385,7 @@ def graph_text(graph, named):
     spanned = ", no time" if named is None else " from %s %d to %d" % (named["one"], times[0], times[-1])
     lines = [
         "",
-        "graph %s, %d steps%s" % (graph["name"], len(times), spanned),
+        "graph %s, %s, %d steps%s" % (graph["name"], viewed_text(graph["view"]), len(times), spanned),
         "  tasks: %s" % "; ".join(tasked_text(task, moments, named) for task, moments in graph["tasks"].items()),
         "  held at each %s before the first entry:" % stepping(named),
     ]
@@ -408,6 +408,16 @@ def settled(record):
             listed({name: ", ".join(rules) or "none" for name, rules in splits["sees"].items()}),
         ),
         "settings: %s" % listed(record["settings"]),
+        "graphs of the bank the view does not show: %s"
+        % (
+            "; ".join(
+                "%s, which holds %d tasks, %d of them of a split trained on or scored on, and to which the choice of "
+                "steps %s gives %d sequences of steps"
+                % (held["name"], held["tasks"], held["stated"], record["settings"]["time/steps"], held["sequences"])
+                for held in record["unshown"]
+            )
+            or "none"
+        ),
     ]
     LOG.debug("effect settled exit lines=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result

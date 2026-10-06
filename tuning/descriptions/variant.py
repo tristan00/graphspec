@@ -15,7 +15,7 @@ from tuning.statement import agreed, state
 
 from . import reach as reaching
 from . import reaches
-from .restated import Derived
+from .restated import Derived, unviewed, viewed
 
 LOG = logging.getLogger(__name__)
 
@@ -38,7 +38,8 @@ def graphed(deriver, config):
     for group in deriver.graphs(config):
         found.update(zip(held.loaded(group)[0], held.effects(group)))
         held.group_done()
-    result = [found[graph["index"]] for graph in deriver.viewed(config).graphs]
+    views = viewed(deriver, config)
+    result = [dict(found[graph["index"]], view=views[graph["index"]]) for graph in deriver.viewed(config).graphs]
     LOG.info("variant graphed exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
     return result
 
@@ -52,6 +53,7 @@ def headed(deriver, config, key):
         device=deriver.device,
         splits=config["splits"],
         settings=specs.materialized(spec),
+        unshown=unviewed(deriver, config),
         entries=[effect.entered(step, deriver.registry, spec, config["splits"]) for step in steps],
     )
     LOG.debug("variant headed exit entries=%d seconds=%.4f", len(steps), time.perf_counter() - started)

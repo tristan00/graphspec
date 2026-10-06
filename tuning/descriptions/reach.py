@@ -856,7 +856,7 @@ class Reached(Derived):
                 self.decision_done()
             self.searched(group, asked, cuts)
             self.group_done()
-        result = []
+        result, views = [], restated.viewed(self.deriver, self.config)
         for graph in self.deriver.viewed(self.config).graphs:
             decisions = held[graph["index"]] if graph["index"] in held else []
             described = [decision["kind"] for decision in decisions]
@@ -864,7 +864,8 @@ class Reached(Derived):
                 task: dict(decisions=count, described=described.count(task)) for task, count in stated[graph["index"]].items()
             }
             found = cuts[graph["index"]] if graph["index"] in cuts else []
-            result.append(dict(name=graph["name"], decided=decided, cuts=found, decisions=decisions))
+            view = views[graph["index"]]
+            result.append(dict(name=graph["name"], view=view, decided=decided, cuts=found, decisions=decisions))
         LOG.info("reached graphed exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
         return result
 
@@ -901,6 +902,7 @@ def recorded(deriver, config, key, name, refused):
         device=deriver.device,
         splits=config["splits"],
         settings=specs.materialized(reached.spec),
+        unshown=restated.unviewed(deriver, config),
         entries=[effect.entered(step, deriver.registry, reached.spec, config["splits"]) for step in reached.steps],
         tasks={
             task: dict(
@@ -1172,9 +1174,10 @@ def graph_text(graph):
     started = time.perf_counter()
     lines = [
         "",
-        "graph %s, %s"
+        "graph %s, %s, %s"
         % (
             graph["name"],
+            truth.viewed_text(graph["view"]),
             "; ".join(
                 "decisions of %s %d, described %d%s"
                 % (

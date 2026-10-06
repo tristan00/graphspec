@@ -11,6 +11,7 @@ from graphspec.engine.segments import padded
 from graphspec.infra.files import sha256_json
 
 from . import variant as varying
+from .restated import viewed
 
 LOG = logging.getLogger(__name__)
 
@@ -87,7 +88,9 @@ def recorded(sides, configs):
             "the view of the first variant shows the graphs %s and the view of the second %s; a difference reads the "
             "same graphs of the view in both" % (", ".join(names[0]) or "none", ", ".join(names[1]) or "none")
         )
-    graphs = [paired(first, second) for first, second in zip(*held)]
+    views = viewed(sides[0][0], configs[0])
+    shown = sides[0][0].viewed(configs[0]).graphs
+    graphs = [dict(paired(first, second), view=views[graph["index"]]) for first, second, graph in zip(*held, shown)]
     result = dict(
         version=truth.VERSION,
         stored_sha256=sides[0][0].source,
