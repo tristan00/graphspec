@@ -68,8 +68,10 @@ def parsed(path):
 
 @timed("files.read_json")
 def read_json(path):
-    with open_read(path) as stream:
-        return json.load(stream)
+    found, unread = parsed(path)
+    if unread is not None:
+        raise ValueError("%s is no JSON: %s" % (path, unread))
+    return found
 
 
 @timed("files.write_jsonl")

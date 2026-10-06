@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import shutil
 import sys
 import time
@@ -530,6 +531,67 @@ def test_a_file_is_served_only_where_it_parses_and_holds_its_key_and_the_files_o
     assert describe(other) == record and kept_in(folder) == mine
     assert kept_in(other / "descriptions" / "differences") == apart and len(apart) == 3
     LOG.info("descriptions served and removed exit seconds=%.3f", time.perf_counter() - started)
+
+
+MANIFEST = "the manifest.json of the bank %s lacks %s; a bank holds the manifest its build wrote"
+UNFOLDERED = "%s is a file; descriptions are kept in a folder of that name"
+
+
+def test_a_bank_or_a_file_lacking_a_part_stops_the_call_naming_the_file_and_the_part(bank, tmp_path, capsys, monkeypatch):
+    from tuning.__main__ import main
+
+    started = time.perf_counter()
+    other = tmp_path / "bank"
+    shutil.copytree(bank, other, ignore=shutil.ignore_patterns("descriptions"))
+    manifest = read_json(other / "manifest.json")
+    config = configuration(bank, MODEL, None, pipeline=[], graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    calls = (lambda: describe(other), lambda: between(other, "g0", "g1"), lambda: variant(other, config, STATED))
+    for lacking in ("version", "splits", "graphs", "spec", "stored_sha256", "spec_sha256", "trained"):
+        write_json(other / "manifest.json", without(manifest, lacking))
+        for call in calls:
+            with pytest.raises(ValueError) as raised:
+                call()
+            assert str(raised.value) == MANIFEST % (other, lacking)
+    write_json(other / "manifest.json", {})
+    with pytest.raises(ValueError, match="lacks version, trained, spec, spec_sha256, splits, split_rows, observers, graphs, "):
+        describe(other)
+    (other / "manifest.json").write_text("this is no json", encoding="utf-8")
+    for call in calls:
+        with pytest.raises(ValueError) as raised:
+            call()
+        assert str(raised.value) == "%s is no JSON: Expecting value: line 1 column 1 (char 0)" % (other / "manifest.json")
+    write_json(other / "manifest.json", manifest)
+    (other / "descriptions").write_text("not a folder", encoding="utf-8")
+    for call in calls:
+        with pytest.raises(NotADirectoryError) as raised:
+            call()
+        assert str(raised.value) == UNFOLDERED % (other / "descriptions")
+    (other / "descriptions").unlink()
+    (other / "supervision.json").rename(other / "held.json")
+    with pytest.raises(FileNotFoundError) as raised:
+        variant(other, config, STATED)
+    assert raised.value.filename == str(other / "supervision.json") and repr(str(other / "supervision.json")) in str(raised.value)
+    (other / "held.json").rename(other / "supervision.json")
+    shutil.rmtree(other / "truth" / "graph_0001")
+    for call in calls[:2]:
+        with pytest.raises(FileNotFoundError) as raised:
+            call()
+        assert raised.value.filename == str(other / "truth" / "graph_0001" / "graph.json")
+        assert repr(str(other / "truth" / "graph_0001" / "graph.json")) in str(raised.value)
+    assert not (other / "descriptions").exists()
+    with pytest.raises(ValueError) as raised:
+        between(bank, "g0", "g9")
+    assert type(raised.value) is ValueError
+    assert str(raised.value) == "the bank %s holds no graph named g9; its graphs are g0, g1" % bank
+    (tmp_path / "not.json").write_text("{", encoding="utf-8")
+    write_json(tmp_path / "statement.json", STATED)
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", str(bank), str(tmp_path / "not.json"), str(tmp_path / "statement.json")])
+    with pytest.raises(ValueError, match="^%s is no JSON: " % re.escape(str(tmp_path / "not.json"))):
+        main()
+    write_json(tmp_path / "plan.json", dict(bank_stored_sha256=manifest["stored_sha256"], trials=[dict(folder="trial_000000")]))
+    with pytest.raises(ValueError, match="^the plan.json of .* lists a trial that names no directory: "):
+        reach_search(bank, tmp_path)
+    LOG.info("descriptions lacking parts exit seconds=%.3f", time.perf_counter() - started)
 
 
 NODES = {
@@ -3925,7 +3987,7 @@ def test_two_truth_graphs_of_a_bank_differ_by_what_is_written_out_here_and_a_gra
     assert between(bank, "g1", "g1") == alone
     written = ALONE_TEXT % (alone["stored_sha256"], describing.VERSION, differing.TRUTH["clock"])
     assert differing.text(alone) == written == stem.with_suffix(".txt").read_text(encoding="utf-8")
-    with pytest.raises(KeyError, match="holds no graph named g9; its graphs are g0, g1"):
+    with pytest.raises(ValueError, match="holds no graph named g9; its graphs are g0, g1$"):
         between(bank, "g0", "g9")
     LOG.info("descriptions difference of truth graphs exit seconds=%.3f", time.perf_counter() - started)
 

@@ -80,7 +80,8 @@ def open_read(path):
         None,
     )
     if handle == INVALID_HANDLE:
-        raise ctypes.WinError(ctypes.get_last_error())
+        code = ctypes.get_last_error()
+        raise OSError(None, ctypes.FormatError(code).strip().rstrip("."), os.fspath(path), code)
     try:
         descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
     except BaseException:

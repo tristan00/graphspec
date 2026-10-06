@@ -24,7 +24,7 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 24
+VERSION = 25
 DIFFERENCE = "graphspec.difference"
 CODED = 16
 UNWRITTEN = "no file is written for the key"
@@ -771,6 +771,9 @@ def swept(folder, mine):
 def kept(folder, key, made, written):
     started = time.perf_counter()
     folder, key = Path(folder), json.loads(json.dumps(key))
+    for place in (folder.parent, folder):
+        if place.exists() and not place.is_dir():
+            raise NotADirectoryError("%s is a file; descriptions are kept in a folder of that name" % place)
     held = folder / named(key)
     place, text = held.with_suffix(".json"), held.with_suffix(".txt")
     record, unserved = served(place, key)

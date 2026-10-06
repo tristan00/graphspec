@@ -302,6 +302,8 @@ def search(bank, folder):
         )
     trials = []
     for item in plan["trials"]:
+        if type(item) is not dict or "directory" not in item:
+            raise ValueError("the plan.json of %s lists a trial that names no directory: %r" % (folder, item))
         trial = Path(folder) / item["directory"]
         lacking = [name for name in FILES if not (trial / name).is_file()]
         if lacking:

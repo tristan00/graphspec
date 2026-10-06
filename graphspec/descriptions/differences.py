@@ -327,7 +327,7 @@ def differences(path, first, second):
     named = {graph["name"]: graph for graph in manifest["graphs"]}
     lacking = [name for name in (first, second) if name not in named]
     if lacking:
-        raise KeyError(
+        raise ValueError(
             "the bank %s holds no graph named %s; its graphs are %s" % (path, " or ".join(lacking), ", ".join(named))
         )
     held = Path(path) / "descriptions" / "differences"

@@ -16,6 +16,18 @@ from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
 VERSION = 18
+MANIFEST = (
+    "version",
+    "trained",
+    "spec",
+    "spec_sha256",
+    "splits",
+    "split_rows",
+    "observers",
+    "graphs",
+    "supervision_sha256",
+    "stored_sha256",
+)
 PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
 HELD = ("inner_owner", "inner_kind", "inner_values")
@@ -71,9 +83,20 @@ STORED = (
 
 @timed("stored.admitted")
 def admitted(directory, manifest):
-    if manifest["version"] != VERSION:
+    if type(manifest) is not dict:
+        raise ValueError(
+            "the manifest.json of the bank %s holds %r and no mapping; a bank holds the manifest its build wrote"
+            % (directory, manifest)
+        )
+    if "version" in manifest and manifest["version"] != VERSION:
         raise ValueError(
             "bank %s has version %s; this code reads version %d" % (directory, manifest["version"], VERSION)
+        )
+    lacking = [name for name in MANIFEST if name not in manifest]
+    if lacking:
+        raise ValueError(
+            "the manifest.json of the bank %s lacks %s; a bank holds the manifest its build wrote"
+            % (directory, ", ".join(lacking))
         )
     return manifest
 
