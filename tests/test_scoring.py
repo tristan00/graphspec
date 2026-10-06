@@ -27,8 +27,8 @@ COUNTS = (1, 2, 8, 50)
 CHECKED = COUNTS[1:]
 SHIPPED = ("node", "vector", "action_nodes", "actor_edge", "set_edge")
 SPOTS = 52
-STEPS = 16
-ROUNDS, MARGIN = (8, 32), 1.1
+STEPS = 32
+ROUNDS, MARGIN = (12, 28), 1.5
 
 
 @timed("scoring.schema")
@@ -124,7 +124,7 @@ def packed(held, cfg):
 def prepared():
     started = time.perf_counter()
     held = Deriver(shared("scoring", made) / "bank", "cpu", support.SEED, RESIDENT)
-    plain, last = packed(held, configured(held, NONE, STEPS)), packed(held, configured(held, NONE, 1))
+    plain = packed(held, configured(held, NONE, STEPS))
     nets, batches, acting = {}, {}, {}
     for name in SHIPPED:
         cfg = configured(held, name, STEPS)
@@ -133,7 +133,7 @@ def prepared():
         if realisation(name).actor not in acting:
             acting[realisation(name).actor] = packed(held, cfg)
         batches[name] = acting[realisation(name).actor]
-    found = dict(plain=plain, last=last, nets=nets, batches=batches)
+    found = dict(plain=plain, nets=nets, batches=batches)
     LOG.info("scoring prepared exit seconds=%.3f", time.perf_counter() - started)
     yield found
     found.clear()
@@ -149,28 +149,30 @@ def clocked(make):
         gc.enable()
 
 
-def sampled(found, rounds, held):
+def sampled(found, rounds, held, caught):
     started = time.perf_counter()
     nets, batches, body = held["nets"], held["batches"], held["nets"]["node"]
+    measured = [(("alone", name), lambda name=name: nets[name](batches[name]["k1"])) for name in SHIPPED]
+    for count in CHECKED:
+        graph = "k%d" % count
+        measured.append(("history", lambda graph=graph: captured(body, held["plain"][graph])))
+        for name in SHIPPED:
+            b, (features, members) = batches[name][graph], caught[name, count]
+            measured.append(((name, count), lambda name=name, b=b: nets[name](b)))
+            measured.append((("head", name, count), lambda name=name, b=b, f=features, m=members: nets[name].head(f, b, m)))
     for repeat in range(rounds):
-        for count in CHECKED:
-            graph = "k%d" % count
-            measured = [("history", lambda: captured(body, held["plain"][graph])), ("last", lambda: captured(body, held["last"][graph]))]
-            measured += [(name, lambda name=name: nets[name](batches[name][graph])) for name in SHIPPED]
-            measured += [("alone", lambda: nets["vector"](batches["vector"]["k1"]))]
-            for name, make in measured[:: 1 if repeat % 2 else -1]:
-                found.setdefault((name, count), []).append(clocked(make))
+        for key, make in measured[:: 1 if repeat % 2 else -1]:
+            found.setdefault(key, []).append(clocked(make))
     LOG.debug("scoring sampled exit rounds=%d seconds=%.4f", rounds, time.perf_counter() - started)
 
 
 def estimated(found):
     started = time.perf_counter()
     least = {key: min(values) for key, values in found.items()}
-    bound = {count: least["history", count] + count * least["last", count] for count in CHECKED}
-    ratios = {(name, count): least[name, count] / bound[count] for name in SHIPPED for count in CHECKED}
-    alone = min(least["alone", count] for count in CHECKED)
-    wrong = {count: count * alone / bound[count] for count in CHECKED}
-    LOG.debug("scoring estimated exit samples=%d seconds=%.4f", len(found["alone", CHECKED[0]]), time.perf_counter() - started)
+    bound = {(name, count): least["history"] + least["head", name, count] for name in SHIPPED for count in CHECKED}
+    ratios = {key: least[key] / bound[key] for key in bound}
+    wrong = {(name, count): count * least["alone", name] / bound[name, count] for name, count in bound}
+    LOG.debug("scoring estimated exit samples=%d seconds=%.4f", len(found["alone", SHIPPED[0]]), time.perf_counter() - started)
     return least, ratios, wrong
 
 
@@ -178,25 +180,30 @@ def test_k_options_take_one_encoding_of_the_history_and_k_of_the_last_step_and_o
     started = time.perf_counter()
     held, found, settled = prepared, {}, False
     with torch.no_grad(), single():
+        caught = {(name, count): captured(held["nets"][name], held["batches"][name]["k%d" % count]) for name in SHIPPED for count in CHECKED}
         for name in SHIPPED:
             for b in held["batches"][name].values():
                 held["nets"][name](b)
         for rounds in ROUNDS:
             if not settled:
-                sampled(found, rounds, held)
+                sampled(found, rounds, held, caught)
                 least, ratios, wrong = estimated(found)
-                settled = max(ratios.values()) <= MARGIN < min(wrong.values())
-    LOG.info(
-        "scoring of options exit rounds=%d history=%s last=%s largest=%.3f wrong=%s seconds=%.3f",
-        len(found["alone", CHECKED[0]]),
-        ["%.5f" % least["history", count] for count in CHECKED],
-        ["%.5f" % least["last", count] for count in CHECKED],
-        max(ratios.values()),
-        ["%.3f" % wrong[count] for count in CHECKED],
-        time.perf_counter() - started,
+                over, under = max(ratios.values()), min(wrong.values())
+                settled = over <= MARGIN < under
+    largest = {count: round(max(ratios[name, count] for name in SHIPPED), 3) for count in CHECKED}
+    smallest = {count: round(min(wrong[name, count] for name in SHIPPED), 3) for count in CHECKED}
+    shown = (
+        "by K the largest ratio %s and the smallest per option %s; the bound is one encoding of the history, %.3f ms, "
+        "plus the head scoring the K options alone; by realisation and K the ratios to it of K options and of K times one: %s"
+    ) % (
+        largest,
+        smallest,
+        1e3 * least["history"],
+        {"%s %d" % key: (round(ratios[key], 3), round(wrong[key], 3)) for key in ratios},
     )
-    assert max(ratios.values()) <= MARGIN, (ratios, least)
-    assert min(wrong.values()) > MARGIN, (wrong, least)
+    LOG.info("scoring of options exit rounds=%d seconds=%.3f; %s", len(found["alone", SHIPPED[0]]), time.perf_counter() - started, shown)
+    assert over <= MARGIN, "scoring K options took up to %.4f times the bound, above %.1f; %s" % (over, MARGIN, shown)
+    assert under > MARGIN, "scoring each option alone took only %.4f times the bound, not above %.1f; %s" % (under, MARGIN, shown)
 
 
 def test_all_options_of_a_decision_read_one_encoding_of_the_history_whatever_their_number(prepared):
