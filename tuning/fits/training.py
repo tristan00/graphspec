@@ -18,11 +18,12 @@ from graphspec.infra.timing import measure, timed
 from graphspec.operations.parameters import digest
 from graphspec.schema.decisions import drawn
 from tuning.bank.bank import PACKAGES
+from tuning.bank.routes import routed
 from tuning.families.heads import FIELD
 from tuning.families.model_spec import realised
 from tuning.measures.measures import measurable, measured, predicted, scored
 
-from .guards import guarded, routed
+from .guards import guarded
 from .losses import Summed, admitted, counting
 
 if TYPE_CHECKING:

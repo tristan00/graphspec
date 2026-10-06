@@ -22,6 +22,7 @@ from tuning import REALISATIONS, Edited
 from tuning.bank import forks
 from tuning.bank.options import READ as OFFERED
 from tuning.bank.options import TOKEN
+from tuning.bank.routes import routed
 from tuning.batches.batching import pack_batch, pack_parts, parted, recipe_batch
 from tuning.batches.tensors import keys, materialise
 from tuning.families import model_spec
@@ -29,7 +30,7 @@ from tuning.families.heads import REALISATION, coded, realisation, refused
 from tuning.families.model_spec import EDITS, VIEWS, realisable, space
 from tuning.families.models import build as network
 from tuning.families.periods import blocks as windows
-from tuning.fits.guards import BACK, Forked, routed
+from tuning.fits.guards import BACK, Forked
 from tuning.fits.losses import Summed
 from tuning.fits.training import fit
 from tuning.statement import state

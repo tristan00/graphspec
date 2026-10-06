@@ -20,6 +20,7 @@ from graphspec.sources import synthetic
 from tuning import REALISATIONS
 from tuning.bank import options as offered
 from tuning.bank.bank import Bank
+from tuning.bank.routes import routed
 from tuning.batches import inputs
 from tuning.batches.batching import batches, pack_batch
 from tuning.families import model_spec
@@ -28,7 +29,7 @@ from tuning.families.heads import DEPTH, DEPTHS, FIELDS, NONE, REALISATION, code
 from tuning.families.model_spec import VIEWS, realisable, space, views
 from tuning.families.models import build as network
 from tuning.families.periods import blocks as windows
-from tuning.fits.guards import STATE, Guard, captured, routed
+from tuning.fits.guards import STATE, Guard, captured
 from tuning.fits.losses import Summed, counting, outcomes
 from tuning.fits.training import fit
 from tuning.statement import state
