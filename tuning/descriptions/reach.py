@@ -47,7 +47,7 @@ REFUSAL = (
     "a fit of this configuration is refused before it starts, by the check of the routes from the options to the "
     "prediction: %s; what follows is what such a fit would have been given had it not been refused"
 )
-READING = (
+READ = (
     "described: the decisions of a graph of the view of which an option holds a point there, an outcome a fit reads, "
     "which are the decisions whose options a realisation puts before a model; a decision holding none is counted "
     "with its graph and its options are not described; "
@@ -75,30 +75,46 @@ READING = (
     "it there; an element an option creates is no node of the variant; the second statement tells how far the target "
     "lies from the references, which matters to a family that reads the graph by hops from them, and is not needed "
     "for a model to read the field beside the variant, where a field put before the model is read whatever joins it; "
-    "features: the columns of the kind of a target's nodes holding a value at the step; "
+    "the walk reads the facts of the step of the decision alone, so a target that a fact joined to a reference at an "
+    "earlier step of the history a family reads, and none joins at this one, reads as joined by no path; and it takes "
+    "each fact either way, which no family does under relations/direction directed, where a relation with a direction "
+    "is read from its source to its target alone: so a joined target also gives the least number of hops along the "
+    "direction of its facts, of a path from the target to a reference that takes each fact of a relation with a "
+    "direction from its source to its target, as what the target holds is passed on towards the reference, and a "
+    "fact of a relation without direction either way, or says that no such path joins it; "
+    "held at the step: a node is held where it is observed at the step other than as an anchor, as the description "
+    "of a variant counts it; an anchor, a node observed there only because a reference of a task of the step names "
+    "it, is read by a family all the same, so a target that is one is said to be an anchor at the step and is joined "
+    "or not as any other, and a target is not held only where it is observed there neither as a node nor as an anchor; "
+    "features: the columns of the kind of a target's node that hold a value at the step; of an edge, those of each of "
+    "its two ends, named, and of the edge the columns of its relation of which a present fact joining its ends at the "
+    "step holds a value; "
     "a cut is written once, numbered, under its graph, and every option, field and target it is of names it; it is of "
     "an option a fit leaves out, for being held by a fit, of a field or a target not put before the model, for being "
     "put before it, or of a target joined by no path, for being joined to a reference; it names every entry of the "
     "pipeline that cuts, the first being the entry after the last state of the pipeline, read from the last back, in "
-    "which what it is of holds; the parameters of that entry are re-stated one at a time with each other value, every "
+    "which what it is of holds; the parameters of that entry are re-stated one by one with each other value, every "
     "option of a choice and the two ends of a number's range, a value being stated without the parameters it makes "
     "inactive and with every value of each parameter it makes active, and the whole pipeline is derived again under "
     "each statement, one derivation of a graph read by every option, field and target of it; the statements that give "
     "it back are named, each by its parameter and value and the parameters stated with it, and the rest are counted, "
     "those that do not give it back, those the pipeline refuses with every parameter stated, those whose derivation "
-    "the library stops with an error of its own, and those not tried, at most %d being tried for a value, all of "
-    "which the record holds; the parameters of the entries it reads are re-stated only where none of its own gives it "
-    "back, and the text says which were and which were not; where no statement "
+    "the library stops with an error of its own, and those not tried, at most %(bound)d being tried for a value, all "
+    "of which the record holds; the parameters of the entries it reads are re-stated only where none of its own gives "
+    "it back, and the text says which were and which were not; where no statement "
     "gives it back the pipeline is derived without the entry or, where the pipeline is refused without it, with the "
     "one parameter of it re-stated after which the graph holds the most, and the entry after which it is still "
     "missing there is named and its parameters re-stated in turn, each entry so named cutting alone; a statement not "
     "tried is tried by stating it in the pipeline of the configuration and asking the reach of that configuration; "
-    "by no entry: it holds in no state, the view before the first entry included, and the truth graph is read at the "
-    "time of the task as the description of the bank reads it: the truth holds none of it at that time, or the truth "
-    "holds it and the view does not show it to the task, by the rule named, what its split may see, that it became "
-    "known later, or that another observer saw it; an end of a reference that the pipeline replaced by a node of a "
-    "kind it adds is named by that kind and the node of the view in whose place it stands" % restated.BOUND
+    "by no entry: it holds in no state, the view before the first entry included, and the truth graph is read "
+    "%(when)s as the description of the bank reads it: the truth holds none of it there, or the truth holds it and "
+    "the view does not show it to the task, by the rule named, what its split may see, that it became known later, "
+    "or that another observer saw it; an end of a reference that the pipeline replaced by a node of a kind it adds "
+    "is named by that kind and the node of the view in whose place it stands"
 )
+WHEN = dict(none="as it holds always", order="at the position of the task", clock="at the time of the task")
+WHEN["clocks"] = WHEN["clock"]
+READING = {model: READ % dict(bound=restated.BOUND, when=when) for model, when in WHEN.items()}
 HIDDEN = {KNOWN: "it became known later", OBSERVER: "another observer saw it"}
 WIDTH = 200
 
@@ -108,15 +124,16 @@ def looked(graph, step):
     tokens = masked(graph.entity_token)
     order = np.argsort(tokens, kind="stable")
     entity, moment = np.asarray(graph.obs_entity, np.int64), np.asarray(graph.obs_step, np.int64)
-    rows = np.full(len(tokens), -1, np.int64)
+    rows, anchors = np.full(len(tokens), -1, np.int64), np.zeros(len(tokens), bool)
     at = np.flatnonzero(moment == step)
     rows[entity[at]] = at
+    anchors[entity[at]] = np.asarray(graph.obs_anchor, bool)[at]
     present = np.asarray(graph.fact_present, bool) & (np.asarray(graph.fact_step, np.int64) == step)
     facts = tuple(np.asarray(graph.arrays[name], np.int64)[present] for name in ("fact_source", "fact_target", "fact_code"))
     table, refs = np.asarray(graph.value_table, np.float64), np.asarray(graph.fact_ref, np.int64)[present]
     valued = np.full((len(refs), table.shape[1]), np.nan)
     valued[refs >= 0] = table[refs[refs >= 0]]
-    result = dict(tokens=tokens[order], order=order, rows=rows, facts=facts, values=valued)
+    result = dict(tokens=tokens[order], order=order, rows=rows, anchors=anchors, facts=facts, values=valued)
     LOG.debug("reach looked exit step=%d facts=%d seconds=%.4f", step, len(facts[0]), time.perf_counter() - started)
     return result
 
@@ -127,11 +144,9 @@ def entity(seen, token):
     return int(seen["order"][place]) if place < len(seen["tokens"]) and seen["tokens"][place] == token else -1
 
 
-def walked(seen, sources):
+def hopped(start, end, count, sources):
     started = time.perf_counter()
-    source, target, code = seen["facts"]
-    start, end = np.r_[source, target], np.r_[target, source]
-    hops = np.full(len(seen["rows"]), -1, np.int64)
+    hops = np.full(count, -1, np.int64)
     frontier, depth = np.unique(np.asarray(sources, np.int64)), 0
     hops[frontier] = 0
     while len(frontier):
@@ -139,8 +154,39 @@ def walked(seen, sources):
         reached = end[np.isin(start, frontier)]
         frontier = np.unique(reached[hops[reached] < 0])
         hops[frontier] = depth
-    result = hops, (start, end, np.r_[code, code])
-    LOG.debug("reach walked exit sources=%d hops=%d seconds=%.4f", len(sources), depth - 1, time.perf_counter() - started)
+    LOG.debug("reach hopped exit sources=%d hops=%d seconds=%.4f", len(sources), depth - 1, time.perf_counter() - started)
+    return hops
+
+
+def walked(seen, sources):
+    started = time.perf_counter()
+    source, target, code = seen["facts"]
+    start, end = np.r_[source, target], np.r_[target, source]
+    result = hopped(start, end, len(seen["rows"]), sources), (start, end, np.r_[code, code])
+    LOG.debug("reach walked exit sources=%d seconds=%.4f", len(sources), time.perf_counter() - started)
+    return result
+
+
+def directed(seen, registry, sources):
+    started = time.perf_counter()
+    source, target, code = seen["facts"]
+    either = registry.flipped[code] == code
+    result = hopped(np.r_[target, source[either]], np.r_[source, target[either]], len(seen["rows"]), sources)
+    LOG.debug("reach directed exit sources=%d seconds=%.4f", len(sources), time.perf_counter() - started)
+    return result
+
+
+def owned(seen, registry, ends, relation):
+    started = time.perf_counter()
+    source, target, code = seen["facts"]
+    joins = (source == ends[0]) & (target == ends[1])
+    if registry.flipped[relation] == relation:
+        joins |= (source == ends[1]) & (target == ends[0])
+    rows = np.flatnonzero(joins & (code == relation)) if min(ends) >= 0 else np.zeros(0, np.int64)
+    place = int(registry.value_group[relation])
+    columns = registry.attributes(registry.valued[place]) if place >= 0 else ()
+    result = rows, [column for at, column in enumerate(columns) if not np.isnan(seen["values"][rows, at]).all()]
+    LOG.debug("reach owned exit facts=%d columns=%d seconds=%.4f", len(rows), len(result[1]), time.perf_counter() - started)
     return result
 
 
@@ -214,6 +260,7 @@ class Reached(Derived):
         picked = picked[np.argsort(tasks[picked], kind="stable")]
         indices = self.loaded(group)[0]
         titles = {held["index"]: held["name"] for held in self.deriver.viewed(self.config).graphs}
+        timed_steps = self.deriver.registry.schema.model != "none"
         result = []
         for at in picked.tolist():
             task = int(tasks[at])
@@ -226,7 +273,7 @@ class Reached(Derived):
                     view=view,
                     graph=titles[view],
                     step=step,
-                    time=int(graph.step_time[step]),
+                    time=int(graph.step_time[step]) if timed_steps else None,
                     key=int(graph.task_key[task]),
                     kind=int(graph.task_kind[task]),
                 )
@@ -307,36 +354,44 @@ class Reached(Derived):
     def looking(self, graph, registry, decision, seen):
         started = time.perf_counter()
         sources = [end for _, source, target, _ in self.referred(graph, decision) for end in (source, target) if end >= 0]
-        result = seen, walked(seen, sources), [registry.by_code[code].name for code in range(registry.relations)]
+        names = [registry.by_code[code].name for code in range(registry.relations)]
+        result = seen, walked(seen, sources), names, directed(seen, registry, sources)
         LOG.debug("reached looking exit decision=%d seconds=%.4f", decision["decision"], time.perf_counter() - started)
         return result
 
-    def featured(self, graph, registry, seen, ends):
+    def featured(self, graph, registry, seen, ends, keys):
         started = time.perf_counter()
         entities, table, refs = registry.schema.entities(), np.asarray(graph.x_table), np.asarray(graph.obs_ref, np.int64)
         found = []
-        for end in ends:
-            row = table[refs[seen["rows"][end]]]
+        for end, key in zip(ends, keys):
+            row, held = table[refs[seen["rows"][end]]], []
             for column in entities[registry.nodes[int(graph.kinds[end])]]:
                 flags = registry.encoding.slots(column)[1]
-                if len(flags) and row[flags[0]] > 0 and column not in found:
-                    found.append(column)
-        LOG.debug("reached featured exit columns=%d seconds=%.4f", len(found), time.perf_counter() - started)
+                if len(flags) and row[flags[0]] > 0:
+                    held.append(column)
+            found.append(dict(node=key, columns=held))
+        LOG.debug("reached featured exit nodes=%d seconds=%.4f", len(found), time.perf_counter() - started)
         return found
 
-    def placed(self, graph, registry, looked_at, ends):
+    def placed(self, graph, registry, looked_at, ends, target):
         started = time.perf_counter()
-        seen, walk, names = looked_at
-        result = dict(state=UNHELD, hops=None, relations=None, features=[])
+        seen, walk, names, toward = looked_at
+        valued = None if target["relation"] is None else owned(seen, registry, ends, registry.code(target["relation"]))[1]
+        result = dict(state=UNHELD, hops=None, relations=None, along=None, anchor=False, features=[], values=valued)
         if all(end >= 0 and seen["rows"][end] >= 0 for end in ends):
-            hops = walk[0][list(ends)]
+            hops, along = walk[0][list(ends)], toward[list(ends)]
             reached = hops[hops >= 0]
-            features = self.featured(graph, registry, seen, ends)
-            result = dict(state=UNJOINED, hops=None, relations=None, features=features)
+            held = dict(
+                along=int(along[along >= 0].min()) if (along >= 0).any() else None,
+                anchor=bool(seen["anchors"][list(ends)].any()),
+                features=self.featured(graph, registry, seen, ends, target["nodes"]),
+                values=valued,
+            )
+            result = dict(held, state=UNJOINED, hops=None, relations=None, along=None)
             if len(reached):
                 least = int(reached.min())
                 starts = [end for end, hop in zip(ends, hops.tolist()) if hop == least]
-                result = dict(state=JOINED, hops=least, relations=traced(walk, names, starts), features=features)
+                result = dict(held, state=JOINED, hops=least, relations=traced(walk, names, starts))
         LOG.debug("reached placed exit state=%s seconds=%.4f", result["state"], time.perf_counter() - started)
         return result
 
@@ -359,11 +414,15 @@ class Reached(Derived):
             result, where = [], "a target of the option %s" % found.keys[option]
             for action, role in rows:
                 source, target = int(found.role["source"][role]), int(found.role["target"][role])
-                spoken = self.keyed(source, where)
+                spoken, relation = self.keyed(source, where), None
+                nodes = [spoken]
                 if sorts[role] == "edge":
-                    spoken = "%s %s %s" % (spoken, bank[int(found.role["relation"][role])].name, self.keyed(target, where))
+                    relation = bank[int(found.role["relation"][role])].name
+                    nodes.append(self.keyed(target, where))
+                    spoken = "%s %s %s" % (nodes[0], relation, nodes[1])
                 ends = (int(masked([elements[source]])[0]),) if sorts[role] == "new" else (source, target)[: 1 + (sorts[role] == "edge")]
-                result.append(dict(action=action, role=role, code=int(found.role["code"][role]), sort=sorts[role], target=spoken, ends=ends))
+                held = dict(action=action, role=role, code=int(found.role["code"][role]), sort=sorts[role], target=spoken, ends=ends)
+                result.append(dict(held, nodes=nodes, relation=relation))
             self.aims[option] = sorted(result, key=lambda held: (held["action"], held["code"], held["target"], held["role"]))
         LOG.debug("reached aiming exit option=%d targets=%d seconds=%.4f", option, len(self.aims[option]), time.perf_counter() - started)
         return self.aims[option]
@@ -451,9 +510,11 @@ class Reached(Derived):
                         put=True,
                         facts=[],
                         **(
-                            dict(state=CREATED, hops=None, relations=None, features=[])
+                            dict(state=CREATED, hops=None, relations=None, along=None, anchor=False, features=[], values=None)
                             if created
-                            else self.placed(graph, registry, looked_at, tuple(entity(looked_at[0], end) for end in target["ends"]))
+                            else self.placed(
+                                graph, registry, looked_at, tuple(entity(looked_at[0], end) for end in target["ends"]), target
+                            )
                         ),
                     )
                     for target in held
@@ -470,16 +531,11 @@ class Reached(Derived):
         marks = np.r_[masked(plan.graph.entity_token), masked([found for found, _ in plan.made])]
         created = {target["ends"][0]: target["target"] for target in self.aiming(option) if target["sort"] == "new"}
         where, result = "a fact of the edit of the option %s" % self.found.keys[option], []
-        source, target, code = seen["facts"]
         for relation, first, second, row, action, role in plan.facts:
             ends = [int(marks[first]), int(marks[second])]
             keys = [created[end] if end in created else self.keyed(end, where) for end in ends]
-            held = [entity(seen, end) for end in ends]
             edge = registry.by_code[relation]
-            joined = (source == held[0]) & (target == held[1])
-            if edge.symmetric:
-                joined |= (source == held[1]) & (target == held[0])
-            rows = np.flatnonzero(joined & (code == relation)) if min(held) >= 0 else np.zeros(0, np.int64)
+            rows, valued = owned(seen, registry, [entity(seen, end) for end in ends], relation)
             place = int(registry.value_group[relation])
             columns = registry.attributes(registry.valued[place]) if place >= 0 else ()
             result.append(
@@ -489,7 +545,7 @@ class Reached(Derived):
                     fact="%s %s %s" % (keys[0], edge.name, keys[1]),
                     held=bool(len(rows)),
                     carried=[column for at, column in enumerate(columns) if not np.isnan(row[at])],
-                    valued=[column for at, column in enumerate(columns) if not np.isnan(seen["values"][rows, at]).all()],
+                    valued=valued,
                     keys=keys,
                     ends=ends,
                     relation=edge.name,
@@ -528,7 +584,7 @@ class Reached(Derived):
                             target=target["target"],
                             put=any(fact["held"] for fact in own),
                             facts=own,
-                            **self.placed(graph, registry, looked_at, ends),
+                            **self.placed(graph, registry, looked_at, ends, target),
                         )
                     )
                 result[field["name"]] = dict(put=any(target["put"] for target in targets), route=FACT, targets=targets)
@@ -896,6 +952,7 @@ def recorded(deriver, config, key, name, refused):
         version=truth.VERSION,
         variant=key,
         stored_sha256=deriver.source,
+        time=truth.modelled(deriver.registry),
         realisation=stated(name),
         refused=refused,
         seed=deriver.seed,
@@ -976,14 +1033,25 @@ def listed(values):
 
 @timed("reach.spoken")
 def spoken(held):
+    anchored = "an anchor at the step, " if held["anchor"] else ""
     if held["state"] == JOINED:
-        return "joined to a reference at hop %d by %s" % (
+        return "%sjoined to a reference at hop %d by %s and %s along the direction of its facts" % (
+            anchored,
             held["hops"],
             " then ".join(" or ".join(names) for names in held["relations"]) or "nothing",
+            "by no path" if held["along"] is None else "at hop %d" % held["along"],
         )
     if held["state"] == UNJOINED:
-        return "joined to a reference by no path"
+        return anchored + "joined to a reference by no path"
     return "an element the option creates, no node of the variant" if held["state"] == CREATED else "not held at the step"
+
+
+@timed("reach.features_text")
+def features_text(target):
+    if target["values"] is None:
+        return "features %s" % listed([column for held in target["features"] for column in held["columns"]])
+    ends = ["of %s %s" % (held["node"], listed(held["columns"])) for held in target["features"]]
+    return "features %s" % ", ".join(ends + ["of the edge %s" % listed(target["values"])])
 
 
 @timed("reach.worded")
@@ -1060,27 +1128,28 @@ def found_text(found, under):
 
 
 @timed("reach.truth_text")
-def truth_text(on, held):
+def truth_text(on, held, named):
     kept = ", ".join(HIDDEN[reason] if reason in HIDDEN else "the rule %s of what its split may see" % reason.split(" ", 1)[1] for reason in held["hidden"])
     unkept = "none of what its split may see, when it became known and who observed it"
+    when = "" if named is None else " at the %s of the task" % named["one"]
     if on == JOINED and held["held"]:
-        said = "    the truth joins it to a reference at the time of the task, and the view keeps facts of that time from the task by: %s"
-        return said % (kept or unkept)
+        said = "    the truth joins it to a reference%s, and the view keeps facts%s from the task by: %s"
+        return said % (when, "" if named is None else " of that %s" % named["one"], kept or unkept)
     if on == JOINED:
-        return "    the truth joins it to no reference at the time of the task"
+        return "    the truth joins it to no reference%s" % when
     if not held["held"]:
-        return "    %s: the truth holds none of it at the time of the task" % held["target"]
+        return "    %s: the truth holds none of it%s" % (held["target"], when)
     if not held["hidden"]:
-        return "    %s: the truth holds it at the time of the task, and %s keeps it from the task" % (held["target"], unkept)
-    return "    %s: the truth holds it at the time of the task and the view does not show it to the task: %s" % (held["target"], kept)
+        return "    %s: the truth holds it%s, and %s keeps it from the task" % (held["target"], when, unkept)
+    return "    %s: the truth holds it%s and the view does not show it to the task: %s" % (held["target"], when, kept)
 
 
-def cut_text(place, cut):
+def cut_text(place, cut, timed_by):
     started = time.perf_counter()
     site, entries = SITES[cut["on"]], cut["entries"]
     if not entries:
         lines = ["  cut %d, of being %s: by no entry, %s in no state, the view before the first entry included" % (place + 1, site, site)]
-        lines += [truth_text(cut["on"], held) for held in cut["truth"]]
+        lines += [truth_text(cut["on"], held, timed_by) for held in cut["truth"]]
     else:
         named = [
             found["entry"] if found["entry"] == found["operation"] else "%s, of the operation %s" % (found["entry"], found["operation"])
@@ -1130,7 +1199,7 @@ def lacking_text(held):
 def target_text(target, cuts):
     started = time.perf_counter()
     parts = [facts_text(target["facts"])] if target["facts"] else []
-    parts.append("%s, features %s" % (spoken(target), listed(target["features"])) if target["state"] in (JOINED, UNJOINED) else spoken(target))
+    parts.append("%s, %s" % (spoken(target), features_text(target)) if target["state"] in (JOINED, UNJOINED) else spoken(target))
     if target["cut"] is not None:
         parts.append(cited(cuts, target["cut"]))
     result = "        %s: %s" % (target["target"], "; ".join(parts))
@@ -1170,7 +1239,7 @@ def option_text(option, cuts):
     return lines
 
 
-def graph_text(graph):
+def graph_text(graph, named):
     started = time.perf_counter()
     lines = [
         "",
@@ -1193,14 +1262,14 @@ def graph_text(graph):
         ),
     ]
     for place, cut in enumerate(graph["cuts"]):
-        lines += cut_text(place, cut)
+        lines += cut_text(place, cut, named)
     for decision in graph["decisions"]:
         lines.append(
-            "  decision %s of %s at time %d, references %s"
+            "  decision %s of %s%s, references %s"
             % (
                 decision["task"],
                 decision["kind"],
-                decision["time"],
+                "" if named is None else " at %s %d" % (named["one"], decision["time"]),
                 "; ".join("%s %s" % (name, ", ".join(held)) for name, held in decision["references"].items()) or "none",
             )
         )
@@ -1251,7 +1320,7 @@ def text(record):
         *([] if record["refused"] is None else [REFUSAL % record["refused"]]),
         *realised_text(record["realisation"]),
         *effect.settled(record),
-        READING,
+        READING[record["time"]["model"]],
     ]
     lines += [effect.entry_text(entry) for entry in record["entries"]]
     lines += [
@@ -1260,6 +1329,6 @@ def text(record):
     ]
     lines.append("kinds of task that decide nothing, which hold no option: %s" % listed(record["undecided"]))
     for graph in record["graphs"]:
-        lines += graph_text(graph)
+        lines += graph_text(graph, truth.NAMED[record["time"]["model"]])
     LOG.debug("reach text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"
