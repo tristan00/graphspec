@@ -117,7 +117,7 @@ def test_an_edit_maps_every_kind_of_action_to_facts_and_is_refused_naming_what_i
         "the mapping of the edit states the kind of action cut of the kind of task turn, which it does not state"
     )
     went = dict(relation="went", actor="source")
-    stay = varied(registry, "stay", dict(roles=dict(at=dict(sort="node", kinds=["spot"])), parameters=["speed"]), {})
+    stay = varied(registry, "stay", dict(roles=dict(at=dict(sort="node", kinds=["spot"], count=[1, 1])), parameters=["speed"]), {})
     where = "the kind of action %s of the kind of task turn"
     for acted, relations, wrong, message in (
         (dict(ACTED, put=dict(at=went)), RELATIONS, registry, "the mapping of the edit states for %s the roles at, and it states the roles at, made" % (where % "put")),

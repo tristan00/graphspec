@@ -44,10 +44,11 @@ def written(option, symmetric):
             kind=action["kind"],
             actor=action["actor"],
             targets={
-                role: [min(aim[0], aim[2]), aim[1], max(aim[0], aim[2])]
-                if isinstance(aim, list) and aim[1] in symmetric
-                else aim
-                for role, aim in sorted(action["targets"].items())
+                role: sorted(
+                    [min(aim[0], aim[2]), aim[1], max(aim[0], aim[2])] if isinstance(aim, list) and aim[1] in symmetric else aim
+                    for aim in aims
+                )
+                for role, aims in sorted(action["targets"].items())
             },
             parameters={name: plain(value) for name, value in sorted(action["parameters"].items())},
         )
@@ -146,7 +147,8 @@ class World:
                 kind=action["kind"],
                 actor=action["actor"],
                 targets={
-                    role: self.aimed(aim, roles[action["kind"]][role]["kinds"]) for role, aim in sorted(action["targets"].items())
+                    role: sorted(self.aimed(aim, roles[action["kind"]][role]["kinds"]) for aim in aims)
+                    for role, aims in sorted(action["targets"].items())
                 },
                 parameters={name: plain(value) for name, value in sorted(action["parameters"].items())},
             )
@@ -301,8 +303,9 @@ class Frame:
                 for option in world.decided[task]["options"]
                 if option["origin"] == RECORDED
                 for action in option["actions"]
-                for role, aim in action["targets"].items()
+                for role, aims in action["targets"].items()
                 if roles[action["kind"]][role]["sort"] == "new"
+                for aim in aims
             ),
             world.relations,
             world.symmetric,
@@ -522,10 +525,32 @@ class Check:
             return "the actor %s, not an actor of its decision" % action["actor"]
         if set(action["targets"]) != set(declared["roles"]) or set(action["parameters"]) != set(declared["parameters"]):
             return "other roles or parameters than its kind %s states" % action["kind"]
-        for role, aim in action["targets"].items():
-            reason = self.aimless(action["kind"], role, declared["roles"][role], aim)
-            if reason is not None:
-                return "under the role %s %s" % (role, reason)
+        for role, aims in action["targets"].items():
+            (least, most), seen = declared["roles"][role]["count"], set()
+            if not isinstance(aims, list):
+                return "under the role %s %r, not the list of its targets" % (role, aims)
+            if len(aims) < least or (most is not None and len(aims) > most):
+                return "under the role %s %d targets, and its kind %s states from %d to %s" % (
+                    role,
+                    len(aims),
+                    action["kind"],
+                    least,
+                    "no bound" if most is None else most,
+                )
+            for aim in aims:
+                reason = self.aimless(action["kind"], role, declared["roles"][role], aim)
+                if reason is not None:
+                    return "under the role %s %s" % (role, reason)
+                content = (
+                    aim
+                    if type(aim) is str
+                    else (min(aim[0], aim[2]), aim[1], max(aim[0], aim[2]))
+                    if aim[1] in self.symmetric
+                    else tuple(aim)
+                )
+                if content in seen:
+                    return "under the role %s %r twice; the targets of a role are a set" % (role, aim)
+                seen.add(content)
         return None
 
     @timed("generators.Check.aimless")
@@ -604,17 +629,18 @@ def appended(registry, tables, drawn):
                     **{VALUE + name: action["parameters"][name] if name in action["parameters"] else None for name in columns},
                 )
             )
-            for role, aim in action["targets"].items():
-                edged = isinstance(aim, list)
-                roles.append(
-                    dict(
-                        role=role,
-                        key=aim[0] if edged else aim,
-                        relation=aim[1] if edged else None,
-                        to_key=aim[2] if edged else None,
-                        action=found["action"].num_rows + len(actions) - 1,
+            for role, aims in action["targets"].items():
+                for aim in aims:
+                    edged = isinstance(aim, list)
+                    roles.append(
+                        dict(
+                            role=role,
+                            key=aim[0] if edged else aim,
+                            relation=aim[1] if edged else None,
+                            to_key=aim[2] if edged else None,
+                            action=found["action"].num_rows + len(actions) - 1,
+                        )
                     )
-                )
     result = dict(
         found,
         **{
@@ -680,7 +706,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 8
+    version = 9
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -703,7 +729,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 8
+    version = 9
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -769,7 +795,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 8
+    version = 9
     reads = ("chosen",)
     probable = False
 
@@ -832,7 +858,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 8
+    version = 9
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

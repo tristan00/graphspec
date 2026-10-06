@@ -44,7 +44,7 @@ class Stated:
 
 
 def registry(events=True, signals=2, decided=()):
-    picking = dict(pick=dict(roles=dict(at=dict(sort="node", kinds=["unit"])), parameters=[]))
+    picking = dict(pick=dict(roles=dict(at=dict(sort="node", kinds=["unit"], count=[1, 1])), parameters=[]))
     target = dict(kind="number", actions=picking, nothing=None)
     kinds = dict(ask=dict(target=target, references=("unit",), absent="stop"))
     return SimpleNamespace(

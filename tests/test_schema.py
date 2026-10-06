@@ -109,7 +109,7 @@ def test_a_schema_with_a_statement_absent_stops_naming_it(path, message):
 
 def test_a_schema_of_another_version_or_with_an_unknown_name_is_refused():
     mapping = synthetic.varied("task")["schema"]
-    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 6"):
+    with pytest.raises(ValueError, match="the schema has version 0; this code reads version 7"):
         Schema(dict(mapping, version=0))
     with pytest.raises(KeyError, match="no column type is registered under the name 'colourful'"):
         Schema(dict(mapping, columns=dict(mapping["columns"], size=dict(type="colourful", encoder="value"))))
@@ -276,7 +276,7 @@ def test_the_onehot_encoder_states_what_it_does_with_a_value_unseen_in_training(
 def test_the_varied_graph_builds_with_what_the_check_names(varied):
     manifest = read_json(varied / "manifest.json")
     declared = manifest["spec"]
-    assert manifest["version"] == VERSION == 17 and manifest["trained"] == ["train"]
+    assert manifest["version"] == VERSION == 18 and manifest["trained"] == ["train"]
     assert declared["schema"] == synthetic.varied("task")["schema"]
     assert manifest["splits"] == ["train", "validation"] and list(declared["extras"]) == list(EXTRAS)
     assert declared["extras"]["events"] is True and Schema(declared["schema"]).targets() == ("number",)
@@ -438,7 +438,7 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
     monkeypatch.setattr(sys, "argv", ["graphspec", "inspect", str(varied)])
     main()
     printed = capsys.readouterr().out
-    assert "schema version 6" in printed and "  place: size number by standard\n" in printed
+    assert "schema version 7" in printed and "  place: size number by standard\n" in printed
     assert ", width" not in printed and "  lends: from links" in printed
     assert "  reference person: node of person" in printed and "keyed by ticket, grouped by week" in printed
     assert (
@@ -450,9 +450,9 @@ def test_inspect_prints_the_schema_of_a_task_and_of_a_bank(varied, capsys, monke
 
 def test_a_bank_of_version_7_is_refused_with_an_error_naming_its_version(ground):
     old = ground / "01_plain" / "bank"
-    with pytest.raises(ValueError, match="has version 7; this code reads version 17"):
+    with pytest.raises(ValueError, match="has version 7; this code reads version 18"):
         Deriver(old, "cpu", support.SEED, RESIDENT)
-    with pytest.raises(ValueError, match="has version 7; this code reads version 17"):
+    with pytest.raises(ValueError, match="has version 7; this code reads version 18"):
         inspect(old)
 
 

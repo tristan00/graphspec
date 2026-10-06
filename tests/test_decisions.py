@@ -99,7 +99,7 @@ def picked(case):
     for column in {name for kind in DECIDING for entry in kinds[kind]["target"]["actions"].values() for name in entry["parameters"]}:
         del result["schema"]["columns"][column]
     for kind in DECIDING:
-        kinds[kind]["target"].update(actions=dict(go=dict(roles=dict(to=dict(sort="node", kinds=["spot"])), parameters=[])), nothing=None)
+        kinds[kind]["target"].update(actions=dict(go=dict(roles=dict(to=dict(sort="node", kinds=["spot"], count=[1, 1])), parameters=[])), nothing=None)
     result["graphs"] = result["graphs"][1:]
     for target in filter(None, result["graphs"][0]["tasks"]["target"]):
         target["options"] = [option for option in target["options"] if [action["kind"] for action in option["actions"]] == ["go"]]
@@ -185,7 +185,7 @@ def covered(case):
                 found.add(("actions", min(len(option["actions"]), 2), option["together"]))
                 found.add(("origin", option["origin"] == RECORDED))
                 found.add(("outcome", type(option["outcome"]).__name__))
-                found |= {("target", sorts[action["kind"]][role]) for action in option["actions"] for role in action["targets"]}
+                found |= {("target", sorts[action["kind"]][role]) for action in option["actions"] for role, aims in action["targets"].items() if aims}
     return found
 
 
@@ -210,11 +210,21 @@ def test_a_decision_states_its_actors_kinds_of_action_and_the_option_that_does_n
         held["tasks"]["kinds"]["turn"]["target"].update(change)
         with pytest.raises((ValueError, KeyError), match=message):
             Schema(held)
+    counted = "states how many targets it holds as [least, most], least a whole number from 0 and most one from 1 and from least, or none where it holds any number, found "
+    created = "creates one element at most, so it states as its count [0, 1] or [1, 1], found %s; several elements of one role would be told apart by their keys alone, which no model reads"
     actions = (
         (("go", "roles", "to", "sort"), "wire", "is of one of the sorts node, edge, new, found 'wire'"),
         (("put", "roles", "made", "kinds"), ["mark", "spot"], "names the one kind of node of the element it creates"),
         (("go", "parameters"), ["weight"], "states its parameters as a list of distinct columns of the schema"),
         (("cut", "parameters"), ["mode", "mode"], "states its parameters as a list of distinct columns of the schema"),
+        (("go", "roles", "to", "count"), None, "^the role to of the kind of action go of the target of the kind of task turn lacks count$"),
+        (("go", "roles", "to", "count"), [2, 1], re.escape(counted + "[2, 1]")),
+        (("go", "roles", "to", "count"), [0, 0], re.escape(counted + "[0, 0]")),
+        (("go", "roles", "to", "count"), [-1, None], re.escape(counted + "[-1, None]")),
+        (("go", "roles", "to", "count"), [1, 2.0], re.escape(counted + "[1, 2.0]")),
+        (("go", "roles", "to", "count"), [1], re.escape(counted + "[1]")),
+        (("put", "roles", "made", "count"), [1, 2], re.escape(created % "[1, 2]")),
+        (("put", "roles", "made", "count"), [0, None], re.escape(created % "[0, None]")),
     )
     for path, value, message in actions:
         held = copy.deepcopy(stated)
@@ -222,8 +232,16 @@ def test_a_decision_states_its_actors_kinds_of_action_and_the_option_that_does_n
         for name in path[:-1]:
             entry = entry[name]
         entry[path[-1]] = value
+        if value is None:
+            del entry[path[-1]]
         with pytest.raises(ValueError, match=message):
             Schema(held)
+    held = copy.deepcopy(stated)
+    held["tasks"]["kinds"]["turn"]["target"]["actions"]["go"]["roles"]["to"]["count"] = [1, None]
+    held["tasks"]["kinds"]["turn"]["target"]["actions"]["put"]["roles"]["made"]["count"] = [0, 1]
+    several = Schema(held)
+    assert Schema(several.mapping()).mapping() == several.mapping()
+    assert several.tasks["kinds"]["turn"]["target"]["actions"]["go"]["roles"]["to"] == dict(sort="node", kinds=["spot"], count=[1, None])
     first, aim = synthetic.decisions(GENERATOR)["graphs"][0]["tasks"]["target"][0], schema.tasks["kinds"]["turn"]["target"]
     for key, outcome in (("put", [None, None]), ("wait", [])):
         given = copy.deepcopy(first)
@@ -329,7 +347,7 @@ def test_a_target_or_a_generator_that_does_not_resolve_stops_the_build_naming_th
     @timed("decisions.unresolved")
     def unresolved(case):
         option = case["graphs"][0]["tasks"]["target"][0]["options"][1]
-        option["actions"][0]["targets"]["to"] = "s9"
+        option["actions"][0]["targets"]["to"] = ["s9"]
 
     @timed("decisions.ungenerated")
     def ungenerated(case):
@@ -361,11 +379,11 @@ def test_a_node_or_an_edge_an_action_targets_unobserved_at_the_step_of_its_decis
         rows = graph["values"][1]["rows"]
         for name, value in (("key", "s5"), ("since", 4), ("until", None), ("load", 1.0)):
             rows[name].append(value)
-        graph["tasks"]["target"][0]["options"][1]["actions"][0]["targets"]["to"] = "s5"
+        graph["tasks"]["target"][0]["options"][1]["actions"][0]["targets"]["to"] = ["s5"]
 
     @timed("decisions.unheld")
     def unheld(case):
-        case["graphs"][0]["tasks"]["target"][0]["options"][2]["actions"][0]["targets"]["along"] = ["s0", "near", "s4"]
+        case["graphs"][0]["tasks"]["target"][0]["options"][2]["actions"][0]["targets"]["along"] = [["s0", "near", "s4"]]
 
     @timed("decisions.joined")
     def joined(case):
@@ -435,6 +453,83 @@ def test_next_names_the_first_later_decision_of_each_actor_in_its_episode_and_an
         with pytest.raises(ValueError, match="^" + re.escape(message) + "$"):
             followed(truth, held.registry, rows, changed)
     LOG.info("next decisions exit seconds=%.3f", time.perf_counter() - started)
+
+
+def roled(held, counts, rows):
+    started = time.perf_counter()
+    truth = Facts.load(held.truth(0))
+    stated = copy.deepcopy(held.registry.schema.mapping())
+    actions = stated["tasks"]["kinds"]["turn"]["target"]["actions"]
+    actions["go"]["roles"]["to"]["count"] = actions["cut"]["roles"]["along"]["count"] = [1, None]
+    actions["put"]["roles"]["made"]["count"] = [0, 1]
+    for (action, role), count in counts.items():
+        actions[action]["roles"][role]["count"] = count
+    registry = copy.copy(held.registry)
+    registry.schema = Schema(stated)
+    tasks = {name: np.asarray(truth.arrays[name]) for name in ("task_key", "task_kind", "task_time", "task_ended")}
+    members = {name: truth.arrays[name] for name in ("member_task", "member_name", "member_source")}
+    seen = dict(entity=truth.obs_entity, since=truth.obs_since)
+    found = Decided(registry, tasks, members, truth.keys, truth.kinds, seen, truth.name)
+    task, declared = np.asarray(truth.task_key).tolist().index(10), []
+    for kind in ("go", "put", "cut"):
+        where = "the action 0, of the kind %s, of the option %s of %s" % (kind, kind, found.where(task))
+        declared.append((where, task, registry.schema.tasks["kinds"]["turn"]["target"]["actions"][kind]))
+    table = pa.table(
+        dict(
+            action=pa.array([row[0] for row in rows], pa.int64()),
+            **{name: pa.array([row[at] for row in rows], pa.string()) for at, name in enumerate(("role", "key", "relation", "to_key"), 1)},
+        )
+    )
+    result = found.roles(table, declared, np.arange(len(declared)))
+    LOG.debug("roled exit rows=%d seconds=%.4f", len(rows), time.perf_counter() - started)
+    return result, found
+
+
+def test_the_targets_of_a_role_are_a_set_stored_by_their_content_and_held_within_the_bounds_its_kind_states(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    rows = [
+        (0, "to", "s3", None, None),
+        (0, "to", "s1", None, None),
+        (1, "at", "s2", None, None),
+        (2, "along", "s3", "near", "s2"),
+        (2, "along", "s1", "near", "s0"),
+    ]
+    found, decided = roled(held, {}, rows)
+    named = [
+        (decided.keys[source], None if code < 0 else held.registry.by_code[code].name, None if other < 0 else decided.keys[other])
+        for source, other, code in zip(*(found["role_" + name].tolist() for name in ("source", "target", "code")))
+    ]
+    assert found["role_action"].tolist() == [0, 0, 1, 2, 2] and found["role_name"].tolist() == [0, 0, 0, 0, 0]
+    assert named == [("s1", None, None), ("s3", None, None), ("s2", None, None), ("s0", "near", "s1"), ("s2", "near", "s3")]
+    for given in (rows[::-1], [rows[1], rows[0], rows[2], (2, "along", "s0", "near", "s1"), (2, "along", "s2", "near", "s3")]):
+        again = roled(held, {}, given)[0]
+        assert all(np.array_equal(found[name], again[name]) for name in found)
+    made = roled(held, {}, rows + [(1, "made", "m9", None, None)])
+    assert made[0]["role_action"].tolist() == [0, 0, 1, 1, 2, 2] and made[1].keys[-1] == "m9"
+    where = "the role %s of the action 0, of the kind %s, of the option %s of the decision 10 of the kind turn of graph g0 "
+    for counts, given, message in (
+        ({}, rows + [(0, "to", "s1", None, None)], where % ("to", "go", "go") + "names the node s1 twice; the targets of a role are a set"),
+        ({}, rows + [(2, "along", "s0", "near", "s1")], where % ("along", "cut", "cut") + "names the edge of near from s0 to s1 twice; the targets of a role are a set"),
+        ({}, rows[:2] + rows[3:], where % ("at", "put", "put") + "holds 0 targets, and its kind states from 1 to 1"),
+        ({("go", "to"): [3, None]}, rows, where % ("to", "go", "go") + "holds 2 targets, and its kind states from 3 to no bound"),
+        ({("go", "to"): [1, 1]}, rows, where % ("to", "go", "go") + "holds 2 targets, and its kind states from 1 to 1"),
+        ({}, rows + [(1, "made", "m8", None, None), (1, "made", "m9", None, None)], where % ("made", "put", "put") + "holds 2 targets, and its kind states from 0 to 1"),
+    ):
+        with pytest.raises(ValueError, match="^" + re.escape(message) + "$"):
+            roled(held, counts, given)
+    truth = Facts.load(held.truth(0))
+    declared = held.registry.schema.tasks["kinds"]
+    kinds = list(declared)
+    acted = [
+        (declared[kinds[kind]]["target"]["actions"][action["kind"]]["roles"], action["targets"])
+        for kind, decision in zip(np.asarray(truth.task_kind).tolist(), truth.decided(held.registry))
+        if decision
+        for option in decision["options"]
+        for action in option["actions"]
+    ]
+    assert acted and all(list(roles) == list(targets) and all(isinstance(aims, list) for aims in targets.values()) for roles, targets in acted)
+    LOG.info("targets of roles exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_a_recorded_option_stores_no_generator_and_no_seed_and_a_regenerated_one_its_own(banks):

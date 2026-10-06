@@ -291,11 +291,16 @@ def stated(registry, option):
     actions, values = [], []
     for action in option["actions"]:
         roles = {}
-        for role, aim in sorted(action["targets"].items()):
-            if isinstance(aim, list):
-                roles[role] = (registry.code(aim[1]), frozenset(token("spot:" + key) & offered.TOKEN for key in aim[::2]))
-            else:
-                roles[role] = (token("spot:" + aim) & offered.TOKEN,) if role != "made" else ("new",)
+        for role, aims in sorted(action["targets"].items()):
+            if aims:
+                roles[role] = sorted(
+                    (registry.code(aim[1]), tuple(sorted(token("spot:" + key) & offered.TOKEN for key in aim[::2])))
+                    if isinstance(aim, list)
+                    else (token("spot:" + aim) & offered.TOKEN,)
+                    if role != "made"
+                    else ("new",)
+                    for aim in aims
+                )
         actions.append((action["kind"], roles))
         stated = action["parameters"]
         values.append(
@@ -323,8 +328,8 @@ def read(held, b, option):
             name = roles[int(found["role_code"][role])][2]
             ends = [int(b["member_token"][member]) for member in found["role_member"][role].tolist() if member >= 0]
             relation = int(found["role_relation"][role])
-            held_roles[name] = (relation, frozenset(ends)) if relation >= 0 else tuple(ends) or ("new",)
-        actions.append((acts[int(found["action_kind"][action])][1], dict(sorted(held_roles.items()))))
+            held_roles.setdefault(name, []).append((relation, tuple(sorted(ends))) if relation >= 0 else tuple(ends) or ("new",))
+        actions.append((acts[int(found["action_kind"][action])][1], {name: sorted(held) for name, held in sorted(held_roles.items())}))
     result = bool(found["sequence"][option]), actions, found["action_values"][chosen].numpy()
     LOG.debug("realisations read exit actions=%d seconds=%.4f", len(actions), time.perf_counter() - started)
     return result
@@ -351,7 +356,7 @@ def unheld(held, graph, ticket, option):
     step = steps[ticket]
     result = False
     for action in option["actions"]:
-        for role, aim in action["targets"].items():
+        for role, aim in [(role, aim) for role, aims in action["targets"].items() for aim in aims]:
             if role == "made":
                 continue
             ends = [aim[0], aim[2]] if isinstance(aim, list) else [aim]
@@ -840,12 +845,12 @@ def test_the_node_realisation_reads_options_of_one_action_whose_one_target_is_a_
     with pytest.raises(ValueError, match=where + "of task turn states the option wait, which does nothing and holds no action"):
         routed(stated, configured(stated, "node", graph=PLAIN))
     routed(chosen, configured(chosen, "node", graph=PLAIN))
-    spot, number = dict(sort="node", kinds=["spot"]), dict(type="number", encoder="value")
+    spot, number = dict(sort="node", kinds=["spot"], count=[1, 1]), dict(type="number", encoder="value")
     base = chosen.registry
     routes = "of the kind of task turn has no route to the prediction under the realisation of options node: the realisation"
     for action, entry, columns, message in (
         ("cut", dict(roles=dict(along=dict(spot, sort="edge")), parameters=[]), {}, where + "of action cut of the kind of task turn states the roles along of the sort edge, and the realisation reads options of one action whose one target is a node"),
-        ("put", dict(roles=dict(at=spot, made=dict(sort="new", kinds=["mark"])), parameters=[]), {}, where + "of action put of the kind of task turn states the roles at of the sort node, made of the sort new"),
+        ("put", dict(roles=dict(at=spot, made=dict(sort="new", kinds=["mark"], count=[1, 1])), parameters=[]), {}, where + "of action put of the kind of task turn states the roles at of the sort node, made of the sort new"),
         ("stay", dict(roles=dict(at=spot), parameters=[]), {}, "the field kind " + routes + " reads no kind"),
         ("go", dict(roles=dict(to=spot), parameters=["speed"]), dict(speed=number), "the field parameter speed of go " + routes + " reads no parameters"),
     ):

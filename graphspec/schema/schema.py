@@ -16,7 +16,7 @@ from .targets import BETTER, TARGETS, UTILITIES, UTILITY
 from .time import ABOUT, MODELS, STAMPS, TIES, UNITED
 
 LOG = logging.getLogger(__name__)
-VERSION = 6
+VERSION = 7
 EDGE = "edge_"
 OBSERVED = "observed_"
 TASK = "task_"

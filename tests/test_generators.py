@@ -161,9 +161,9 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
             chosen = earlier(found, place) if name == "others" else nearest(found, place)
             counts[name] += checked(found, drawn, place, name, pool(found, drawn, place, chosen, name), 2)
         spotted = generated.spotted(own["graph"], own["time"], own["observer"])
-        spots = [dict(actions=[dict(kind="go", actor=actor, targets=dict(to=spot), parameters=dict(speed=1.25))], together="set") for actor in own["actors"] for spot in spotted]
+        spots = [dict(actions=[dict(kind="go", actor=actor, targets=dict(to=[spot]), parameters=dict(speed=1.25))], together="set") for actor in own["actors"] for spot in spotted]
         spots += [
-            dict(actions=[dict(kind="hold", actor=actor, targets=dict(of=[generated.HOME[actor], "base", actor]), parameters=dict(speed=1.25))], together="set")
+            dict(actions=[dict(kind="hold", actor=actor, targets=dict(of=[[generated.HOME[actor], "base", actor]]), parameters=dict(speed=1.25))], together="set")
             for actor in own["actors"]
         ]
         counts["ruled"] += checked(found, drawn, place, "ruled", {generated.content(option): option for option in spots}, 2)
@@ -181,7 +181,7 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
         pairs, crossed = generated.edged(own["graph"], own["time"], own["observer"]), of(drawn[place], "crossings")
         assert len(crossed) == min(1, len(pairs))
         for option in crossed:
-            assert tuple(sorted(option["actions"][0]["targets"]["along"][::2])) in pairs and option["origin"]["drawn"] == 1 / len(pairs)
+            assert tuple(sorted(option["actions"][0]["targets"]["along"][0][::2])) in pairs and option["origin"]["drawn"] == 1 / len(pairs)
         for name in ("around", "crossings"):
             for option in of(drawn[place], name):
                 assert generated.observed(own["graph"], option, own["time"], own["observer"])
@@ -196,7 +196,7 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
             present.append(generated.content(option))
             assert (option["available"], option["chosen"], option["order"], option["shown"], option["logged"], option["outcome"]) == (True, False, None, None, None, None)
     mirrored = {
-        (option["origin"]["generator"], action["kind"], [aim[0] in generated.HOME for aim in action["targets"].values()] == [action["kind"] == "tie"])
+        (option["origin"]["generator"], action["kind"], [aims[0][0] in generated.HOME for aims in action["targets"].values()] == [action["kind"] == "tie"])
         for options in drawn.values()
         for option in options
         for action in option["actions"]
@@ -207,12 +207,12 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=8, probabilities=False),
+        changed=dict(version=9, probabilities=False),
         crossings=dict(version=1, probabilities=True),
         idle=dict(version=1, probabilities=False),
-        nearest=dict(version=8, probabilities=True),
-        others=dict(version=8, probabilities=True),
-        ruled=dict(version=8, probabilities=True),
+        nearest=dict(version=9, probabilities=True),
+        others=dict(version=9, probabilities=True),
+        ruled=dict(version=9, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -238,7 +238,8 @@ def aims(options):
         aim if isinstance(aim, str) else tuple(sorted(aim[::2]))
         for option in options
         for action in option["actions"]
-        for aim in action["targets"].values()
+        for aims in action["targets"].values()
+        for aim in aims
     }
 
 

@@ -18,7 +18,7 @@ TOGETHER = ("set", "sequence")
 RECORDED = "recorded"
 WHOLE = -1
 ACTION = ("roles", "parameters")
-ROLE = ("sort", "kinds")
+ROLE = ("sort", "kinds", "count")
 RULE = ("name", "parameters")
 STATED = ("options", "concurrent", "next", "ended", "discount")
 OPTION = ("key", "actions", "together", "available", "chosen", "order", "shown", "logged", "origin", "outcome")
@@ -92,6 +92,26 @@ def generators(stated, schema, target, references, where):
     return result
 
 
+@timed("decisions.bounded")
+def bounded(count, sort, where):
+    least, most = count if isinstance(count, list) and len(count) == 2 else (None, None)
+    if (
+        type(least) is not int
+        or least < 0
+        or (most is not None and (type(most) is not int or most < max(least, 1)))
+    ):
+        raise ValueError(
+            "%s states how many targets it holds as [least, most], least a whole number from 0 and most one from 1 "
+            "and from least, or none where it holds any number, found %r" % (where, count)
+        )
+    if sort == "new" and most != 1:
+        raise ValueError(
+            "%s creates one element at most, so it states as its count [0, 1] or [1, 1], found %r; several "
+            "elements of one role would be told apart by their keys alone, which no model reads" % (where, count)
+        )
+    return [least, most]
+
+
 def acted(name, entry, schema, where):
     started = time.perf_counter()
     where = "the kind of action %s of %s" % (named(name, "a kind of action of " + where), where)
@@ -124,7 +144,7 @@ def acted(name, entry, schema, where):
                     kinds,
                 )
             )
-        held[role] = dict(sort=sort, kinds=list(kinds))
+        held[role] = dict(sort=sort, kinds=list(kinds), count=bounded(statement["count"], sort, inner))
     columns = entry["parameters"]
     if (
         not isinstance(columns, list)
@@ -170,16 +190,17 @@ def option(stated, series, where):
         targets, parameters = action["targets"], action["parameters"]
         if not isinstance(targets, dict) or any(
             type(role) is not str
-            or not (
-                type(target) is str
-                or isinstance(target, list) and len(target) == 3 and all(type(part) is str for part in target)
+            or not isinstance(aims, list)
+            or not all(
+                type(aim) is str or isinstance(aim, list) and len(aim) == 3 and all(type(part) is str for part in aim)
+                for aim in aims
             )
-            for role, target in targets.items()
+            for role, aims in targets.items()
         ):
             raise ValueError(
-                "%s states its targets as a mapping from role to the key of a node or of an element it creates, or "
-                "to the key of the first node, the relation and the key of the second node of an edge, found %r"
-                % (inner, targets)
+                "%s states its targets as a mapping from every role of its kind to the list of its targets, empty "
+                "where it holds none, each the key of a node or of an element it creates, or the key of the first "
+                "node, the relation and the key of the second node of an edge, found %r" % (inner, targets)
             )
         if not isinstance(parameters, dict) or any(type(name) is not str for name in parameters):
             raise ValueError("%s states its parameters as a mapping from column to value, found %r" % (inner, parameters))

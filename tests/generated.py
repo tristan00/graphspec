@@ -71,14 +71,14 @@ class Spots:
         state = seen.state
         return [
             dict(
-                actions=[dict(kind="go", actor=actor, targets=dict(to=spot), parameters=dict(speed=parameters["speed"]))],
+                actions=[dict(kind="go", actor=actor, targets=dict(to=[spot]), parameters=dict(speed=parameters["speed"]))],
                 together="set",
             )
             for actor in sorted(seen.decision["actors"])
             for spot in sorted(state["nodes"]["spot"])
         ] + [
             dict(
-                actions=[dict(kind="hold", actor=actor, targets=dict(of=[actor, "base", spot]), parameters=dict(speed=parameters["speed"]))],
+                actions=[dict(kind="hold", actor=actor, targets=dict(of=[[actor, "base", spot]]), parameters=dict(speed=parameters["speed"]))],
                 together="set",
             )
             for actor in sorted(seen.decision["actors"])
@@ -110,7 +110,7 @@ class Crossings:
         made = [
             dict(
                 actions=[
-                    dict(kind="cut", actor=actor, targets=dict(along=[first, "near", second]), parameters=dict(mode=parameters["mode"]))
+                    dict(kind="cut", actor=actor, targets=dict(along=[[first, "near", second]]), parameters=dict(mode=parameters["mode"]))
                 ],
                 together="set",
             )
@@ -140,7 +140,7 @@ class Faulty:
         if fault == "unread":
             return seen.rule
         if fault == "unobserved":
-            cut = dict(kind="cut", actor=sorted(seen.decision["actors"])[0], targets=dict(along=["s0", "near", "s4"]), parameters=dict(mode="fast"))
+            cut = dict(kind="cut", actor=sorted(seen.decision["actors"])[0], targets=dict(along=[["s0", "near", "s4"]]), parameters=dict(mode="fast"))
             return [dict(actions=[cut], together="set", drawn=None)]
         copied = [dict(actions=option["actions"], together=option["together"], drawn=None) for option in seen.chosen if option["actions"]]
         return [dict(option, drawn=0.5) for option in copied] if fault == "probability" else copied
@@ -153,7 +153,7 @@ def around(seen, parameters):
         for action in option["actions"]:
             if action["kind"] != "go":
                 continue
-            spot = action["targets"]["to"]
+            (spot,) = action["targets"]["to"]
             near = sorted(
                 {
                     edge["target"] if edge["source"] == spot else edge["source"]
@@ -161,10 +161,10 @@ def around(seen, parameters):
                     if edge["relation"] == "near" and spot in (edge["source"], edge["target"])
                 }
             )
-            made = [dict(actions=[dict(action, targets=dict(to=key))], together="set") for key in near]
+            made = [dict(actions=[dict(action, targets=dict(to=[key]))], together="set") for key in near]
             made = [held for held in made if seen.fresh(held)]
             if made:
-                draws = seen.unit([held["actions"][0]["targets"]["to"] for held in made])
+                draws = seen.unit([held["actions"][0]["targets"]["to"][0] for held in made])
                 found.append(dict(made[int(np.argmin(draws))], drawn=1 / len(made)))
     return found
 
@@ -202,8 +202,8 @@ def unregister():
 SPAN = 2
 HOME = dict(zip(synthetic.AGENTS, ("s0", "s2", "s4")))
 MIRRORED = dict(
-    tie=dict(roles=dict(by=dict(sort="edge", kinds=["agent"])), parameters=["speed"]),
-    hold=dict(roles=dict(of=dict(sort="edge", kinds=["spot"])), parameters=["speed"]),
+    tie=dict(roles=dict(by=dict(sort="edge", kinds=["agent"], count=[1, 1])), parameters=["speed"]),
+    hold=dict(roles=dict(of=dict(sort="edge", kinds=["spot"], count=[1, 1])), parameters=["speed"]),
 )
 MIRRORED_ROLES = ("by", "of")
 
@@ -218,8 +218,8 @@ def tied(graph, place):
             continue
         actor = target["options"][1]["actions"][0]["actor"]
         made = [
-            synthetic.offered("tie", [synthetic.acting("tie", actor, dict(by=[actor, "base", HOME[actor]]), dict(speed=0.25 * moment))], "set", "recorded"),
-            synthetic.offered("hold", [synthetic.acting("hold", actor, dict(of=[HOME[actor], "base", actor]), dict(speed=0.5 * moment + place))], "set", "recorded"),
+            synthetic.offered("tie", [synthetic.acting("tie", actor, dict(by=[[actor, "base", HOME[actor]]]), dict(speed=0.25 * moment))], "set", "recorded"),
+            synthetic.offered("hold", [synthetic.acting("hold", actor, dict(of=[[HOME[actor], "base", actor]]), dict(speed=0.5 * moment + place))], "set", "recorded"),
         ]
         if (moment + place) % 3 == 0:
             for option in target["options"]:
@@ -236,7 +236,7 @@ def lone(graph, place):
     tasks = graph["tasks"]
     (at,) = [at for at, (kind, key) in enumerate(zip(tasks["kind"], tasks["key"])) if kind == KIND and key == LONE]
     target, actor = tasks["target"][at], tasks["references"]["agents"][at][0]
-    chosen = synthetic.offered("lone", [synthetic.acting("go", actor, dict(to="s3"), dict(speed=SPEED))], "set", "recorded")
+    chosen = synthetic.offered("lone", [synthetic.acting("go", actor, dict(to=["s3"]), dict(speed=SPEED))], "set", "recorded")
     chosen.update(chosen=True, outcome=synthetic.worth(tasks["time"][at], place, 0))
     target["options"] = [chosen] + [option for option in target["options"] if option["origin"] != "recorded"]
     LOG.debug("generated lone exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
@@ -439,7 +439,8 @@ def observed(graph, option, moment, observer):
         if role in MIRRORED_ROLES
         else True
         for action in option["actions"]
-        for role, aim in action["targets"].items()
+        for role, aims in action["targets"].items()
+        for aim in aims
     )
     LOG.debug("generated observed exit seconds=%.6f", time.perf_counter() - started)
     return result
@@ -489,7 +490,10 @@ def value(graph, key, moment, observer):
 def content(option):
     actions = []
     for action in option["actions"]:
-        targets = {role: sorted(aim[::2]) + [aim[1]] if isinstance(aim, list) else aim for role, aim in action["targets"].items()}
+        targets = {
+            role: sorted(sorted(aim[::2]) + [aim[1]] if isinstance(aim, list) else [aim] for aim in aims)
+            for role, aims in action["targets"].items()
+        }
         actions.append(repr((action["kind"], action["actor"], sorted(targets.items()), sorted(action["parameters"].items()))))
     together = option["together"] if len(actions) > 1 else "set"
     return (together, tuple(sorted(actions) if together == "set" else actions))

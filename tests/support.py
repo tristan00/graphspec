@@ -343,10 +343,11 @@ def made(schema, graph):
         roles = {name: entry["roles"] for name, entry in schema.tasks["kinds"][kind]["target"]["actions"].items()}
         for option in target["options"]:
             for action in option["actions"]:
-                for role, key in action["targets"].items():
+                for role, keys in action["targets"].items():
                     declared = roles[action["kind"]][role]
-                    if declared["sort"] == "new" and key not in graph["nodes"][declared["kinds"][0]]:
-                        result[declared["kinds"][0]].add(key)
+                    for key in keys:
+                        if declared["sort"] == "new" and key not in graph["nodes"][declared["kinds"][0]]:
+                            result[declared["kinds"][0]].add(key)
     LOG.debug("made exit graph=%s seconds=%.6f", graph["name"], time.perf_counter() - started)
     return {kind: sorted(keys) for kind, keys in result.items()}
 
@@ -364,8 +365,11 @@ def chosen_of(schema, graph, entity, decision, stated):
         for action in option["actions"]:
             roles = decision["actions"][action["kind"]]["roles"]
             targets = {
-                role: list(ended(schema, graph, entity, roles[role]["kinds"], tuple(key))) if isinstance(key, list) else key
-                for role, key in action["targets"].items()
+                role: sorted(
+                    list(ended(schema, graph, entity, roles[role]["kinds"], tuple(key))) if isinstance(key, list) else key
+                    for key in keys
+                )
+                for role, keys in action["targets"].items()
             }
             parameters = {name: stored_as(schema, name, [value])[0] for name, value in action["parameters"].items()}
             actions.append(dict(action, targets=targets, parameters=parameters))

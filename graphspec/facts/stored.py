@@ -15,7 +15,7 @@ from graphspec.schema.schema import VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 17
+VERSION = 18
 PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
 HELD = ("inner_owner", "inner_kind", "inner_values")
@@ -408,7 +408,7 @@ class Facts:
             entry = dict(
                 kind=name,
                 actor=keys[actor],
-                targets={},
+                targets={role: [] for role in declared["roles"]},
                 parameters={column: values[column][at] for column in declared["parameters"]},
             )
             options[owner]["actions"].append(entry)
@@ -422,7 +422,7 @@ class Facts:
             entry, declared = actions[action]
             name = list(declared["roles"])[role]
             edged = declared["roles"][name]["sort"] == "edge"
-            entry["targets"][name] = [keys[source], names[code], keys[other]] if edged else keys[source]
+            entry["targets"][name].append([keys[source], names[code], keys[other]] if edged else keys[source])
         for owner, part, code, y in zip(
             *(np.asarray(self.arrays[name]).tolist() for name in ("target_option", "target_part", "target_series", "target_y"))
         ):

@@ -222,13 +222,16 @@ class Decided:
             (action, role, self.lookup[source] if type(source) is tuple else source, other, code)
             for action, role, source, other, code in rows
         ]
-        rows.sort(key=lambda row: row[:2])
-        stated = {action: [] for action in range(len(declared))}
-        for action, role, *_ in rows:
-            stated[action].append(role)
-        for action, (where, _, held) in enumerate(declared):
-            if stated[action] != list(range(len(held["roles"]))):
-                raise ValueError("%s states every role of its kind, %s, once" % (where, ", ".join(held["roles"]) or "none"))
+        named = self.registry.by_code
+        keyed = sorted(
+            (
+                (action, role, self.keys[source], "" if code < 0 else named[code].name, "" if other < 0 else self.keys[other]),
+                (action, role, source, other, code),
+            )
+            for action, role, source, other, code in rows
+        )
+        self.counted(keyed, declared)
+        rows = [row for _, row in keyed]
         result = {
             "role_" + name: np.asarray([row[place] for row in rows], dtype).reshape(-1)
             for place, (name, dtype) in enumerate(
@@ -237,6 +240,32 @@ class Decided:
         }
         LOG.debug("decided roles exit graph=%s roles=%d made=%d seconds=%.4f", self.name, len(rows), len(made), time.perf_counter() - started)
         return result
+
+    def counted(self, keyed, declared):
+        started = time.perf_counter()
+        for (before, _), (after, _) in zip(keyed, keyed[1:]):
+            if before == after:
+                action, role, source, relation, other = after
+                where, _, held = declared[action]
+                sort = list(held["roles"].values())[role]["sort"]
+                named = (
+                    "the edge of %s from %s to %s" % (relation, source, other)
+                    if sort == "edge"
+                    else "the %s %s" % ("element" if sort == "new" else "node", source)
+                )
+                raise ValueError(
+                    "the role %s of %s names %s twice; the targets of a role are a set" % (list(held["roles"])[role], where, named)
+                )
+        found = Counter(label[:2] for label, _ in keyed)
+        for action, (where, _, held) in enumerate(declared):
+            for role, (name, entry) in enumerate(held["roles"].items()):
+                (least, most), number = entry["count"], found[(action, role)]
+                if number < least or (most is not None and number > most):
+                    raise ValueError(
+                        "the role %s of %s holds %d targets, and its kind states from %d to %s"
+                        % (name, where, number, least, "no bound" if most is None else most)
+                    )
+        LOG.debug("decided counted exit graph=%s targets=%d seconds=%.4f", self.name, len(keyed), time.perf_counter() - started)
 
     def node(self, inner, kinds, key):
         started = time.perf_counter()

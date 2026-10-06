@@ -1032,18 +1032,30 @@ def case_decisions(schema, index, tasks, ids, counter, where):
                         "task states every parameter it lists"
                         % (inner, action["kind"], ", ".join(sorted(action["parameters"])) or "none")
                     )
+                if set(action["targets"]) != set(actions[action["kind"]]["roles"]):
+                    raise ValueError(
+                        "%s states an action of the kind %s with the roles %s; an action states every role of its "
+                        "kind, %s, with the list of its targets, empty where it holds none"
+                        % (
+                            inner,
+                            action["kind"],
+                            ", ".join(sorted(action["targets"])) or "none",
+                            ", ".join(actions[action["kind"]]["roles"]) or "none",
+                        )
+                    )
                 found["action"]["owner"].append(len(held["owner"]) - 1)
                 found["action"]["kind"].append(action["kind"])
                 found["action"]["actor"].append(action["actor"])
                 for name in columns:
                     found["action"][name].append(action["parameters"][name] if name in action["parameters"] else None)
-                for role, target in action["targets"].items():
-                    edged = isinstance(target, list)
-                    found["role"]["owner"].append(len(found["action"]["owner"]) - 1)
-                    found["role"]["role"].append(role)
-                    found["role"]["key"].append(target[0] if edged else target)
-                    found["role"]["relation"].append(target[1] if edged else None)
-                    found["role"]["to_key"].append(target[2] if edged else None)
+                for role, targets in action["targets"].items():
+                    for target in targets:
+                        edged = isinstance(target, list)
+                        found["role"]["owner"].append(len(found["action"]["owner"]) - 1)
+                        found["role"]["role"].append(role)
+                        found["role"]["key"].append(target[0] if edged else target)
+                        found["role"]["relation"].append(target[1] if edged else None)
+                        found["role"]["to_key"].append(target[2] if edged else None)
     numbers = {name: counter.take(table, len(found[name]["owner"])) for name, table in (
         ("option", OPTIONS), ("action", ACTIONS), ("role", ROLED)
     )}
@@ -1208,10 +1220,12 @@ BLIND = (1, TURNS[-1])
 @timed("synthetic.chooser")
 def chooser(nothing):
     actions = dict(
-        go=dict(roles=dict(to=dict(sort="node", kinds=["spot"])), parameters=["speed"]),
-        cut=dict(roles=dict(along=dict(sort="edge", kinds=["spot"])), parameters=["mode"]),
+        go=dict(roles=dict(to=dict(sort="node", kinds=["spot"], count=[1, 1])), parameters=["speed"]),
+        cut=dict(roles=dict(along=dict(sort="edge", kinds=["spot"], count=[1, 1])), parameters=["mode"]),
         put=dict(
-            roles=dict(at=dict(sort="node", kinds=["spot"]), made=dict(sort="new", kinds=["mark"])),
+            roles=dict(
+                at=dict(sort="node", kinds=["spot"], count=[1, 1]), made=dict(sort="new", kinds=["mark"], count=[1, 1])
+            ),
             parameters=["lit"],
         ),
     )
@@ -1293,31 +1307,31 @@ def turned(moment, place, actors, generator):
     made = "m0" if (place, moment, actor) == (0, 3, "a0") else "m0_%d_%s" % (moment, actor)
     options = [
         offered("wait", [], "set", RECORDED),
-        offered("go", [acting("go", actor, dict(to=spot), dict(speed=0.5 * moment + place))], "set", RECORDED),
+        offered("go", [acting("go", actor, dict(to=[spot]), dict(speed=0.5 * moment + place))], "set", RECORDED),
         offered(
             "cut",
-            [acting("cut", actor, dict(along=along[::-1] if moment % 2 else along), dict(mode=MODES[moment % 2]))],
+            [acting("cut", actor, dict(along=[along[::-1] if moment % 2 else along]), dict(mode=MODES[moment % 2]))],
             "set",
             RECORDED,
         ),
         offered(
             "put",
             [
-                acting("go", actor, dict(to=spot), dict(speed=1.5)),
-                acting("put", actor, dict(at=spot, made=made), dict(lit=moment % 2 == 0)),
+                acting("go", actor, dict(to=[spot]), dict(speed=1.5)),
+                acting("put", actor, dict(at=[spot], made=[made]), dict(lit=moment % 2 == 0)),
             ],
             "sequence",
             RECORDED,
         ),
     ]
     if len(actors) > 1:
-        pair = [acting("go", other, dict(to=SPOTS[(moment + at) % 5]), dict(speed=None)) for at, other in enumerate(actors)]
+        pair = [acting("go", other, dict(to=[SPOTS[(moment + at) % 5]]), dict(speed=None)) for at, other in enumerate(actors)]
         options.append(offered("pair", pair, "set", RECORDED))
     drawn = 0.25 if moment % 2 else None
     options.append(
         offered(
             "drawn",
-            [acting("go", actor, dict(to=SPOTS[(moment + place + 2) % 5]), dict(speed=2.0))],
+            [acting("go", actor, dict(to=[SPOTS[(moment + place + 2) % 5]]), dict(speed=2.0))],
             "set",
             dict(generator=generator, seed=7 * moment + place, drawn=drawn),
         )
@@ -1340,7 +1354,7 @@ def turned(moment, place, actors, generator):
 def shown(moment, place):
     started = time.perf_counter()
     options = [
-        offered("show%d" % at, [acting("go", "a2", dict(to=SPOTS[at]), dict(speed=1.0))], "set", RECORDED)
+        offered("show%d" % at, [acting("go", "a2", dict(to=[SPOTS[at]]), dict(speed=1.0))], "set", RECORDED)
         for at in range(4)
     ]
     blind = (place, moment) == BLIND

@@ -36,7 +36,7 @@ def schema():
     stated = synthetic.decision_schema()
     kind = copy.deepcopy(stated["tasks"]["kinds"]["show"])
     kind["target"].update(
-        actions=dict(go=dict(roles=dict(to=dict(sort="node", kinds=["spot"])), parameters=[])),
+        actions=dict(go=dict(roles=dict(to=dict(sort="node", kinds=["spot"], count=[1, 1])), parameters=[])),
         series=["gain"],
         utility=dict(name="weighted", better="higher", weights=dict(gain=1.0)),
     )
@@ -51,7 +51,7 @@ def graph(count):
     started = time.perf_counter()
     spots, agents, moment = ["s%02d" % at for at in range(SPOTS)], ["a0", "a1"], STEPS - 1
     options = [
-        synthetic.offered("o%02d" % at, [synthetic.acting("go", "a0", dict(to=spots[at]), {})], "set", RECORDED)
+        synthetic.offered("o%02d" % at, [synthetic.acting("go", "a0", dict(to=[spots[at]]), {})], "set", RECORDED)
         for at in range(count)
     ]
     for at, option in enumerate(options):
