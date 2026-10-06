@@ -258,6 +258,11 @@ SLOW = {
     "tests/test_outcomes.py::test_concordance_without_a_comparable_pair_among_the_tasks_scored_stops_a_fit_when_it_starts",
     "tests/test_outcomes.py::test_the_batch_a_model_reads_holds_the_inputs_of_a_sequence_and_a_time_to_an_event_and_no_outcome",
     "tests/test_outcomes.py::test_times_past_two_to_the_24_are_held_and_read_by_the_loss_and_the_measures_exactly",
+    "tests/test_reach_fit.py::test_reach_names_the_options_and_fields_the_batches_of_a_fit_hold_of_the_stated_bank_whole_and_with_spots_sampled",
+    "tests/test_reach_fit.py::test_reach_names_the_options_and_fields_the_batches_of_a_fit_hold_of_the_picked_bank_under_the_node_realisation",
+    "tests/test_reach_fit.py::test_under_the_edit_and_the_setting_of_28_september_reach_names_the_facts_the_forks_of_a_fit_hold_and_the_value_that_gives_a_field_back",
+    "tests/test_reach_fit.py::test_the_fields_the_guards_of_the_smallest_fit_see_are_those_reach_puts_before_the_model_for_an_option_held_in_the_scored_splits",
+    "tests/test_reach_fit.py::test_a_bank_without_time_and_one_of_order_built_as_such_are_described_in_the_words_of_their_model_as_the_records_written_out_here",
 }
 
 
