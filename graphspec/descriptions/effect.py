@@ -9,6 +9,7 @@ from graphspec.operations.operation import Stored
 from graphspec.operations.sets import PARAMETER
 
 from .describe import table
+from .differences import compared, counted, distinct, numbered, tokens, unmatched
 
 LOG = logging.getLogger(__name__)
 READING = (
@@ -30,22 +31,25 @@ def begun(members, beside, registry, steps, spec, groups, seed, limits, partitio
     return result
 
 
-def derived(members, beside, registry, steps, spec, groups, seed, limits, partitions):
+def ended(members, beside, registry, steps, spec, groups, seed, limits, partitions):
     started = time.perf_counter()
     total = sum(member.steps for member in members)
+    start = begun(members, beside, registry, steps, spec, groups, seed, limits, partitions, 0)
+    result = start.continued(total, None).derived()
+    LOG.debug("effect ended exit entries=%d steps=%d seconds=%.4f", len(steps), total, time.perf_counter() - started)
+    return result
+
+
+def derived(members, beside, registry, steps, spec, groups, seed, limits, partitions):
+    started = time.perf_counter()
     result = [
-        begun(members, beside, registry, steps[:count], spec, groups, seed, limits, partitions, 0).continued(total, None).derived()
+        ended(members, beside, registry, steps[:count], spec, groups, seed, limits, partitions)
         for count in range(len(steps) + 1)
     ]
     LOG.info(
         "effect derived exit graphs=%d states=%d seconds=%.3f", len(members), len(result), time.perf_counter() - started
     )
     return result
-
-
-@timed("effect.tokens")
-def tokens(graph):
-    return np.ascontiguousarray(np.asarray(graph.entity_token, np.uint64)).view(np.int64)
 
 
 @timed("effect.nodes")
@@ -57,21 +61,15 @@ def nodes(graph):
     return keys, np.asarray(graph.obs_anchor, bool)
 
 
-def edges(graph, registry):
+def edges(graph, registry, number):
     started = time.perf_counter()
     present = np.asarray(graph.fact_present, bool)
-    code = np.asarray(graph.fact_code, np.int64)[present]
-    kinds, token = np.asarray(graph.kinds, np.int64), tokens(graph)
-    source = np.asarray(graph.fact_source, np.int64)[present]
-    target = np.asarray(graph.fact_target, np.int64)[present]
-    first, second = np.stack((kinds[source], token[source]), 1), np.stack((kinds[target], token[target]), 1)
-    symmetric = np.asarray([registry.by_code[place].symmetric for place in range(registry.relations)], bool)
-    later = (first[:, 0] > second[:, 0]) | ((first[:, 0] == second[:, 0]) & (first[:, 1] > second[:, 1]))
-    swapped = (symmetric[code] & later)[:, None]
-    ends = np.concatenate((np.where(swapped, second, first), np.where(swapped, first, second)), 1)
-    keys = np.concatenate((np.asarray(graph.fact_step, np.int64)[present][:, None], code[:, None], ends), 1)
-    result = np.unique(keys, axis=0)
-    LOG.debug("effect edges exit facts=%d edges=%d seconds=%.4f", len(keys), len(result), time.perf_counter() - started)
+    step, code, source, target = (
+        np.asarray(graph.arrays[name], np.int64)[present]
+        for name in ("fact_step", "fact_code", "fact_source", "fact_target")
+    )
+    result = distinct(registry, np.stack((step, code, number[source], number[target]), 1))
+    LOG.debug("effect edges exit facts=%d edges=%d seconds=%.4f", len(step), len(result), time.perf_counter() - started)
     return result
 
 
@@ -82,12 +80,8 @@ def related(found, registry):
     names = list(dict.fromkeys(stated + [registry.by_code[code].name for code in codes]))
     places = np.full(registry.relations, -1, np.int64)
     places[[registry.code(name) for name in names]] = np.arange(len(names))
-    result = names, [
-        (keys, anchored, np.concatenate((ends[:, :1], places[ends[:, 1:2]], ends[:, 2:]), 1))
-        for keys, anchored, ends in found
-    ]
     LOG.debug("effect related exit relations=%d seconds=%.4f", len(names), time.perf_counter() - started)
-    return result
+    return names, places
 
 
 @timed("effect.within")
@@ -96,17 +90,9 @@ def within(keys, low, high):
     return np.concatenate((keys[chosen, :1] - low, keys[chosen, 1:]), 1), chosen
 
 
-@timed("effect.compared")
-def compared(before, after):
-    _, inverse = np.unique(np.concatenate((before, after)), axis=0, return_inverse=True)
-    inverse = inverse.reshape(-1)
-    earlier, later = inverse[: len(before)], inverse[len(before) :]
-    return ~np.isin(earlier, later), ~np.isin(later, earlier)
-
-
-@timed("effect.counted")
-def counted(keys, steps, size):
-    return np.bincount(keys[:, 0] * size + keys[:, 1], minlength=steps * size).reshape(steps, size)
+@timed("effect.placed")
+def placed(facts, places):
+    return np.stack((facts[:, 0], places[facts[:, 1]]), 1)
 
 
 @timed("effect.share")
@@ -114,13 +100,13 @@ def share(count, total):
     return round(count / total, 4) if total else None
 
 
-def held(state, steps, kinds, names):
+def held(state, steps, kinds, names, places):
     started = time.perf_counter()
     keys, anchored, ends = state
     found, anchors, edged = (
         counted(keys[~anchored], steps, len(kinds)),
         counted(keys[anchored], steps, len(kinds)),
-        counted(ends, steps, len(names)),
+        counted(placed(ends, places), steps, len(names)),
     )
     result = dict(
         kinds={kind: dict(nodes=found[:, at].tolist(), anchors=anchors[:, at].tolist()) for at, kind in enumerate(kinds)},
@@ -130,9 +116,9 @@ def held(state, steps, kinds, names):
     return result
 
 
-def changed(before, after, size):
+def changed(before, after, apart, size):
     started = time.perf_counter()
-    removed, added = compared(before, after)
+    removed, added = apart
     result = (
         np.bincount(before[removed, 1], minlength=size).tolist(),
         np.bincount(after[added, 1], minlength=size).tolist(),
@@ -182,10 +168,13 @@ def cuts(sort, name, before, after, tasks, times):
     return result
 
 
-def effected(step, earlier, later, before, after, kinds, names, tasks, times):
+def effected(step, earlier, later, before, after, kinds, names, places, registry, tasks, times):
     started = time.perf_counter()
-    removed, added = changed(earlier[0][~earlier[1]], later[0][~later[1]], len(kinds))
-    lost, made = changed(earlier[2], later[2], len(names))
+    seen = earlier[0][~earlier[1]], later[0][~later[1]]
+    removed, added = changed(*seen, compared(*seen), len(kinds))
+    lost, made = changed(
+        placed(earlier[2], places), placed(later[2], places), unmatched(registry, earlier[2], later[2]), len(names)
+    )
     result = dict(
         entry=step.name,
         operation=step.operation.name,
@@ -223,7 +212,7 @@ def tasked(graph, registry, low, high):
     return result
 
 
-def graphed(name, first, found, steps, registry, low, high, kinds, names):
+def graphed(name, first, found, steps, registry, low, high, kinds, names, places):
     started = time.perf_counter()
     size = high - low
     times = np.asarray(first.step_time, np.int64)[low:high].tolist()
@@ -232,14 +221,16 @@ def graphed(name, first, found, steps, registry, low, high, kinds, names):
     for keys, anchored, ends in found:
         inside, chosen = within(keys, low, high)
         own.append((inside, anchored[chosen], within(ends, low, high)[0]))
-    states = [held(state, size, kinds, names) for state in own]
+    states = [held(state, size, kinds, names, places) for state in own]
     result = dict(
         name=name,
         times=times,
         tasks={task: [times[at] for at in held_steps] for task, held_steps in tasks.items()},
         held=states[0],
         effects=[
-            effected(step, own[at], own[at + 1], states[at], states[at + 1], kinds, names, tasks, times)
+            effected(
+                step, own[at], own[at + 1], states[at], states[at + 1], kinds, names, places, registry, tasks, times
+            )
             for at, step in enumerate(steps)
         ],
     )
@@ -256,14 +247,15 @@ def described(members, beside, registry, steps, spec, groups, seed, limits, part
 
 def told(graphs, members, registry, steps):
     started = time.perf_counter()
-    names, found = related([nodes(graph) + (edges(graph, registry),) for graph in graphs], registry)
+    numbers = numbered(*[np.stack((np.asarray(graph.kinds, np.int64), tokens(graph)), 1) for graph in graphs])
+    found = [nodes(graph) + (edges(graph, registry, number),) for graph, number in zip(graphs, numbers)]
+    names, places = related(found, registry)
     kinds, member = list(registry.nodes), np.asarray(graphs[0].step_graph, np.int64)
     result = []
     for at, graph in enumerate(members):
         inside = np.flatnonzero(member == at)
-        result.append(
-            graphed(graph.name, graphs[0], found, steps, registry, int(inside[0]), int(inside[-1]) + 1, kinds, names)
-        )
+        low, high = int(inside[0]), int(inside[-1]) + 1
+        result.append(graphed(graph.name, graphs[0], found, steps, registry, low, high, kinds, names, places))
     LOG.debug("effect told exit graphs=%d states=%d seconds=%.4f", len(result), len(graphs), time.perf_counter() - started)
     return result
 
@@ -390,12 +382,10 @@ def graph_text(graph):
     return lines
 
 
-def text(record):
+def settled(record):
     started = time.perf_counter()
     splits = record["splits"]
-    lines = [
-        "variant %s of the bank stored as %s, described at version %d"
-        % (record["variant"], record["stored_sha256"], record["version"]),
+    result = [
         "derivation seed %d, device %s" % (record["seed"], record["device"]),
         "splits trained on %s, scored on %s; rules of what each sees: %s"
         % (
@@ -404,6 +394,17 @@ def text(record):
             listed({name: ", ".join(rules) or "none" for name, rules in splits["sees"].items()}),
         ),
         "settings: %s" % listed(record["settings"]),
+    ]
+    LOG.debug("effect settled exit lines=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def text(record):
+    started = time.perf_counter()
+    lines = [
+        "variant %s of the bank stored as %s, described at version %d"
+        % (record["variant"], record["stored_sha256"], record["version"]),
+        *settled(record),
         READING,
     ]
     lines += [entry_text(entry) for entry in record["entries"]]

@@ -767,7 +767,7 @@ def graph_text(graph):
 
 def text(record):
     started = time.perf_counter()
-    splits, held = record["splits"], record["realisation"]
+    held = record["realisation"]
     lines = [
         "reach of the options of the variant %s of the bank stored as %s, described at version %d"
         % (record["variant"], record["stored_sha256"], record["version"]),
@@ -778,14 +778,7 @@ def text(record):
             ", ".join(held["reads"]),
             "each option an edit of the graph, read in its own fork" if held["back"] else "options read beside the variant",
         ),
-        "derivation seed %d, device %s" % (record["seed"], record["device"]),
-        "splits trained on %s, scored on %s; rules of what each sees: %s"
-        % (
-            ", ".join(splits["trained"]),
-            ", ".join(splits["scored"]),
-            effect.listed({name: ", ".join(rules) or "none" for name, rules in splits["sees"].items()}),
-        ),
-        "settings: %s" % effect.listed(record["settings"]),
+        *effect.settled(record),
         READING,
     ]
     lines += [effect.entry_text(entry) for entry in record["entries"]]

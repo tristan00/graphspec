@@ -9,6 +9,7 @@ from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
 from .build.output import Stage
 from .descriptions.describe import describe
+from .descriptions.differences import differences
 from .descriptions.inspect import inspect
 from .operations.negatives import NEGATIVES
 from .operations.operation import OPERATIONS, Operation, Phase
@@ -56,6 +57,7 @@ __all__ = [
     "Scripted",
     "Stage",
     "describe",
+    "differences",
     "inspect",
     "write_task",
 ]

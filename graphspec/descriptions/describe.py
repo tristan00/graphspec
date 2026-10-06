@@ -12,7 +12,7 @@ from graphspec.schema.declaration import Registry
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 7
+VERSION = 8
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
 READING = (
     "at a time: the nodes observed and their observations, and the edges a present fact holds; a run: a stretch of "
@@ -172,10 +172,20 @@ def decisions(registry, facts):
     return result
 
 
+@timed("describe.clocked")
+def clocked(registry, facts):
+    stamps = [facts.arrays[name] for name in ("obs_since", "obs_until", "fact_since", "fact_until")]
+    return moments(*stamps, facts.task_time if registry.schema.model != "none" else [])
+
+
+@timed("describe.stored")
+def stored(path, graph):
+    return Facts.load(Path(path) / "truth" / ("graph_%04d" % graph["index"]))
+
+
 def graphed(registry, facts, splits):
     started = time.perf_counter()
-    stamps = [facts.arrays[name] for name in ("obs_since", "obs_until", "fact_since", "fact_until")]
-    times = moments(*stamps, facts.task_time if registry.schema.model != "none" else [])
+    times = clocked(registry, facts)
     result = dict(
         name=facts.name,
         unit=facts.unit,
@@ -197,10 +207,7 @@ def recorded(path, manifest):
         stored_sha256=manifest["stored_sha256"],
         time=dict(model=registry.schema.model, units=list(registry.schema.units)),
         splits=list(manifest["splits"]),
-        graphs=[
-            graphed(registry, Facts.load(Path(path) / "truth" / ("graph_%04d" % graph["index"])), manifest["splits"])
-            for graph in manifest["graphs"]
-        ],
+        graphs=[graphed(registry, stored(path, graph), manifest["splits"]) for graph in manifest["graphs"]],
     )
     LOG.info("describe recorded exit graphs=%d seconds=%.3f", len(result["graphs"]), time.perf_counter() - started)
     return result

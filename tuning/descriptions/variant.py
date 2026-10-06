@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from graphspec.descriptions import describe as truth
+from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, sha256_json
@@ -18,59 +19,71 @@ from . import reaches
 LOG = logging.getLogger(__name__)
 
 
-def graphed(deriver, config):
+def grouped(deriver, config):
     started = time.perf_counter()
     _, steps, spec, chosen = deriver.stated(config)
-    registry, joining, found = deriver.fitted(config), deriver.joining(config), {}
-    for index in deriver.graphs(config):
+    registry, joining, groups = deriver.fitted(config), deriver.joining(config), deriver.graphs(config)
+    for index in groups:
         indices = deriver.groups(config)[index] if joining else [index]
         members = [Graph.load(deriver.view(member, config)).dense() for member in indices]
-        found.update(
-            zip(
-                indices,
-                effect.described(
-                    members,
-                    deriver.seconds(steps, indices, config, False),
-                    registry,
-                    steps,
-                    spec,
-                    chosen,
-                    deriver.seed,
-                    deriver.limits(),
-                    deriver.partitions(config),
-                ),
-            )
-        )
+        beside = deriver.seconds(steps, indices, config, False)
+        yield indices, (members, beside, registry, steps, spec, chosen, deriver.seed, deriver.limits(), deriver.partitions(config))
+    LOG.debug("variant grouped exit groups=%d seconds=%.4f", len(groups), time.perf_counter() - started)
+
+
+def graphed(deriver, config):
+    started = time.perf_counter()
+    found = {}
+    for indices, given in grouped(deriver, config):
+        found.update(zip(indices, effect.described(*given)))
     result = [found[graph["index"]] for graph in deriver.viewed(config).graphs]
     LOG.info("variant graphed exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
     return result
 
 
-def recorded(deriver, config, key):
+def headed(deriver, config, key):
     started = time.perf_counter()
     _, steps, spec, _ = deriver.stated(config)
     result = dict(
-        version=truth.VERSION,
         variant=key,
-        stored_sha256=deriver.source,
         seed=deriver.seed,
         device=deriver.device,
         splits=config["splits"],
         settings=specs.materialized(spec),
         entries=[effect.entered(step, deriver.registry, spec, config["splits"]) for step in steps],
-        graphs=graphed(deriver, config),
     )
-    LOG.info("variant recorded exit entries=%d seconds=%.3f", len(steps), time.perf_counter() - started)
+    LOG.debug("variant headed exit entries=%d seconds=%.4f", len(steps), time.perf_counter() - started)
     return result
 
 
-def describe(bank, config, statement):
+def recorded(deriver, config, key):
+    started = time.perf_counter()
+    result = dict(
+        version=truth.VERSION,
+        stored_sha256=deriver.source,
+        **headed(deriver, config, key),
+        graphs=graphed(deriver, config),
+    )
+    LOG.info("variant recorded exit graphs=%d seconds=%.3f", len(result["graphs"]), time.perf_counter() - started)
+    return result
+
+
+def opened(bank, derivers, config, statement):
     started = time.perf_counter()
     truth.manifested(bank)
     stated = state(statement)
     agreed(config, stated)
-    deriver = Deriver(bank, stated.device, stated.derivation_seed, RESIDENT)
-    key = specs.digest(deriver.identity(config))
+    held = (stated.device, stated.derivation_seed)
+    if held not in derivers:
+        derivers[held] = Deriver(bank, *held, RESIDENT)
+    key = specs.digest(derivers[held].identity(config))
+    LOG.debug("variant opened exit variant=%s seconds=%.4f", key[:10], time.perf_counter() - started)
+    return derivers[held], key
+
+
+def describe(bank, config, statement):
+    started = time.perf_counter()
+    deriver, key = opened(bank, {}, config, statement)
     held = Path(bank) / "descriptions" / "variants" / sha256_json(dict(variant=key, version=truth.VERSION))
     result = truth.kept(held, lambda: recorded(deriver, config, key), effect.text)
     LOG.info("variant describe exit variant=%s seconds=%.3f", key[:10], time.perf_counter() - started)
@@ -87,6 +100,8 @@ def read(parser, name):
 
 
 def main():
+    from . import differences
+
     started = time.perf_counter()
     parser = argparse.ArgumentParser(prog="graphspec describe")
     parser.add_argument("path", help="the directory of a bank")
@@ -95,8 +110,9 @@ def main():
         nargs="*",
         metavar="FILE",
         help="the configuration and the statement of a fit, JSON files, which name the variant described, or with "
-        "--reach the folder of a search, whose trials name the variants described; without them the truth graphs of "
-        "the bank are described",
+        "--reach the folder of a search, whose trials name the variants described, or with --difference the names "
+        "of two graphs of the bank, or the configuration and the statement of a fit and then those of another; "
+        "without them the truth graphs of the bank are described",
     )
     parser.add_argument(
         "--reach",
@@ -105,13 +121,27 @@ def main():
         "the configuration states puts them before it, or, given the folder of a search, of every trial of it in "
         "one table",
     )
+    parser.add_argument(
+        "--difference",
+        action="store_true",
+        help="describe what the first of two truth graphs of the bank, or of the variants of two fits, holds that "
+        "the second does not, and the second that the first does not, per kind, per relation and per time",
+    )
     args = parser.parse_args()
-    if len(args.variant) not in ((1, 2) if args.reach else (0, 2)):
+    if args.reach and args.difference:
+        parser.error("describe takes --reach or --difference, not both")
+    if len(args.variant) not in ((2, 4) if args.difference else (1, 2) if args.reach else (0, 2)):
         parser.error(
-            "describe takes a bank, or a bank, the configuration and the statement of a fit, and --reach the "
-            "latter or a bank and the folder of a search; found %d paths after the bank" % len(args.variant)
+            "describe takes a bank, or a bank, the configuration and the statement of a fit, with --reach the "
+            "latter or a bank and the folder of a search, and with --difference a bank and the names of two of its "
+            "graphs or the configuration and the statement of each of two fits; found %d paths after the bank"
+            % len(args.variant)
         )
-    if args.reach and len(args.variant) == 1:
+    if args.difference and len(args.variant) == 2:
+        written = differing.text(differing.differences(args.path, *args.variant))
+    elif args.difference:
+        written = differences.text(differences.differences(args.path, *[read(parser, name) for name in args.variant]))
+    elif args.reach and len(args.variant) == 1:
         if not Path(args.variant[0]).is_dir():
             parser.error("%s is no folder; describe --reach reads the folder of a search" % args.variant[0])
         written = reaches.text(reaches.search(args.path, args.variant[0]))

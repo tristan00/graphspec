@@ -9,9 +9,12 @@ import numpy as np
 import pytest
 
 from conftest import SPLITS, shared
-from graphspec import OPERATIONS, Operation, Phase, describe
+from graphspec import OPERATIONS, Operation, Phase, Registry, describe
+from graphspec import differences as between
 from graphspec.descriptions import describe as describing
+from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
+from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, sha256_json, write_json
 from graphspec.infra.timing import timed
@@ -20,11 +23,15 @@ from graphspec.operations import parameters as specs
 from graphspec.operations.operation import Need
 from graphspec.operations.parameters import choice, equals, number
 from graphspec.schema.schema import VERSION as SCHEMA
+from graphspec.schema.time import ALWAYS as EARLIEST
+from graphspec.schema.time import NEVER as LATEST
 from graphspec.sources import synthetic
 from tuning import REALISATIONS, Edited, configuration, reach, reach_over, reach_search
 from tuning import describe as variant
+from tuning import differences as against
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
+from tuning.descriptions import differences as diverging
 from tuning.descriptions import reach as reaching
 from tuning.descriptions import reaches
 from tuning.descriptions import variant as varying
@@ -2143,3 +2150,512 @@ def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_anot
         main()
     assert "found 0 paths after the bank" in capsys.readouterr().err
     LOG.info("descriptions reach over a search refused exit seconds=%.3f", time.perf_counter() - started)
+
+
+DEGREE = "nodes/agent/min_degree"
+NODAL = ("first", "second", "first_anchors", "second_anchors")
+EDGED = ("first", "second", "valued")
+SWAPPED = dict(first="second", second="first", first_anchors="second_anchors", second_anchors="first_anchors")
+UNSHARED = dict(first=[], second=[])
+
+
+@timed("descriptions.unlike")
+def unlike(labels, stated, totals, *rows):
+    return dict(
+        stated=stated,
+        **dict(zip(labels, totals)),
+        at=[dict(time=row[0], **dict(zip(labels, row[1:]))) for row in rows],
+    )
+
+
+LEANER = dict(
+    name="g0",
+    times=[0, 1, 2, 3, 4, 5, 6, 7],
+    alone=UNSHARED,
+    kinds=dict(
+        agent=unlike(
+            NODAL,
+            "both",
+            (11, 0, 0, 3),
+            (0, 1, 0, 0, 0),
+            (1, 2, 0, 0, 1),
+            (2, 1, 0, 0, 0),
+            (3, 1, 0, 0, 1),
+            (4, 2, 0, 0, 0),
+            (5, 2, 0, 0, 1),
+            (6, 1, 0, 0, 0),
+            (7, 1, 0, 0, 0),
+        )
+    ),
+    relations={
+        "base": unlike(EDGED, "both", (6, 0, 0), (0, 1, 0, 0), (2, 1, 0, 0), (4, 2, 0, 0), (6, 1, 0, 0), (7, 1, 0, 0)),
+        LOOPS: unlike(
+            EDGED,
+            "both",
+            (11, 0, 0),
+            (0, 1, 0, 0),
+            (1, 2, 0, 0),
+            (2, 1, 0, 0),
+            (3, 1, 0, 0),
+            (4, 2, 0, 0),
+            (5, 2, 0, 0),
+            (6, 1, 0, 0),
+            (7, 1, 0, 0),
+        ),
+    },
+    equal=dict(kinds=1, relations=1),
+)
+LEANER_SECOND = dict(
+    name="g1",
+    times=[1, 2, 3],
+    alone=UNSHARED,
+    kinds=dict(agent=unlike(NODAL, "both", (2, 0, 0, 1), (1, 1, 0, 0, 0), (2, 1, 0, 0, 1))),
+    relations={
+        "base": unlike(EDGED, "both", (1, 0, 0), (1, 1, 0, 0)),
+        LOOPS: unlike(EDGED, "both", (2, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0)),
+    },
+    equal=dict(kinds=1, relations=1),
+)
+TRUTHS = dict(
+    first="g0",
+    second="g1",
+    unit="tick",
+    differs=True,
+    times=[0, 1, 2, 3, 4, 5, 6, 7],
+    kinds=dict(
+        agent=unlike(
+            NODAL,
+            "both",
+            (8, 0, 0, 0),
+            (0, 1, 0, 0, 0),
+            (1, 1, 0, 0, 0),
+            (2, 1, 0, 0, 0),
+            (3, 1, 0, 0, 0),
+            (4, 1, 0, 0, 0),
+            (5, 1, 0, 0, 0),
+            (6, 1, 0, 0, 0),
+            (7, 1, 0, 0, 0),
+        ),
+        spot=unlike(
+            NODAL,
+            "both",
+            (9, 0, 0, 0),
+            (0, 1, 0, 0, 0),
+            (2, 1, 0, 0, 0),
+            (3, 2, 0, 0, 0),
+            (4, 2, 0, 0, 0),
+            (5, 1, 0, 0, 0),
+            (6, 1, 0, 0, 0),
+            (7, 1, 0, 0, 0),
+        ),
+    ),
+    relations=dict(
+        near=unlike(
+            EDGED, "both", (8, 0, 0), (0, 1, 0, 0), (1, 1, 0, 0), (2, 2, 0, 0), (3, 2, 0, 0), (4, 1, 0, 0), (5, 1, 0, 0)
+        ),
+        base=unlike(
+            EDGED,
+            "both",
+            (10, 2, 0),
+            (0, 1, 1, 0),
+            (1, 1, 0, 0),
+            (2, 1, 1, 0),
+            (3, 1, 0, 0),
+            (4, 2, 0, 0),
+            (5, 2, 0, 0),
+            (6, 1, 0, 0),
+            (7, 1, 0, 0),
+        ),
+    ),
+    equal=dict(kinds=0, relations=0),
+)
+SIDE_TEXT = """derivation seed 7, device cpu
+splits trained on train, scored on validation; rules of what each sees: train none, validation none
+settings: graphs/join separate, nodes/untyped False, relations/direction inverse, time/steps changes, time/several last
+entry graphspec.nodes, of the operation graphspec.nodes at version %d: parameters nodes/agent/keep True, nodes/spot/keep True, nodes/referenced keep, nodes/agent/filter degree, nodes/agent/min_degree %d, nodes/spot/filter none; reads none; splits none; storage none; second graph none
+entry test.cut, of the operation test.cut at version 1: parameters cut/relation base, cut/kind turn; reads none; splits none; storage none; second graph none
+entry graphspec.relation_forms, of the operation graphspec.relation_forms at version %d: parameters relation_forms/types typed, relation_forms/parallel keep, relation_forms/reverse False, relation_forms/loops True; reads none; splits none; storage none; second graph none"""
+HEAD_TEXT = """difference of the variants %s, the first, and %s, the second, of the bank stored as %s, described at version %d
+%s
+the first:
+%s
+the second:
+%s
+"""
+DIFFERENCE = """
+graph g0, times 8 from 0 to 7; times only the first shows: none; times only the second shows: none
+  kind agent: nodes only the first holds 11, only the second 0; anchors only the first holds 0, only the second 3
+    time  first nodes  second nodes  first anchors  second anchors
+    0     1            0             0              0
+    1     2            0             0              1
+    2     1            0             0              0
+    3     1            0             0              1
+    4     2            0             0              0
+    5     2            0             0              1
+    6     1            0             0              0
+    7     1            0             0              0
+  relation base: edges only the first holds 6, only the second 0, held by both with other values 0
+    time  first  second  other values
+    0     1      0       0
+    2     1      0       0
+    4     2      0       0
+    6     1      0       0
+    7     1      0       0
+  relation relation_forms.loops: edges only the first holds 11, only the second 0, held by both with other values 0
+    time  first  second  other values
+    0     1      0       0
+    1     2      0       0
+    2     1      0       0
+    3     1      0       0
+    4     2      0       0
+    5     2      0       0
+    6     1      0       0
+    7     1      0       0
+  equal at every time: kinds 1, relations 1
+
+graph g1, times 3 from 1 to 3; times only the first shows: none; times only the second shows: none
+  kind agent: nodes only the first holds 2, only the second 0; anchors only the first holds 0, only the second 1
+    time  first nodes  second nodes  first anchors  second anchors
+    1     1            0             0              0
+    2     1            0             0              1
+  relation base: edges only the first holds 1, only the second 0, held by both with other values 0
+    time  first  second  other values
+    1     1      0       0
+  relation relation_forms.loops: edges only the first holds 2, only the second 0, held by both with other values 0
+    time  first  second  other values
+    1     1      0       0
+    2     1      0       0
+  equal at every time: kinds 1, relations 1
+"""
+SAME_TEXT = "nothing differs: the two hold the same nodes, anchors and edges at every time of each of the 2 graphs of the view\n"
+TRUTHS_TEXT = """difference of the truth graphs g0, the first, and g1, the second, of the bank stored as %s, described at version %d
+unit tick, times 8 from 0 to 7
+%s
+  kind agent: nodes only the first holds 8, only the second 0; anchors only the first holds 0, only the second 0
+    time  first nodes  second nodes  first anchors  second anchors
+    0     1            0             0              0
+    1     1            0             0              0
+    2     1            0             0              0
+    3     1            0             0              0
+    4     1            0             0              0
+    5     1            0             0              0
+    6     1            0             0              0
+    7     1            0             0              0
+  kind spot: nodes only the first holds 9, only the second 0; anchors only the first holds 0, only the second 0
+    time  first nodes  second nodes  first anchors  second anchors
+    0     1            0             0              0
+    2     1            0             0              0
+    3     2            0             0              0
+    4     2            0             0              0
+    5     1            0             0              0
+    6     1            0             0              0
+    7     1            0             0              0
+  relation near: edges only the first holds 8, only the second 0, held by both with other values 0
+    time  first  second  other values
+    0     1      0       0
+    1     1      0       0
+    2     2      0       0
+    3     2      0       0
+    4     1      0       0
+    5     1      0       0
+  relation base: edges only the first holds 10, only the second 2, held by both with other values 0
+    time  first  second  other values
+    0     1      1       0
+    1     1      0       0
+    2     1      1       0
+    3     1      0       0
+    4     2      0       0
+    5     2      0       0
+    6     1      0       0
+    7     1      0       0
+  equal at every time: kinds 0, relations 0
+"""
+ALONE_TEXT = """difference of the truth graphs g1, the first, and g1, the second, of the bank stored as %s, described at version %d
+unit tick, times 3 from 1 to 3
+%s
+  nothing differs; equal at every time: kinds 2, relations 2
+"""
+TIMELESS_TEXT = """unit tick, no time
+%s
+  kind agent: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
+    time  first nodes  second nodes  first anchors  second anchors
+    none  1            0             0              0
+  kind spot: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
+    time  first nodes  second nodes  first anchors  second anchors
+    none  1            0             0              0
+  relation near: edges only the first holds 2, only the second 0, held by both with other values 0
+    time  first  second  other values
+    none  2      0       0
+  relation base: edges only the first holds 1, only the second 0, held by both with other values 0
+    time  first  second  other values
+    none  1      0       0
+  equal at every time: kinds 0, relations 0
+"""
+
+
+@timed("descriptions.turned_over")
+def turned_over(value):
+    if type(value) is dict:
+        return {
+            SWAPPED.get(name, name): SWAPPED.get(held, held) if name == "stated" else turned_over(held)
+            for name, held in value.items()
+        }
+    return [turned_over(held) for held in value] if type(value) is list else value
+
+
+@timed("descriptions.leaning")
+def leaning(degree):
+    return [dict(entry, parameters=dict(entry["parameters"], **{DEGREE: degree})) if DEGREE in entry["parameters"] else entry for entry in pipelined(CUTTING)]
+
+
+@timed("descriptions.leaned")
+def leaned(bank, degree):
+    return configuration(bank, MODEL, None, pipeline=leaning(degree), graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+
+
+@timed("descriptions.diverged")
+def diverged(bank, degrees, differs, graphs):
+    stored = read_json(bank / "manifest.json")["stored_sha256"]
+    deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
+    sides = [
+        dict(
+            variant=specs.digest(deriver.identity(leaned(bank, degree))),
+            seed=STATED["derivation_seed"],
+            device="cpu",
+            splits=SPLITS,
+            settings=SETTLED,
+            entries=entered(leaning(degree)),
+        )
+        for degree in degrees
+    ]
+    record = dict(
+        version=describing.VERSION, stored_sha256=stored, first=sides[0], second=sides[1], differs=differs, graphs=graphs
+    )
+    versions = [OPERATIONS.named(name).version for name in ("graphspec.nodes", "graphspec.relation_forms")]
+    written = HEAD_TEXT % (
+        sides[0]["variant"],
+        sides[1]["variant"],
+        stored,
+        describing.VERSION,
+        differing.READING,
+        *[SIDE_TEXT % (versions[0], degree, versions[1]) for degree in degrees],
+    )
+    key = dict(version=describing.VERSION, first=dict(variant=sides[0]["variant"]), second=dict(variant=sides[1]["variant"]))
+    return record, written, bank / "descriptions" / "differences" / sha256_json(key)
+
+
+@timed("descriptions.truths")
+def truths(bank, first, second, found):
+    stored = read_json(bank / "manifest.json")["stored_sha256"]
+    key = dict(stored=stored, version=describing.VERSION, first=dict(graph=first), second=dict(graph=second))
+    return (
+        dict(version=describing.VERSION, stored_sha256=stored, **found),
+        bank / "descriptions" / "differences" / sha256_json(key),
+    )
+
+
+def test_two_variants_that_differ_by_one_setting_differ_in_the_description_by_what_that_setting_removes_and_nothing_else(
+    bank, cutting
+):
+    assert {DEGREE: 1}.items() <= NODES.items() and leaning(2)[0]["parameters"] == dict(NODES, **{DEGREE: 2})
+    started = time.perf_counter()
+    first, second = leaned(bank, 1), leaned(bank, 2)
+    record = against(bank, first, STATED, second, STATED)
+    assert record == diverged(bank, (1, 2), True, [LEANER, LEANER_SECOND])[0]
+    assert json.loads(json.dumps(record)) == record
+    assert against(bank, second, STATED, first, STATED) == turned_over(record)
+    assert turned_over(record) == diverged(bank, (2, 1), True, [turned_over(LEANER), turned_over(LEANER_SECOND)])[0]
+    assert turned_over(LEANER)["kinds"]["agent"]["at"][1] == dict(time=1, first=0, second=2, first_anchors=1, second_anchors=0)
+    same = [
+        dict(name=name, times=times, alone=UNSHARED, kinds={}, relations={}, equal=dict(kinds=2, relations=3))
+        for name, times in (("g0", LEANER["times"]), ("g1", LEANER_SECOND["times"]))
+    ]
+    expected, written, _ = diverged(bank, (1, 1), False, same)
+    assert against(bank, first, STATED, first, STATED) == expected
+    assert diverging.text(expected) == written + SAME_TEXT
+    joined = dict(pipeline=leaning(2), graph=dict(SETTINGS, **JOINED), seed=STATED["seed"], splits=SPLITS)
+    assert against(bank, first, STATED, configuration(bank, MODEL, None, **joined), STATED)["graphs"] == record["graphs"]
+    reseeded = against(bank, first, STATED, first, dict(STATED, derivation_seed=8))
+    assert (reseeded["first"]["seed"], reseeded["second"]["seed"], reseeded["differs"]) == (7, 8, False)
+    LOG.info("descriptions difference of variants exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_two_truth_graphs_of_a_bank_differ_by_what_is_written_out_here_and_a_graph_beside_itself_in_nothing(bank):
+    started = time.perf_counter()
+    expected, _ = truths(bank, "g0", "g1", TRUTHS)
+    record = between(bank, "g0", "g1")
+    assert record == expected and json.loads(json.dumps(record)) == record
+    assert between(bank, "g1", "g0") == turned_over(expected)
+    assert turned_over(expected)["relations"]["base"]["at"][0] == dict(time=0, first=1, second=1, valued=0)
+    assert turned_over(expected)["relations"]["base"]["at"][1] == dict(time=1, first=0, second=1, valued=0)
+    alone = dict(first="g1", second="g1", unit="tick", differs=False, times=[1, 2, 3], kinds={}, relations={})
+    alone, stem = truths(bank, "g1", "g1", dict(alone, equal=dict(kinds=2, relations=2)))
+    assert between(bank, "g1", "g1") == alone
+    written = ALONE_TEXT % (alone["stored_sha256"], describing.VERSION, differing.READING)
+    assert differing.text(alone) == written == stem.with_suffix(".txt").read_text(encoding="utf-8")
+    with pytest.raises(KeyError, match="holds no graph named g9; its graphs are g0, g1"):
+        between(bank, "g0", "g9")
+    LOG.info("descriptions difference of truth graphs exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_text_of_a_difference_holds_its_record_and_the_verb_prints_what_the_call_writes(
+    bank, cutting, tmp_path, capsys, monkeypatch
+):
+    from tuning.__main__ import main
+
+    started = time.perf_counter()
+    first, second = leaned(bank, 1), leaned(bank, 2)
+    record = against(bank, first, STATED, second, STATED)
+    expected, head, stem = diverged(bank, (1, 2), True, [LEANER, LEANER_SECOND])
+    assert diverging.text(record) == head + DIFFERENCE
+    assert read_json(stem.with_suffix(".json")) == record == expected
+    assert stem.with_suffix(".txt").read_text(encoding="utf-8") == head + DIFFERENCE
+    names = ("config.json", "statement.json", "other.json")
+    for name, held in zip(names, (first, STATED, second)):
+        write_json(tmp_path / name, held)
+    files = [str(tmp_path / names[place]) for place in (0, 1, 2, 1)]
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--difference", str(bank), *files])
+    main()
+    assert capsys.readouterr().out == head + DIFFERENCE
+    record = between(bank, "g0", "g1")
+    expected, stem = truths(bank, "g0", "g1", TRUTHS)
+    written = TRUTHS_TEXT % (expected["stored_sha256"], describing.VERSION, differing.READING)
+    assert differing.text(record) == written
+    assert read_json(stem.with_suffix(".json")) == record == expected
+    assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--difference", str(bank), "g0", "g1"])
+    main()
+    assert capsys.readouterr().out == written
+    LOG.info("descriptions difference text exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_second_call_reads_the_file_of_a_difference_and_another_pair_is_not_served_it(bank, cutting, monkeypatch):
+    started = time.perf_counter()
+    first, second = leaned(bank, 1), leaned(bank, 2)
+    record = against(bank, first, STATED, second, STATED)
+    stems = [diverged(bank, degrees, True, [])[2] for degrees in ((1, 2), (1, 3), (2, 1))]
+    assert stems[0].with_suffix(".json").exists() and len(set(stems)) == 3
+    monkeypatch.setattr(diverging, "recorded", refused)
+    assert against(bank, first, STATED, second, STATED) == record
+    with pytest.raises(AssertionError, match="the description was computed again"):
+        against(bank, first, STATED, leaned(bank, 3), STATED)
+    record = between(bank, "g0", "g1")
+    assert truths(bank, "g0", "g1", {})[1].with_suffix(".json").exists()
+    monkeypatch.setattr(differing, "recorded", refused)
+    assert between(bank, "g0", "g1") == record
+    with pytest.raises(AssertionError, match="the description was computed again"):
+        between(bank, "g0", "g0")
+    LOG.info("descriptions difference served exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("descriptions.timeless")
+def timeless(facts):
+    return facts.replace(
+        obs_since=np.full(len(facts.obs_since), EARLIEST, np.int64),
+        obs_until=np.full(len(facts.obs_until), LATEST, np.int64),
+        fact_since=np.full(len(facts.fact_since), EARLIEST, np.int64),
+        fact_until=np.full(len(facts.fact_until), LATEST, np.int64),
+        task_time=np.full(len(facts.task_time), LATEST, np.int64),
+    )
+
+
+def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_only_one_side_shows_are_told_apart(
+    bank, cutting, monkeypatch
+):
+    started = time.perf_counter()
+    manifest = read_json(bank / "manifest.json")
+    registry = Registry.from_declaration(manifest["spec"])
+    held = [describing.stored(bank, graph) for graph in manifest["graphs"]]
+    moments = describing.clocked(registry, held[0])
+    values = np.array(held[0].fact_values)
+    values[values[:, 0] == 2.0, 0] = 5.0
+    sides = [differing.lasting(registry, facts, moments) for facts in (held[0], held[0].replace(fact_values=values))]
+    assert differing.differed(*sides, moments.tolist()) == dict(
+        kinds={},
+        relations=dict(near=unlike(EDGED, "both", (0, 0, 3), (3, 0, 0, 1), (4, 0, 0, 1), (5, 0, 0, 1))),
+        equal=dict(kinds=2, relations=1),
+    )
+    still = [timeless(facts) for facts in held]
+    monkeypatch.setattr(describing, "stored", lambda path, graph: still[graph["index"]])
+    record = differing.recorded(bank, manifest, *manifest["graphs"])
+    assert record == dict(
+        version=describing.VERSION,
+        stored_sha256=manifest["stored_sha256"],
+        first="g0",
+        second="g1",
+        unit="tick",
+        differs=True,
+        times=[None],
+        kinds=dict(
+            agent=unlike(NODAL, "both", (1, 0, 0, 0), (None, 1, 0, 0, 0)),
+            spot=unlike(NODAL, "both", (1, 0, 0, 0), (None, 1, 0, 0, 0)),
+        ),
+        relations=dict(
+            near=unlike(EDGED, "both", (2, 0, 0), (None, 2, 0, 0)), base=unlike(EDGED, "both", (1, 0, 0), (None, 1, 0, 0))
+        ),
+        equal=dict(kinds=0, relations=0),
+    )
+    assert differing.text(record).split("\n", 1)[1] == TIMELESS_TEXT % differing.READING
+    config = leaned(bank, 1)
+    name, graph, grown, low, high = diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), config)[0]
+    assert (name, low, high) == ("g0", 0, 8)
+    assert diverging.paired((name, graph, grown, 0, 8), (name, graph, grown, 1, 7)) == dict(
+        name="g0",
+        times=[0, 1, 2, 3, 4, 5, 6, 7],
+        alone=dict(first=[0, 7], second=[]),
+        kinds=dict(
+            agent=unlike(NODAL, "both", (2, 0, 0, 0), (0, 1, 0, 0, 0), (7, 1, 0, 0, 0)),
+            spot=unlike(NODAL, "both", (4, 0, 0, 0), (0, 2, 0, 0, 0), (7, 2, 0, 0, 0)),
+        ),
+        relations={
+            "near": unlike(EDGED, "both", (1, 0, 0), (0, 1, 0, 0)),
+            "base": unlike(EDGED, "both", (2, 0, 0), (0, 1, 0, 0), (7, 1, 0, 0)),
+            LOOPS: unlike(EDGED, "both", (6, 0, 0), (0, 3, 0, 0), (7, 3, 0, 0)),
+        },
+        equal=dict(kinds=0, relations=0),
+    )
+    unlooped = leaning(1)[:2] + [dict(operation="graphspec.relation_forms", parameters=dict(FORMS, **{"relation_forms/loops": False}))]
+    unlooped = configuration(bank, MODEL, None, pipeline=unlooped, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    found = against(bank, config, STATED, unlooped, STATED)["graphs"]
+    assert [(graph["kinds"], graph["equal"]) for graph in found] == [({}, dict(kinds=2, relations=2))] * 2
+    assert found[1]["relations"] == {LOOPS: unlike(EDGED, "first", (7, 0, 0), (1, 3, 0, 0), (2, 3, 0, 0), (3, 1, 0, 0))}
+    assert "  relation relation_forms.loops, which only the first states: edges only the first holds 7," in "\n".join(
+        differing.graph_text(found[1])
+    )
+    LOG.info("descriptions difference apart exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_difference_stops_naming_what_it_cannot_meet(bank, capsys, monkeypatch):
+    from tuning.__main__ import main
+
+    started = time.perf_counter()
+    manifest = read_json(bank / "manifest.json")
+    registry = Registry.from_declaration(manifest["spec"])
+    held = [describing.stored(bank, graph) for graph in manifest["graphs"]]
+    moments = describing.clocked(registry, held[0])
+    undirected = dict(
+        manifest["spec"], edges=[dict(edge, symmetric=True) if edge["name"] == "base" else edge for edge in manifest["spec"]["edges"]]
+    )
+    sides = [differing.lasting(found, held[0], moments) for found in (registry, Registry.from_declaration(undirected))]
+    with pytest.raises(ValueError, match="the relation base has a direction on one side and none on the other"):
+        differing.differed(*sides, moments.tolist())
+    with pytest.raises(ValueError, match="the second shows the graph g0 at two steps of one time, among 0, 1, 1"):
+        differing.met("g0", [0, 1], [0, 1, 1])
+    last = held[1]
+    hourly = Facts(last.name, last.keys, "hour", last.inner, last.observers, last.options, last.generators, **last.arrays)
+    monkeypatch.setattr(describing, "stored", lambda path, graph: (held[0], hourly)[graph["index"]])
+    with pytest.raises(ValueError, match="the graph g0 counts time in tick and the graph g1 in hour"):
+        differing.recorded(bank, manifest, *manifest["graphs"])
+    monkeypatch.setattr(diverging, "ended", Mock(side_effect=[[("g0",)], [("g1",)]]))
+    with pytest.raises(ValueError, match="the first variant shows the graphs g0 and the view of the second g1"):
+        diverging.recorded([(None, None), (None, None)], (None, None))
+    for stated, refusal in (
+        (["--reach", "--difference", str(bank), "g0", "g1"], "describe takes --reach or --difference, not both"),
+        (["--difference", str(bank), "g0"], "found 1 paths after the bank"),
+        (["--difference", str(bank), "g0", "g1", "g0"], "found 3 paths after the bank"),
+    ):
+        monkeypatch.setattr(sys, "argv", ["graphspec", "describe", *stated])
+        with pytest.raises(SystemExit):
+            main()
+        assert refusal in capsys.readouterr().err
+    LOG.info("descriptions difference refused exit seconds=%.3f", time.perf_counter() - started)

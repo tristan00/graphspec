@@ -48,6 +48,15 @@ def describe(bank, config, statement):
     return result
 
 
+def differences(bank, config, statement, other, other_statement):
+    from .descriptions.differences import differences as differed
+
+    started = time.perf_counter()
+    result = differed(bank, config, statement, other, other_statement)
+    LOG.info("differences exit seconds=%.3f bank=%s", time.perf_counter() - started, bank)
+    return result
+
+
 def reach(bank, config, statement):
     from .descriptions.reach import reach as reached
 
