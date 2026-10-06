@@ -33,10 +33,18 @@ VARIED = (
     + ", and the graphs nodes hold"
 )
 PLACED = "first and second: at a %(one)s, " + OWNED
+ROWS = "; a table shows at most %d %%(many)s, as rows: " % truth.SHOWN + truth.CHOSEN
+NUMBERED = (
+    "; in the record a count over the %(many)s is a list of runs, each the number of a step, the %(many)s of either "
+    "side numbered together from 0 in their order, and the count held from it until the step of the next"
+)
 STEPPED = (
     PLACED + "; the %(many)s are those of either side, and at a %(one)s only one side shows the other holds nothing; "
     "only what differs is listed, %(one)s by %(one)s, and a kind or a relation equal at every %(one)s is counted"
     + VARIED
+    + ROWS
+    + truth.SEVERAL
+    + NUMBERED
 )
 LAST = (
     "each of the two graphs is read as it holds once every correction is known, a fact a correction replaced "
@@ -64,8 +72,8 @@ READING["clocks"] = READING["clock"]
 TRUTH = dict(
     none="first and second: " + OWNED + "; " + LAST + "; the graphs hold no time, so every fact holds always and the "
     "two are compared once; only what differs is listed, and a kind or a relation equal is counted" + STATED_VALUES,
-    order=HELD % truth.NAMED["order"] + STATED_VALUES,
-    clock=HELD % truth.NAMED["clock"] + STATED_VALUES,
+    order=HELD % truth.NAMED["order"] + STATED_VALUES + (ROWS + truth.RUNS) % truth.NAMED["order"],
+    clock=HELD % truth.NAMED["clock"] + STATED_VALUES + (ROWS + truth.RUNS) % truth.NAMED["clock"],
 )
 TRUTH["clocks"] = TRUTH["clock"]
 
@@ -159,18 +167,14 @@ def stating(holding):
     return "both" if all(holding) else SIDES[holding.index(True)]
 
 
-def tallied(labels, counts, times):
+def tallied(labels, counts, places):
     started = time.perf_counter()
     counts = np.asarray(counts, np.int64)
     result = dict(
-        zip(labels, counts.sum(1).tolist()),
-        at=[
-            dict(time=times[at], **dict(zip(labels, counts[:, at].tolist())))
-            for at in np.flatnonzero(counts.any(0)).tolist()
-        ],
+        zip(labels, counts.sum(1).tolist()), at={label: truth.lasted(held, places) for label, held in zip(labels, counts)}
     )
-    LOG.debug("differences tallied exit times=%d seconds=%.4f", len(result["at"]), time.perf_counter() - started)
-    return result
+    LOG.debug("differences tallied exit places=%d seconds=%.4f", len(places), time.perf_counter() - started)
+    return result, bool(counts.any())
 
 
 def kinded(sides, numbers, kinds, times):
@@ -194,8 +198,8 @@ def kinded(sides, numbers, kinds, times):
     for at, name in enumerate(kinds):
         if name not in declared and at not in observed:
             continue
-        entry = tallied(NODES, [held[:, at] for held in counts], times)
-        if entry["at"]:
+        entry, differs = tallied(NODES, [held[:, at] for held in counts], times)
+        if differs:
             found[name] = dict(stated=stating([name in side["registry"].nodes for side in sides]), **entry)
         else:
             equal += 1
@@ -224,7 +228,7 @@ def related(name, sides, facts, times):
     both = [held[~apart & other] for held, apart, other in zip(keyed, alone, unlike)]
     edges.append(distinct(registry, np.concatenate(both)))
     result = tallied(EDGES, [np.bincount(held[:, 0], minlength=len(times)) for held in edges], times)
-    LOG.debug("differences related exit relation=%s times=%d seconds=%.4f", name, len(result["at"]), time.perf_counter() - started)
+    LOG.debug("differences related exit relation=%s differs=%s seconds=%.4f", name, result[1], time.perf_counter() - started)
     return result
 
 
@@ -248,8 +252,8 @@ def edged(sides, numbers, times):
     ]
     found, equal = {}, 0
     for name in dict.fromkeys(stated + holding):
-        entry = related(name, sides, facts, times)
-        if entry["at"]:
+        entry, differs = related(name, sides, facts, times)
+        if differs:
             found[name] = dict(stated=stating([name in side["registry"].by_name for side in sides]), **entry)
         else:
             equal += 1
@@ -336,19 +340,22 @@ def differences(path, first, second):
     return record
 
 
-def tabled(named, headers, labels, rows):
+def tabled(named, headers, labels, held, places, heads, kept):
     started = time.perf_counter()
-    counts = [[held[label] for label in labels] for held in rows]
+    series = [held[label] for label in labels]
+    chosen, total, changing = truth.picked(series, places, True)
+    asked = [places[at] for at in chosen]
+    rows = np.asarray([truth.counts(found, asked) for found in series], np.int64).T.tolist()
     if named is None:
-        result = truth.table(headers, counts)
+        result = truth.table(headers, rows)
     else:
-        placed = [[truth.BEFORE if held["time"] is None else held["time"]] + found for held, found in zip(rows, counts)]
-        result = truth.table([named["one"]] + headers, placed)
-    LOG.debug("differences tabled exit rows=%d seconds=%.4f", len(rows), time.perf_counter() - started)
+        result = truth.table([named["one"]] + headers, [[heads[at]] + row for at, row in zip(chosen, rows)])
+    result += truth.omitted(len(chosen), total, changing, "rows", kept)
+    LOG.debug("differences tabled exit rows=%d of=%d seconds=%.4f", len(chosen), total, time.perf_counter() - started)
     return result
 
 
-def found_text(found, named):
+def found_text(found, named, places, heads, kept):
     started = time.perf_counter()
     equal, lines = "equal%s: kinds %d, relations %d", []
     equal %= ("" if named is None else " at every " + named["one"], found["equal"]["kinds"], found["equal"]["relations"])
@@ -359,13 +366,13 @@ def found_text(found, named):
             % (name, STATED[entry["stated"]], *[entry[label] for label in NODES])
         )
         headers = ["first nodes", "second nodes", "first anchors", "second anchors", "other values"]
-        lines += tabled(named, headers, NODES, entry["at"])
+        lines += tabled(named, headers, NODES, entry["at"], places, heads, kept)
     for name, entry in found["relations"].items():
         lines.append(
             "  relation %s%s: edges only the first holds %d, only the second %d, held by both with other values %d"
             % (name, STATED[entry["stated"]], *[entry[label] for label in EDGES])
         )
-        lines += tabled(named, ["first", "second", "other values"], EDGES, entry["at"])
+        lines += tabled(named, ["first", "second", "other values"], EDGES, entry["at"], places, heads, kept)
     lines.append("  %s" % equal if lines else "  nothing differs of what is compared; %s" % equal)
     LOG.debug("differences found text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return lines
@@ -382,18 +389,19 @@ def text(record):
         "%s, %s" % ("no unit" if record["unit"] is None else "unit " + record["unit"], truth.spanned(named, record["times"][1:])),
         TRUTH[model],
     ]
-    lines += found_text(record, named)
+    heads = [truth.BEFORE if moment is None else moment for moment in record["times"]]
+    lines += found_text(record, named, record["times"], heads, record["kept"])
     LOG.debug("differences text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"
 
 
-def graph_text(graph, named):
+def graph_text(graph, named, kept):
     started = time.perf_counter()
     head = "graph %s, %s, %s" % (graph["name"], truth.viewed_text(graph["view"]), truth.spanned(named, graph["times"]))
     if named is not None:
-        alone = [", ".join(map(str, graph["alone"][side])) or "none" for side in SIDES]
+        alone = [truth.several(graph["alone"][side], named) or "none" for side in SIDES]
         head += "; %s only the first shows: %s; %s only the second shows: %s" % (named["many"], alone[0], named["many"], alone[1])
     lines = ["", head]
-    lines += found_text(graph, named)
+    lines += found_text(graph, named, list(range(len(graph["times"]))), graph["times"], kept)
     LOG.debug("differences graph text exit graph=%s lines=%d seconds=%.4f", graph["name"], len(lines), time.perf_counter() - started)
     return lines

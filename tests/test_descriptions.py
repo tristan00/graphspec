@@ -9,13 +9,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import numpy as np
 import pytest
 
 from conftest import SPLITS, shared
 from graphspec import ENCODERS, OPERATIONS, RULES, Operation, Phase, Registry, describe, registries
+from graphspec import counts as held_at
 from graphspec import differences as between
 from graphspec.budgets import GraphCapacityError, Refused
 from graphspec.descriptions import describe as describing
@@ -70,8 +71,7 @@ HELD = dict(
 )
 NONE = dict(least=None, most=None, mean=None)
 CLOCKED = dict(model="clock", units=["tick"])
-UNBEGUN = dict(nodes_before=0, observations_before=0)
-BEGUN = dict(nodes_before=1, observations_before=1)
+UNHELD = [[None, 0]]
 WHOLE_KIND = dict(created=0, unstated=0)
 UNREAD = dict(
     later=dict(nodes=0, edges=0, gap=None, last=None),
@@ -86,10 +86,18 @@ FIRST = dict(
     times=[0, 1, 2, 3, 4, 5, 6, 7],
     kinds=dict(
         agent=dict(
-            UNBEGUN, nodes=2, observations=3, replaced=0, nodes_at=[2, 2, 2, 2, 2, 2, 2, 2], observations_at=[2, 2, 2, 3, 2, 2, 2, 2]
+            nodes=2,
+            observations=3,
+            replaced=0,
+            nodes_held=[[None, 0], [0, 2]],
+            observations_held=[[None, 0], [0, 2], [3, 3], [4, 2]],
         ),
         spot=dict(
-            UNBEGUN, nodes=3, observations=3, replaced=0, nodes_at=[2, 2, 3, 3, 3, 2, 2, 2], observations_at=[2, 2, 3, 3, 3, 2, 2, 2]
+            nodes=3,
+            observations=3,
+            replaced=0,
+            nodes_held=[[None, 0], [0, 2], [2, 3], [5, 2]],
+            observations_held=[[None, 0], [0, 2], [2, 3], [5, 2]],
         ),
     ),
     relations=dict(
@@ -99,8 +107,7 @@ FIRST = dict(
             facts=3,
             absent=1,
             replaced=0,
-            edges_before=0,
-            edges_at=[1, 1, 2, 2, 1, 1, 0, 0],
+            edges_held=[[None, 0], [0, 1], [2, 2], [4, 1], [6, 0]],
             runs=2,
             bounded=2,
             least=2,
@@ -113,8 +120,7 @@ FIRST = dict(
             facts=3,
             absent=0,
             replaced=0,
-            edges_before=0,
-            edges_at=[1, 2, 1, 1, 2, 2, 1, 1],
+            edges_held=[[None, 0], [0, 1], [1, 2], [2, 1], [4, 2], [6, 1]],
             runs=3,
             bounded=2,
             least=1,
@@ -148,25 +154,19 @@ SECOND = dict(
     unit="tick",
     times=[1, 2, 3],
     kinds=dict(
-        agent=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1], observations_at=[1, 1, 1]),
-        spot=dict(BEGUN, nodes=2, observations=2, replaced=0, nodes_at=[2, 2, 1], observations_at=[2, 2, 1]),
+        agent=dict(nodes=1, observations=1, replaced=0, nodes_held=[[None, 1]], observations_held=[[None, 1]]),
+        spot=dict(
+            nodes=2,
+            observations=2,
+            replaced=0,
+            nodes_held=[[None, 1], [1, 2], [3, 1]],
+            observations_held=[[None, 1], [1, 2], [3, 1]],
+        ),
     ),
     relations=dict(
-        near=dict(
-            HELD["near"],
-            ends=[],
-            edges=0,
-            facts=0,
-            absent=0,
-            replaced=0,
-            edges_before=0,
-            edges_at=[0, 0, 0],
-            runs=0,
-            bounded=0,
-            **NONE,
-        ),
+        near=dict(HELD["near"], ends=[], edges=0, facts=0, absent=0, replaced=0, edges_held=UNHELD, runs=0, bounded=0, **NONE),
         base=dict(
-            HELD["base"], edges=1, facts=1, absent=0, replaced=0, edges_before=1, edges_at=[1, 1, 0], runs=1, bounded=0, **NONE
+            HELD["base"], edges=1, facts=1, absent=0, replaced=0, edges_held=[[None, 1], [3, 0]], runs=1, bounded=0, **NONE
         ),
     ),
     tasks=dict(
@@ -198,16 +198,13 @@ graph g0, unit tick, times 8 from 0 to 7
   relation near of the table near: ends spot to spot; columns weight; edges 2, facts 3, absent 1, replaced 0; runs 2, bounded 2, lasting 2 to 6, mean 4.0
   relation base of the table base: ends agent to spot; no columns; edges 2, facts 3, absent 0, replaced 0; runs 3, bounded 2, lasting 1 to 2, mean 1.5
   held before every time and at each time:
-    time    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    before  0            0                   0           0                  0           0
-    0       2            2                   2           2                  1           1
-    1       2            2                   2           2                  1           2
-    2       2            2                   3           3                  2           1
-    3       2            3                   3           3                  2           1
-    4       2            2                   3           3                  1           2
-    5       2            2                   2           2                  1           2
-    6       2            2                   2           2                  0           1
-    7       2            2                   2           2                  0           1
+    time                before  0  1  2  3  4  5  6  7
+    agent nodes         0       2  2  2  2  2  2  2  2
+    agent observations  0       2  2  2  3  2  2  2  2
+    spot nodes          0       2  2  3  3  3  2  2  2
+    spot observations   0       2  2  3  3  3  2  2  2
+    near edges          0       1  1  2  2  1  1  0  0
+    base edges          0       1  2  1  1  2  2  1  1
   shown to some tasks only: no fact known later than it holds from; no fact naming observers
   not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 3; train 2, validation 1, no split 0
@@ -224,11 +221,13 @@ graph g1, unit tick, times 3 from 1 to 3
   relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
   relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
   held before every time and at each time:
-    time    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    before  1            1                   1           1                  0           1
-    1       1            1                   2           2                  0           1
-    2       1            1                   2           2                  0           1
-    3       1            1                   1           1                  0           0
+    time                before  1  2  3
+    agent nodes         1       1  1  1
+    agent observations  1       1  1  1
+    spot nodes          1       2  2  1
+    spot observations   1       2  2  1
+    near edges          0       0  0  0
+    base edges          1       1  1  0
   shown to some tasks only: no fact known later than it holds from; no fact naming observers
   not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 1; train 1, validation 0, no split 0
@@ -404,7 +403,7 @@ def bank():
 
 @timed("descriptions.kept_as")
 def kept_as(part, beside):
-    return dict(beside=beside, away=None, folder="descriptions/" + part)
+    return dict(beside=beside, away=None, folder="descriptions/" + part, file=ANY)
 
 
 @timed("descriptions.located")
@@ -447,6 +446,8 @@ def test_the_text_holds_every_number_of_the_record_and_the_verb_prints_what_the_
     assert describing.text(record) == written
     found, shown = files(bank, stored)
     assert read_json(found)["record"] == record and shown.read_text(encoding="utf-8") == written
+    assert record["kept"] == dict(beside="bank", away=None, folder="descriptions/truth", file=found.name)
+    assert found.read_text(encoding="utf-8") == json.dumps(dict(key=read_json(found)["key"], record=record), separators=(",", ":"))
     monkeypatch.setattr(sys, "argv", ["graphspec", "describe", str(bank)])
     main()
     assert capsys.readouterr().out == written
@@ -476,8 +477,9 @@ def test_a_second_call_reads_the_file_of_the_first_and_a_bank_of_other_stored_co
     with pytest.raises(AssertionError, match="the description was computed again"):
         describe(other)
     monkeypatch.undo()
-    assert describe(other) == dict(record, stored_sha256="0" * 64, graphs=[SECOND, FIRST])
-    assert files(other, "0" * 64)[0].exists() and describe(bank) == record
+    elsewhere = dict(record["kept"], file=files(other, "0" * 64)[0].name)
+    assert describe(other) == dict(record, stored_sha256="0" * 64, graphs=[SECOND, FIRST], kept=elsewhere)
+    assert elsewhere["file"] != record["kept"]["file"] and files(other, "0" * 64)[0].exists() and describe(bank) == record
 
 
 @timed("descriptions.kept_in")
@@ -534,7 +536,9 @@ def test_a_file_is_served_only_where_it_parses_and_holds_its_key_and_the_files_o
     assert describe(other) == record and kept_in(folder) == sorted(mine + older + moved + absent + lone)
     caplog.clear()
     with raised(describing), caplog.at_level(logging.INFO, logger=describing.LOG.name):
-        assert describe(other) == dict(record, version=version + 1)
+        later_key = describing.keyed(read_json(other / "manifest.json"), located(other, "bank", "truth"))
+        later_kept = dict(record["kept"], file=describing.named(later_key) + ".json")
+        assert describe(other) == dict(record, version=version + 1, kept=later_kept) and later_kept != record["kept"]
         newer = kept_in(folder)
         assert len(newer) == 5 and set(absent) < set(newer) and not set(newer) & set(mine + older + moved + lone)
     removed = [message for message in caplog.messages if "removed" in message]
@@ -642,10 +646,11 @@ def test_a_bank_the_library_may_not_write_beside_is_described_under_the_home_and
     home = cache_path("descriptions", stored)
     for part, beside, call, text in described:
         record = call()
-        assert record["kept"] == dict(beside=beside, away="code", folder="cache/descriptions/%s/%s" % (stored, part))
         assert text(record).split("\n")[1] == AWAY % (stored, part, beside, INSIDE)
         written = [path for path in (home / part).glob("*-*.txt") if path.read_text(encoding="utf-8") == text(record)]
         assert len(written) == 1 and read_json(written[0].with_suffix(".json"))["record"] == record
+        folder = "cache/descriptions/%s/%s" % (stored, part)
+        assert record["kept"] == dict(beside=beside, away="code", folder=folder, file=written[0].with_suffix(".json").name)
         assert call() == record
     model = dict(MODEL, **{"options/realisation": "vector"})
     aimed = configuration(bank, model, None, pipeline=[], graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
@@ -664,10 +669,10 @@ def test_a_bank_the_library_may_not_write_beside_is_described_under_the_home_and
     assert kept_in(tmp_path / "repository") == [".git", "bank", "search"] and kept_in(tmp_path / "repository" / "search") == ["plan.json"]
     beside = describe(bank)
     assert kept_in(other) == kept_in(bank)[1:] and kept_in(bank)[0] == "descriptions"
-    assert beside["kept"] == dict(beside="bank", away=None, folder="descriptions/truth")
+    assert beside["kept"] == dict(beside="bank", away=None, folder="descriptions/truth", file=files(bank, stored)[0].name)
     assert describing.text(beside).split("\n")[1] == "kept beside the bank, in its folder descriptions/truth"
     assert without(describe(other), "kept") == without(beside, "kept")
-    far = dict(beside, kept=dict(beside="bank", away="volume", folder="cache/descriptions/%s/truth" % stored))
+    far = dict(beside, kept=dict(beside["kept"], away="volume", folder="cache/descriptions/%s/truth" % stored))
     assert describing.text(far).split("\n")[1] == AWAY % (stored, "truth", "bank", ELSEWHERE)
     if os.name == "nt":
         monkeypatch.setattr(runtime, "configured_home", lambda: Path("Q:/home"))
@@ -777,8 +782,12 @@ STATED = dict(
     alike=1,
 )
 LOOPS = "relation_forms.loops"
-ZERO = [0] * 8
-EMPTY = [0] * 3
+NIL = [[0, 0]]
+SPOTS = [[0, 2], [2, 3], [5, 2]]
+NEARS = [[0, 1], [2, 2], [4, 1], [6, 0]]
+BASES = [[0, 1], [1, 2], [2, 1], [4, 2], [6, 1]]
+BASES_CUT = [[0, 1], [1, 0], [2, 1], [3, 0], [4, 2], [5, 0], [6, 1]]
+LOOPS_HELD = [[0, 3], [1, 4], [4, 5], [5, 4], [6, 3]]
 
 
 @timed("descriptions.pipelined")
@@ -974,9 +983,8 @@ def tally(before, removed, removed_share, added, added_share, after, **held):
 
 @timed("descriptions.holding")
 def holding(agent, spot, near, base, loops):
-    zero = [0] * len(agent)
     return dict(
-        kinds=dict(agent=dict(nodes=agent, anchors=zero), spot=dict(nodes=spot, anchors=zero)),
+        kinds=dict(agent=dict(nodes=agent, anchors=NIL), spot=dict(nodes=spot, anchors=NIL)),
         relations={"near": dict(edges=near), "base": dict(edges=base), LOOPS: dict(edges=loops)},
     )
 
@@ -998,44 +1006,44 @@ VARIED = dict(
     view=VIEWED["g0"],
     times=[0, 1, 2, 3, 4, 5, 6, 7],
     tasks=dict(turn=[1, 3, 5], visit=[2, 4, 5, 6]),
-    held=holding([2, 2, 2, 2, 2, 2, 2, 2], [2, 2, 3, 3, 3, 2, 2, 2], [1, 1, 2, 2, 1, 1, 0, 0], [1, 2, 1, 1, 2, 2, 1, 1], ZERO),
+    held=holding([[0, 2]], SPOTS, NEARS, BASES, NIL),
     effects=[
         effected(
             "graphspec.nodes",
             dict(
-                agent=tally(16, 5, 0.3125, 0, 0.0, 11, nodes=[1, 2, 1, 1, 2, 2, 1, 1], anchors=ZERO),
-                spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=[2, 2, 3, 3, 3, 2, 2, 2], anchors=ZERO),
+                agent=tally(16, 5, 0.3125, 0, 0.0, 11, nodes=BASES, anchors=NIL),
+                spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=SPOTS, anchors=NIL),
             ),
             {
-                "near": tally(8, 0, 0.0, 0, 0.0, 8, edges=[1, 1, 2, 2, 1, 1, 0, 0]),
-                "base": tally(11, 0, 0.0, 0, 0.0, 11, edges=[1, 2, 1, 1, 2, 2, 1, 1]),
-                LOOPS: tally(0, 0, None, 0, None, 0, edges=ZERO),
+                "near": tally(8, 0, 0.0, 0, 0.0, 8, edges=NEARS),
+                "base": tally(11, 0, 0.0, 0, 0.0, 11, edges=BASES),
+                LOOPS: tally(0, 0, None, 0, None, 0, edges=NIL),
             },
             [],
         ),
         effected(
             "test.cut",
             dict(
-                agent=tally(11, 0, 0.0, 0, 0.0, 11, nodes=[1, 2, 1, 1, 2, 2, 1, 1], anchors=ZERO),
-                spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=[2, 2, 3, 3, 3, 2, 2, 2], anchors=ZERO),
+                agent=tally(11, 0, 0.0, 0, 0.0, 11, nodes=BASES, anchors=NIL),
+                spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=SPOTS, anchors=NIL),
             ),
             {
-                "near": tally(8, 0, 0.0, 0, 0.0, 8, edges=[1, 1, 2, 2, 1, 1, 0, 0]),
-                "base": tally(11, 5, 0.4545, 0, 0.0, 6, edges=[1, 0, 1, 0, 2, 0, 1, 1]),
-                LOOPS: tally(0, 0, None, 0, None, 0, edges=ZERO),
+                "near": tally(8, 0, 0.0, 0, 0.0, 8, edges=NEARS),
+                "base": tally(11, 5, 0.4545, 0, 0.0, 6, edges=BASES_CUT),
+                LOOPS: tally(0, 0, None, 0, None, 0, edges=NIL),
             },
             [dict(sort="relation", name="base", task="turn", times=[1, 3, 5], everywhere=False, without=[])],
         ),
         effected(
             "graphspec.relation_forms",
             dict(
-                agent=tally(11, 0, 0.0, 0, 0.0, 11, nodes=[1, 2, 1, 1, 2, 2, 1, 1], anchors=ZERO),
-                spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=[2, 2, 3, 3, 3, 2, 2, 2], anchors=ZERO),
+                agent=tally(11, 0, 0.0, 0, 0.0, 11, nodes=BASES, anchors=NIL),
+                spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=SPOTS, anchors=NIL),
             ),
             {
-                "near": tally(8, 0, 0.0, 0, 0.0, 8, edges=[1, 1, 2, 2, 1, 1, 0, 0]),
-                "base": tally(6, 0, 0.0, 0, 0.0, 6, edges=[1, 0, 1, 0, 2, 0, 1, 1]),
-                LOOPS: tally(0, 0, None, 30, None, 30, edges=[3, 4, 4, 4, 5, 4, 3, 3]),
+                "near": tally(8, 0, 0.0, 0, 0.0, 8, edges=NEARS),
+                "base": tally(6, 0, 0.0, 0, 0.0, 6, edges=BASES_CUT),
+                LOOPS: tally(0, 0, None, 30, None, 30, edges=LOOPS_HELD),
             },
             [],
         ),
@@ -1046,50 +1054,49 @@ VARIED_SECOND = dict(
     view=VIEWED["g1"],
     times=[1, 2, 3],
     tasks=dict(turn=[2], visit=[1]),
-    held=holding([1, 1, 1], [2, 2, 1], EMPTY, [1, 1, 0], EMPTY),
+    held=holding([[0, 1]], [[0, 2], [2, 1]], NIL, [[0, 1], [2, 0]], NIL),
     effects=[
         effected(
             "graphspec.nodes",
             dict(
-                agent=tally(3, 1, 0.3333, 0, 0.0, 2, nodes=[1, 1, 0], anchors=EMPTY),
-                spot=tally(5, 0, 0.0, 0, 0.0, 5, nodes=[2, 2, 1], anchors=EMPTY),
+                agent=tally(3, 1, 0.3333, 0, 0.0, 2, nodes=[[0, 1], [2, 0]], anchors=NIL),
+                spot=tally(5, 0, 0.0, 0, 0.0, 5, nodes=[[0, 2], [2, 1]], anchors=NIL),
             ),
             {
-                "near": tally(0, 0, None, 0, None, 0, edges=EMPTY),
-                "base": tally(2, 0, 0.0, 0, 0.0, 2, edges=[1, 1, 0]),
-                LOOPS: tally(0, 0, None, 0, None, 0, edges=EMPTY),
+                "near": tally(0, 0, None, 0, None, 0, edges=NIL),
+                "base": tally(2, 0, 0.0, 0, 0.0, 2, edges=[[0, 1], [2, 0]]),
+                LOOPS: tally(0, 0, None, 0, None, 0, edges=NIL),
             },
             [],
         ),
         effected(
             "test.cut",
             dict(
-                agent=tally(2, 0, 0.0, 0, 0.0, 2, nodes=[1, 1, 0], anchors=EMPTY),
-                spot=tally(5, 0, 0.0, 0, 0.0, 5, nodes=[2, 2, 1], anchors=EMPTY),
+                agent=tally(2, 0, 0.0, 0, 0.0, 2, nodes=[[0, 1], [2, 0]], anchors=NIL),
+                spot=tally(5, 0, 0.0, 0, 0.0, 5, nodes=[[0, 2], [2, 1]], anchors=NIL),
             ),
             {
-                "near": tally(0, 0, None, 0, None, 0, edges=EMPTY),
-                "base": tally(2, 1, 0.5, 0, 0.0, 1, edges=[1, 0, 0]),
-                LOOPS: tally(0, 0, None, 0, None, 0, edges=EMPTY),
+                "near": tally(0, 0, None, 0, None, 0, edges=NIL),
+                "base": tally(2, 1, 0.5, 0, 0.0, 1, edges=[[0, 1], [1, 0]]),
+                LOOPS: tally(0, 0, None, 0, None, 0, edges=NIL),
             },
             [dict(sort="relation", name="base", task="turn", times=[2], everywhere=False, without=[])],
         ),
         effected(
             "graphspec.relation_forms",
             dict(
-                agent=tally(2, 0, 0.0, 0, 0.0, 2, nodes=[1, 1, 0], anchors=EMPTY),
-                spot=tally(5, 0, 0.0, 0, 0.0, 5, nodes=[2, 2, 1], anchors=EMPTY),
+                agent=tally(2, 0, 0.0, 0, 0.0, 2, nodes=[[0, 1], [2, 0]], anchors=NIL),
+                spot=tally(5, 0, 0.0, 0, 0.0, 5, nodes=[[0, 2], [2, 1]], anchors=NIL),
             ),
             {
-                "near": tally(0, 0, None, 0, None, 0, edges=EMPTY),
-                "base": tally(1, 0, 0.0, 0, 0.0, 1, edges=[1, 0, 0]),
-                LOOPS: tally(0, 0, None, 7, None, 7, edges=[3, 3, 1]),
+                "near": tally(0, 0, None, 0, None, 0, edges=NIL),
+                "base": tally(1, 0, 0.0, 0, 0.0, 1, edges=[[0, 1], [1, 0]]),
+                LOOPS: tally(0, 0, None, 7, None, 7, edges=[[0, 3], [2, 1]]),
             },
             [],
         ),
     ],
 )
-STEPS = "    time  agent nodes  agent anchors  spot nodes  spot anchors  near edges  base edges  relation_forms.loops edges"
 EFFECT = "    held                        before  removed  share    added  share    after"
 VARIANT = """variant %s of the bank stored as %s, described at version %d
 kept beside the bank, in its folder descriptions/variants
@@ -1105,15 +1112,14 @@ entry graphspec.relation_forms, of the operation graphspec.relation_forms at ver
 graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 steps from time 0 to 7
   tasks: turn at 1, 3, 5; visit at 2, 4, 5, 6
   held at each time before the first entry:
-%(steps)s
-    0     2            0              2           0             1           1           0
-    1     2            0              2           0             1           2           0
-    2     2            0              3           0             2           1           0
-    3     2            0              3           0             2           1           0
-    4     2            0              3           0             1           2           0
-    5     2            0              2           0             1           2           0
-    6     2            0              2           0             0           1           0
-    7     2            0              2           0             0           1           0
+    time                        0  1  2  3  4  5  6  7
+    agent nodes                 2  2  2  2  2  2  2  2
+    agent anchors               0  0  0  0  0  0  0  0
+    spot nodes                  2  2  3  3  3  2  2  2
+    spot anchors                0  0  0  0  0  0  0  0
+    near edges                  1  1  2  2  1  1  0  0
+    base edges                  1  2  1  1  2  2  1  1
+    relation_forms.loops edges  0  0  0  0  0  0  0  0
   entry graphspec.nodes, of the operation graphspec.nodes:
 %(effect)s
     agent nodes                 16      5        0.3125   0      0.0      11
@@ -1123,15 +1129,14 @@ graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 st
     relation_forms.loops edges  0       0        nothing  0      nothing  0
   columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
-%(steps)s
-    0     1            0              2           0             1           1           0
-    1     2            0              2           0             1           2           0
-    2     1            0              3           0             2           1           0
-    3     1            0              3           0             2           1           0
-    4     2            0              3           0             1           2           0
-    5     2            0              2           0             1           2           0
-    6     1            0              2           0             0           1           0
-    7     1            0              2           0             0           1           0
+    time                        0  1  2  3  4  5  6  7
+    agent nodes                 1  2  1  1  2  2  1  1
+    agent anchors               0  0  0  0  0  0  0  0
+    spot nodes                  2  2  3  3  3  2  2  2
+    spot anchors                0  0  0  0  0  0  0  0
+    near edges                  1  1  2  2  1  1  0  0
+    base edges                  1  2  1  1  2  2  1  1
+    relation_forms.loops edges  0  0  0  0  0  0  0  0
   entry test.cut, of the operation test.cut:
 %(effect)s
     agent nodes                 11      0        0.0      0      0.0      11
@@ -1141,15 +1146,14 @@ graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 st
     relation_forms.loops edges  0       0        nothing  0      nothing  0
   columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
-%(steps)s
-    0     1            0              2           0             1           1           0
-    1     2            0              2           0             1           0           0
-    2     1            0              3           0             2           1           0
-    3     1            0              3           0             2           0           0
-    4     2            0              3           0             1           2           0
-    5     2            0              2           0             1           0           0
-    6     1            0              2           0             0           1           0
-    7     1            0              2           0             0           1           0
+    time                        0  1  2  3  4  5  6  7
+    agent nodes                 1  2  1  1  2  2  1  1
+    agent anchors               0  0  0  0  0  0  0  0
+    spot nodes                  2  2  3  3  3  2  2  2
+    spot anchors                0  0  0  0  0  0  0  0
+    near edges                  1  1  2  2  1  1  0  0
+    base edges                  1  0  1  0  2  0  1  1
+    relation_forms.loops edges  0  0  0  0  0  0  0  0
   entry test.cut, of the operation test.cut, removes every edge of the relation base at the times of the tasks of turn: 1, 3, 5; not at every time
   entry graphspec.relation_forms, of the operation graphspec.relation_forms:
 %(effect)s
@@ -1160,23 +1164,26 @@ graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 st
     relation_forms.loops edges  0       0        nothing  30     nothing  30
   columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
-%(steps)s
-    0     1            0              2           0             1           1           3
-    1     2            0              2           0             1           0           4
-    2     1            0              3           0             2           1           4
-    3     1            0              3           0             2           0           4
-    4     2            0              3           0             1           2           5
-    5     2            0              2           0             1           0           4
-    6     1            0              2           0             0           1           3
-    7     1            0              2           0             0           1           3
+    time                        0  1  2  3  4  5  6  7
+    agent nodes                 1  2  1  1  2  2  1  1
+    agent anchors               0  0  0  0  0  0  0  0
+    spot nodes                  2  2  3  3  3  2  2  2
+    spot anchors                0  0  0  0  0  0  0  0
+    near edges                  1  1  2  2  1  1  0  0
+    base edges                  1  0  1  0  2  0  1  1
+    relation_forms.loops edges  3  4  4  4  5  4  3  3
 
 graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 steps from time 1 to 3
   tasks: turn at 2; visit at 1
   held at each time before the first entry:
-%(steps)s
-    1     1            0              2           0             0           1           0
-    2     1            0              2           0             0           1           0
-    3     1            0              1           0             0           0           0
+    time                        1  2  3
+    agent nodes                 1  1  1
+    agent anchors               0  0  0
+    spot nodes                  2  2  1
+    spot anchors                0  0  0
+    near edges                  0  0  0
+    base edges                  1  1  0
+    relation_forms.loops edges  0  0  0
   entry graphspec.nodes, of the operation graphspec.nodes:
 %(effect)s
     agent nodes                 3       1        0.3333   0      0.0      2
@@ -1186,10 +1193,14 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 st
     relation_forms.loops edges  0       0        nothing  0      nothing  0
   columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
-%(steps)s
-    1     1            0              2           0             0           1           0
-    2     1            0              2           0             0           1           0
-    3     0            0              1           0             0           0           0
+    time                        1  2  3
+    agent nodes                 1  1  0
+    agent anchors               0  0  0
+    spot nodes                  2  2  1
+    spot anchors                0  0  0
+    near edges                  0  0  0
+    base edges                  1  1  0
+    relation_forms.loops edges  0  0  0
   entry test.cut, of the operation test.cut:
 %(effect)s
     agent nodes                 2       0        0.0      0      0.0      2
@@ -1199,10 +1210,14 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 st
     relation_forms.loops edges  0       0        nothing  0      nothing  0
   columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
-%(steps)s
-    1     1            0              2           0             0           1           0
-    2     1            0              2           0             0           0           0
-    3     0            0              1           0             0           0           0
+    time                        1  2  3
+    agent nodes                 1  1  0
+    agent anchors               0  0  0
+    spot nodes                  2  2  1
+    spot anchors                0  0  0
+    near edges                  0  0  0
+    base edges                  1  0  0
+    relation_forms.loops edges  0  0  0
   entry test.cut, of the operation test.cut, removes every edge of the relation base at the times of the tasks of turn: 2; not at every time
   entry graphspec.relation_forms, of the operation graphspec.relation_forms:
 %(effect)s
@@ -1213,10 +1228,14 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 st
     relation_forms.loops edges  0       0        nothing  7      nothing  7
   columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
-%(steps)s
-    1     1            0              2           0             0           1           3
-    2     1            0              2           0             0           0           3
-    3     0            0              1           0             0           0           1
+    time                        1  2  3
+    agent nodes                 1  1  0
+    agent anchors               0  0  0
+    spot nodes                  2  2  1
+    spot anchors                0  0  0
+    near edges                  0  0  0
+    base edges                  1  0  0
+    relation_forms.loops edges  3  3  1
 """
 
 
@@ -1293,7 +1312,7 @@ def varied(bank, config):
         graphs=[VARIED, VARIED_SECOND],
         kept=kept_as("variants", "bank"),
     )
-    written = VARIANT.replace("%(steps)s", STEPS).replace("%(effect)s", EFFECT) % (
+    written = VARIANT.replace("%(effect)s", EFFECT) % (
         key,
         stored,
         describing.VERSION,
@@ -1331,6 +1350,7 @@ def test_the_text_of_a_variant_holds_every_number_of_its_record_and_the_verb_pri
     assert effect.text(record) == written
     assert read_json(stem.with_suffix(".json"))["record"] == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
+    assert record["kept"]["file"] == stem.with_suffix(".json").name
     write_json(tmp_path / "config.json", config)
     write_json(tmp_path / "statement.json", STATED)
     monkeypatch.setattr(
@@ -1399,10 +1419,7 @@ def test_a_relation_an_entry_adds_is_listed_in_a_graph_where_it_holds_no_edge_an
     assert [list(graph["held"]["kinds"]) for graph in apart["graphs"]] == [["agent", "spot"]] * 2
     assert [list(graph["held"]["relations"]) for graph in apart["graphs"]] == [["near", "base", "product"]] * 2
     made = [graph["effects"][0]["relations"]["product"] for graph in apart["graphs"]]
-    assert made == [
-        tally(0, 0, None, 8, None, 8, edges=[1, 1, 2, 2, 1, 1, 0, 0]),
-        tally(0, 0, None, 0, None, 0, edges=EMPTY),
-    ]
+    assert made == [tally(0, 0, None, 8, None, 8, edges=NEARS), tally(0, 0, None, 0, None, 0, edges=NIL)]
     assert joined["graphs"] == apart["graphs"]
     degree = dict(added=["measures.degree"], removed=[], filled=["measures.degree"])
     valued = dict(added=["product.value"], removed=[], filled=["product.value"])
@@ -3732,49 +3749,20 @@ UNSHARED = dict(first=[], second=[])
 
 
 @timed("descriptions.unlike")
-def unlike(labels, stated, totals, *rows):
-    return dict(
-        stated=stated,
-        **dict(zip(labels, totals)),
-        at=[dict(time=row[0], **dict(zip(labels, row[1:]))) for row in rows],
-    )
+def unlike(labels, stated, totals, *held):
+    return dict(stated=stated, **dict(zip(labels, totals)), at=dict(zip(labels, held, strict=True)))
 
 
+ANCHORED = [[0, 0], [1, 1], [2, 0], [3, 1], [4, 0], [5, 1], [6, 0]]
 LEANER = dict(
     name="g0",
     view=VIEWED["g0"],
     times=[0, 1, 2, 3, 4, 5, 6, 7],
     alone=UNSHARED,
-    kinds=dict(
-        agent=unlike(
-            NODAL,
-            "both",
-            (11, 0, 0, 3, 0),
-            (0, 1, 0, 0, 0, 0),
-            (1, 2, 0, 0, 1, 0),
-            (2, 1, 0, 0, 0, 0),
-            (3, 1, 0, 0, 1, 0),
-            (4, 2, 0, 0, 0, 0),
-            (5, 2, 0, 0, 1, 0),
-            (6, 1, 0, 0, 0, 0),
-            (7, 1, 0, 0, 0, 0),
-        )
-    ),
+    kinds=dict(agent=unlike(NODAL, "both", (11, 0, 0, 3, 0), BASES, NIL, NIL, ANCHORED, NIL)),
     relations={
-        "base": unlike(EDGED, "both", (6, 0, 0), (0, 1, 0, 0), (2, 1, 0, 0), (4, 2, 0, 0), (6, 1, 0, 0), (7, 1, 0, 0)),
-        LOOPS: unlike(
-            EDGED,
-            "both",
-            (11, 0, 0),
-            (0, 1, 0, 0),
-            (1, 2, 0, 0),
-            (2, 1, 0, 0),
-            (3, 1, 0, 0),
-            (4, 2, 0, 0),
-            (5, 2, 0, 0),
-            (6, 1, 0, 0),
-            (7, 1, 0, 0),
-        ),
+        "base": unlike(EDGED, "both", (6, 0, 0), BASES_CUT, NIL, NIL),
+        LOOPS: unlike(EDGED, "both", (11, 0, 0), BASES, NIL, NIL),
     },
     equal=dict(kinds=1, relations=1),
 )
@@ -3783,10 +3771,10 @@ LEANER_SECOND = dict(
     view=VIEWED["g1"],
     times=[1, 2, 3],
     alone=UNSHARED,
-    kinds=dict(agent=unlike(NODAL, "both", (2, 0, 0, 1, 0), (1, 1, 0, 0, 0, 0), (2, 1, 0, 0, 1, 0))),
+    kinds=dict(agent=unlike(NODAL, "both", (2, 0, 0, 1, 0), [[0, 1], [2, 0]], NIL, NIL, [[0, 0], [1, 1], [2, 0]], NIL)),
     relations={
-        "base": unlike(EDGED, "both", (1, 0, 0), (1, 1, 0, 0)),
-        LOOPS: unlike(EDGED, "both", (2, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0)),
+        "base": unlike(EDGED, "both", (1, 0, 0), [[0, 1], [1, 0]], NIL, NIL),
+        LOOPS: unlike(EDGED, "both", (2, 0, 0), [[0, 1], [2, 0]], NIL, NIL),
     },
     equal=dict(kinds=1, relations=1),
 )
@@ -3797,51 +3785,22 @@ TRUTHS = dict(
     differs=True,
     times=[None, 0, 1, 2, 3, 4, 5, 6, 7],
     kinds=dict(
-        agent=unlike(
-            NODAL,
-            "both",
-            (8, 1, 0, 0, 0),
-            (None, 0, 1, 0, 0, 0),
-            (0, 1, 0, 0, 0, 0),
-            (1, 1, 0, 0, 0, 0),
-            (2, 1, 0, 0, 0, 0),
-            (3, 1, 0, 0, 0, 0),
-            (4, 1, 0, 0, 0, 0),
-            (5, 1, 0, 0, 0, 0),
-            (6, 1, 0, 0, 0, 0),
-            (7, 1, 0, 0, 0, 0),
-        ),
+        agent=unlike(NODAL, "both", (8, 1, 0, 0, 0), [[None, 0], [0, 1]], [[None, 1], [0, 0]], UNHELD, UNHELD, UNHELD),
         spot=unlike(
             NODAL,
             "both",
             (9, 1, 0, 0, 0),
-            (None, 0, 1, 0, 0, 0),
-            (0, 1, 0, 0, 0, 0),
-            (2, 1, 0, 0, 0, 0),
-            (3, 2, 0, 0, 0, 0),
-            (4, 2, 0, 0, 0, 0),
-            (5, 1, 0, 0, 0, 0),
-            (6, 1, 0, 0, 0, 0),
-            (7, 1, 0, 0, 0, 0),
+            [[None, 0], [0, 1], [1, 0], [2, 1], [3, 2], [5, 1]],
+            [[None, 1], [0, 0]],
+            UNHELD,
+            UNHELD,
+            UNHELD,
         ),
     ),
     relations=dict(
-        near=unlike(
-            EDGED, "both", (8, 0, 0), (0, 1, 0, 0), (1, 1, 0, 0), (2, 2, 0, 0), (3, 2, 0, 0), (4, 1, 0, 0), (5, 1, 0, 0)
-        ),
+        near=unlike(EDGED, "both", (8, 0, 0), [[None, 0], [0, 1], [2, 2], [4, 1], [6, 0]], UNHELD, UNHELD),
         base=unlike(
-            EDGED,
-            "both",
-            (10, 3, 0),
-            (None, 0, 1, 0),
-            (0, 1, 1, 0),
-            (1, 1, 0, 0),
-            (2, 1, 1, 0),
-            (3, 1, 0, 0),
-            (4, 2, 0, 0),
-            (5, 2, 0, 0),
-            (6, 1, 0, 0),
-            (7, 1, 0, 0),
+            EDGED, "both", (10, 3, 0), [[None, 0], [0, 1], [4, 2], [6, 1]], [[None, 1], [1, 0], [2, 1], [3, 0]], UNHELD
         ),
     ),
     equal=dict(kinds=0, relations=0),
@@ -4066,10 +4025,13 @@ def test_two_variants_that_differ_by_one_setting_differ_in_the_description_by_wh
     record = against(bank, first, STATED, second, STATED)
     assert record == diverged(bank, (1, 2), True, [LEANER, LEANER_SECOND])[0]
     assert json.loads(json.dumps(record)) == record
-    assert against(bank, second, STATED, first, STATED) == turned_over(record)
-    assert turned_over(record) == diverged(bank, (2, 1), True, [turned_over(LEANER), turned_over(LEANER_SECOND)])[0]
-    turned = dict(time=1, first=0, second=2, first_anchors=1, second_anchors=0, valued=0)
-    assert turned_over(LEANER)["kinds"]["agent"]["at"][1] == turned
+    mirrored, _, stem = diverged(bank, (2, 1), True, [turned_over(LEANER), turned_over(LEANER_SECOND)])
+    kept = dict(record["kept"], file=stem.with_suffix(".json").name)
+    assert against(bank, second, STATED, first, STATED) == dict(turned_over(record), kept=kept) == mirrored
+    assert kept["file"] != record["kept"]["file"]
+    turned = dict(first=NIL, second=BASES, first_anchors=ANCHORED, second_anchors=NIL, valued=NIL)
+    assert turned_over(LEANER)["kinds"]["agent"]["at"] == turned
+    assert held_at(turned["second"], [1]) == [2] and held_at(turned["first_anchors"], [1]) == [1]
     same = [
         dict(
             name=name, view=VIEWED[name], times=times, alone=UNSHARED, kinds={}, relations={}, equal=dict(kinds=2, relations=3)
@@ -4125,10 +4087,9 @@ def test_two_variants_differ_by_the_columns_of_values_one_alone_holds_and_by_the
     record = against(bank, degree, STATED, unneared, STATED)
     first, second = record["graphs"]
     assert record["differs"] and record["columns"] == UNCOLUMNED
-    unlike_values = [(0, 0, 0, 0, 0, 2), (1, 0, 0, 0, 0, 2), (2, 0, 0, 0, 0, 3), (3, 0, 0, 0, 0, 3), (4, 0, 0, 0, 0, 2), (5, 0, 0, 0, 0, 2)]
-    assert first["kinds"] == dict(spot=unlike(NODAL, "both", (0, 0, 0, 0, 14), *unlike_values))
-    unlike_edges = [(0, 1, 0, 0), (1, 1, 0, 0), (2, 2, 0, 0), (3, 2, 0, 0), (4, 1, 0, 0), (5, 1, 0, 0)]
-    assert first["relations"] == dict(near=unlike(EDGED, "both", (8, 0, 0), *unlike_edges))
+    unlike_values = [[0, 2], [2, 3], [4, 2], [6, 0]]
+    assert first["kinds"] == dict(spot=unlike(NODAL, "both", (0, 0, 0, 0, 14), NIL, NIL, NIL, NIL, unlike_values))
+    assert first["relations"] == dict(near=unlike(EDGED, "both", (8, 0, 0), NEARS, NIL, NIL))
     assert (first["equal"], second["kinds"], second["relations"]) == (dict(kinds=1, relations=1), {}, {})
     assert second["equal"] == dict(kinds=2, relations=2) and UNLIKE_VALUES in diverging.text(record)
     for legend in (effect.READING, differing.READING["clock"], differing.TRUTH["clock"]):
@@ -4145,9 +4106,9 @@ def test_two_truth_graphs_of_a_bank_differ_by_what_is_written_out_here_and_a_gra
     record = between(bank, "g0", "g1")
     assert record == expected and json.loads(json.dumps(record)) == record
     assert between(bank, "g1", "g0") == turned_over(expected)
-    assert turned_over(expected)["relations"]["base"]["at"][0] == dict(time=None, first=1, second=0, valued=0)
-    assert turned_over(expected)["relations"]["base"]["at"][1] == dict(time=0, first=1, second=1, valued=0)
-    assert turned_over(expected)["relations"]["base"]["at"][2] == dict(time=1, first=0, second=1, valued=0)
+    turned = turned_over(expected)["relations"]["base"]["at"]
+    assert turned == dict(first=[[None, 1], [1, 0], [2, 1], [3, 0]], second=[[None, 0], [0, 1], [4, 2], [6, 1]], valued=UNHELD)
+    assert [held_at(turned[label], [None, 0, 1]) for label in EDGED] == [[1, 1, 0], [0, 1, 1], [0, 0, 0]]
     alone = dict(first="g1", second="g1", unit="tick", differs=False, times=[None, 1, 2, 3], kinds={}, relations={})
     alone, stem = truths(bank, "g1", "g1", dict(alone, equal=dict(kinds=2, relations=2)))
     assert between(bank, "g1", "g1") == alone
@@ -4170,6 +4131,7 @@ def test_the_text_of_a_difference_holds_its_record_and_the_verb_prints_what_the_
     assert diverging.text(record) == head + DIFFERENCE
     assert read_json(stem.with_suffix(".json"))["record"] == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == head + DIFFERENCE
+    assert record["kept"]["file"] == stem.with_suffix(".json").name
     names = ("config.json", "statement.json", "other.json")
     for name, held in zip(names, (first, STATED, second)):
         write_json(tmp_path / name, held)
@@ -4183,6 +4145,7 @@ def test_the_text_of_a_difference_holds_its_record_and_the_verb_prints_what_the_
     assert differing.text(record) == written
     assert read_json(stem.with_suffix(".json"))["record"] == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
+    assert record["kept"]["file"] == stem.with_suffix(".json").name
     monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--difference", str(bank), "g0", "g1"])
     main()
     assert capsys.readouterr().out == written
@@ -4232,7 +4195,7 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
     sides = [differing.lasting(registry, facts, moments) for facts in (held[0], held[0].replace(fact_values=values))]
     assert differing.differed(*sides, moments.tolist()) == dict(
         kinds={},
-        relations=dict(near=unlike(EDGED, "both", (0, 0, 3), (3, 0, 0, 1), (4, 0, 0, 1), (5, 0, 0, 1))),
+        relations=dict(near=unlike(EDGED, "both", (0, 0, 3), NIL, NIL, [[0, 0], [3, 1], [6, 0]])),
         equal=dict(kinds=2, relations=1),
     )
     still = [timeless(facts) for facts in held]
@@ -4248,11 +4211,12 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         differs=True,
         times=[None],
         kinds=dict(
-            agent=unlike(NODAL, "both", (1, 0, 0, 0, 0), (None, 1, 0, 0, 0, 0)),
-            spot=unlike(NODAL, "both", (1, 0, 0, 0, 0), (None, 1, 0, 0, 0, 0)),
+            agent=unlike(NODAL, "both", (1, 0, 0, 0, 0), [[None, 1]], UNHELD, UNHELD, UNHELD, UNHELD),
+            spot=unlike(NODAL, "both", (1, 0, 0, 0, 0), [[None, 1]], UNHELD, UNHELD, UNHELD, UNHELD),
         ),
         relations=dict(
-            near=unlike(EDGED, "both", (2, 0, 0), (None, 2, 0, 0)), base=unlike(EDGED, "both", (1, 0, 0), (None, 1, 0, 0))
+            near=unlike(EDGED, "both", (2, 0, 0), [[None, 2]], UNHELD, UNHELD),
+            base=unlike(EDGED, "both", (1, 0, 0), [[None, 1]], UNHELD, UNHELD),
         ),
         equal=dict(kinds=0, relations=0),
     )
@@ -4266,13 +4230,13 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         times=[0, 1, 2, 3, 4, 5, 6, 7],
         alone=dict(first=[0, 7], second=[]),
         kinds=dict(
-            agent=unlike(NODAL, "both", (2, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0), (7, 1, 0, 0, 0, 0)),
-            spot=unlike(NODAL, "both", (4, 0, 0, 0, 0), (0, 2, 0, 0, 0, 0), (7, 2, 0, 0, 0, 0)),
+            agent=unlike(NODAL, "both", (2, 0, 0, 0, 0), [[0, 1], [1, 0], [7, 1]], NIL, NIL, NIL, NIL),
+            spot=unlike(NODAL, "both", (4, 0, 0, 0, 0), [[0, 2], [1, 0], [7, 2]], NIL, NIL, NIL, NIL),
         ),
         relations={
-            "near": unlike(EDGED, "both", (1, 0, 0), (0, 1, 0, 0)),
-            "base": unlike(EDGED, "both", (2, 0, 0), (0, 1, 0, 0), (7, 1, 0, 0)),
-            LOOPS: unlike(EDGED, "both", (6, 0, 0), (0, 3, 0, 0), (7, 3, 0, 0)),
+            "near": unlike(EDGED, "both", (1, 0, 0), [[0, 1], [1, 0]], NIL, NIL),
+            "base": unlike(EDGED, "both", (2, 0, 0), [[0, 1], [1, 0], [7, 1]], NIL, NIL),
+            LOOPS: unlike(EDGED, "both", (6, 0, 0), [[0, 3], [1, 0], [7, 3]], NIL, NIL),
         },
         equal=dict(kinds=0, relations=0),
     )
@@ -4280,9 +4244,9 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
     unlooped = configuration(bank, MODEL, None, pipeline=unlooped, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
     found = against(bank, config, STATED, unlooped, STATED)["graphs"]
     assert [(graph["kinds"], graph["equal"]) for graph in found] == [({}, dict(kinds=2, relations=2))] * 2
-    assert found[1]["relations"] == {LOOPS: unlike(EDGED, "first", (7, 0, 0), (1, 3, 0, 0), (2, 3, 0, 0), (3, 1, 0, 0))}
+    assert found[1]["relations"] == {LOOPS: unlike(EDGED, "first", (7, 0, 0), [[0, 3], [2, 1]], NIL, NIL)}
     assert "  relation relation_forms.loops, which only the first states: edges only the first holds 7," in "\n".join(
-        differing.graph_text(found[1], describing.NAMED["clock"])
+        differing.graph_text(found[1], describing.NAMED["clock"], kept_as("differences", "bank"))
     )
     LOG.info("descriptions difference apart exit seconds=%.3f", time.perf_counter() - started)
 
@@ -4333,8 +4297,7 @@ RETRACTED = dict(
     facts=1,
     absent=1,
     replaced=1,
-    edges_before=0,
-    edges_at=[1, 1, 1, 1],
+    edges_held=[[None, 0], [0, 1]],
     runs=1,
     bounded=0,
     **NONE,
@@ -4352,8 +4315,7 @@ EITHER_WAY = dict(
     facts=2,
     absent=0,
     replaced=0,
-    edges_before=0,
-    edges_at=[1, 1, 1, 1],
+    edges_held=[[None, 0], [0, 1]],
     runs=1,
     bounded=0,
     **NONE,
@@ -4363,8 +4325,8 @@ THIRD = dict(
     unit="tick",
     times=[0, 1, 2, 3],
     kinds=dict(
-        agent=dict(UNBEGUN, nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1, 1], observations_at=[1, 1, 1, 1]),
-        spot=dict(UNBEGUN, nodes=3, observations=3, replaced=0, nodes_at=[3, 3, 3, 3], observations_at=[3, 3, 3, 3]),
+        agent=dict(nodes=1, observations=1, replaced=0, nodes_held=[[None, 0], [0, 1]], observations_held=[[None, 0], [0, 1]]),
+        spot=dict(nodes=3, observations=3, replaced=0, nodes_held=[[None, 0], [0, 3]], observations_held=[[None, 0], [0, 3]]),
     ),
     relations=dict(near=RETRACTED, base=EITHER_WAY),
     tasks=dict(turn=dict(tasks=4, splits=dict(train=2, validation=2), unsplit=0)),
@@ -4393,12 +4355,13 @@ graph h0, unit tick, times 4 from 0 to 3
   relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 1, replaced 1; runs 1, bounded 0
   relation base of the table base: ends agent to spot, spot to agent; no columns; edges 1, facts 2, absent 0, replaced 0; runs 1, bounded 0
   held before every time and at each time:
-    time    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    before  0            0                   0           0                  0           0
-    0       1            1                   3           3                  1           1
-    1       1            1                   3           3                  1           1
-    2       1            1                   3           3                  1           1
-    3       1            1                   3           3                  1           1
+    time                before  0  1  2  3
+    agent nodes         0       1  1  1  1
+    agent observations  0       1  1  1  1
+    spot nodes          0       3  3  3  3
+    spot observations   0       3  3  3  3
+    near edges          0       1  1  1  1
+    base edges          0       1  1  1  1
   shown to some tasks only: facts known later than they hold from, about nodes 0 and about edges 1, by 4 at most, the last known from time 4, before which a task is not shown them; no fact naming observers
   not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 4; train 2, validation 2, no split 0
@@ -4430,12 +4393,13 @@ def test_an_edge_without_direction_stated_from_both_ends_is_one_edge_and_a_truth
     (shown,) = variant(crossed, lined(crossed, THINNER, KEPT, "vector"), STATED)["graphs"]
     assert shown["times"] == [0, 1, 2, 3, 4]
     steps = [shown["times"].index(moment) for moment in told["times"]]
-    edges = {name: [held["edges"][step] for step in steps] for name, held in shown["held"]["relations"].items()}
-    nodes = {name: [held["nodes"][step] for step in steps] for name, held in shown["held"]["kinds"].items()}
-    assert nodes == {name: held["nodes_at"] for name, held in told["kinds"].items()}
-    assert edges["base"] == told["relations"]["base"]["edges_at"] == [1, 1, 1, 1]
-    assert (edges["near"], told["relations"]["near"]["edges_at"]) == ([1, 1, 1, 2], [1, 1, 1, 1])
-    assert shown["held"]["relations"]["near"]["edges"] == [1, 1, 1, 2, 1]
+    edges = {name: held_at(held["edges"], steps) for name, held in shown["held"]["relations"].items()}
+    nodes = {name: held_at(held["nodes"], steps) for name, held in shown["held"]["kinds"].items()}
+    assert nodes == {name: held_at(held["nodes_held"], told["times"]) for name, held in told["kinds"].items()}
+    assert nodes == dict(agent=[1, 1, 1, 1], spot=[3, 3, 3, 3])
+    assert edges["base"] == held_at(told["relations"]["base"]["edges_held"], told["times"]) == [1, 1, 1, 1]
+    assert (edges["near"], held_at(told["relations"]["near"]["edges_held"], told["times"])) == ([1, 1, 1, 2], [1, 1, 1, 1])
+    assert shown["held"]["relations"]["near"]["edges"] == [[0, 1], [3, 2], [4, 1]]
     LOG.info("descriptions either way exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -4465,7 +4429,7 @@ def test_a_fact_a_correction_replaced_holds_nothing_is_counted_apart_and_alone_t
         differs=True,
         times=[None, 0, 1, 2, 3],
         kinds={},
-        relations=dict(near=unlike(EDGED, "both", (4, 0, 0), (0, 1, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0), (3, 1, 0, 0))),
+        relations=dict(near=unlike(EDGED, "both", (4, 0, 0), [[None, 0], [0, 1]], UNHELD, UNHELD)),
         equal=dict(kinds=2, relations=1),
     )
     LOG.info("descriptions corrected exit seconds=%.3f", time.perf_counter() - started)
@@ -4479,11 +4443,13 @@ ORDERED_SECOND = """graph g1, no unit, positions 3 from 1 to 3
   relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
   relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
   held before every position and at each position:
-    position  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    before    1            1                   1           1                  0           1
-    1         1            1                   2           2                  0           1
-    2         1            1                   2           2                  0           1
-    3         1            1                   1           1                  0           0
+    position            before  1  2  3
+    agent nodes         1       1  1  1
+    agent observations  1       1  1  1
+    spot nodes          1       2  2  1
+    spot observations   1       2  2  1
+    near edges          0       0  0  0
+    base edges          1       1  1  0
   shown to some tasks only: no fact known later than it holds from; no fact naming observers
   not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 1; train 1, validation 0, no split 0
@@ -4510,8 +4476,13 @@ STILL_SECOND = """graph g1, no unit, no time
   relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
   relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
   held always:
-    agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
-    1            1                   2           2                  0           1
+    held                always
+    agent nodes         1
+    agent observations  1
+    spot nodes          2
+    spot observations   2
+    near edges          0
+    base edges          1
   shown to some tasks only: no fact known later than it holds from; no fact naming observers
   not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 1; train 1, validation 0, no split 0
@@ -4540,10 +4511,14 @@ STILL_VARIANT = """
 graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 steps, no time
   tasks: turn at the step; visit at the step
   held at each step before the first entry:
-    agent nodes  agent anchors  spot nodes  spot anchors  near edges  base edges  relation_forms.loops edges
-    1            0              2           0             0           1           3
-    1            0              2           0             0           0           3
-    0            0              1           0             0           0           1
+    step                        0  1  2
+    agent nodes                 1  1  0
+    agent anchors               0  0  0
+    spot nodes                  2  2  1
+    spot anchors                0  0  0
+    near edges                  0  0  0
+    base edges                  1  0  0
+    relation_forms.loops edges  3  3  1
 """
 
 
@@ -4598,8 +4573,12 @@ def test_under_order_a_description_states_positions_and_no_length_and_the_orders
     body = stated[stated.index("\ngraph ") :]
     head = "\ngraph g0, %s, 8 steps from position 0 to 7\n  tasks: turn at 1, 3, 5; visit at 2, 4, 5, 6\n" % (SEEN_BY % "g0")
     assert body.startswith(head)
-    assert "  held at each position before the first entry:\n    position  agent nodes  agent anchors  spot nodes" in body
-    assert ORDERED_CUT in body and "time" not in body
+    opening = (
+        "  held at each position before the first entry:\n"
+        "    position                    0  1  2  3  4  5  6  7\n"
+        "    agent nodes                 2  2  2  2  2  2  2  2\n"
+    )
+    assert opening in body and ORDERED_CUT in body and "time" not in body
     LOG.info("descriptions under order exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -4615,10 +4594,10 @@ def test_without_time_a_description_states_no_time_and_counts_once_what_holds_al
         unit=None,
         times=[],
         kinds=dict(
-            agent=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[], observations_at=[]),
-            spot=dict(nodes=2, observations=2, replaced=0, nodes_before=2, observations_before=2, nodes_at=[], observations_at=[]),
+            agent=dict(nodes=1, observations=1, replaced=0, nodes_held=[[None, 1]], observations_held=[[None, 1]]),
+            spot=dict(nodes=2, observations=2, replaced=0, nodes_held=[[None, 2]], observations_held=[[None, 2]]),
         ),
-        relations={name: dict(found, edges_at=[]) for name, found in SECOND["relations"].items()},
+        relations=dict(near=SECOND["relations"]["near"], base=dict(SECOND["relations"]["base"], edges_held=[[None, 1]])),
         decisions=dict(turn=dict(turn, each=[dict(turn["each"][0], time=None)])),
     )
     written = describing.text(dict(record, kept=kept_as("truth", "bank")))
@@ -4626,7 +4605,7 @@ def test_without_time_a_description_states_no_time_and_counts_once_what_holds_al
     assert written.split("\n\n")[2] == STILL_SECOND
     apart = differing.recorded(bank, manifest, *manifest["graphs"])
     assert (apart["time"], apart["unit"], apart["times"], apart["differs"]) == (STILL, None, [None], True)
-    assert apart["relations"]["near"] == unlike(EDGED, "both", (2, 0, 0), (None, 2, 0, 0))
+    assert apart["relations"]["near"] == unlike(EDGED, "both", (2, 0, 0), [[None, 2]], UNHELD, UNHELD)
     kept = dict(apart, kept=kept_as("differences", "bank"))
     assert differing.text(kept).split("\n", 2)[2] == STILL_APART % differing.TRUTH["none"]
     name, graph, grown, low, high = diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), leaned(bank, 1))[1]
@@ -4660,12 +4639,20 @@ WATCHED_FIRST = dict(
     unit="tick",
     times=[0, 1, 2, 3, 4, 5, 6],
     kinds=dict(
-        agent=dict(UNBEGUN, nodes=2, observations=2, replaced=0, nodes_at=[2] * 7, observations_at=[2] * 7),
+        agent=dict(nodes=2, observations=2, replaced=0, nodes_held=[[None, 0], [0, 2]], observations_held=[[None, 0], [0, 2]]),
         spot=dict(
-            UNBEGUN, nodes=5, observations=5, replaced=0, nodes_at=[4, 4, 5, 5, 5, 5, 5], observations_at=[4, 4, 5, 5, 5, 5, 5]
+            nodes=5,
+            observations=5,
+            replaced=0,
+            nodes_held=[[None, 0], [0, 4], [2, 5]],
+            observations_held=[[None, 0], [0, 4], [2, 5]],
         ),
         group=dict(
-            UNBEGUN, nodes=2, observations=2, replaced=0, nodes_at=[2, 2, 2, 2, 1, 1, 1], observations_at=[2, 2, 2, 2, 1, 1, 1]
+            nodes=2,
+            observations=2,
+            replaced=0,
+            nodes_held=[[None, 0], [0, 2], [4, 1]],
+            observations_held=[[None, 0], [0, 2], [4, 1]],
         ),
     ),
     relations=dict(
@@ -4679,8 +4666,7 @@ WATCHED_FIRST = dict(
             facts=3,
             absent=0,
             replaced=0,
-            edges_before=0,
-            edges_at=[3] * 7,
+            edges_held=[[None, 0], [0, 3]],
             runs=3,
             bounded=0,
             **NONE,
@@ -4695,8 +4681,7 @@ WATCHED_FIRST = dict(
             facts=3,
             absent=0,
             replaced=0,
-            edges_before=0,
-            edges_at=[2, 2, 2, 3, 3, 3, 3],
+            edges_held=[[None, 0], [0, 2], [3, 3]],
             runs=3,
             bounded=0,
             **NONE,
@@ -4711,8 +4696,7 @@ WATCHED_FIRST = dict(
             facts=1,
             absent=0,
             replaced=0,
-            edges_before=0,
-            edges_at=[1] * 7,
+            edges_held=[[None, 0], [0, 1]],
             runs=1,
             bounded=0,
             **NONE,
@@ -4727,8 +4711,7 @@ WATCHED_FIRST = dict(
             facts=2,
             absent=0,
             replaced=0,
-            edges_before=0,
-            edges_at=[1, 2, 2, 2, 1, 1, 1],
+            edges_held=[[None, 0], [0, 1], [1, 2], [4, 1]],
             runs=2,
             bounded=1,
             least=3,
@@ -4761,21 +4744,21 @@ WATCHED_FIRST = dict(
     ),
 )
 UNHELD_RELATION = dict(
-    ends=[], about=None, lapsed=0, edges=0, facts=0, absent=0, replaced=0, edges_before=0, edges_at=[], runs=0, bounded=0, **NONE
+    ends=[], about=None, lapsed=0, edges=0, facts=0, absent=0, replaced=0, edges_held=UNHELD, runs=0, bounded=0, **NONE
 )
 WATCHED_SECOND = dict(
     name="w1",
     unit="tick",
     times=[],
     kinds=dict(
-        agent=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[], observations_at=[]),
-        spot=dict(BEGUN, nodes=1, observations=1, replaced=0, nodes_at=[], observations_at=[]),
-        group=dict(UNBEGUN, nodes=0, observations=0, replaced=0, nodes_at=[], observations_at=[]),
+        agent=dict(nodes=1, observations=1, replaced=0, nodes_held=[[None, 1]], observations_held=[[None, 1]]),
+        spot=dict(nodes=1, observations=1, replaced=0, nodes_held=[[None, 1]], observations_held=[[None, 1]]),
+        group=dict(nodes=0, observations=0, replaced=0, nodes_held=UNHELD, observations_held=UNHELD),
     ),
     relations=dict(
         near=dict(UNHELD_RELATION, table="near", columns=["weight"]),
         base=dict(
-            UNHELD_RELATION, table="base", ends=[["agent", "spot"]], columns=[], edges=1, facts=1, edges_before=1, runs=1
+            UNHELD_RELATION, table="base", ends=[["agent", "spot"]], columns=[], edges=1, facts=1, edges_held=[[None, 1]], runs=1
         ),
         back=dict(UNHELD_RELATION, table="back", columns=[]),
         note=dict(UNHELD_RELATION, table="note", columns=["mark"], about="lapse"),
@@ -4805,15 +4788,17 @@ graph w0, unit tick, times 7 from 0 to 6
   relation back of the table back: ends spot to agent; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
   relation note of the table note: ends group to spot; columns mark; edges 2, facts 2, absent 0, replaced 0; runs 2, bounded 1, lasting 3 to 3, mean 3.0; about a set edge under the rule lapse, lapsed 2
   held before every time and at each time:
-    time    agent nodes  agent observations  spot nodes  spot observations  group set edges  group facts  near edges  base edges  back edges  note edges
-    before  0            0                   0           0                  0                0            0           0           0           0
-    0       2            2                   4           4                  2                2            3           2           1           1
-    1       2            2                   4           4                  2                2            3           2           1           2
-    2       2            2                   5           5                  2                2            3           2           1           2
-    3       2            2                   5           5                  2                2            3           3           1           2
-    4       2            2                   5           5                  1                1            3           3           1           1
-    5       2            2                   5           5                  1                1            3           3           1           1
-    6       2            2                   5           5                  1                1            3           3           1           1
+    time                before  0  1  2  3  4  5  6
+    agent nodes         0       2  2  2  2  2  2  2
+    agent observations  0       2  2  2  2  2  2  2
+    spot nodes          0       4  4  5  5  5  5  5
+    spot observations   0       4  4  5  5  5  5  5
+    group set edges     0       2  2  2  2  1  1  1
+    group facts         0       2  2  2  2  1  1  1
+    near edges          0       3  3  3  3  3  3  3
+    base edges          0       2  2  2  3  3  3  3
+    back edges          0       1  1  1  1  1  1  1
+    note edges          0       1  2  2  2  1  1  1
   shown to some tasks only: facts known later than they hold from, about nodes 1 and about edges 1, by 3 at most, the last known from time 5, before which a task is not shown them; facts naming observers, which a task naming another observer is not shown, about nodes 1 and about edges 2, naming north 1 and 1, south 0 and 1
   not counted above: members of set edges, group 5 in 2 set edges of 2 to 3; graphs nodes hold, agent 2 of 0 to 2 nodes, 2 nodes and 1 edges in all; entities no fact is about, spot 1 an option would create and 1 other
   kind of task turn: tasks 3; train 2, validation 1, no split 0
@@ -4832,8 +4817,17 @@ graph w1, unit tick, no time
   relation back of the table back: no ends; no columns; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
   relation note of the table note: no ends; columns mark; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0; about a set edge under the rule lapse, lapsed 0
   held before every time and at each time:
-    time    agent nodes  agent observations  spot nodes  spot observations  group set edges  group facts  near edges  base edges  back edges  note edges
-    before  1            1                   1           1                  0                0            0           1           0           0
+    time                before
+    agent nodes         1
+    agent observations  1
+    spot nodes          1
+    spot observations   1
+    group set edges     0
+    group facts         0
+    near edges          0
+    base edges          1
+    back edges          0
+    note edges          0
   shown to some tasks only: no fact known later than it holds from; no fact naming observers
   not counted above: members of set edges, group 0 in 0 set edges; graphs nodes hold, agent 1 of 0 to 0 nodes, 0 nodes and 0 edges in all; no entity without a fact
   kind of task turn: tasks 0; train 0, validation 0, no split 0
@@ -5080,13 +5074,16 @@ def test_a_variant_names_the_graphs_of_the_bank_its_view_does_not_show_and_the_s
     unweighed = dict(kinds={}, relations=dict(near=dict(added=[], removed=["weight"], filled=[])))
     assert [held["values"] for held in shown["effects"]] == [unweighed]
     assert "\n  columns of values and values of nodes: relation near removes weight\n" in written
-    assert shown["effects"][0]["relations"]["near"] == tally(21, 21, 1.0, 0, 0.0, 0, edges=[0] * 7)
-    noted = WATCHED_FIRST["relations"]["note"]["edges_at"]
-    assert shown["held"]["relations"]["note"]["edges"] == noted == [1, 2, 2, 2, 1, 1, 1]
-    assert shown["held"]["kinds"]["group"]["nodes"] == WATCHED_FIRST["kinds"]["group"]["nodes_at"]
-    assert (shown["held"]["relations"]["base"]["edges"], WATCHED_FIRST["relations"]["base"]["edges_at"]) == (
-        [2, 2, 2, 2, 2, 3, 3],
-        [2, 2, 2, 3, 3, 3, 3],
+    assert shown["effects"][0]["relations"]["near"] == tally(21, 21, 1.0, 0, 0.0, 0, edges=NIL)
+    steps, moments = list(range(7)), WATCHED_FIRST["times"]
+    noted = held_at(WATCHED_FIRST["relations"]["note"]["edges_held"], moments)
+    assert held_at(shown["held"]["relations"]["note"]["edges"], steps) == noted == [1, 2, 2, 2, 1, 1, 1]
+    assert shown["held"]["relations"]["note"]["edges"] == [[0, 1], [1, 2], [4, 1]]
+    grouped_held = held_at(WATCHED_FIRST["kinds"]["group"]["nodes_held"], moments)
+    assert held_at(shown["held"]["kinds"]["group"]["nodes"], steps) == grouped_held == [2, 2, 2, 2, 1, 1, 1]
+    assert (shown["held"]["relations"]["base"]["edges"], WATCHED_FIRST["relations"]["base"]["edges_held"]) == (
+        [[0, 2], [5, 3]],
+        [[None, 0], [0, 2], [3, 3]],
     )
     deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
     ruled = configuration(bank, MODEL, None, pipeline=[], graph=SETTINGS, seed=STATED["seed"], splits=SEEING)
@@ -5199,3 +5196,254 @@ def test_a_kind_of_task_whose_options_a_rule_gives_names_the_rule_beside_the_opt
     written = describing.text(dict(record, kept=kept_as("truth", "bank")))
     assert RULED_TEXT in written and "no rule of options" not in written
     LOG.info("descriptions ruled exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("descriptions.stretched")
+def stretched(values, step, shift):
+    values = np.asarray(values, np.int64)
+    stated = (values > EARLIEST) & (values < LATEST)
+    return np.where(stated, values * 1000 + step * np.arange(len(values)) + shift, values)
+
+
+def brute(registry, facts, places):
+    started = time.perf_counter()
+    kinds = np.asarray(facts.kinds).tolist()
+    names = ("obs_entity", "obs_since", "obs_until")
+    seen = list(zip(*[np.asarray(facts.arrays[name]).tolist() for name in names]))
+    names = ("fact_code", "fact_source", "fact_target", "fact_since", "fact_until", "fact_present")
+    stated = [row for row in zip(*[np.asarray(facts.arrays[name]).tolist() for name in names]) if row[5]]
+    found = {}
+    for place in places:
+        moment = EARLIEST if place is None else place
+        held = [entity for entity, since, until in seen if since <= moment < until]
+        joined = {
+            (code, *(sorted((source, target)) if registry.by_code[code].symmetric else (source, target)))
+            for code, source, target, since, until, _ in stated
+            if since <= moment < until
+        }
+        for name in registry.nodes:
+            mine = [entity for entity in held if kinds[entity] == registry.kind(name)]
+            found.setdefault(name + " nodes", []).append(len(set(mine)))
+            found.setdefault(name + " observations", []).append(len(mine))
+        for name in ("near", "base"):
+            found.setdefault(name + " edges", []).append(sum(edge[0] == registry.code(name) for edge in joined))
+    LOG.debug("descriptions brute exit places=%d seconds=%.4f", len(places), time.perf_counter() - started)
+    return found
+
+
+def test_what_holds_over_time_is_recorded_as_runs_exact_at_every_time_and_no_larger_than_the_facts_that_change_it(bank):
+    started = time.perf_counter()
+    held = [[None, 0], [0, 2], [3, 3], [4, 2]]
+    assert held_at(held, [None, 0, 1, 2, 3, 4, 7]) == [0, 2, 2, 2, 3, 2, 2] and held_at(held, [3]) == [3]
+    assert held_at(held, [-5, 100]) == [0, 2] and held_at(NIL, [0, 6]) == [0, 0] and held_at(held, []) == []
+    with pytest.raises(ValueError, match="^a count is asked at -1, before 0, the first place from which its runs hold it$"):
+        held_at(NIL, [-1])
+    manifest = read_json(bank / "manifest.json")
+    registry = Registry.from_declaration(manifest["spec"])
+    facts = describing.stored(bank, manifest["graphs"][0])
+    fine = facts.replace(
+        obs_since=stretched(facts.obs_since, 7, 0),
+        obs_until=stretched(facts.obs_until, 13, 1),
+        fact_since=stretched(facts.fact_since, 11, 2),
+        fact_until=stretched(facts.fact_until, 17, 5),
+        task_time=np.asarray(facts.task_time, np.int64) * 1000 + 3,
+    )
+    record = describing.graphed(registry, fine, manifest["splits"])
+    places = [None] + record["times"]
+    told = {name + " edges": entry["edges_held"] for name, entry in record["relations"].items()}
+    for name, entry in record["kinds"].items():
+        told.update({name + " nodes": entry["nodes_held"], name + " observations": entry["observations_held"]})
+    assert len(places) > 2 * describing.SHOWN and sorted(places[1:]) == places[1:]
+    counted = brute(registry, fine, places)
+    assert {label: held_at(runs, places) for label, runs in told.items()} == counted
+    assert sorted(counted) == sorted(told) and all(len(set(found)) > 1 for found in counted.values())
+    assert all(runs[0][0] is None and runs[0][1] == 0 for runs in told.values())
+    assert all(first[1] != second[1] and second[0] in places for runs in told.values() for first, second in zip(runs, runs[1:]))
+    changes = 2 * (2 * len(facts.obs_since) + len(facts.fact_since))
+    assert sum(len(runs) - 1 for runs in told.values()) <= changes < len(told) * len(places)
+    between_two = [moment + 1 for moment in record["times"] if moment + 1 not in record["times"]]
+    assert {label: held_at(runs, between_two) for label, runs in told.items()} == brute(registry, fine, between_two)
+    assert json.loads(json.dumps(record)) == record
+    whole = dict(version=describing.VERSION, stored_sha256="stored", time=CLOCKED, splits=manifest["splits"], graphs=[record])
+    lines = describing.text(dict(whole, kept=dict(kept_as("truth", "bank"), file="fine.json"))).split("\n")
+    header = lines.index("  held before every time and at each time:") + 1
+    assert lines[header].split()[:2] == ["time", "before"] and len(lines[header].split()) == 1 + describing.SHOWN
+    assert lines[header].split()[-1] == str(places[-1]) and max(map(len, lines[5:])) < 300
+    assert [line.split()[:2] for line in lines[header + 1 : header + 7]] == [label.split() for label in (
+        "agent nodes", "agent observations", "spot nodes", "spot observations", "near edges", "base edges"
+    )]
+    assert lines[header + 7].startswith("    %d of %d columns shown, " % (describing.SHOWN, len(places)))
+    assert lines[header + 7].endswith(", in the file descriptions/truth/fine.json")
+    LOG.info("descriptions runs exit times=%d seconds=%.3f", len(record["times"]), time.perf_counter() - started)
+
+
+OMITTED = (
+    "    %d of %d %s shown, the first, the last and those between at which the counts change most; a count changes at %d "
+    "of the %d left out; the record holds every one, in the file descriptions/%s/long.json"
+)
+CLIMBING = [[None, 0], [11, 1], [12, 2], [13, 3], [14, 4], [15, 5], [16, 6], [17, 7], [18, 8], [19, 9], [21, 8], [22, 7], [23, 6]]
+ASKED = [2, 2, 2, 5, 2, 2, 2, 2, 2, 2, 7, 2, 2, 2, 3]
+LONG = dict(
+    name="long",
+    unit="tick",
+    times=list(range(10, 30)),
+    kinds=dict(
+        spot=dict(
+            nodes=9, observations=9, replaced=0, nodes_held=[[None, 0], [10, 4], [20, 9]], observations_held=[[None, 0], [10, 4], [20, 9]]
+        )
+    ),
+    relations=dict(
+        near=dict(HELD["near"], edges=9, facts=9, absent=0, replaced=0, edges_held=CLIMBING, runs=9, bounded=3, least=4, most=12, mean=8.0),
+        base=dict(HELD["near"], columns=[], edges=3, facts=3, absent=0, replaced=0, edges_held=[[None, 3], [24, 0]], runs=3, bounded=0, **NONE),
+    ),
+    tasks=dict(turn=dict(tasks=15, splits=dict(train=15, validation=0), unsplit=0)),
+    decisions=dict(
+        turn=dict(
+            decisions=15,
+            options=39,
+            recorded=39,
+            regenerated=0,
+            generators={},
+            rule=None,
+            each=[
+                dict(key=100 + at, time=10 + at, options=count, recorded=count, regenerated=0, generators={})
+                for at, count in enumerate(ASKED)
+            ],
+        )
+    ),
+    unread=dict(UNREAD, entities=dict(spot=WHOLE_KIND)),
+)
+LONG_TEXT = """
+graph long, unit tick, times 20 from 10 to 29
+  kind spot: nodes 9, observations 9, replaced 0
+  relation near of the table near: ends spot to spot; columns weight; edges 9, facts 9, absent 0, replaced 0; runs 9, bounded 3, lasting 4 to 12, mean 8.0
+  relation base of the table near: ends spot to spot; no columns; edges 3, facts 3, absent 0, replaced 0; runs 3, bounded 0
+  held before every time and at each time:
+    time               before  10  11  12  13  14  15  16  17  20  24  29
+    spot nodes         0       4   4   4   4   4   4   4   4   9   9   9
+    spot observations  0       4   4   4   4   4   4   4   4   9   9   9
+    near edges         0       0   1   2   3   4   5   6   7   9   6   6
+    base edges         3       3   3   3   3   3   3   3   3   3   0   0
+%s
+  shown to some tasks only: no fact known later than it holds from; no fact naming observers
+  not counted above: no member of a set edge; no graph a node holds; no entity without a fact
+  kind of task turn: tasks 15; train 15, validation 0, no split 0
+  decisions of turn: decisions 15, options 39, recorded 39, regenerated 0; no generator; no rule of options
+    task  time  options  recorded  regenerated
+    100   10    2        2         0
+    103   13    5        5         0
+    104   14    2        2         0
+    110   20    7        7         0
+    111   21    2        2         0
+    114   24    3        3         0
+%s"""
+
+
+@timed("descriptions.filed")
+def filed(part):
+    return dict(kept_as(part, "bank"), file="long.json")
+
+
+def test_a_table_over_more_than_the_bound_shows_the_first_the_last_and_those_between_at_which_its_counts_change_most(bank):
+    started = time.perf_counter()
+    assert describing.SHOWN == 12 and sum(ASKED) == 39
+    written = LONG_TEXT % (OMITTED % (12, 21, "columns", 5, 9, "truth"), OMITTED % (6, 15, "rows", 0, 9, "truth"))
+    assert describing.graph_text(LONG, describing.NAMED["clock"], filed("truth")) == written.split("\n")
+    within = dict(near=dict(LONG["relations"]["near"], edges_held=CLIMBING[:10]), base=dict(LONG["relations"]["base"], edges_held=[[None, 3]]))
+    short = describing.graph_text(dict(LONG, times=LONG["times"][:11], relations=within), describing.NAMED["clock"], filed("truth"))
+    assert short[6].split() == ["time", "before"] + [str(moment) for moment in range(10, 21)]
+    assert short[9].split() == ["near", "edges", "0"] + [str(count) for count in (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9)]
+    assert short[10].split() == ["base", "edges"] + ["3"] * 12 and short[11].startswith("  shown to some tasks only: ")
+    stated = "at most %d" % describing.SHOWN
+    legends = [describing.READING[model] for model in ("none", "order", "clock", "clocks")] + [effect.READING]
+    legends += [held[model] for held in (differing.READING, differing.TRUTH) for model in ("order", "clock", "clocks")]
+    assert [legend.count(stated) for legend in legends] == [1] * 11
+    assert "decisions, as rows" in describing.READING["none"] and "as columns" not in describing.READING["none"]
+    relations = {
+        "r%03d" % at: dict(LONG["relations"]["base"], edges_held=[[None, 0], [1000 + at, 1], [1005 + at, 0]]) for at in range(200)
+    }
+    spots = dict(LONG["kinds"]["spot"], nodes_held=[[None, 0], [1000, 4]], observations_held=[[None, 0], [1000, 4]])
+    long = dict(LONG, times=list(range(1000, 1300)), kinds=dict(spot=spots), relations=relations)
+    wide = describing.graph_text(long, describing.NAMED["clock"], filed("truth"))
+    assert len(wide) == 3 + 200 + 1 + 1 + 2 + 200 + 1 + 2 + 2 + 1 + 6 + 1 and max(map(len, wide)) < 300
+    assert wide[204].split() == ["time", "before", "1000"] + [str(moment) for moment in range(1005, 1014)] + ["1299"]
+    assert wide[407] == OMITTED % (12, 301, "columns", 195, 289, "truth")
+    LOG.info("descriptions bounded truth exit seconds=%.3f", time.perf_counter() - started)
+
+
+TURNS = list(range(100, 140))
+WAVING = [[step, step % 3] for step in range(40)]
+LONG_VARIANT = dict(
+    name="long",
+    view=VIEWED["g0"],
+    times=TURNS,
+    tasks=dict(turn=TURNS, visit=[]),
+    held=dict(kinds=dict(spot=dict(nodes=[[0, 1], [5, 2], [30, 1]], anchors=NIL)), relations=dict(near=dict(edges=WAVING))),
+    effects=[
+        dict(
+            entry="test.cut",
+            operation="test.cut",
+            kinds=dict(spot=tally(55, 0, 0.0, 0, 0.0, 55, nodes=[[0, 1], [5, 2], [30, 1]], anchors=NIL)),
+            relations=dict(near=tally(39, 39, 1.0, 0, 0.0, 0, edges=NIL)),
+            values=UNVALUED,
+            cuts=[dict(sort="relation", name="near", task="turn", times=TURNS[1:], everywhere=True, without=[])],
+        )
+    ],
+)
+LONG_STEPS = """  held at each time before the first entry:
+    time          100  103  105  106  109  112  115  118  121  124  130  139
+    spot nodes    1    1    2    2    2    2    2    2    2    2    1    1
+    spot anchors  0    0    0    0    0    0    0    0    0    0    0    0
+    near edges    0    0    2    0    0    0    0    0    0    0    0    0
+%s""" % (OMITTED % (12, 40, "columns", 28, 28, "variants"))
+LONG_CUT = (
+    "  entry test.cut, of the operation test.cut, removes every edge of the relation near at the times of the tasks of turn: "
+    "39 times from 101 to 139; and at every time"
+)
+WAVERING = [[None, 0]] + [[moment, 1 + moment % 2] for moment in range(50)]
+LONG_DIFFERENCE = """  kind spot: nodes only the first holds 75, only the second 0; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
+    time  first nodes  second nodes  first anchors  second anchors  other values
+    0     1            0             0              0               0
+    1     2            0             0              0               0
+    2     1            0             0              0               0
+    3     2            0             0              0               0
+    4     1            0             0              0               0
+    5     2            0             0              0               0
+    6     1            0             0              0               0
+    7     2            0             0              0               0
+    8     1            0             0              0               0
+    9     2            0             0              0               0
+    10    1            0             0              0               0
+    49    2            0             0              0               0
+%s
+  equal at every time: kinds 0, relations 2""" % (OMITTED % (12, 50, "rows", 38, 38, "differences"))
+
+
+def test_the_texts_of_a_variant_and_of_a_difference_are_bounded_as_that_of_a_truth_graph_is_whatever_their_steps(bank):
+    started = time.perf_counter()
+    lines = effect.graph_text(LONG_VARIANT, describing.NAMED["clock"], filed("variants"))
+    assert lines[1] == "graph long, %s, 40 steps from time 100 to 139" % (SEEN_BY % "g0")
+    assert lines[2] == "  tasks: turn at 40 times from 100 to 139; visit at no time"
+    assert lines[3:9] == LONG_STEPS.split("\n") and lines[-1] == LONG_CUT
+    after = lines.index("  held at each time after it:")
+    assert lines[after + 1].split() == ["time", "100", "105", "130", "139"] and lines[after + 3].split() == ["spot", "anchors"] + ["0"] * 4
+    assert lines[after + 5] == OMITTED % (4, 40, "columns", 0, 36, "variants") and max(map(len, lines)) < 300
+    still = effect.graph_text(dict(LONG_VARIANT, times=[None] * 40, tasks=dict(turn=[None] * 40, visit=[])), None, filed("variants"))
+    assert still[2] == "  tasks: turn at the step; visit at no step"
+    assert still[4].split() == ["step", "0", "3", "5", "6", "9", "12", "15", "18", "21", "24", "30", "39"]
+    found = dict(
+        times=[None] + list(range(50)),
+        kinds=dict(spot=unlike(NODAL, "both", (75, 0, 0, 0, 0), WAVERING, UNHELD, UNHELD, UNHELD, UNHELD)),
+        relations={},
+        equal=dict(kinds=0, relations=2),
+    )
+    heads = [describing.BEFORE] + list(range(50))
+    told = differing.found_text(found, describing.NAMED["clock"], found["times"], heads, filed("differences"))
+    assert told == LONG_DIFFERENCE.split("\n")
+    stepped = dict(found, kinds=dict(spot=unlike(NODAL, "both", (75, 0, 0, 0, 0), WAVERING[1:], NIL, NIL, NIL, NIL)))
+    shown = dict(stepped, name="long", view=VIEWED["g0"], times=TURNS + list(range(140, 150)), alone=dict(first=TURNS, second=[]))
+    lines = differing.graph_text(shown, describing.NAMED["clock"], filed("differences"))
+    assert lines[1].endswith("; times only the first shows: 40 times from 100 to 139; times only the second shows: none")
+    assert [line.split()[0] for line in lines[4:16]] == [str(moment) for moment in (*range(100, 111), 149)]
+    assert lines[16] == LONG_DIFFERENCE.split("\n")[14]
+    LOG.info("descriptions bounded variant and difference exit seconds=%.3f", time.perf_counter() - started)

@@ -40,8 +40,8 @@ SIZES, SWEEPERS = {}, {}
 PUBLISH = threading.Lock()
 
 
-@timed("files.write_json")
-def write_json(path, value):
+@timed("files.published")
+def published(path, text):
     with PUBLISH:
         path = output_path(path)
         stream = tempfile.NamedTemporaryFile(
@@ -50,10 +50,20 @@ def write_json(path, value):
         temporary = Path(stream.name)
         try:
             with stream:
-                stream.write(json.dumps(value, indent=2, allow_nan=False))
+                stream.write(text)
             replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
+
+
+@timed("files.write_json")
+def write_json(path, value):
+    published(path, json.dumps(value, indent=2, allow_nan=False))
+
+
+@timed("files.write_record")
+def write_record(path, value):
+    published(path, json.dumps(value, separators=(",", ":"), allow_nan=False))
 
 
 @timed("files.parsed")

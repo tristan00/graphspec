@@ -119,7 +119,7 @@ def paired(first, second):
         name=name,
         times=placed,
         alone=dict(first=np.setdiff1d(*shown).tolist(), second=np.setdiff1d(*shown[::-1]).tolist()),
-        **differing.differed(*sides, placed),
+        **differing.differed(*sides, range(len(times))),
     )
     LOG.debug("differences paired exit graph=%s times=%d seconds=%.4f", name, len(times), time.perf_counter() - started)
     return result
@@ -195,6 +195,6 @@ def text(record):
     ]
     lines.append("columns of values only one side holds: %s" % ("; ".join(held) or "none"))
     for graph in record["graphs"]:
-        lines += differing.graph_text(graph, named)
+        lines += differing.graph_text(graph, named, record["kept"])
     LOG.debug("differences text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"

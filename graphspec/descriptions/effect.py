@@ -9,10 +9,17 @@ from graphspec.operations.operation import Stored
 from graphspec.operations.pipeline import called
 from graphspec.operations.sets import PARAMETER
 
-from .describe import NAMED, kept_text, table, viewed_text
+from .describe import CHOSEN, NAMED, SHOWN, counts, kept_text, lasted, over, several, table, viewed_text
 from .differences import compared, counted, distinct, numbered, tokens, unmatched
 
 LOG = logging.getLogger(__name__)
+BOUNDED = (
+    "; a table shows at most %d steps, as columns: " % SHOWN
+    + CHOSEN
+    + "; a list of more than %d steps of tasks is given as their number, the first and the last; in the record a count "
+    "over the steps is a list of runs, each the number of a step, the steps numbered from 0 in their order, and the count "
+    "held from it until the step of the next" % SHOWN
+)
 READING = (
     "held at a step: a node observed at the step other than as an anchor; an anchor, a node observed there only "
     "because a reference of a task of the step names it; an edge, two ends a present fact of its relation joins at "
@@ -29,7 +36,7 @@ READING = (
     "before it and none after; changes the values of, the nodes held before and after the entry whose values, as the "
     "encoders give them, are not the same, summed over the steps; not compared between the states before and after an "
     "entry: the values of the edges it leaves, the graphs nodes hold, periods, tasks and their targets, options, and "
-    "the negatives drawn for a link"
+    "the negatives drawn for a link" + BOUNDED
 )
 ALONE = dict(absent="without the entry", least="with one parameter re-stated of the entry")
 
@@ -111,11 +118,19 @@ def held(state, steps, kinds, names, places):
         counted(placed(ends, places), steps, len(names)),
     )
     result = dict(
-        kinds={kind: dict(nodes=found[:, at].tolist(), anchors=anchors[:, at].tolist()) for at, kind in enumerate(kinds)},
-        relations={name: dict(edges=edged[:, at].tolist()) for at, name in enumerate(names)},
+        kinds={kind: dict(nodes=found[:, at], anchors=anchors[:, at]) for at, kind in enumerate(kinds)},
+        relations={name: dict(edges=edged[:, at]) for at, name in enumerate(names)},
     )
     LOG.debug("effect held exit steps=%d seconds=%.4f", steps, time.perf_counter() - started)
     return result
+
+
+@timed("effect.stated")
+def stated(state):
+    return {
+        part: {name: {label: lasted(values, range(len(values))) for label, values in entry.items()} for name, entry in held.items()}
+        for part, held in state.items()
+    }
 
 
 def changed(before, after, apart, size):
@@ -136,15 +151,15 @@ def changed(before, after, apart, size):
 
 def tallied(before, after, removed, added, part):
     started = time.perf_counter()
-    first = sum(before[part])
+    first = int(before[part].sum())
     result = dict(
         before=first,
         removed=removed,
         removed_share=share(removed, first),
         added=added,
         added_share=share(added, first),
-        after=sum(after[part]),
-        **after,
+        after=int(after[part].sum()),
+        **{label: lasted(values, range(len(values))) for label, values in after.items()},
     )
     LOG.debug("effect tallied exit part=%s seconds=%.4f", part, time.perf_counter() - started)
     return result
@@ -175,7 +190,7 @@ def left(graph, sort, name, task):
     started = time.perf_counter()
     held = graph["held"]["kinds" if sort == "kind" else "relations"]
     steps = [place for place, moment in enumerate(graph["times"]) if moment in graph["tasks"][task]]
-    result = name in held and any(held[name]["nodes" if sort == "kind" else "edges"][place] for place in steps)
+    result = name in held and any(counts(held[name]["nodes" if sort == "kind" else "edges"], steps))
     LOG.debug("effect left exit %s=%s left=%s seconds=%.4f", sort, name, result, time.perf_counter() - started)
     return result
 
@@ -306,7 +321,7 @@ def graphed(name, graphs, found, steps, registry, low, high, kinds):
         name=name,
         times=times,
         tasks={task: [times[at] for at in held_steps] for task, held_steps in tasks.items()},
-        held=states[0],
+        held=stated(states[0]),
         effects=[
             effected(
                 step,
@@ -390,19 +405,16 @@ def entry_text(entry):
     )
 
 
-def stepped(times, state, named):
+def stepped(times, state, named, kept):
     started = time.perf_counter()
-    columns = [
+    series = [
         pair
         for kind, entry in state["kinds"].items()
         for pair in ((kind + " nodes", entry["nodes"]), (kind + " anchors", entry["anchors"]))
     ] + [(name + " edges", entry["edges"]) for name, entry in state["relations"].items()]
-    counts = [[values[at] for _, values in columns] for at in range(len(times))]
-    if named is None:
-        result = table([header for header, _ in columns], counts)
-    else:
-        result = table([named["one"]] + [header for header, _ in columns], [[moment] + row for moment, row in zip(times, counts)])
-    LOG.debug("effect stepped exit rows=%d seconds=%.4f", len(times), time.perf_counter() - started)
+    steps = list(range(len(times)))
+    result = over(stepping(named), series, steps, steps if named is None else times, kept)
+    LOG.debug("effect stepped exit steps=%d lines=%d seconds=%.4f", len(times), len(result), time.perf_counter() - started)
     return result
 
 
@@ -425,7 +437,7 @@ def cut_text(effect, found, named):
         "node of the kind" if found["sort"] == "kind" else "edge of the relation",
         found["name"],
         one if named is None else named["many"],
-        found["task"] if named is None else "%s: %s" % (found["task"], ", ".join(map(str, found["times"]))),
+        found["task"] if named is None else "%s: %s" % (found["task"], several(found["times"], named)),
         ("and at every %s" if found["everywhere"] else "not at every %s") % one,
         "; alone, %s" % lifted(found["without"]) if found["without"] else "",
     )
@@ -449,7 +461,7 @@ def values_text(found):
     return result
 
 
-def effect_text(effect, times, named):
+def effect_text(effect, times, named, kept):
     started = time.perf_counter()
     rows = [(kind + " nodes", entry) for kind, entry in effect["kinds"].items()]
     rows += [(name + " edges", entry) for name, entry in effect["relations"].items()]
@@ -471,7 +483,7 @@ def effect_text(effect, times, named):
     )
     lines.append(values_text(effect["values"]))
     lines.append("  held at each %s after it:" % stepping(named))
-    lines += stepped(times, effect, named)
+    lines += stepped(times, effect, named, kept)
     lines += [cut_text(effect, found, named) for found in effect["cuts"]]
     LOG.debug(
         "effect entry text exit entry=%s lines=%d seconds=%.4f", effect["entry"], len(lines), time.perf_counter() - started
@@ -483,10 +495,10 @@ def effect_text(effect, times, named):
 def tasked_text(task, moments, named):
     if named is None:
         return "%s at %s" % (task, "the step" if moments else "no step")
-    return "%s at %s" % (task, ", ".join(map(str, moments)) or "no " + named["one"])
+    return "%s at %s" % (task, several(moments, named) or "no " + named["one"])
 
 
-def graph_text(graph, named):
+def graph_text(graph, named, kept):
     started = time.perf_counter()
     times = graph["times"]
     spanned = ", no time" if named is None else " from %s %d to %d" % (named["one"], times[0], times[-1])
@@ -496,9 +508,9 @@ def graph_text(graph, named):
         "  tasks: %s" % "; ".join(tasked_text(task, moments, named) for task, moments in graph["tasks"].items()),
         "  held at each %s before the first entry:" % stepping(named),
     ]
-    lines += stepped(times, graph["held"], named)
+    lines += stepped(times, graph["held"], named, kept)
     for effect in graph["effects"]:
-        lines += effect_text(effect, times, named)
+        lines += effect_text(effect, times, named, kept)
     LOG.debug("effect graph text exit graph=%s lines=%d seconds=%.4f", graph["name"], len(lines), time.perf_counter() - started)
     return lines
 
@@ -541,6 +553,6 @@ def text(record):
     ]
     lines += [entry_text(entry) for entry in record["entries"]]
     for graph in record["graphs"]:
-        lines += graph_text(graph, NAMED[record["time"]["model"]])
+        lines += graph_text(graph, NAMED[record["time"]["model"]], record["kept"])
     LOG.debug("effect text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"

@@ -9,7 +9,7 @@ import numpy as np
 from graphspec import registries
 from graphspec.engine import transform
 from graphspec.facts.stored import GROUPS, Facts, admitted
-from graphspec.infra.files import parsed, read_json, sha256_json, write_json
+from graphspec.infra.files import parsed, read_json, sha256_json, write_json, write_record
 from graphspec.infra.runtime import cache_path, output_path, refusal
 from graphspec.infra.timing import timed
 from graphspec.operations.operation import OPERATIONS
@@ -24,7 +24,7 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 26
+VERSION = 27
 DIFFERENCE = "graphspec.difference"
 CODED = 16
 UNWRITTEN = "no file is written for the key"
@@ -69,11 +69,27 @@ LATER = (
     "shown, and a task that looks from before a fact is known is not shown it, so the facts known later than they "
     "hold from are counted, with the most by which one is and the last time from which one is known"
 )
+SHOWN = 12
+CHOSEN = (
+    "of more it shows the first, the last and those between at which its counts change most from the one before, by "
+    "the sum of the changes over all it counts, the earlier of two that change alike, and a line under it says how "
+    "many it shows, at how many of those left out a count changes, and the file of the record, which holds every one"
+)
+SEVERAL = "; a list of more than %d %%(many)s is given as their number, the first and the last" % SHOWN
+RUNS = (
+    "; in the record a count over the %(many)s is a list of runs, each a %(one)s and the count held from it until the "
+    "%(one)s of the next, the first from before every %(one)s"
+)
+ROWED = "; a table shows at most %d decisions, as rows: " % SHOWN + CHOSEN
+COLUMNED = "; a table shows at most %d %%(many)s, as columns, or decisions, as rows: " % SHOWN + CHOSEN + RUNS
 READING = dict(
     none=CORRECTED + "; no fact states a time, so every fact holds always: held always, " + HELD + "; a run: an edge "
-    "that holds, without start or end" + APART,
-    order=PLACED % NAMED["order"] + "; nothing is counted between two positions, so no run has a length" + APART,
-    clock=PLACED % NAMED["clock"] + ", lasting in the unit of its graph" + APART + LATER,
+    "that holds, without start or end" + APART + ROWED,
+    order=PLACED % NAMED["order"]
+    + "; nothing is counted between two positions, so no run has a length"
+    + APART
+    + COLUMNED % NAMED["order"],
+    clock=PLACED % NAMED["clock"] + ", lasting in the unit of its graph" + APART + LATER + COLUMNED % NAMED["clock"],
 )
 READING["clocks"] = READING["clock"]
 WORDED = {
@@ -126,11 +142,46 @@ def moments(*stamps):
     return np.unique(held[(held > ALWAYS) & (held < NEVER)])
 
 
-@timed("describe.counted")
-def counted(since, until, times):
-    return (
-        np.searchsorted(np.sort(since), times, "right") - np.searchsorted(np.sort(until), times, "right")
-    ).tolist()
+def counted(groups, begun, ended, size, places):
+    started = time.perf_counter()
+    width = len(places) + 1
+    keys = np.r_[groups * width + begun, groups * width + ended].astype(np.int64)
+    order = np.argsort(keys, kind="stable")
+    keys = keys[order]
+    first = np.flatnonzero(np.r_[True, keys[1:] != keys[:-1]][: len(keys)])
+    steps = np.r_[np.ones(len(groups), np.int64), -np.ones(len(groups), np.int64)][order]
+    change = np.add.reduceat(steps, first) if len(first) else steps
+    kept = (change != 0) & (keys[first] % width < len(places))
+    result = [[[places[0], 0]] for _ in range(size)]
+    marks = zip((keys[first][kept] // width).tolist(), (keys[first][kept] % width).tolist(), np.cumsum(change)[kept].tolist())
+    for group, place, count in marks:
+        if place:
+            result[group].append([places[place], count])
+        else:
+            result[group][0][1] = count
+    LOG.debug("describe counted exit spans=%d groups=%d seconds=%.4f", len(groups), size, time.perf_counter() - started)
+    return result
+
+
+@timed("describe.lasted")
+def lasted(values, places):
+    starts = np.r_[0, np.flatnonzero(np.diff(values)) + 1][: len(values)]
+    return [[places[at], count] for at, count in zip(starts.tolist(), values[starts].tolist())]
+
+
+def counts(runs, places):
+    started = time.perf_counter()
+    since = np.asarray([ALWAYS if place is None else place for place, _ in runs], np.int64)
+    asked = np.asarray([ALWAYS if place is None else place for place in places], np.int64)
+    found = np.searchsorted(since, asked, "right") - 1
+    if (found < 0).any():
+        raise ValueError(
+            "a count is asked at %s, before %s, the first place from which its runs hold it"
+            % (places[int(np.flatnonzero(found < 0)[0])], runs[0][0] if runs else "any place, for it holds no run")
+        )
+    result = np.asarray([count for _, count in runs], np.int64)[found].tolist()
+    LOG.debug("describe counts exit runs=%d places=%d seconds=%.4f", len(runs), len(places), time.perf_counter() - started)
+    return result
 
 
 def runs(groups, since, until):
@@ -144,7 +195,7 @@ def runs(groups, since, until):
     stop = np.maximum.accumulate(np.searchsorted(bounds, until) + lifted)
     first = np.r_[True, start[1:] > stop[:-1]][: len(groups)]
     last = np.r_[np.flatnonzero(first)[1:] - 1, len(groups) - 1][: int(first.sum())]
-    result = since[first], bounds[stop[last] - lifted[last]]
+    result = order[first], since[first], bounds[stop[last] - lifted[last]]
     LOG.debug("describe runs exit facts=%d runs=%d seconds=%.4f", len(groups), len(last), time.perf_counter() - started)
     return result
 
@@ -192,27 +243,25 @@ def shown(facts, group, moments):
     return result
 
 
-def kinds(registry, facts, places, seen):
+def kinds(registry, facts, seen, labels):
     started = time.perf_counter()
     entity = np.asarray(facts.obs_entity, np.int64)
     begun, ended = seen["obs"]
-    last, steps = ended > begun, np.arange(len(places))
+    last = ended > begun
     owner, result = np.asarray(facts.kinds, np.int64), {}
     stated = np.zeros(len(owner), bool)
     stated[entity[last]] = True
+    whom, first, stop = runs(entity[last], begun[last], ended[last])
+    found = counted(owner[entity[last][whom]], first, stop, len(registry.nodes), labels)
+    said = counted(owner[entity[last]], begun[last], ended[last], len(registry.nodes), labels)
     for kind in registry.nodes:
         rows = owner[entity] == registry.kind(kind)
-        held = rows & last
-        found = counted(*runs(entity[held], begun[held], ended[held]), steps)
-        said = counted(begun[held], ended[held], steps)
         result[kind] = dict(
             nodes=int((stated & (owner == registry.kind(kind))).sum()),
-            observations=int(held.sum()),
+            observations=int((rows & last).sum()),
             replaced=int((rows & ~last).sum()),
-            nodes_before=found[0],
-            observations_before=said[0],
-            nodes_at=found[1:],
-            observations_at=said[1:],
+            nodes_held=found[registry.kind(kind)],
+            observations_held=said[registry.kind(kind)],
         )
     LOG.debug("describe kinds exit graph=%s kinds=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started)
     return result
@@ -277,43 +326,44 @@ def ruled(registry, facts, places, seen):
     return piece, first, stop
 
 
-def relations(registry, facts, places, seen):
+def relations(registry, facts, places, seen, labels):
     started = time.perf_counter()
     owner = np.asarray(facts.kinds, np.int64)
     code, present = np.asarray(facts.fact_code, np.int64), np.asarray(facts.fact_present, bool)
     source, target = np.asarray(facts.fact_source, np.int64), np.asarray(facts.fact_target, np.int64)
     begun, ended = seen["fact"]
-    last, steps, bounds = ended > begun, np.arange(len(places)), np.r_[places, np.int64(NEVER)]
+    last, bounds = ended > begun, np.r_[places, np.int64(NEVER)]
     (edge,) = fact_keys(registry, (np.zeros(len(code), np.int64), code, source, target))
     piece, opened, closed = ruled(registry, facts, places, seen)
+    names = [(table, name) for table in registry.schema.edges for name in registry.encoding.relations[table]]
+    placed_at = np.full(registry.relations, -1, np.int64)
+    placed_at[[registry.code(name) for _, name in names]] = np.arange(len(names))
+    whom, first, stop = runs(edge[piece], opened, closed)
+    which = placed_at[code[piece[whom]]]
+    found = counted(which, first, stop, len(names), labels)
     measured, result = registry.schema.model in UNITED, {}
-    for table, entry in registry.schema.edges.items():
-        for name in registry.encoding.relations[table]:
-            number = registry.code(name)
-            rows = code == number
-            said = rows & last
-            held = said & present
-            own = code[piece] == number
-            pairs = edge[piece[own]]
-            first, stop = runs(pairs, opened[own], closed[own])
-            found = counted(first, stop, steps)
-            rule = registry.about[number] if number in registry.about else None
-            stated = found if rule is None else counted(*runs(edge[held], begun[held], ended[held]), steps)
-            ends = sorted(set(zip(owner[source[said]].tolist(), owner[target[said]].tolist())))
-            result[name] = dict(
-                table=table,
-                ends=[[registry.nodes[one], registry.nodes[other]] for one, other in ends],
-                columns=list(entry["columns"]),
-                about=rule,
-                lapsed=sum(stated) - sum(found),
-                edges=len(np.unique(pairs)),
-                facts=int(held.sum()),
-                absent=int((said & ~present).sum()),
-                replaced=int((rows & ~last).sum()),
-                edges_before=found[0],
-                edges_at=found[1:],
-                **lasting(bounds[first], bounds[stop], measured),
-            )
+    for at, (table, name) in enumerate(names):
+        number = registry.code(name)
+        rows = code == number
+        said = rows & last
+        held = said & present
+        own = which == at
+        rule = registry.about[number] if number in registry.about else None
+        stated = (first[own], stop[own]) if rule is None else runs(edge[held], begun[held], ended[held])[1:]
+        ends = sorted(set(zip(owner[source[said]].tolist(), owner[target[said]].tolist())))
+        result[name] = dict(
+            table=table,
+            ends=[[registry.nodes[one], registry.nodes[other]] for one, other in ends],
+            columns=list(registry.schema.edges[table]["columns"]),
+            about=rule,
+            lapsed=int((stated[1] - stated[0]).sum() - (stop[own] - first[own]).sum()),
+            edges=len(np.unique(edge[piece[code[piece] == number]])),
+            facts=int(held.sum()),
+            absent=int((said & ~present).sum()),
+            replaced=int((rows & ~last).sum()),
+            edges_held=found[at],
+            **lasting(bounds[first[own]], bounds[stop[own]], measured),
+        )
     LOG.debug(
         "describe relations exit graph=%s relations=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started
     )
@@ -468,14 +518,14 @@ def stored(path, graph):
 def graphed(registry, facts, splits):
     started = time.perf_counter()
     times = clocked(registry, facts)
-    places = placed(times)
+    places, labels = placed(times), [None] + times.tolist()
     seen = {group: shown(facts, group, places) for group in GROUPS}
     result = dict(
         name=facts.name,
         unit=facts.unit,
-        times=times.tolist(),
-        kinds=kinds(registry, facts, places, seen),
-        relations=relations(registry, facts, places, seen),
+        times=labels[1:],
+        kinds=kinds(registry, facts, seen, labels),
+        relations=relations(registry, facts, places, seen, labels),
         tasks=tasks(registry, facts, splits),
         decisions=decisions(registry, facts),
         unread=unread(registry, facts, seen),
@@ -505,9 +555,65 @@ def recorded(path, manifest):
 
 @timed("describe.table")
 def table(header, rows):
-    cells = [list(header)] + [[str(cell) for cell in row] for row in rows]
+    cells = [[str(cell) for cell in row] for row in [header, *rows]]
     widths = [max(len(row[at]) for row in cells) for at in range(len(header))]
     return ["    " + "  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip() for row in cells]
+
+
+def most(change, eligible):
+    started = time.perf_counter()
+    chosen = eligible
+    if len(eligible) > SHOWN:
+        inner = eligible[1:-1]
+        changing = inner[np.argsort(-change[inner], kind="stable")[: SHOWN - 2]]
+        chosen = np.sort(np.r_[eligible[0], changing[change[changing] > 0], eligible[-1]])
+    left = int((change[eligible] > 0).sum() - (change[chosen] > 0).sum())
+    result = chosen.tolist(), len(eligible), left
+    LOG.debug("describe most exit shown=%d of=%d seconds=%.4f", len(chosen), len(eligible), time.perf_counter() - started)
+    return result
+
+
+def picked(series, places, differing):
+    started = time.perf_counter()
+    index = {place: at for at, place in enumerate(places)}
+    change, lit = np.zeros(len(places), np.int64), np.zeros(len(places) + 1, np.int64)
+    for held in series:
+        starts = np.asarray([index[place] for place, _ in held], np.int64)
+        found = np.asarray([count for _, count in held], np.int64)
+        np.add.at(change, starts[1:], np.abs(np.diff(found)))
+        np.add.at(lit, starts[found != 0], 1)
+        np.add.at(lit, np.r_[starts[1:], len(places)][: len(starts)][found != 0], -1)
+    result = most(change, np.flatnonzero(np.cumsum(lit[:-1]) > 0) if differing else np.arange(len(places)))
+    LOG.debug("describe picked exit series=%d places=%d seconds=%.4f", len(series), len(places), time.perf_counter() - started)
+    return result
+
+
+@timed("describe.omitted")
+def omitted(shown, total, changing, laid, kept):
+    if shown == total:
+        return []
+    return [
+        "    %d of %d %s shown, the first, the last and those between at which the counts change most; a count changes "
+        "at %d of the %d left out; the record holds every one, in the file %s/%s"
+        % (shown, total, laid, changing, total - shown, kept["folder"], kept["file"])
+    ]
+
+
+def over(head, series, places, heads, kept):
+    started = time.perf_counter()
+    chosen, total, changing = picked([held for _, held in series], places, False)
+    asked = [places[at] for at in chosen]
+    result = table([head] + [heads[at] for at in chosen], [[label] + counts(held, asked) for label, held in series])
+    result += omitted(len(chosen), total, changing, "columns", kept)
+    LOG.debug("describe over exit series=%d shown=%d of=%d seconds=%.4f", len(series), len(chosen), total, time.perf_counter() - started)
+    return result
+
+
+@timed("describe.several")
+def several(moments, named):
+    if len(moments) <= SHOWN:
+        return ", ".join(map(str, moments))
+    return "%d %s from %s to %s" % (len(moments), named["many"], moments[0], moments[-1])
 
 
 @timed("describe.related")
@@ -619,7 +725,7 @@ def spanned(named, times):
     return "%s %d from %d to %d" % (named["many"], len(times), times[0], times[-1]) if times else "no " + named["one"]
 
 
-def decided(name, entry, named):
+def decided(name, entry, named, kept):
     started = time.perf_counter()
     lines = [
         "  decisions of %s: decisions %d, options %d, recorded %d, regenerated %d; %s; %s"
@@ -634,20 +740,25 @@ def decided(name, entry, named):
         )
     ]
     if entry["each"]:
+        rows = [
+            [held[part] for part in ("options", "recorded", "regenerated")] + list(held["generators"].values())
+            for held in entry["each"]
+        ]
+        change = np.r_[0, np.abs(np.diff(np.asarray(rows, np.int64), axis=0)).sum(1)]
+        chosen, total, changing = most(change, np.arange(len(rows)))
         lines += table(
             ["task", "time" if named is None else named["one"], "options", "recorded", "regenerated"] + list(entry["generators"]),
             [
-                [held["key"], "none" if held["time"] is None else held["time"]]
-                + [held[part] for part in ("options", "recorded", "regenerated")]
-                + list(held["generators"].values())
-                for held in entry["each"]
+                [entry["each"][at]["key"], "none" if entry["each"][at]["time"] is None else entry["each"][at]["time"]] + rows[at]
+                for at in chosen
             ],
         )
+        lines += omitted(len(chosen), total, changing, "rows", kept)
     LOG.debug("describe decided exit kind=%s lines=%d seconds=%.4f", name, len(lines), time.perf_counter() - started)
     return lines
 
 
-def graph_text(graph, named):
+def graph_text(graph, named, kept):
     started = time.perf_counter()
     times = graph["times"]
     lines = [
@@ -662,21 +773,17 @@ def graph_text(graph, named):
         for name, entry in graph["kinds"].items()
     ]
     lines += [related(name, entry) for name, entry in graph["relations"].items()]
-    columns = [
-        (name + " " + worded[name][part], entry[part + "_before"], entry[part + "_at"])
+    series = [
+        (name + " " + worded[name][part], entry[part + "_held"])
         for name, entry in graph["kinds"].items()
         for part in ("nodes", "observations")
-    ] + [(name + " edges", entry["edges_before"], entry["edges_at"]) for name, entry in graph["relations"].items()]
-    headers, first = [header for header, _, _ in columns], [before for _, before, _ in columns]
+    ] + [(name + " edges", entry["edges_held"]) for name, entry in graph["relations"].items()]
     if named is None:
         lines.append("  held always:")
-        lines += table(headers, [first])
+        lines += over("held", series, [None], ["always"], kept)
     else:
         lines.append("  held before every %(one)s and at each %(one)s:" % named)
-        lines += table(
-            [named["one"]] + headers,
-            [[BEFORE] + first] + [[moment] + [values[at] for _, _, values in columns] for at, moment in enumerate(times)],
-        )
+        lines += over(named["one"], series, [None] + times, [BEFORE] + times, kept)
     lines += [partial_text(graph["unread"], named), uncounted_text(graph["unread"])]
     lines += [
         "  kind of task %s: tasks %d; %s"
@@ -688,7 +795,7 @@ def graph_text(graph, named):
         for name, entry in graph["tasks"].items()
     ]
     for name, entry in graph["decisions"].items():
-        lines += decided(name, entry, named)
+        lines += decided(name, entry, named, kept)
     LOG.debug("describe graph text exit graph=%s lines=%d seconds=%.4f", graph["name"], len(lines), time.perf_counter() - started)
     return lines
 
@@ -716,7 +823,7 @@ def text(record):
         READING[held["model"]],
     ]
     for graph in record["graphs"]:
-        lines += graph_text(graph, NAMED[held["model"]])
+        lines += graph_text(graph, NAMED[held["model"]], record["kept"])
     LOG.debug("describe text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return "\n".join(lines) + "\n"
 
@@ -808,13 +915,13 @@ def kept(where, key, made, written):
     place, text = held.with_suffix(".json"), held.with_suffix(".txt")
     record, unserved = served(place, key)
     if unserved is not None:
-        record = dict(made(), kept=dict(beside=where["beside"], away=where["away"], folder=where["shown"]))
+        record = dict(made(), kept=dict(beside=where["beside"], away=where["away"], folder=where["shown"], file=place.name))
         output_path(folder).mkdir(parents=True, exist_ok=True)
         if not (folder / (coding(key) + ".json")).is_file():
             write_json(folder / (coding(key) + ".json"), key["code"])
             swept(folder, coding(key))
         text.write_text(written(record), encoding="utf-8")
-        write_json(place, dict(key=key, record=record))
+        write_record(place, dict(key=key, record=record))
         if unserved is not UNWRITTEN:
             LOG.warning("describe replaced file=%s because %s", place, unserved)
     elif not text.is_file():
