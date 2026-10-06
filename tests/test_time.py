@@ -373,7 +373,15 @@ def spaced():
     values, edges = steady("spaced", False)
     values.append(statement("event", {}, dict(key=["s3", "s3"], load=[7.0, 8.0], at=[5, 6]), kind="site"))
     graphs = [graph("spaced", "tick", values, edges, MOMENTS, None)]
-    return dict(schema=stated("clock", ["tick"], "key", False), graphs=graphs)
+    values, edges = steady("revised", False)
+    values[1]["rows"]["replaced"] = [6, None, None]
+    rows = dict(key=["s0", "s0"], load=[7.0, 5.5], since=[0, 0], until=[None, None], known=[6, 8], replaced=[8, None])
+    values.append(statement("state", {}, rows, kind="site"))
+    edges[0]["rows"]["replaced"] = [6, None]
+    rows = dict(source=["m0"], target=["s0"], present=[True], weight=[9.0], since=[0], until=[None], known=[6])
+    edges.append(statement("state", {}, rows, table="serves", ends=("maker", "site")))
+    graphs.append(graph("revised", "tick", values, edges, MOMENTS, None))
+    return dict(schema=stated("clocks", ["tick"], None, False), graphs=graphs)
 
 
 CASES = dict(forms=shaped, seen=seen, timeless=timeless, ordered=ordered, spaced=spaced)
@@ -766,6 +774,68 @@ def test_facts_about_one_entity_at_one_time_stop_naming_it_where_no_rule_orders_
         "the rule sequence for ties leaves them unordered",
     ):
         build(synthetic.stage(root, "tied", case), root / "tied", 1, ("train",))
+
+
+@clocked("time.told")
+def told(row):
+    return "the fact %d" % row
+
+
+@clocked("time.tied")
+def tied(ties, known, replaced):
+    count = len(known)
+    facts = {name: np.zeros(count, np.int64) for name in ("seq", "code", "source", "target")}
+    stamps = dict(since=np.zeros(count, np.int64), known=np.asarray(known), replaced=np.asarray(replaced))
+    clock.untied("g", told, ties, np.zeros(count, np.int64), stamps, facts)
+
+
+def test_two_facts_of_one_time_need_no_rule_for_ties_where_one_was_replaced_before_the_other_was_known():
+    started, never = time.perf_counter(), clock.NEVER
+    for ties, words in ((None, "the schema states no rule for ties"), ("key", "the rule key for ties leaves them unordered")):
+        tied(ties, [0, 6], [6, never])
+        tied(ties, [8, 0, 6], [never, 6, 8])
+        tied(ties, [0, 7], [6, never])
+        for known, replaced in (([0, 0], [never, never]), ([0, 5], [6, never]), ([0, 6, 6], [6, never, never])):
+            with pytest.raises(ValueError, match="two facts about the fact [12] of graph g hold from the time 0 and " + words):
+                tied(ties, known, replaced)
+    LOG.info("ties of corrections exit seconds=%.4f", time.perf_counter() - started)
+
+
+@clocked("time.weighed")
+def weighed(held, graph, step, pair):
+    dense = graph.dense()
+    rows = (dense.fact_step == step) & dense.fact_present & (dense.fact_code == held.registry.code("serves"))
+    rows &= (dense.fact_source == graph.keys.index(pair[0])) & (dense.fact_target == graph.keys.index(pair[1]))
+    return np.asarray(dense.value_table)[dense.fact_ref[rows]][:, 0].tolist()
+
+
+def test_a_fact_and_its_correction_build_without_a_rule_for_ties_and_the_view_shows_each_while_it_is_known(banks):
+    from graphspec.facts.check import check
+
+    started = time.perf_counter()
+    held, cfg = opened(banks, "spaced")
+    schema, truth = held.registry.schema, truths(held)["revised"]
+    assert schema.model == "clocks" and schema.ties is None and "seq" not in schema.stamps()
+    assert sorted(truth.obs_replaced_time.tolist()) == [6, 8] and truth.fact_replaced_time.tolist() == [6]
+    for steps in ("tasks", "changes"):
+        held, cfg = opened(banks, "spaced", **{"time/steps": steps})
+        (sequence,) = sequences(truth, held.registry, steps, held.looking(cfg)[0])
+        graph, moments = looked(held, cfg, "revised"), sequence["moments"].tolist()
+        assert moments == list(MOMENTS)
+        for step, moment in enumerate(moments):
+            assert observed(held, graph, step, "s0") == [4.0 if moment < 6 else 7.0 if moment < 8 else 5.5]
+            assert weighed(held, graph, step, ("m0", "s0")) == [1.0 if moment < 6 else 9.0], (steps, moment)
+    check(truth, held.registry, held.splits, held.manifest["observers"])
+    none = np.zeros(0, np.int64)
+    for group, named in (("obs", "the node s0 of the kind site"), ("fact", "the edge of serves from m0 to s0")):
+        unreplaced = truth.replace(**{group + "_replaced_row": none, group + "_replaced_time": none})
+        with pytest.raises(
+            ValueError,
+            match="two facts about %s of graph revised hold from the time 0 and the schema states no rule for ties"
+            % named,
+        ):
+            check(unreplaced, held.registry, held.splits, held.manifest["observers"])
+    LOG.info("corrections without ties exit seconds=%.4f", time.perf_counter() - started)
 
 
 @clocked("time.looked")

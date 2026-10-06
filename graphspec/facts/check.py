@@ -194,5 +194,5 @@ def check(graph, registry, splits, observers):
                     graph.keys[int(graph.fact_target[row])],
                 )
 
-        clock.untied(name, named, schema.ties, owner, stamps["since"], facts)
+        clock.untied(name, named, schema.ties, owner, stamps, facts)
     LOG.debug("check exit graph=%s seconds=%.4f", name, time.perf_counter() - started)

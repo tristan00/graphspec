@@ -95,13 +95,14 @@ def keys(name, facts):
     return () if name is None else tuple(TIES.named(name).keys(facts))
 
 
-def untied(graph, named, ties, owner, since, facts):
+def untied(graph, named, ties, owner, stamps, facts):
     started = time.perf_counter()
     held = keys(ties, facts)
     columns = [np.asarray(owner, np.int64)] + [np.asarray(key, np.int64) for key in held]
-    columns.append(np.asarray(since, np.int64))
-    order = np.lexsort(columns[::-1])
-    same = np.ones(max(len(order) - 1, 0), bool)
+    columns.append(np.asarray(stamps["since"], np.int64))
+    known, replaced = np.asarray(stamps["known"], np.int64), np.asarray(stamps["replaced"], np.int64)
+    order = np.lexsort([known] + columns[::-1])
+    same = known[order][1:] < replaced[order][:-1]
     for column in columns:
         same &= column[order][1:] == column[order][:-1]
     if same.any():
@@ -111,7 +112,7 @@ def untied(graph, named, ties, owner, since, facts):
             % (
                 named(row),
                 graph,
-                shown(np.asarray(since, np.int64)[row]),
+                shown(columns[-1][row]),
                 "the schema states no rule for ties"
                 if ties is None
                 else "the rule %s for ties leaves them unordered" % ties,
