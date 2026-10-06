@@ -280,8 +280,10 @@ def test_every_decision_reads_back_as_stated_with_its_fields_in_the_type_of_thei
     dtypes = dict(
         option_shown=np.float64,
         option_logged=np.float64,
-        option_drawn=np.float64,
-        option_seed=np.int64,
+        origin_option=np.int32,
+        origin_generator=np.int32,
+        origin_drawn=np.float64,
+        origin_seed=np.int64,
         option_order=np.int32,
         option_chosen=bool,
         option_available=bool,
@@ -432,6 +434,24 @@ def test_next_names_the_first_later_decision_of_each_actor_in_its_episode_and_an
         with pytest.raises(ValueError, match="^" + re.escape(message) + "$"):
             followed(truth, held.registry, rows, changed)
     LOG.info("next decisions exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_recorded_option_stores_no_generator_and_no_seed_and_a_regenerated_one_its_own(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    truth, graph = Facts.load(held.truth(0)), synthetic.decisions(GENERATOR)["graphs"][0]
+    tasks = graph["tasks"]
+    wanted = {(key, option["key"]): option["origin"] for key, target in zip(tasks["key"], tasks["target"]) if target for option in target["options"]}
+    back = [(key, decision) for key, decision in zip(np.asarray(truth.task_key).tolist(), truth.decided(held.registry)) if decision]
+    assert {(key, option["key"]): option["origin"] for key, decision in back for option in decision["options"]} == wanted
+    assert {RECORDED} < {origin if origin == RECORDED else "drawn" for origin in wanted.values()}
+    assert not {"option_generator", "option_seed", "option_drawn"} & set(truth.arrays)
+    drawn = [at for at, key in enumerate(truth.options) if key == "drawn"]
+    assert truth.origin_option.tolist() == drawn and truth.origin_generator.tolist() == [0] * len(drawn)
+    found = zip(drawn, truth.origin_seed.tolist(), truth.origin_drawn.tolist())
+    found = {(int(truth.task_key[truth.option_task[at]]), "drawn"): (seed, None if np.isnan(value) else value) for at, seed, value in found}
+    assert {key: (origin["seed"], origin["drawn"]) for key, origin in wanted.items() if origin != RECORDED} == found
+    LOG.info("origins exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("decisions.equal")

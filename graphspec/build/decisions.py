@@ -82,7 +82,6 @@ class Decided:
             if held["generator"] is None:
                 if held["seed"] is not None or held["drawn"] is not None:
                     raise ValueError("%s is recorded and states a seed or the probability of a draw" % where)
-                generator, seed = -1, 0
             else:
                 if held["generator"] not in GENERATORS.names():
                     raise ValueError(
@@ -95,25 +94,27 @@ class Decided:
                     raise ValueError("%s is regenerated and chosen; an option a generator drew was never chosen" % where)
                 if held["generator"] not in generators:
                     generators.append(held["generator"])
-                generator, seed = generators.index(held["generator"]), held["seed"]
-            rows.append(dict(held, task=owner, generator=generator, seed=seed))
+            rows.append(dict(held, task=owner))
         tasks = np.asarray([row["task"] for row in rows], np.int64)
         for owner in np.unique(tasks).tolist():
             self.chosen(owner, [row for row in rows if row["task"] == owner])
+        drawn = [(at, row) for at, row in enumerate(rows) if row["generator"] is not None]
         result = dict(
             option_task=tasks.astype(np.int32),
             option_sequence=np.asarray([row["sequence"] for row in rows], bool).reshape(-1),
             option_available=np.asarray([row["available"] for row in rows], bool).reshape(-1),
             option_chosen=np.asarray([row["chosen"] for row in rows], bool).reshape(-1),
             option_order=np.asarray([-1 if row["order"] is None else row["order"] for row in rows], np.int32).reshape(-1),
-            option_generator=np.asarray([row["generator"] for row in rows], np.int32).reshape(-1),
-            option_seed=np.asarray([row["seed"] for row in rows], np.int64).reshape(-1),
             **{
                 "option_" + name: np.asarray(
                     [np.nan if row[name] is None else row[name] for row in rows], np.float64
                 ).reshape(-1)
-                for name in ("shown", "logged", "drawn")
+                for name in ("shown", "logged")
             },
+            origin_option=np.asarray([at for at, _ in drawn], np.int32).reshape(-1),
+            origin_generator=np.asarray([generators.index(row["generator"]) for _, row in drawn], np.int32).reshape(-1),
+            origin_seed=np.asarray([row["seed"] for _, row in drawn], np.int64).reshape(-1),
+            origin_drawn=np.asarray([np.nan if row["drawn"] is None else row["drawn"] for _, row in drawn], np.float64).reshape(-1),
         )
         LOG.debug("decided options exit graph=%s options=%d seconds=%.4f", self.name, len(rows), time.perf_counter() - started)
         return result, [row["key"] for row in rows], generators, order
@@ -185,11 +186,11 @@ class Decided:
     def nothing(self, options, actions):
         started = time.perf_counter()
         counts = np.bincount(actions["action_option"], minlength=len(options["keys"]))
-        drawn = options["option_generator"].tolist()
+        drawn = set(options["origin_option"].tolist())
         for option, (task, key) in enumerate(zip(options["option_task"].tolist(), options["keys"])):
             idle = self.aims[self.tasks["task_kind"][task]]["nothing"]
             empty = counts[option] == 0
-            if (key == idle and not empty) or (empty and key != idle and (idle is None or drawn[option] < 0)):
+            if (key == idle and not empty) or (empty and key != idle and (idle is None or option not in drawn)):
                 raise ValueError(
                     "the option %s of %s holds %d actions; the option that does nothing, %s, and one a generator drew "
                     "for it hold none, and every other option holds one at least"

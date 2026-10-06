@@ -15,7 +15,7 @@ from graphspec.schema.schema import VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 16
+VERSION = 17
 PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
 HELD = ("inner_owner", "inner_kind", "inner_values")
@@ -36,9 +36,10 @@ DECIDED = dict(
     option_order=np.int32,
     option_shown=np.float64,
     option_logged=np.float64,
-    option_generator=np.int32,
-    option_seed=np.int64,
-    option_drawn=np.float64,
+    origin_option=np.int32,
+    origin_generator=np.int32,
+    origin_seed=np.int64,
+    origin_drawn=np.float64,
     action_option=np.int32,
     action_kind=np.int16,
     action_actor=np.int32,
@@ -371,7 +372,6 @@ class Facts:
         ended, discount = np.asarray(self.task_ended).tolist(), np.asarray(self.task_discount, np.float64)
         result, options, actions = [None] * len(task_keys), [], []
         for at, task in enumerate(np.asarray(self.option_task).tolist()):
-            generator = int(self.option_generator[at])
             entry = dict(
                 key=self.options[at],
                 actions=[],
@@ -381,13 +381,7 @@ class Facts:
                 order=None if self.option_order[at] < 0 else int(self.option_order[at]),
                 shown=known(self.option_shown[at]),
                 logged=known(self.option_logged[at]),
-                origin=RECORDED
-                if generator < 0
-                else dict(
-                    generator=self.generators[generator],
-                    seed=int(self.option_seed[at]),
-                    drawn=known(self.option_drawn[at]),
-                ),
+                origin=RECORDED,
                 outcome=None,
             )
             if result[task] is None:
@@ -400,6 +394,10 @@ class Facts:
                 )
             result[task]["options"].append(entry)
             options.append(entry)
+        for option, generator, seed, drawn in zip(
+            *(np.asarray(self.arrays["origin_" + name]).tolist() for name in ("option", "generator", "seed", "drawn"))
+        ):
+            options[option]["origin"] = dict(generator=self.generators[generator], seed=seed, drawn=known(drawn))
         values = stated(registry, columns, np.asarray(self.action_values))
         for at, (owner, kind, actor) in enumerate(
             zip(*(np.asarray(self.arrays[name]).tolist() for name in ("action_option", "action_kind", "action_actor")))

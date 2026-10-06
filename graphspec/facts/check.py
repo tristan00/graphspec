@@ -26,6 +26,7 @@ def check(graph, registry, splits, observers):
         next=len(graph.next_task),
         concurrent=len(graph.concurrent_task),
         option=len(graph.option_task),
+        origin=len(graph.origin_option),
         action=len(graph.action_option),
         role=len(graph.role_action),
     )
@@ -39,8 +40,8 @@ def check(graph, registry, splits, observers):
         within_values=2,
         action_values=2,
     )
-    real = ("fact_present", "graph_values", "task_weight", "target_y", "task_discount")
-    real += tuple("option_" + name for name in ("sequence", "available", "chosen", "shown", "logged", "drawn"))
+    real = ("fact_present", "graph_values", "task_weight", "target_y", "task_discount", "origin_drawn")
+    real += tuple("option_" + name for name in ("sequence", "available", "chosen", "shown", "logged"))
     loose = tuple(group + "_" + part for group in GROUPS for part in SPARSE)
     for key, values in graph.arrays.items():
         if not isinstance(values, np.ndarray) or values.ndim != dimensions.get(key, 1):
@@ -128,7 +129,16 @@ def check(graph, registry, splits, observers):
     ):
         if np.any(values < 0) or np.any(values >= count):
             raise ValueError("a %s of graph %s names an option or an action outside the graph" % (label, name))
-    if len(graph.options) != lengths["option"] or np.any(graph.option_generator >= len(graph.generators)):
+    drawn, generator = np.asarray(graph.origin_option, np.int64), np.asarray(graph.origin_generator, np.int64)
+    if (
+        len(graph.options) != lengths["option"]
+        or np.any(np.diff(drawn) <= 0)
+        or np.any(drawn < 0)
+        or np.any(drawn >= lengths["option"])
+        or np.any(generator < 0)
+        or np.any(generator >= len(graph.generators))
+        or np.any(graph.origin_seed < 0)
+    ):
         raise ValueError("graph %s names its options or their generators other than it holds them" % name)
     if np.any(graph.target_series < 0) or np.any(graph.target_series >= len(schema.series())):
         raise ValueError("a target of graph %s names a series its schema does not state" % name)

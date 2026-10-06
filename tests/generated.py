@@ -527,13 +527,15 @@ def undrawn(truth):
     acted = keep[np.asarray(truth.action_option, np.int64)]
     numbered = np.cumsum(acted) - 1
     roled = acted[np.asarray(truth.role_action, np.int64)]
-    names = [truth.generators[code] for code in np.asarray(truth.option_generator)[keep].tolist() if code >= 0]
+    origins = keep[np.asarray(truth.origin_option, np.int64)]
+    names = [truth.generators[code] for code in np.asarray(truth.origin_generator)[origins].tolist()]
     generators = list(dict.fromkeys(names))
-    codes = [-1 if code < 0 else generators.index(truth.generators[code]) for code in np.asarray(truth.option_generator)[keep].tolist()]
     arrays = {name: np.asarray(values)[keep] for name, values in truth.arrays.items() if name.startswith("option_")}
+    arrays.update({name: np.asarray(values)[origins] for name, values in truth.arrays.items() if name.startswith("origin_")})
     arrays.update({name: np.asarray(values)[acted] for name, values in truth.arrays.items() if name.startswith("action_")})
     arrays.update({name: np.asarray(values)[roled] for name, values in truth.arrays.items() if name.startswith("role_")})
-    arrays["option_generator"] = np.asarray(codes, np.int32).reshape(-1)
+    arrays["origin_option"] = placed[arrays["origin_option"]].astype(np.int32)
+    arrays["origin_generator"] = np.asarray([generators.index(name) for name in names], np.int32).reshape(-1)
     arrays["action_option"] = placed[arrays["action_option"]].astype(np.int32)
     arrays["role_action"] = numbered[arrays["role_action"]].astype(np.int32)
     target = np.asarray(truth.target_option, np.int64)
