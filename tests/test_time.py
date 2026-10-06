@@ -311,6 +311,36 @@ def seen():
         )
     )
     graphs.append(graph("between", "tick", values, edges, MOMENTS, [None] * len(MOMENTS)))
+    values, edges = steady("learned", True)
+    values.append(statement("event", {}, dict(key=["s0"], load=[9.0], at=[3], known=[7], seq=[40]), kind="site"))
+    edges.append(
+        statement(
+            "event",
+            {},
+            dict(source=["m2"], target=["s2"], present=[True], weight=[3.0], at=[3], known=[7], seq=[41]),
+            table="serves",
+            ends=("maker", "site"),
+        )
+    )
+    edges.append(
+        statement(
+            "state",
+            {},
+            dict(
+                source=["m2"],
+                target=["s0"],
+                present=[True],
+                weight=[5.0],
+                since=[2],
+                until=[5],
+                known=[9],
+                seq=[42],
+            ),
+            table="serves",
+            ends=("maker", "site"),
+        )
+    )
+    graphs.append(graph("learned", "tick", values, edges, MOMENTS, [None] * len(MOMENTS)))
     return dict(schema=stated("clocks", ["tick"], "sequence", True), graphs=graphs)
 
 
@@ -415,7 +445,7 @@ def serving(held, graph, step):
 def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, cases, name):
     held, _ = opened(banks, name)
     schema = held.registry.schema
-    assert held.manifest["version"] == 18 and schema.tasks["grouping"] is None
+    assert held.manifest["version"] == 19 and schema.tasks["grouping"] is None
     found, wanted = support.read_back(held), support.meant(cases[name])
     assert list(found) == list(wanted)
     for graph, read in found.items():
@@ -763,7 +793,75 @@ def test_an_event_between_two_steps_is_shown_at_the_first_step_at_or_after_its_t
     begun, ended = visible.visible([5], [6], [5], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
     assert begun.tolist() == [1] and ended.tolist() == [2]
     begun, ended = visible.visible([5], [6], [7], [clock.NEVER], [True], [4, 6, 8], [4, 6, 8])
-    assert begun.tolist() == ended.tolist() == [2]
+    assert begun.tolist() == [2] and ended.tolist() == [3]
+
+
+@clocked("time.spans")
+def spans(facts, moments, looking):
+    since, until, known, replaced, permitted = (list(column) for column in zip(*facts))
+    begun, ended = visible.visible(since, until, known, replaced, permitted, moments, looking)
+    return [list(range(low, high)) for low, high in zip(begun.tolist(), ended.tolist())]
+
+
+def test_a_fact_no_step_that_knows_it_shows_holding_is_shown_once_at_the_first_step_that_knows_it():
+    started, never = time.perf_counter(), clock.NEVER
+    events = [(5, 6, 7, never, True), (5, 6, 7, 8, True), (5, 6, 7, never, False), (5, 6, 9, never, True)]
+    assert spans(events, [4, 6, 8], [4, 6, 8]) == [[2], [], [], []]
+    assert spans(events[:2], [4, 5, 6, 7, 8], [4, 5, 6, 7, 8]) == [[3], [3]]
+    ended = [(2, 6, 7, never, True), (2, 6, 7, 9, True), (2, 6, 7, 8, True), (2, 6, 2, never, True)]
+    assert spans(ended, [2, 6, 7, 8, 9], [2, 6, 7, 8, 9]) == [[2], [2], [2], [0]]
+    assert spans(ended, [1, 9], [1, 9]) == [[], [], [], []]
+    assert spans(ended, [5, 9], [5, 9]) == [[1], [], [], [0]]
+    lasting = [(2, 8, 7, never, True), (2, 10, 7, never, True), (2, never, 7, never, True)]
+    assert spans(lasting, [5, 9], [5, 9]) == [[1], [1], [1]]
+    assert spans(lasting, [2, 7, 8, 10], [2, 7, 8, 10]) == [[1], [1, 2], [1, 2, 3]]
+    last = np.full(3, clock.NEVER - 1)
+    assert spans(events[:1] + ended[:1] + lasting[:1], [2, 5, 7], last) == [[1], [0, 1], [0, 1, 2]]
+    LOG.info("facts known late exit seconds=%.4f", time.perf_counter() - started)
+
+
+def test_what_becomes_known_about_the_past_is_shown_at_the_step_at_which_it_becomes_known(banks):
+    started, found = time.perf_counter(), {}
+    for steps in ("tasks", "changes"):
+        held, cfg = opened(banks, "seen", **{"time/steps": steps})
+        truth = truths(held)["learned"]
+        assert sorted(truth.fact_known_time.tolist()) == [7, 9] and truth.obs_known_time.tolist() == [7]
+        (sequence,) = sequences(truth, held.registry, steps, held.looking(cfg)[0])
+        graph, moments = looked(held, cfg, "learned"), sequence["moments"].tolist()
+        shown_at = dict(event=[], state=[], node=[])
+        for step, moment in enumerate(moments):
+            edges = serving(held, graph, step)
+            shown_at["event"] += [moment] * (("m2", "s2") in edges)
+            shown_at["state"] += [moment] * (("m2", "s0") in edges)
+            shown_at["node"] += [moment] * (observed(held, graph, step, "s0") == [9.0])
+            assert observed(held, graph, step, "s0") in ([4.0], [9.0]), moment
+        found[steps] = shown_at
+    assert found == dict(
+        tasks=dict(event=[8], state=[10], node=[8]), changes=dict(event=[7], state=[9], node=[7])
+    )
+    LOG.info("learned late exit seconds=%.4f", time.perf_counter() - started)
+
+
+@clocked("time.sited")
+def sited(rows, moments):
+    names = ("entity", "since", "until", "known")
+    site = pa.table({name: pa.array([row[at] for row in rows], pa.int64()) for at, name in enumerate(names)})
+    tasks = pa.table(dict(time=pa.array(moments, pa.int64()), split=pa.array(["train"] * len(moments))))
+    return dict(observations=dict(maker=site.slice(0, 0), site=site), tasks=tasks)
+
+
+def test_a_fact_known_late_counts_among_several_at_the_step_at_which_it_becomes_known():
+    from tuning.bank.build import several
+
+    started, schema = time.perf_counter(), Schema(stated("clocks", ["tick"], None, False))
+    lasting = (0, 5, None, None)
+    assert several(schema, sited([(0, 3, 4, None), lasting], [4, 8]), ("train",)) is False
+    assert several(schema, sited([(0, 3, 4, 7), lasting], [4, 8]), ("train",)) is True
+    assert several(schema, sited([(0, 3, 4, 7), (1, 5, None, None)], [4, 8]), ("train",)) is False
+    assert several(schema, sited([(0, 2, 5, None), lasting], [4, 10]), ("train",)) is False
+    assert several(schema, sited([(0, 2, 5, 9), lasting], [4, 10]), ("train",)) is True
+    assert several(schema, sited([(0, 0, 4, None), (0, 4, None, 8)], [2, 8]), ("train",)) is False
+    LOG.info("several known late exit seconds=%.4f", time.perf_counter() - started)
 
 
 def test_two_events_about_one_node_between_two_task_times_are_shown_by_the_rule_stated_for_several_facts(

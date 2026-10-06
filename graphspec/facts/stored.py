@@ -15,7 +15,7 @@ from graphspec.schema.schema import VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 18
+VERSION = 19
 MANIFEST = (
     "version",
     "trained",

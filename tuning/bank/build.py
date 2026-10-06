@@ -70,6 +70,26 @@ def observing(tables):
     return sorted(found)
 
 
+def crowded(entity, since, until, once, sittings):
+    started = time.perf_counter()
+    order = np.lexsort((since, entity))
+    entity, since, until, once = entity[order], since[order], until[order], once[order]
+    result = bool(np.any((entity[1:] == entity[:-1]) & (since[1:] < until[:-1])))
+    for moments in sittings:
+        step = np.searchsorted(moments, since, "left")
+        held = until > moments[np.minimum(step, len(moments) - 1)]
+        shown = np.stack((entity, step), 1)[(step < len(moments)) & (once | held)]
+        result |= len(np.unique(shown, axis=0)) < len(shown)
+    LOG.debug(
+        "crowded exit facts=%d sittings=%d crowded=%s seconds=%.4f",
+        len(order),
+        len(sittings),
+        result,
+        time.perf_counter() - started,
+    )
+    return result
+
+
 def several(stated, tables, trained):
     started = time.perf_counter()
     parts = []
@@ -79,14 +99,11 @@ def several(stated, tables, trained):
             np.asarray(table.column(name).fill_null(base).to_numpy(zero_copy_only=False), np.int64)
             if name in table.column_names
             else np.full(table.num_rows, base, np.int64)
-            for name, base in (("since", ALWAYS), ("until", NEVER))
+            for name, base in (("since", ALWAYS), ("until", NEVER), ("known", ALWAYS))
         ]
         parts.append((np.asarray(table.column("entity").to_numpy(), np.int64), *stamps))
     empty = np.zeros(0, np.int64)
-    entity, since, until = (np.concatenate([part[at] for part in parts] + [empty]) for at in range(3))
-    order = np.lexsort((since, entity))
-    entity, since, until = entity[order], since[order], until[order]
-    result = bool(np.any((entity[1:] == entity[:-1]) & (since[1:] < until[:-1])))
+    entity, since, until, known = (np.concatenate([part[at] for part in parts] + [empty]) for at in range(4))
     tasks = tables["tasks"]
     times = (
         np.asarray(tasks.column("time").to_numpy(), np.int64)
@@ -99,17 +116,17 @@ def several(stated, tables, trained):
     )
     splits = np.asarray(tasks.column("split").to_pylist(), object)
     common = np.asarray([split is None or split in trained for split in splits.tolist()], bool)
+    sittings = []
     for observer in set(looking.tolist()):
         mine = looking == observer
         own = [mine & (common | (splits == split)) for split in set(splits[mine].tolist()) - {None}]
-        for chosen in [mine] + own:
-            moments = np.unique(times[chosen])
-            step = np.searchsorted(moments, since, "left")
-            held = until > moments[np.minimum(step, len(moments) - 1)]
-            shown = np.stack((entity, step), 1)[(step < len(moments)) & ((until == since + 1) | held)]
-            result |= len(np.unique(shown, axis=0)) < len(shown)
+        sittings += [np.unique(times[chosen]) for chosen in [mine] + own]
+    learned = np.maximum(since, known)
+    result = crowded(entity, since, until, until == since + 1, sittings) or crowded(
+        entity, learned, np.maximum(until, learned + 1), (until <= learned + 1) | (known > since), sittings
+    )
     LOG.debug(
-        "several exit facts=%d several=%s seconds=%.4f", len(order), result, time.perf_counter() - started
+        "several exit facts=%d several=%s seconds=%.4f", len(entity), result, time.perf_counter() - started
     )
     return result
 

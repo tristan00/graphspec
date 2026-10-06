@@ -44,9 +44,11 @@ def visible(since, until, known, replaced, permitted, moments, looking):
         raise ValueError("a view shows no time later than the time of looking at it")
     since, until = np.asarray(since, np.int64), np.asarray(until, np.int64)
     first = np.searchsorted(moments, since, "left")
-    begun = np.maximum(first, np.searchsorted(looking, known, "left"))
+    learned = np.searchsorted(looking, known, "left")
+    begun = np.maximum(first, learned)
     held = np.searchsorted(moments, until, "left")
     held = np.where(until == since + 1, np.minimum(first + 1, len(moments)), held)
+    held = np.where((held > first) & (learned >= held), np.minimum(learned + 1, len(moments)), held)
     ended = np.minimum(held, np.searchsorted(looking, replaced, "left"))
     ended = np.maximum(np.where(permitted, ended, begun), begun)
     LOG.debug(

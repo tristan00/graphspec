@@ -14,7 +14,7 @@ from graphspec.sources import synthetic
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 from tuning.batches.batching import batches, pack_batch
-from tuning.families.model_spec import VIEWS, views
+from tuning.families.model_spec import VIEWS, edits, views
 from tuning.families.models import build as network
 from tuning.families.periods import blocks as period_blocks
 
@@ -22,6 +22,8 @@ LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.xdist_group("composition")
 USERS, ITEMS = ("u0", "u1", "u2", "u3"), ("i0", "i1", "i2", "i3", "i4")
 TIMES, CHANGED, SCORED = (1, 2, 3, 4, 5, 6), 3, (2, 3, 5)
+BANKS = dict(stated="clock", changed="clock", late="clocks")
+HAPPENED, KNOWN, EDGELESS = 3, 5, ("mixed", "affinity", "signal")
 SPLITS = dict(trained=["train"], scored=["validation"], sees=dict(train=[], validation=[]))
 ROUNDING = 1e-5
 GRAPH = {"time/history": 2, "time/context": 1, "time/periods": "every", "time/period_length": 2}
@@ -34,7 +36,7 @@ OPENED = {}
 
 
 @timed("composition.schema")
-def schema():
+def schema(model):
     number = dict(type="number", encoder="value")
     kinds = dict(
         score=dict(
@@ -52,7 +54,7 @@ def schema():
     )
     return dict(
         version=VERSION,
-        time=dict(model="clock", units=["tick"], ties="key"),
+        time=dict(model=model, units=["tick"], ties="key"),
         observers=False,
         columns=dict(load=number, price=number),
         graph=dict(columns=[]),
@@ -70,7 +72,8 @@ def schema():
 
 
 @timed("composition.graph")
-def graph(changed):
+def graph(name):
+    changed = name == "changed"
     tasks = dict(key=[], kind=[], time=[], split=[], weight=[], target=[], known=[], signal=[], signal_observed=[])
     references = dict(who=[], at=[])
     for at, moment in enumerate(TIMES):
@@ -102,6 +105,9 @@ def graph(changed):
         since=[edge[2] for edge in edges],
         until=[None] * len(edges),
     )
+    if name == "late":
+        learned = dict(source="u3", target="i3", present=True, since=HAPPENED, until=HAPPENED + 1, known=KNOWN)
+        buys = {column: buys.get(column, [None] * len(edges)) + [value] for column, value in learned.items()}
     near = dict(source=["i0", "i3"], target=["i2", "i4"], present=[True] * 2, since=[0, 0], until=[None] * 2)
     return dict(
         name="g0",
@@ -122,8 +128,8 @@ def graph(changed):
 
 @timed("composition.made")
 def made(root):
-    for name in ("stated", "changed"):
-        build(synthetic.stage(root, name, dict(schema=schema(), graphs=[graph(name == "changed")])), root / name, 1, ("train",))
+    for name, model in BANKS.items():
+        build(synthetic.stage(root, name, dict(schema=schema(model), graphs=[graph(name)])), root / name, 1, ("train",))
 
 
 @pytest.fixture(scope="module")
@@ -131,7 +137,7 @@ def banks():
     started = time.perf_counter()
     root = shared("composition", made)
     LOG.info("composition banks exit seconds=%.3f", time.perf_counter() - started)
-    yield {name: root / name for name in ("stated", "changed")}
+    yield {name: root / name for name in BANKS}
     OPENED.clear()
 
 
@@ -170,4 +176,9 @@ def test_a_prediction_depends_neither_on_the_windows_beside_it_nor_on_a_fact_aft
     assert beside == [], "predictions that depend on the windows packed beside them, at %s" % beside
     read = [moment for moment in moments if moment <= TIMES[CHANGED] and abs(together[moment] - later[moment]) > ROUNDING]
     assert read == [], "predictions that read a fact after their time, at %s" % read
+    learned = predicted(opened(banks, "late"), cfg, net, True)
+    read = [moment for moment in moments if abs(together[moment] - learned[moment]) > ROUNDING]
+    assert HAPPENED <= moments[0] < KNOWN <= moments[-1] and ("facts" in edits(cfg["model"])) == (values["view"] not in EDGELESS)
+    wanted = [] if values["view"] in EDGELESS else [moment for moment in moments if moment >= KNOWN]
+    assert read == wanted, "an event known at %d is read by the predictions at %s" % (KNOWN, read)
     LOG.info("composition exit spec=%s seconds=%.3f", values, time.perf_counter() - started)
