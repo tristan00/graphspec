@@ -280,7 +280,7 @@ def schema():
 
 
 UNAIMED = dict(along=[], made=[])
-AIMED = dict(to=["s0", "s1"], along=[["a1", "base", "s1"]], made=["s2"])
+AIMED = dict(to=["s1", "s0"], along=[["a1", "base", "s1"]], made=["s2"])
 
 
 @timed("descriptions.aiming")
@@ -496,6 +496,7 @@ def test_a_file_is_served_only_where_it_parses_and_holds_its_key_and_the_files_o
     record, key = describe(other), describing.keyed(read_json(other / "manifest.json"), located(other, "bank", "truth"))
     folder = other / "descriptions" / "truth"
     held, text = [(folder / describing.named(key)).with_suffix(suffix) for suffix in (".json", ".txt")]
+    assert held.name == "%s-%s.json" % (sha256_json(key["code"])[:16], sha256_json(key))
     whole, written = dict(key=key, record=record), describing.text(record)
     assert read_json(held) == whole and text.read_text(encoding="utf-8") == written
     earlier = dict(key, code=dict(key["code"], description=key["code"]["description"] - 1))
@@ -577,6 +578,10 @@ def test_a_bank_or_a_file_lacking_a_part_stops_the_call_naming_the_file_and_the_
     write_json(other / "manifest.json", {})
     with pytest.raises(ValueError, match="lacks version, trained, spec, spec_sha256, splits, split_rows, observers, graphs, "):
         describe(other)
+    (tmp_path / "empty").mkdir()
+    for call in (lambda: describe(tmp_path / "empty"), lambda: variant(tmp_path / "empty", config, STATED)):
+        with pytest.raises(FileNotFoundError, match="empty holds no manifest.json; a description reads the folder of a bank$"):
+            call()
     (other / "manifest.json").write_text("this is no json", encoding="utf-8")
     for call in calls:
         with pytest.raises(ValueError) as raised:
@@ -1335,6 +1340,16 @@ def test_every_count_and_share_of_a_variant_equals_the_number_written_out_here_a
         dict(sort="relation", name="base", task="turn", times=[1, 3, 5], everywhere=False, without=[]),
         dict(sort="relation", name="base", task="turn", times=[2], everywhere=False, without=[]),
     ]
+    tasked_at = dict(turn=[1, 3, 5], visit=[2, 4, 5, 6])
+    partly = effect.cuts("relation", "near", [1, 1, 2, 2, 1, 1, 0, 0], [1, 1, 0, 2, 0, 0, 0, 0], tasked_at, list(range(10, 18)))
+    assert partly == [dict(sort="relation", name="near", task="visit", times=[12, 14, 15], everywhere=False, without=[])]
+    lasting = dict(times=[10, 11, 12], tasks=dict(turn=[11, 12]), held=dict(kinds={}, relations=dict(base=dict(edges=[[0, 1], [2, 0]]))))
+    assert effect.left(lasting, "relation", "base", "turn") and not effect.left(lasting, "relation", "near", "turn")
+    apart = dict(seed=7, device="cpu", splits=SPLITS, settings={"time/steps": "changes"})
+    assert effect.settled(dict(apart, unshown=[dict(name="x", tasks=3, stated=2, sequences=1)]))[3] == (
+        "graphs of the bank the view does not show: x, which holds 3 tasks, 2 of them of a split trained on or scored on, "
+        "and to which the choice of steps changes gives 1 sequences of steps"
+    )
     LOG.info("descriptions variant numbers exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2036,6 +2051,42 @@ def test_under_an_edit_a_field_is_put_before_the_model_only_where_the_fork_of_it
     assert cuts == {0: found} and found == [cut_at("held", True, ["near"], []), cut_at("put", True, ["near"], [])]
     assert "".join(line + "\n" for option in options[1:] for line in reaching.option_text(option, found)) == GROUNDED_TEXT
     assert [line for place, cut in enumerate(found) for line in reaching.cut_text(place, cut, describing.NAMED["clock"])] == GROUND_CUTS
+    cells = {name: dict(role=name != GO[3], stated=0, held=0, put=0, unput={}, targets=0, hops=[], parted={}) for name in GO}
+    task = dict(described=0, options=0, held=0, left={}, fields=cells)
+    reaches.tallied(held, decision, task)
+    assert (task["described"], task["options"], task["held"], task["left"]) == (1, 3, 1, {1: 2})
+    aimed_at = dict(roled(3, 1, 0, 2, 2, 1, 2), unput=stopped("options", [("test.cut", 1)]))
+    assert reaches.counted(cells[GO[0]], held.steps) == aimed_at and reaches.counted(cells[GO[3]], held.steps) == owned(3, 1, 1)
+    assert reaches.field_cell(aimed_at) == "0/1/3, not put cut by test.cut 1, joined 2/2, hops 1 to 2"
+    left_out = dict(held=1, options=3, described=1, decisions=3, left=reaches.cutting(task["left"], held.steps, "options"))
+    assert reaches.task_cell(left_out) == "1/3 in 1/3, left out cut by test.cut 2"
+    based = deriver.registry.code("base")
+    made = [
+        dict(action=7, role=0, fact="a0 went s1", held=False, carried=["speed"], valued=[], keys=["a0", "s1"], ends=[1, 2], relation="went"),
+        dict(action=7, role=1, fact="a0 base s0", held=True, carried=["speed"], valued=[], keys=["a0", "s0"], ends=[1, 3], relation="base"),
+        dict(action=8, role=2, fact="a0 went s2", held=False, carried=["speed"], valued=["speed"], keys=["a0", "s2"], ends=[1, 4], relation="went"),
+    ]
+    unput = dict(put=True, state="unjoined", facts=[dict(fact="a0 went s1", held=False)])
+    monkeypatch.setattr(held, "edits", lambda *given: (made, None))
+    monkeypatch.setattr(held, "read", lambda *given: dict(held=True, fields={GO[0]: dict(targets=[unput])}))
+    nodes = [dict(target=key, ends=(end,), relation=None) for key, end in (("a0", 1), ("s1", 2), ("s2", 4))]
+    assert held.wanted(decision, 0, ("put", GO[0], 0)) == nodes[:2]
+    assert held.wanted(decision, 0, ("held",)) == nodes + [dict(target="a0 base s0", ends=(1, 3), relation=based)]
+    assert [held.holding((site, GO[0], 0), None, 3, decision, 0) for site in ("put", "joined")] == [True, False]
+    monkeypatch.setattr(held, "forked", lambda *given: (None, None))
+    monkeypatch.setattr(held, "looking", lambda *given: None)
+    monkeypatch.setattr(held, "stating", lambda *given: [(dict(sort="parameters", name=GO[3], column="speed"), [7])])
+    unvalued = [dict(fact="a0 base s0", held=False), dict(fact="a0 went s1", held=False)]
+    assert held.edited(None, 3, decision, 0)[0] == {GO[3]: dict(put=False, route="fact", facts=unvalued)}
+    stopped_at = dict(entry="test.cut", operation="test.cut", restated=["test.cut"], spared=[], settings=[], without=None)
+    asking = dict(decision=dict(view=0), option=0, site=("held",), into={}, last=1, wanted=[], entries=[stopped_at], truth=None)
+    monkeypatch.setattr(held, "tried", lambda base, place, given: [(found, found["entries"][0]) for found in given])
+    monkeypatch.setattr(held, "lifted", lambda *given: dict(how="absent", key="lifted", parameter=None, value=None, stating=[]))
+    monkeypatch.setattr(held, "judged", lambda key, given: [("stopped", dict(error="GraphCapacityError", reason=HEAVY))])
+    cuts = {}
+    held.searched(0, [asking], cuts)
+    kept_form = dict(how="kept", parameter=None, value=None, stating=[], back=False)
+    assert cuts == {0: [dict(on="held", entries=[dict(stopped_at, without=kept_form)], truth=None)]} and asking["into"] == dict(cut=0)
     LOG.info("descriptions reach edit facts exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2048,14 +2099,17 @@ def cutless(found):
     return dict(found, cut=None, fields=fields)
 
 
-def test_a_target_the_fork_of_its_option_does_not_hold_reads_as_not_held_and_its_fact_as_not_in_the_fork(bank, walking):
+def test_a_target_the_fork_of_its_option_does_not_hold_reads_as_not_held_and_its_fact_as_not_in_the_fork(
+    bank, walking, monkeypatch
+):
     started = time.perf_counter()
     thinned = dict(NODES, **{"nodes/spot/filter": "degree", "nodes/spot/min_degree": 2})
     model = dict(MODEL, **{"options/realisation": "walked"})
     pipeline = [dict(operation="graphspec.nodes", parameters=thinned)]
     config = configuration(bank, model, None, pipeline=pipeline, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
     held = reaching.Reached(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), config, "walked")
-    (decision,) = [found for found in held.decided(held.derived(None, 1, 0), 0) if found["key"] == 10]
+    decision, later = [found for found in held.decided(held.derived(None, 1, 0), 0) if found["key"] in (10, 30)]
+    assert (decision["key"], later["key"]) == (10, 30) and held.read(None, 1, later, held.optioned(later)[0])["held"]
     option = held.optioned(decision)[2]
     both = dict(UNDIRECTED, state="joined", hops=1, relations=[["base", "went"]])
     went = [("a0 went a1", True), ("a0 went s0", True), ("a0 went s1", True), ("a0 went s2", False)]
@@ -2072,6 +2126,22 @@ def test_a_target_the_fork_of_its_option_does_not_hold_reads_as_not_held_and_its
         "      parameter speed of go: put before the model as the facts its edit makes of it; facts a0 went a1, a0 went s0, "
         "a0 went s1 in its fork, fact a0 went s2 not in its fork",
     ]
+    sampled = [dict(operation="graphspec.nodes", parameters=dict(NODES, **{"nodes/spot/filter": "sample", "nodes/spot/sample": 0.5}))]
+    config = configuration(bank, model, None, pipeline=sampled, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    other = reaching.Reached(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), config, "walked")
+    other.loaded(0)
+    (unwanted,) = [token for token, key in other.names.items() if key == "s1"]
+    monkeypatch.setattr(filtering, "unit", lambda seed, salt, tokens, steps: np.where(reaching.masked(tokens) == unwanted, 0.9, 0.1))
+    (decision,) = [found for found in other.decided(other.derived(None, 1, 0), 0) if found["key"] == 10]
+    gone = dict(UNDIRECTED, state="unheld", hops=None, relations=None)
+    went = [("a0 went a1", True), ("a0 went s0", True), ("a0 went s1", False), ("a0 went s2", True)]
+    fields = {
+        GO[0]: role("fact", aim("s0", both, LOAD, None, went[1]), aim("s1", gone, [], None, went[2])),
+        GO[1]: role("fact", aim(EDGE, gone, [], None, went[0], went[2])),
+        GO[2]: role("fact", aim("s2", WENT, [], None, went[3])),
+        GO[3]: own("fact", None, *went),
+    }
+    assert cutless(other.read(None, 1, decision, other.optioned(decision)[2])) == kept(fields)
     LOG.info("descriptions reach unheld exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2086,6 +2156,14 @@ def test_an_option_whose_only_fact_the_variant_holds_without_its_edit_is_left_ou
     found = [dict(held.read(None, 1, decision, option), cut=None) for option in held.optioned(decision)]
     assert found == [left([lacking], None, GO[0], GO[3])] * 4
     assert reaching.lacking_text(lacking) == "a1 base s1 of s1, target to of go: in its fork and in the variant without the edit"
+    (later,) = held.decided(held.derived(None, 1, 1), 1)
+    asked, cuts = [], {}
+    fresh = held.option(later, held.optioned(later)[2], asked)
+    held.searched(1, asked, cuts)
+    based = role("fact", aim("s1", ADJACENT, LOAD, None, ("a0 base s1", True)))
+    unput = dict(on="put", entries=[], truth=[])
+    assert fresh == dict(key="o1", **kept({GO[0]: based, GO[3]: dict(put=False, route="fact", facts=[], cut=0)}))
+    assert cuts == {1: [unput]} and reaching.cut_text(0, unput, describing.NAMED["clock"]) == [CUT_BY_NONE % (1, THE_MODEL, THE_MODEL)]
     LOG.info("descriptions reach unshown exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2167,10 +2245,18 @@ def reading(bank, cut, read):
 
 
 def test_a_value_is_stated_with_what_it_makes_active_in_an_entry_that_reads_it_and_without_what_it_makes_inactive_there(
-    bank, cutting
+    bank, cutting, monkeypatch
 ):
     started = time.perf_counter()
     held, times = reading(bank, PARTING, {})
+    read = effect.entered(held.steps[2], held.deriver.registry, held.spec, SPLITS)
+    assert read == dict(
+        name="test.read", operation="test.read", version=1, graph=None, parameters={}, reads=PARTING, splits={}, storage={}
+    )
+    assert effect.entry_text(read) == (
+        "entry test.read, of the operation test.read at version 1: parameters none; reads cut/relation base, cut/times "
+        "all; splits none; storage none; second graph none"
+    )
     tried, untried = held.restating(None, held.steps[1], times, "tasks")
     visit = [("test.part", "cut/kind", "visit")]
     assert untried == [] and [(added, why) for added, _, why in tried] == [
@@ -2194,6 +2280,30 @@ def test_a_value_is_stated_with_what_it_makes_active_in_an_entry_that_reads_it_a
         dict(operation="test.part", parameters=PARTING),
         dict(operation="test.read", parameters={}),
     ]
+    stopping, times = reading(bank, PARTING, {})
+    entering = stopping.entered
+
+    @timed("descriptions.heavy_at_three")
+    def heavy(key, cfg):
+        if cfg["pipeline"][2]["parameters"] == {"read/level": 3}:
+            raise GraphCapacityError(HEAVY)
+        return entering(key, cfg)
+
+    monkeypatch.setattr(stopping, "entered", heavy)
+    tried, untried = stopping.restating(None, stopping.steps[1], times, "tasks")
+    assert untried == [] and [why for _, _, why in tried] == [
+        ("refused", dict(reason=REFUSING % "test.part")),
+        None,
+        ("stopped", dict(error="GraphCapacityError", reason=HEAVY)),
+    ]
+    monkeypatch.setattr(restating, "BOUND", 2)
+    bounded, times = reading(bank, PARTING, {})
+    tried, untried = bounded.restating(None, bounded.steps[1], times, "tasks")
+    assert [added for added, _, _ in tried] == [
+        under("tasks", ("test.part", "cut/kind", "turn"))["stating"],
+        under("tasks", *visit, ("test.read", "read/level", 1))["stating"],
+    ]
+    assert untried == [under("tasks", *visit, ("test.read", "read/level", 3))["stating"]]
     LOG.info("descriptions reach across entries exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2335,6 +2445,26 @@ def test_of_two_entries_that_each_cut_both_are_named_each_alone_by_reach_and_amo
     assert reaches.cut_cell(left_by("test.cut", ("relation", "base", "turn", 1)) + [cut], 1) == (
         "test.cut: relation base at turn 1/1; again: relation base at turn 1/1 alone without the entry test.cut"
     )
+    twice = twice_at("joined", True, ["near"], [])["entries"]
+    relabelled = [
+        dict(found, entry=name, restated=[name], settings=[dict(stated, entry=name) for stated in found["settings"]])
+        for found, name in zip(twice, ("again", "third"))
+    ]
+    thrice = dict(on="joined", entries=[twice[0], *relabelled], truth=None)
+    assert reaching.cut_text(0, thrice, describing.NAMED["clock"]) == [
+        "  cut 1, of being joined to a reference: by the entries test.cut and again, of the operation test.cut and third, "
+        "of the operation test.cut, each alone",
+        RESTATED % ("test.cut", 0, 2, 0, 0, 0) + "; without the entry it is still missing",
+        RESTATED % ("again, with test.cut absent", 0, 2, 0, 0, 0) + "; without the entry it is still missing",
+        RESTATED % ("third, with test.cut absent, with again absent", 2, 0, 0, 0, 0),
+        GIVEN % NEAR_OR_VISIT,
+    ]
+    cutters = pipelined(CUTTING)[1:2] + [dict(operation="test.cut", label=name, parameters=CUTTING) for name in ("again", "third")]
+    stated = configuration(bank, MODEL, None, pipeline=cutters, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    told = restating.Derived(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), stated, False).effects(0)[0]["effects"]
+    turned = dict(sort="relation", name="base", task="turn", times=[1, 3, 5], everywhere=False)
+    lifted_from = [dict(entry=name, how="absent") for name in ("test.cut", "again")]
+    assert [found["cuts"] for found in told] == [[dict(turned, without=lifted_from[:place])] for place in range(3)]
     LOG.info("descriptions reach of two cutting entries exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2375,7 +2505,7 @@ def test_an_entry_the_pipeline_is_refused_without_is_restated_at_the_value_that_
 
 
 def test_where_no_entry_cuts_reach_reads_the_truth_and_names_the_rule_by_which_the_view_keeps_it_from_the_task(
-    bank, crossed
+    bank, crossed, monkeypatch
 ):
     started = time.perf_counter()
     model = dict(MODEL, **{"options/realisation": "vector"})
@@ -2384,12 +2514,19 @@ def test_where_no_entry_cuts_reach_reads_the_truth_and_names_the_rule_by_which_t
     deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
     held = reaching.Reached(deriver, config, "vector")
     assert [graph["name"] for graph in deriver.viewed(config).graphs] == ["g0", "g0 for split 0", "g1", "g1 for split 0"]
-    (decision,) = [found for found in held.decided(held.derived(None, 2, 1), 1) if found["key"] == 30]
+    earlier, decision = [found for found in held.decided(held.derived(None, 2, 1), 1) if found["key"] in (10, 30)]
     asked, cuts = [], {}
+    first = [held.option(earlier, option, asked) for option in held.optioned(earlier)]
     options = [held.option(decision, option, asked) for option in held.optioned(decision)]
     held.searched(1, asked, cuts)
     lacking = lack(GO[0], "s1", "observation", None, "s1")
     assert options == [dict(key=key, **left([lacking], 0, GO[0], GO[3])) for key in FOUR] and cuts == {1: [HIDDEN]}
+    unseen_edge = lack(GO[1], EDGE, "observation", None, "a1", "s1")
+    assert (earlier["key"], decision["key"]) == (10, 30) and first == [
+        dict(key="changed.0.0", **aimed(ADJACENT, None, "s0")),
+        dict(key="o0", **aimed(ADJACENT, None, "s0")),
+        dict(key="o1", **left([lacking, unseen_edge], 0, *GO)),
+    ]
     assert reaching.cut_text(0, HIDDEN, describing.NAMED["clock"]) == HIDDEN_TEXT
     tokens = {key: token for token, key in held.names.items()}
     path = held.told_truly(
@@ -2406,6 +2543,41 @@ def test_where_no_entry_cuts_reach_reads_the_truth_and_names_the_rule_by_which_t
     seen = other.truthful(first)
     flags = other.hidden(seen, "fact", np.arange(len(seen["held"]["fact"])))
     assert sorted(flags) == ["known", "observer"] and int(flags["known"].sum()) == 3 and not flags["observer"].any()
+    assert [reaching.entity(dict(tokens=np.array([3, 9]), order=np.array([1, 0])), token) for token in (3, 5, 9, 11)] == [1, -1, 0, -1]
+    either, based = other.deriver.registry, other.deriver.registry.code("base")
+    joining = dict(facts=(np.array([5]), np.array([2]), np.array([based])), values=np.zeros((1, 0)))
+    assert [reaching.owned(joining, either, ends, based)[0].tolist() for ends in ((5, 2), (2, 5), (2, 4))] == [[0], [0], []]
+    directed, sourced = deriver.registry, deriver.registry.code("base")
+    onward = dict(facts=(np.array([5]), np.array([2]), np.array([sourced])), values=np.zeros((1, 0)))
+    assert [reaching.owned(onward, directed, ends, sourced)[0].tolist() for ends in ((5, 2), (2, 5))] == [[0], []]
+    spots = {key: token for token, key in other.names.items()}
+    stated = dict(target="s0 base a0", ends=(spots["s0"], spots["a0"]), relation=based)
+    turned = other.told_truly(seen, dict(site=("held",)), stated)
+    assert turned == dict(target="s0 base a0", held=True, hidden=[])
+    clocked = describing.NAMED["clock"]
+    assert reaching.truth_text("held", turned, clocked) == (
+        "    s0 base a0: the truth holds it at the time of the task, and none of what its split may see, when it became "
+        "known and who observed it keeps it from the task"
+    )
+    assert reaching.truth_text("held", dict(target="s1", held=False, hidden=[]), clocked) == (
+        "    s1: the truth holds none of it at the time of the task"
+    )
+    assert reaching.truth_text("held", dict(target="s1", held=True, hidden=["known", "observer"]), clocked) == (
+        "    s1: the truth holds it at the time of the task and the view does not show it to the task: it became known "
+        "later, another observer saw it"
+    )
+    listed = ["a" * 80, "b" * 80, "c" * 80]
+    assert reaching.wrapped("given back by", listed) == [GIVEN % ", ".join(listed[:2]), GIVEN % listed[2]]
+    both = dict(target="s0 and s1", ends=(spots["s0"], spots["s1"]), relation=None)
+    monkeypatch.setattr(other, "hidden", lambda held, group, rows: dict(observer=np.array([True, False]), known=np.array([False, False])))
+    assert other.told_truly(seen, dict(site=("held",)), both) == dict(target="s0 and s1", held=True, hidden=[])
+    monkeypatch.setattr(other, "hidden", lambda held, group, rows: dict(observer=np.array([True, False]), known=np.array([False, True])))
+    assert other.told_truly(seen, dict(site=("held",)), both) == dict(target="s0 and s1", held=True, hidden=["known", "observer"])
+    kept_whole = dict(entry="test.gate", without=dict(how="kept", parameter=None, value=None, stating=[], back=False))
+    assert reaching.lifted_text(kept_whole) == (
+        "the pipeline is refused or stops without the entry and no one parameter of it re-stated leaves more in the graph, "
+        "so the entries after it are not examined"
+    )
     LOG.info("descriptions reach truth exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2506,6 +2678,7 @@ graph h0, the graph h0 as the tasks of the splits train, validation see it, deci
       kind: put before the model with the option
       target by of stay: put before the model as the targets the variant holds
         s0: joined to a reference at hop 0 by nothing and at hop 0 along the direction of its facts, features load
+    option wait, held by a fit
 """
 STEPPED_TEXT = """  decision 20 of turn at time 1, references agents a0; over a0 base s0
     option o0, held by a fit
@@ -2539,7 +2712,7 @@ def crossing():
     turn = held["tasks"]["kinds"]["turn"]["target"]
     roles = dict(turn["actions"]["go"]["roles"], along=dict(sort="edge", kinds=["agent", "spot"], count=[0, None]))
     stay = dict(roles=dict(by=dict(sort="node", kinds=["spot"], count=[1, 1])), parameters=[])
-    decided = dict(turn, actions=dict(go=dict(turn["actions"]["go"], roles=roles), stay=stay), generators=[])
+    decided = dict(turn, actions=dict(go=dict(turn["actions"]["go"], roles=roles), stay=stay), nothing="wait", generators=[])
     references = dict(agents=dict(sort="nodes", kinds=["agent"]), over=dict(sort="edge", kinds=["agent"]))
     kinds = dict(turn=synthetic.kind(["agents", "over"], [], decided, None))
     either = dict(synthetic.edge("agent", "spot", [], directed=False), endpoints=[["agent", "spot"], ["spot", "agent"]])
@@ -2583,7 +2756,7 @@ def crossed_case():
                     acted("o1", "go", dict(to=["s1"], along=[["s1", "near", "s0"], ["s0", "base", "a0"]], made=[]), dict(speed=2.0)),
                 ],
             ),
-            (30, 2, "validation", 3.0, [acted("o0", "stay", dict(by=["s0"]), {})]),
+            (30, 2, "validation", 3.0, [acted("o0", "stay", dict(by=["s0"]), {}), synthetic.offered("wait", [], "set", "recorded")]),
             (40, 2, "validation", None, [acted("o0", "stay", dict(by=["s2"]), {})]),
         ]
     )
@@ -2593,7 +2766,7 @@ def crossed_case():
         [("a0", 0, None, 1.0)],
         [("s0", 0, None, 1.0), ("s1", 0, None, 2.0), ("s2", 0, None, 2.0)],
         [
-            ("near", ("spot", "spot"), BASE, [("s1", "s0", True, 0, None)]),
+            ("near", ("spot", "spot"), BASE, [("s1", "s0", True, 0, None), ("s0", "s2", False, 0, 1)]),
             ("near", ("spot", "spot"), LATER, [("s1", "s2", True, 0, None, 3, 4), ("s1", "s2", False, 0, None, 4, None)]),
             ("base", ("agent", "spot"), BASE, [("a0", "s0", True, 0, None)]),
             ("base", ("spot", "agent"), BASE, [("s0", "a0", True, 3, None)]),
@@ -2685,7 +2858,7 @@ def crossed_reach(bank, config, name, references, fields):
     decisions = [
         (10, 0, [("o0", fields[0]), ("o1", fields[1])]),
         (20, 1, [("o0", fields[2]), ("o1", fields[3])]),
-        (30, 2, [("o0", fields[4])]),
+        (30, 2, [("o0", fields[4]), ("wait", kept({}))]),
     ]
     cuts = []
     described = [
@@ -2921,7 +3094,7 @@ def tried(bank):
         ("vector", [nodes, entry("test.part", PARTING), forms], {}),
         ("vector", [nodes, entry("test.part", PART_NEAR), forms], {}),
         ("vector", [nodes, entry("test.part", PART_VISIT), forms], {}),
-        ("vector", [entry("graphspec.nodes", STARVED), forms], {}),
+        ("vector", [entry("test.cut", NEAR_TURN), entry("graphspec.nodes", STARVED), forms], {}),
         ("none", [nodes, entry("test.cut", CUTTING), forms], {}),
         ("vector", [nodes, forms], dict(seed=8)),
         ("aimed", [nodes, entry("test.cut", SEVERING), forms], {}),
@@ -3060,7 +3233,7 @@ SEARCHED = (
     ("vector", gone_by("test.part"), left_by("test.part", BASE_TURN, BASE_VISIT)),
     ("vector", near_by("test.part"), left_by("test.part", NEAR_AT_TURN, NEAR_AT_VISIT)),
     ("vector", visited_by("test.part"), left_by("test.part", BASE_VISIT)),
-    ("vector", gone_by("graphspec.nodes"), left_by("graphspec.nodes", *AGENTS, BASE_TURN, BASE_VISIT)),
+    ("vector", gone_by("graphspec.nodes"), left_by("test.cut", NEAR_AT_TURN) + left_by("graphspec.nodes", *AGENTS, BASE_TURN, BASE_VISIT)),
     (None, UNREALISED),
     (None, UNSTARTED),
     ("aimed", unsped(visited_by("test.cut")), left_by("test.cut", BASE_VISIT), AIMLESS),
@@ -3086,7 +3259,7 @@ one row per trial, in the order of the trials; %(reading)s
     trial_000010  %(v10)s  vector       not refused  12/13 in 4/4, left out cut by test.part 1               12/12/13, joined 0/12, no path cut by test.part 11 and no entry 1                0/0/1                                          0/0/1                                     12/12/13                                      test.part: relation base at turn 2/2, relation base at visit 2/2
     trial_000011  %(v11)s  vector       not refused  13/13 in 4/4                                            13/13/13, joined 12/14, hops 1, no path cut by test.part 1 and no entry 1        1/1/1, joined 0/1, no path cut by test.part 1  1/1/1, joined 0/1                         13/13/13                                      test.part: relation near at turn 1/2, relation near at visit 1/2
     trial_000012  %(v12)s  vector       not refused  13/13 in 4/4                                            13/13/13, joined 10/14, hops 1 to 2, no path cut by test.part 3 and no entry 1   1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         13/13/13                                      test.part: relation base at visit 2/2
-    trial_000013  %(v13)s  vector       not refused  12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1          0/0/1                                          0/0/1                                     12/12/13                                      graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
+    trial_000013  %(v13)s  vector       not refused  12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1          0/0/1                                          0/0/1                                     12/12/13                                      test.cut: relation near at turn 1/2; graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
     trial_000014  -           -            not described: the model of the configuration states options/realisation none, which puts no option before it; reach describes the options of decisions as a realisation puts them before a model
     trial_000015  -           -            not described: the trial holds no statement.json
     trial_000016  %(v16)s  aimed        refused      13/13 in 4/4                                            13/13/13, joined 10/14, hops 1 to 2, no path cut by test.cut 3 and no entry 1    1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         unread                                        test.cut: relation base at visit 2/2  %(aimless)s
@@ -3098,14 +3271,14 @@ ROW_TEXT = """reach of the options of the variant %s of the bank stored as %s in
 kept beside the bank, in its folder descriptions/reach_rows
 %s
     variant     realisation  turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated                                   turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
-    %s  vector       12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1  0/0/1                                      0/0/1                                     12/12/13                                      graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
+    %s  vector       12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1  0/0/1                                      0/0/1                                     12/12/13                                      test.cut: relation near at turn 1/2; graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
 """
 CROSSED_ROW = dict(
     turn=dict(
         decisions=4,
         described=3,
-        options=5,
-        held=5,
+        options=6,
+        held=6,
         left=[],
         fields={
             FIELDS[0]: owned(5, 5, 5),
@@ -3246,12 +3419,12 @@ kept beside the bank, in its folder descriptions/reaches
 described 2, of 1 variants and realisations; not described 1
 one row per trial, in the order of the trials; %s
     trial  variant     realisation  a fit        turn: options held/stated in decisions described/shown  turn: kind, put/held/stated  turn: target to of go, put/held/stated                     turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: target by of stay, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks  a fit is refused because
-    0      %s  vector       not refused  5/5 in 3/4                                              5/5/5                        3/3/3, joined 2/3, hops 0 to 1, no path cut by no entry 1  2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
-    1      %s  vector       not refused  5/5 in 3/4                                              5/5/5                        3/3/3, joined 2/3, hops 0 to 1, no path cut by no entry 1  2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
+    0      %s  vector       not refused  6/6 in 3/4                                              5/5/5                        3/3/3, joined 2/3, hops 0 to 1, no path cut by no entry 1  2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
+    1      %s  vector       not refused  6/6 in 3/4                                              5/5/5                        3/3/3, joined 2/3, hops 0 to 1, no path cut by no entry 1  2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
     2      -           -            not described: the seed of the configuration is 6 and the seed of the statement is 5
 """
 STEPPED_OVER = """    trial  variant     realisation  a fit        turn: options held/stated in decisions described/shown  turn: kind, put/held/stated  turn: target to of go, put/held/stated  turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: target by of stay, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks  a fit is refused because
-    0      %s  stepped      not refused  5/5 in 3/4                                              5/5/5                        3/3/3, joined 3/3, hops 0 to 1          2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
+    0      %s  stepped      not refused  6/6 in 3/4                                              5/5/5                        3/3/3, joined 3/3, hops 0 to 1          2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
 """
 
 
@@ -3505,7 +3678,9 @@ def test_the_key_of_every_description_holds_the_version_of_every_unit_and_entry_
     LOG.info("descriptions keys exit units=%d seconds=%.3f", len(units), time.perf_counter() - started)
 
 
-def test_every_check_of_a_statement_a_configuration_a_pipeline_and_a_realisation_refuses_with_the_one_class(bank, searching):
+def test_every_check_of_a_statement_a_configuration_a_pipeline_and_a_realisation_refuses_with_the_one_class(
+    bank, searching, monkeypatch
+):
     started = time.perf_counter()
     held, stated = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), state(STATED)
     config = modelled(bank, "vector")
@@ -3547,6 +3722,20 @@ def test_every_check_of_a_statement_a_configuration_a_pipeline_and_a_realisation
         with pytest.raises(Refused) as raised:
             call()
         assert str(raised.value) == message
+    unread = (
+        "^the realisation of options node cannot read the options of this bank: the kind of action go of the kind of "
+        "task turn states the roles to of the sort node, along of the sort edge, made of the sort new, and "
+    )
+    with pytest.raises(Refused, match=unread):
+        reach(bank, modelled(bank, "node"), STATED)
+    monkeypatch.setattr(reaching.Reached, "graphed", lambda self: [])
+    aimed_only = modelled(bank, "aimed")
+    told = reaching.recorded(held, aimed_only, keyed(bank, aimed_only), "aimed", None)
+    assert (told["tasks"], told["undecided"]) == (dict(turn=dict(fields=list(GO[:3]), unread=[GO[3]])), ["visit"])
+    assert (
+        "\nkind of task turn: fields target to of go, target along of go, target made of go; not read by the realisation: "
+        "parameter speed of go\n"
+    ) in reaching.text(dict(told, kept=kept_as("reach", "bank")))
     LOG.info("descriptions the one class exit cases=%d seconds=%.3f", len(cases), time.perf_counter() - started)
 
 
@@ -3778,6 +3967,50 @@ LEANER_SECOND = dict(
     },
     equal=dict(kinds=1, relations=1),
 )
+EVERYWHERE = dict(everywhere=True, without=[])
+ANCHORS_LEFT = dict(
+    agent=tally(0, 0, None, 0, None, 0, nodes=NIL, anchors=ANCHORED), spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=SPOTS, anchors=NIL)
+)
+UNBASED = {"near": tally(8, 0, 0.0, 0, 0.0, 8, edges=NEARS), "base": tally(0, 0, None, 0, None, 0, edges=NIL)}
+STARVING = [
+    dict(
+        effected(
+            "graphspec.nodes",
+            dict(
+                agent=tally(16, 16, 1.0, 0, 0.0, 0, nodes=NIL, anchors=ANCHORED),
+                spot=tally(19, 0, 0.0, 0, 0.0, 19, nodes=SPOTS, anchors=NIL),
+            ),
+            {
+                "near": tally(8, 0, 0.0, 0, 0.0, 8, edges=NEARS),
+                "base": tally(11, 11, 1.0, 0, 0.0, 0, edges=NIL),
+                LOOPS: tally(0, 0, None, 0, None, 0, edges=NIL),
+            },
+            [
+                dict(EVERYWHERE, sort="kind", name="agent", task="turn", times=[1, 3, 5]),
+                dict(EVERYWHERE, sort="kind", name="agent", task="visit", times=[2, 4, 5, 6]),
+                dict(EVERYWHERE, sort="relation", name="base", task="turn", times=[1, 3, 5]),
+                dict(EVERYWHERE, sort="relation", name="base", task="visit", times=[2, 4, 5, 6]),
+            ],
+        ),
+        values=dict(kinds=dict(agent=dict(added=[], removed=["load"], filled=[], changed=0)), relations={}),
+    ),
+    effected(
+        "test.cut",
+        ANCHORS_LEFT,
+        dict(UNBASED, **{LOOPS: tally(0, 0, None, 0, None, 0, edges=NIL)}),
+        [
+            dict(
+                sort="relation",
+                name="base",
+                task="turn",
+                times=[1, 3, 5],
+                everywhere=False,
+                without=[dict(entry="graphspec.nodes", how="absent")],
+            )
+        ],
+    ),
+    effected("graphspec.relation_forms", ANCHORS_LEFT, dict(UNBASED, **{LOOPS: tally(0, 0, None, 19, None, 19, edges=SPOTS)}), []),
+]
 TRUTHS = dict(
     first="g0",
     second="g1",
@@ -4045,6 +4278,8 @@ def test_two_variants_that_differ_by_one_setting_differ_in_the_description_by_wh
     assert against(bank, first, STATED, configuration(bank, MODEL, None, **joined), STATED)["graphs"] == record["graphs"]
     reseeded = against(bank, first, STATED, first, dict(STATED, derivation_seed=8))
     assert (reseeded["first"]["seed"], reseeded["second"]["seed"], reseeded["differs"]) == (7, 8, False)
+    starved = restating.Derived(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT), second, False)
+    assert starved.effects(0)[0]["effects"] == STARVING
     LOG.info("descriptions difference of variants exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -4097,6 +4332,9 @@ def test_two_variants_differ_by_the_columns_of_values_one_alone_holds_and_by_the
     sized = [Mock(encoding=Mock(table=("load",), sizes=dict(load=held))) for held in ((1, 1), (2, 1))]
     with pytest.raises(ValueError, match="^the first variant encodes the column load as 1 values and 1 flags and the second as 2 and 1; "):
         diverging.shared(sized)
+    spotted = Mock(entities=Mock(return_value=dict(spot=["load"])))
+    stating = [Mock(nodes=["spot"], by_name=dict(near=Mock(attributes=held)), schema=spotted) for held in (("weight",), ("weight", "extra"))]
+    assert diverging.columned(stating) == dict(kinds={}, relations=dict(near=dict(first=[], second=["extra"])))
     LOG.info("descriptions difference of values exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -4240,10 +4478,34 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         },
         equal=dict(kinds=0, relations=0),
     )
-    unlooped = leaning(1)[:2] + [dict(operation="graphspec.relation_forms", parameters=dict(FORMS, **{"relation_forms/loops": False}))]
+    table = np.asarray(graph.value_table)
+    wide = graph.replace(value_table=np.concatenate((table, np.full((len(table), 1), np.nan, table.dtype)), 1))
+    same = diverging.paired((name, graph, grown, 0, 8), (name, wide, grown, 0, 8))
+    assert (same["kinds"], same["relations"], same["equal"], same["alone"]) == ({}, {}, dict(kinds=2, relations=3), UNSHARED)
+    other = diverging.paired((name, graph, grown, 0, 8), (name, graph.replace(value_table=table * 2), grown, 0, 8))
+    assert other["kinds"] == {} and other["relations"] == dict(near=unlike(EDGED, "both", (0, 0, 8), NIL, NIL, NEARS))
+    near = np.asarray(graph.fact_code) == grown.code("near")
+    turned_round = graph.replace(
+        task_step=np.asarray(graph.task_step)[::-1].copy(),
+        fact_source=np.where(near, graph.fact_target, graph.fact_source),
+        fact_target=np.where(near, graph.fact_source, graph.fact_target),
+    )
+    steps = Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT).stated(config)[1]
+    (told,) = effect.told([graph, turned_round], [graph], grown, steps[2:])
+    assert told["tasks"] == dict(turn=[1, 3, 5], visit=[2, 4, 5, 6])
+    assert told["effects"][0]["relations"]["near"] == tally(8, 0, 0.0, 0, 0.0, 8, edges=NEARS)
+    unlooped = leaning(1)[:2] + [
+        dict(operation="graphspec.relation_forms", parameters=dict(FORMS, **{"relation_forms/loops": False})),
+        dict(operation="graphspec.product", parameters=PRODUCED),
+    ]
     unlooped = configuration(bank, MODEL, None, pipeline=unlooped, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
     found = against(bank, config, STATED, unlooped, STATED)["graphs"]
-    assert [(graph["kinds"], graph["equal"]) for graph in found] == [({}, dict(kinds=2, relations=2))] * 2
+    assert [graph["kinds"] for graph in found] == [{}, {}]
+    assert [graph["equal"] for graph in found] == [dict(kinds=2, relations=2)] * 2
+    assert found[0]["relations"] == {
+        LOOPS: unlike(EDGED, "first", (30, 0, 0), LOOPS_HELD, NIL, NIL),
+        "product": unlike(EDGED, "second", (0, 8, 0), NIL, NEARS, NIL),
+    }
     assert found[1]["relations"] == {LOOPS: unlike(EDGED, "first", (7, 0, 0), [[0, 3], [2, 1]], NIL, NIL)}
     assert "  relation relation_forms.loops, which only the first states: edges only the first holds 7," in "\n".join(
         differing.graph_text(found[1], describing.NAMED["clock"], kept_as("differences", "bank"))
@@ -4267,6 +4529,16 @@ def test_a_difference_stops_naming_what_it_cannot_meet(bank, capsys, monkeypatch
         differing.differed(*sides, moments.tolist())
     with pytest.raises(ValueError, match="the second shows the graph g0 at two steps of one time, among 0, 1, 1"):
         differing.met("g0", [0, 1], [0, 1, 1])
+    times, places = differing.met("g0", [1, 3], [0, 1, 2])
+    assert times.tolist() == [0, 1, 2, 3] and [found.tolist() for found in places] == [[1, 3], [0, 1, 2]]
+    wider = Registry.from_declaration(manifest["spec"])
+    wider.nodes += ("depot",)
+    moved = held[0].replace(kinds=np.where(np.asarray(held[0].kinds) == registry.kind("spot"), 2, held[0].kinds))
+    sides = [differing.lasting(registry, held[0], moments), differing.lasting(wider, moved, moments)]
+    told = differing.differed(*sides, moments.tolist())["kinds"]
+    assert {name: (found["stated"], found["first"], found["second"]) for name, found in told.items()} == dict(
+        spot=("both", 19, 0), depot=("second", 0, 19)
+    )
     last = held[1]
     hourly = Facts(last.name, last.keys, "hour", last.inner, last.observers, last.options, last.generators, **last.arrays)
     monkeypatch.setattr(describing, "stored", lambda path, graph: (held[0], hourly)[graph["index"]])
@@ -4295,7 +4567,7 @@ RETRACTED = dict(
     lapsed=0,
     edges=1,
     facts=1,
-    absent=1,
+    absent=2,
     replaced=1,
     edges_held=[[None, 0], [0, 1]],
     runs=1,
@@ -4303,7 +4575,7 @@ RETRACTED = dict(
     **NONE,
 )
 RETRACTED_TEXT = (
-    "  relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 1, replaced 1; runs 1, bounded 0\n"
+    "  relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 2, replaced 1; runs 1, bounded 0\n"
 )
 EITHER_WAY = dict(
     table="base",
@@ -4333,15 +4605,15 @@ THIRD = dict(
     decisions=dict(
         turn=dict(
             decisions=4,
-            options=6,
-            recorded=6,
+            options=7,
+            recorded=7,
             regenerated=0,
             generators={},
             rule=None,
             each=[
                 dict(key=10, time=0, options=2, recorded=2, regenerated=0, generators={}),
                 dict(key=20, time=1, options=2, recorded=2, regenerated=0, generators={}),
-                dict(key=30, time=2, options=1, recorded=1, regenerated=0, generators={}),
+                dict(key=30, time=2, options=2, recorded=2, regenerated=0, generators={}),
                 dict(key=40, time=2, options=1, recorded=1, regenerated=0, generators={}),
             ],
         )
@@ -4352,7 +4624,7 @@ THIRD_TEXT = """
 graph h0, unit tick, times 4 from 0 to 3
   kind agent: nodes 1, observations 1, replaced 0
   kind spot: nodes 3, observations 3, replaced 0
-  relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 1, replaced 1; runs 1, bounded 0
+  relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 2, replaced 1; runs 1, bounded 0
   relation base of the table base: ends agent to spot, spot to agent; no columns; edges 1, facts 2, absent 0, replaced 0; runs 1, bounded 0
   held before every time and at each time:
     time                before  0  1  2  3
@@ -4365,11 +4637,11 @@ graph h0, unit tick, times 4 from 0 to 3
   shown to some tasks only: facts known later than they hold from, about nodes 0 and about edges 1, by 4 at most, the last known from time 4, before which a task is not shown them; no fact naming observers
   not counted above: no member of a set edge; no graph a node holds; no entity without a fact
   kind of task turn: tasks 4; train 2, validation 2, no split 0
-  decisions of turn: decisions 4, options 6, recorded 6, regenerated 0; no generator; no rule of options
+  decisions of turn: decisions 4, options 7, recorded 7, regenerated 0; no generator; no rule of options
     task  time  options  recorded  regenerated
     10    0     2        2         0
     20    1     2        2         0
-    30    2     1        1         0
+    30    2     2        2         0
     40    2     1        1         0
 """
 
@@ -4415,6 +4687,10 @@ def test_a_fact_a_correction_replaced_holds_nothing_is_counted_apart_and_alone_t
     manifest = read_json(crossed / "manifest.json")
     held = describing.stored(crossed, manifest["graphs"][0])
     assert np.asarray(held.fact_replaced_time).tolist() == [4] and sorted(np.asarray(held.fact_known_time).tolist()) == [3, 4]
+    late = np.array(held.fact_since, np.int64)
+    late[np.asarray(held.fact_replaced_row)] = 9
+    registry = Registry.from_declaration(manifest["spec"])
+    assert describing.clocked(registry, held.replace(fact_since=late)).tolist() == [0, 1, 2, 3]
     none = np.zeros(0, np.int64)
     arrays = dict(held.arrays, fact_replaced_row=none, fact_replaced_time=none)
     twin = Facts("uncorrected", held.keys, held.unit, held.inner, held.observers, held.options, held.generators, **arrays)
@@ -4585,7 +4861,8 @@ def test_under_order_a_description_states_positions_and_no_length_and_the_orders
 def test_without_time_a_description_states_no_time_and_counts_once_what_holds_always(bank, cutting, monkeypatch):
     started = time.perf_counter()
     manifest = restated(read_json(bank / "manifest.json"), STILL, None)
-    held = [unclocked(timeless(describing.stored(bank, graph))) for graph in manifest["graphs"]]
+    undated = [unclocked(timeless(describing.stored(bank, graph))) for graph in manifest["graphs"]]
+    held = [facts.replace(task_time=np.zeros(len(facts.task_time), np.int64)) for facts in undated]
     monkeypatch.setattr(describing, "stored", lambda path, graph: held[graph["index"]])
     record = describing.recorded(bank, manifest)
     second, turn = record["graphs"][1], SECOND["decisions"]["turn"]
@@ -4629,6 +4906,9 @@ SEEN = ("key", "since", "until", "load", "known", "observers")
 OWNED = ("key", "since", "until", "weight", "known", "observers")
 WEIGHED = ("source", "target", "present", "since", "until", "weight", "known", "observers")
 JOINING = ("source", "target", "present", "since", "until", "known", "observers")
+CORRECTED = ("key", "since", "until", "load", "known", "replaced", "observers")
+RETRACTING = ("source", "target", "present", "since", "until", "known", "replaced", "observers")
+OTHERS = dict(generator="others", seed=5, drawn=None)
 NOTED = ("source", "target", "present", "since", "until", "mark", "known", "observers")
 MEMBERS = ("set", "member", "role", "share")
 PIECES = ("owner", "kind", "key", "mass")
@@ -4643,7 +4923,7 @@ WATCHED_FIRST = dict(
         spot=dict(
             nodes=5,
             observations=5,
-            replaced=0,
+            replaced=1,
             nodes_held=[[None, 0], [0, 4], [2, 5]],
             observations_held=[[None, 0], [0, 4], [2, 5]],
         ),
@@ -4695,7 +4975,7 @@ WATCHED_FIRST = dict(
             edges=1,
             facts=1,
             absent=0,
-            replaced=0,
+            replaced=1,
             edges_held=[[None, 0], [0, 1]],
             runs=1,
             bounded=0,
@@ -4719,28 +4999,28 @@ WATCHED_FIRST = dict(
             mean=3.0,
         ),
     ),
-    tasks=dict(turn=dict(tasks=3, splits=dict(train=2, validation=1), unsplit=0)),
+    tasks=dict(turn=dict(tasks=4, splits=dict(train=3, validation=1), unsplit=0)),
     decisions=dict(
         turn=dict(
             decisions=3,
             options=4,
-            recorded=4,
-            regenerated=0,
-            generators={},
+            recorded=3,
+            regenerated=1,
+            generators=dict(others=1),
             rule=None,
             each=[
-                dict(key=10, time=1, options=2, recorded=2, regenerated=0, generators={}),
-                dict(key=20, time=3, options=1, recorded=1, regenerated=0, generators={}),
-                dict(key=30, time=5, options=1, recorded=1, regenerated=0, generators={}),
+                dict(key=10, time=1, options=2, recorded=1, regenerated=1, generators=dict(others=1)),
+                dict(key=20, time=3, options=1, recorded=1, regenerated=0, generators=dict(others=0)),
+                dict(key=30, time=5, options=1, recorded=1, regenerated=0, generators=dict(others=0)),
             ],
         )
     ),
     unread=dict(
         later=dict(nodes=1, edges=1, gap=3, last=5),
-        watched=dict(nodes=1, edges=2, observers=dict(north=dict(nodes=1, edges=1), south=dict(nodes=0, edges=1))),
+        watched=dict(nodes=1, edges=2, observers=dict(north=dict(nodes=1, edges=1), south=dict(nodes=0, edges=2))),
         sets=dict(group=dict(edges=2, members=5, least=2, most=3)),
         held=dict(agent=dict(graphs=2, nodes=2, edges=1, least=0, most=2)),
-        entities=dict(agent=WHOLE_KIND, spot=dict(created=1, unstated=1), group=WHOLE_KIND),
+        entities=dict(agent=WHOLE_KIND, spot=dict(created=1, unstated=2), group=WHOLE_KIND),
     ),
 )
 UNHELD_RELATION = dict(
@@ -4760,7 +5040,7 @@ WATCHED_SECOND = dict(
         base=dict(
             UNHELD_RELATION, table="base", ends=[["agent", "spot"]], columns=[], edges=1, facts=1, edges_held=[[None, 1]], runs=1
         ),
-        back=dict(UNHELD_RELATION, table="back", columns=[]),
+        back=dict(UNHELD_RELATION, table="back", ends=[["spot", "agent"]], columns=[], absent=1),
         note=dict(UNHELD_RELATION, table="note", columns=["mark"], about="lapse"),
     ),
     tasks=dict(turn=dict(tasks=0, splits=dict(train=0, validation=0), unsplit=0)),
@@ -4781,11 +5061,11 @@ splits: train, validation
 
 graph w0, unit tick, times 7 from 0 to 6
   kind agent: nodes 2, observations 2, replaced 0
-  kind spot: nodes 5, observations 5, replaced 0
+  kind spot: nodes 5, observations 5, replaced 1
   set edge group: set edges 2, facts 2, replaced 0
   relation near of the table near: ends spot to spot; columns weight; edges 3, facts 3, absent 0, replaced 0; runs 3, bounded 0
   relation base of the table base: ends agent to spot; no columns; edges 3, facts 3, absent 0, replaced 0; runs 3, bounded 0
-  relation back of the table back: ends spot to agent; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
+  relation back of the table back: ends spot to agent; no columns; edges 1, facts 1, absent 0, replaced 1; runs 1, bounded 0
   relation note of the table note: ends group to spot; columns mark; edges 2, facts 2, absent 0, replaced 0; runs 2, bounded 1, lasting 3 to 3, mean 3.0; about a set edge under the rule lapse, lapsed 2
   held before every time and at each time:
     time                before  0  1  2  3  4  5  6
@@ -4799,14 +5079,14 @@ graph w0, unit tick, times 7 from 0 to 6
     base edges          0       2  2  2  3  3  3  3
     back edges          0       1  1  1  1  1  1  1
     note edges          0       1  2  2  2  1  1  1
-  shown to some tasks only: facts known later than they hold from, about nodes 1 and about edges 1, by 3 at most, the last known from time 5, before which a task is not shown them; facts naming observers, which a task naming another observer is not shown, about nodes 1 and about edges 2, naming north 1 and 1, south 0 and 1
-  not counted above: members of set edges, group 5 in 2 set edges of 2 to 3; graphs nodes hold, agent 2 of 0 to 2 nodes, 2 nodes and 1 edges in all; entities no fact is about, spot 1 an option would create and 1 other
-  kind of task turn: tasks 3; train 2, validation 1, no split 0
-  decisions of turn: decisions 3, options 4, recorded 4, regenerated 0; no generator; no rule of options
-    task  time  options  recorded  regenerated
-    10    1     2        2         0
-    20    3     1        1         0
-    30    5     1        1         0
+  shown to some tasks only: facts known later than they hold from, about nodes 1 and about edges 1, by 3 at most, the last known from time 5, before which a task is not shown them; facts naming observers, which a task naming another observer is not shown, about nodes 1 and about edges 2, naming north 1 and 1, south 0 and 2
+  not counted above: members of set edges, group 5 in 2 set edges of 2 to 3; graphs nodes hold, agent 2 of 0 to 2 nodes, 2 nodes and 1 edges in all; entities no fact is about, spot 1 an option would create and 2 other
+  kind of task turn: tasks 4; train 3, validation 1, no split 0
+  decisions of turn: decisions 3, options 4, recorded 3, regenerated 1; others 1; no rule of options
+    task  time  options  recorded  regenerated  others
+    10    1     2        1         1            1
+    20    3     1        1         0            0
+    30    5     1        1         0            0
 
 graph w1, unit tick, no time
   kind agent: nodes 1, observations 1, replaced 0
@@ -4814,7 +5094,7 @@ graph w1, unit tick, no time
   set edge group: set edges 0, facts 0, replaced 0
   relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
   relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
-  relation back of the table back: no ends; no columns; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
+  relation back of the table back: ends spot to agent; no columns; edges 0, facts 0, absent 1, replaced 0; runs 0, bounded 0
   relation note of the table note: no ends; columns mark; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0; about a set edge under the rule lapse, lapsed 0
   held before every time and at each time:
     time                before
@@ -4904,9 +5184,12 @@ def unwatched(stated):
     names = ("key", "kind", "time", "observer", "split", "weight", "target", "known")
     result = dict({name: [] for name in names}, references=dict(agents=[]))
     for key, moment, split, gain, options in stated:
-        options[0].update(chosen=True, outcome=dict(gain=gain))
-        target = dict(options=options, concurrent=[], next={}, ended=None, discount=None)
-        for name, value in zip(names, (key, "turn", moment, None, split, None, target, moment + 1)):
+        target = None
+        if options is not None:
+            options[0].update(chosen=True, outcome=dict(gain=gain))
+            target = dict(options=options, concurrent=[], next={}, ended=None, discount=None)
+        known = None if target is None else moment + 1
+        for name, value in zip(names, (key, "turn", moment, None, split, None, target, known)):
             result[name].append(value)
         result["references"]["agents"].append(["a0"])
     LOG.debug("descriptions unwatched exit tasks=%d seconds=%.4f", len(stated), time.perf_counter() - started)
@@ -4919,12 +5202,13 @@ def unsaid_first():
         valued_rows("agent", SEEN, ("a0", 0, None, 1.0, None, None), ("a1", 0, None, 2.0, None, None)),
         valued_rows(
             "spot",
-            SEEN,
-            ("s0", 0, None, 1.0, None, None),
-            ("s1", 0, None, None, None, None),
-            ("s2", 0, None, 3.0, None, None),
-            ("s3", 2, None, 4.0, 5, None),
-            ("s4", 0, None, 5.0, None, ["north"]),
+            CORRECTED,
+            ("s0", 0, None, 1.0, None, None, None),
+            ("s1", 0, None, None, None, None, None),
+            ("s2", 0, None, 3.0, None, None, None),
+            ("s3", 2, None, 4.0, 5, None, None),
+            ("s4", 0, None, 5.0, None, None, ["north"]),
+            ("s7", 1, None, 9.0, None, 2, None),
         ),
         valued_rows("group", OWNED, ("g0", 0, None, 1.0, None, None), ("g1", 0, 4, 2.0, None, None)),
     ]
@@ -4943,9 +5227,15 @@ def unsaid_first():
             JOINING,
             ("a0", "s0", True, 0, None, None, None),
             ("a0", "s3", True, 3, None, 5, None),
-            ("a1", "s4", True, 0, None, None, ["north"]),
+            ("a1", "s4", True, 0, None, None, ["north", "south"]),
         ),
-        joined_rows("back", ("spot", "agent"), JOINING, ("s1", "a0", True, 0, None, None, None)),
+        joined_rows(
+            "back",
+            ("spot", "agent"),
+            RETRACTING,
+            ("s1", "a0", True, 0, None, None, None, None),
+            ("s2", "a0", False, 0, None, None, 2, None),
+        ),
         joined_rows(
             "note",
             ("group", "spot"),
@@ -4966,18 +5256,20 @@ def unsaid_first():
         nodes=rows(PIECES, ("a0", "piece", "p0", 1.0), ("a0", "piece", "p1", 2.0)),
         edges=rows(JOINTS, ("a0", "p0", "p1", "joint")),
     )
+    drawn = dict(going("o1", ["s2"], [["s0", "near", "s1"]], ["s9"], 2.0), origin=OTHERS)
     tasks = unwatched(
         [
-            (10, 1, "train", 1.0, [going("o0", ["s0"], [], [], 1.0), going("o1", ["s2"], [["s0", "near", "s1"]], ["s9"], 2.0)]),
+            (10, 1, "train", 1.0, [going("o0", ["s0"], [], [], 1.0), drawn]),
             (20, 3, "train", 2.0, [going("o0", ["s1"], [["s1", "back", "a0"]], [], 1.0)]),
-            (30, 5, "validation", 3.0, [going("o0", ["s3"], [], [], 3.0)]),
+            (30, 5, "validation", 3.0, [going("o0", ["s3"], [], [], None)]),
+            (40, 6, "train", None, None),
         ]
     )
     return dict(
         name="w0",
         unit="tick",
         columns={},
-        nodes=dict(agent=["a0", "a1"], spot=["s0", "s1", "s2", "s3", "s4", "s8"], group=["g0", "g1"]),
+        nodes=dict(agent=["a0", "a1"], spot=["s0", "s1", "s2", "s3", "s4", "s7", "s8"], group=["g0", "g1"]),
         values=values,
         edges=edges,
         sets=dict(group=members),
@@ -4992,7 +5284,10 @@ def unsaid_second():
         valued_rows("agent", SEEN, ("a0", None, None, 1.0, None, None)),
         valued_rows("spot", SEEN, ("s0", None, None, 1.0, None, None)),
     ]
-    edges = [joined_rows("base", ("agent", "spot"), JOINING, ("a0", "s0", True, None, None, None, None))]
+    edges = [
+        joined_rows("base", ("agent", "spot"), JOINING, ("a0", "s0", True, None, None, None, None)),
+        joined_rows("back", ("spot", "agent"), JOINING, ("s0", "a0", False, None, None, None, None)),
+    ]
     return dict(
         name="w1",
         unit="tick",
@@ -5041,6 +5336,9 @@ def test_a_truth_description_counts_what_it_leaves_out_and_holds_an_edge_about_a
     g0, g1, s0, s2 = (held.keys.index(key) for key in ("g0", "g1", "s0", "s2"))
     assert sorted(map(tuple, noted[:, 1:].tolist())) == sorted([(g0, s0, 1, 8), (g1, s2, 2, 5)])
     assert record["graphs"][0]["times"] == [0, 1, 2, 3, 4, 5, 6] and record["graphs"][0]["relations"]["note"]["lapsed"] == 2
+    alone = between(unsaid, "w1", "w1")
+    assert (alone["differs"], alone["times"], alone["kinds"], alone["relations"]) == (False, [None], {}, {})
+    assert alone["equal"] == dict(kinds=3, relations=4)
     LOG.info("descriptions unsaid truth exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -5058,7 +5356,7 @@ RULED_VIEWS = {
 
 
 def test_a_variant_names_the_graphs_of_the_bank_its_view_does_not_show_and_the_splits_whose_tasks_see_each_view(
-    unsaid, bank
+    unsaid, bank, monkeypatch
 ):
     started = time.perf_counter()
     kept = {"relations/%s/keep" % name: name != "near" for name in ("near", "base", "back", "note", "group.lead", "group.other", "group")}
@@ -5090,6 +5388,17 @@ def test_a_variant_names_the_graphs_of_the_bank_its_view_does_not_show_and_the_s
     assert describing.viewed_text(RULED_VIEWS[1]) == "the graph g0 as the tasks of the split train see it"
     north = dict(graph="w0", observer="north", splits=EVERY)
     assert describing.viewed_text(north) == SEEN_BY % "w0" + ", those that name the observer north"
+    looked = Mock(rules={0: (), 1: ()}, splits=("train", "validation"))
+    southern = Mock(
+        viewed=Mock(return_value=Mock(looking=looked, graphs=[dict(index=4, source=0, observer=1, split=-1)])),
+        manifest=dict(observers=["north", "south"], graphs=[dict(index=0, name="w0")]),
+    )
+    assert restating.viewed(southern, None) == {4: dict(graph="w0", observer="south", splits=EVERY)}
+    plain = configuration(bank, MODEL, None, pipeline=[], graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    whole = deriver.viewed(plain)
+    partial = Mock(looking=whole.looking, graphs=whole.graphs[1:], storage=whole.storage, steps=whole.steps)
+    monkeypatch.setattr(deriver, "viewed", lambda config: partial)
+    assert restating.unviewed(deriver, plain) == [dict(name="g0", tasks=7, stated=6, sequences=1)]
     LOG.info("descriptions unsaid variant exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -5137,22 +5446,43 @@ ANCHORED_TEXT = (
 
 
 def test_reach_says_which_end_of_an_edge_holds_a_feature_its_own_values_the_hops_along_its_facts_and_what_is_an_anchor(
-    unsaid, crossed
+    unsaid, crossed, walking, monkeypatch
 ):
     started = time.perf_counter()
     model = dict(MODEL, **{"options/realisation": "vector"})
     config = configuration(unsaid, model, None, pipeline=[], graph=WATCHING, seed=STATED["seed"], splits=SPLITS)
     held = reaching.Reached(Deriver(unsaid, STATED["device"], STATED["derivation_seed"], RESIDENT), config, "vector")
-    found, lines = {}, []
+    found, lines, stated = {}, [], {}
     for decision in held.decided(held.derived(None, 0, 0), 0):
         for option in held.optioned(decision):
             read = held.read(None, 0, decision, option)
             aims = {name: field["targets"] for name, field in read["fields"].items() if "targets" in field}
             found[decision["key"], held.found.keys[option]] = aims
+            stated[decision["key"], held.found.keys[option]] = list(read["fields"])
             lines += [reaching.target_text(dict(target, cut=None), []) for targets in aims.values() for target in targets]
             assert read["held"]
         held.decision_done()
     assert found == WATCHED_AIMS and lines == WATCHED_AIMS_TEXT
+    assert stated == {(10, "o0"): [GO[0], GO[3]], (10, "o1"): list(GO), (20, "o0"): [GO[0], GO[1], GO[3]], (30, "o0"): [GO[0]]}
+    assert held.counted(held.derived(None, 0, 0), 0) == {0: dict(turn=3)}
+    valued = effect.filled(held.derived(None, 0, 0), held.registry, 0, 7, [])["kinds"]
+    assert (valued["agent"], valued["spot"]) == (["load"], ["load"])
+    seen = held.truthful(held.decided(held.derived(None, 0, 0), 0)[0])
+    watched = {
+        observer: {
+            group: int(held.hidden(dict(seen, sequence=dict(seen["sequence"], observer=at)), group, rows)["observer"].sum())
+            for group, rows in (("obs", np.arange(len(seen["held"]["obs"]))), ("fact", np.arange(len(seen["held"]["fact"]))))
+        }
+        for at, observer in enumerate(("north", "south"))
+    }
+    assert watched == dict(north=dict(obs=0, fact=1), south=dict(obs=1, fact=0))
+    oneway = configuration(
+        unsaid, model, None, pipeline=[], graph=dict(WATCHING, **{"relations/direction": "directed"}), seed=STATED["seed"], splits=SPLITS
+    )
+    told = reaching.Reached(Deriver(unsaid, STATED["device"], STATED["derivation_seed"], RESIDENT), oneway, "vector")
+    first = told.decided(told.derived(None, 0, 0), 0)[0]
+    aims = told.read(None, 0, first, told.optioned(first)[1])["fields"]
+    assert {name: field["targets"] for name, field in aims.items() if "targets" in field} == WATCHED_AIMS[10, "o1"]
     thinnest = dict(KEPT, **{"nodes/spot/filter": "degree", "nodes/spot/min_degree": 3})
     other = reaching.Reached(
         Deriver(crossed, STATED["device"], STATED["derivation_seed"], RESIDENT), lined(crossed, THINNER, thinnest, "vector"), "vector"
@@ -5163,6 +5493,23 @@ def test_reach_says_which_end_of_an_edge_holds_a_feature_its_own_values_the_hops
     assert reaching.target_text(dict(anchored, cut=None), []) == ANCHORED_TEXT
     for legend in (effect.READING, reaching.READING["clock"]):
         assert "observed at the step other than as an anchor" in legend
+    sampled = dict(KEPT, **{"nodes/spot/filter": "sample", "nodes/spot/sample": 0.5})
+    edited = reaching.Reached(
+        Deriver(crossed, STATED["device"], STATED["derivation_seed"], RESIDENT), lined(crossed, THINNER, sampled, "stepped"), "stepped"
+    )
+    edited.loaded(0)
+    (unwanted,) = [token for token, key in edited.names.items() if key == "s0"]
+    monkeypatch.setattr(filtering, "unit", lambda seed, salt, tokens, steps: np.where(reaching.masked(tokens) == unwanted, 0.9, 0.1))
+    (second,) = [decision for decision in edited.decided(edited.derived(None, 1, 0), 0) if decision["key"] == 20]
+    made, here = [("a0 went a0", True), ("a0 went s0", False), ("a0 went s1", True)], dict(HERE, anchor=True)
+    assert cutless(edited.read(None, 1, second, edited.optioned(second)[0])) == kept(
+        {
+            FIELDS[0]: own("fact", None, *made),
+            FIELDS[1]: role("fact", aim("s0", here, LOAD, None, made[1])),
+            FIELDS[2]: role("fact", aim("a0 base s0", here, LOAD, None, made[0], made[1]), aim(BOTH, here, LOAD, None, made[1], made[2])),
+            FIELDS[5]: own("fact", None, *made),
+        }
+    )
     LOG.info("descriptions reach ends exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -5237,6 +5584,10 @@ def test_what_holds_over_time_is_recorded_as_runs_exact_at_every_time_and_no_lar
     assert held_at(held, [-5, 100]) == [0, 2] and held_at(NIL, [0, 6]) == [0, 0] and held_at(held, []) == []
     with pytest.raises(ValueError, match="^a count is asked at -1, before 0, the first place from which its runs hold it$"):
         held_at(NIL, [-1])
+    touching = describing.counted(np.array([0, 0]), np.array([1, 2]), np.array([2, 3]), 1, [None, 5, 6])
+    assert touching == [[[None, 0], [5, 1]]]
+    within = describing.runs(np.array([4, 4]), np.array([0, 2]), np.array([9, 5]))
+    assert [found.tolist() for found in within] == [[0], [0], [9]]
     manifest = read_json(bank / "manifest.json")
     registry = Registry.from_declaration(manifest["spec"])
     facts = describing.stored(bank, manifest["graphs"][0])
@@ -5472,6 +5823,10 @@ def test_rows_are_met_as_one_integer_whatever_their_range_and_a_variant_is_descr
     rows = np.concatenate((rows, rows[:20], rows[40:]))
     assert alike(describing.packed(rows.T)) == alike(np.unique(rows, axis=0, return_inverse=True)[1].reshape(-1))
     assert len(np.unique(describing.packed(rows.T))) == 60 and describing.packed(rows[:0].T).tolist() == []
+    apart = np.array([[0] * 8 + [1 << 61] * 8, list(range(8)) * 2])
+    assert len(np.unique(describing.packed(apart))) == 16
+    kinded = differing.numbered(np.array([[0, 7], [1, 7]]), np.array([[1, 7], [0, 7]]))
+    assert [found.tolist() for found in kinded] == [[0, 1], [1, 0]]
     first, second = rows[:50, :3], rows[30:, :3]
     stacked = np.unique(np.concatenate((first, second)), axis=0, return_inverse=True)[1].reshape(-1)
     apart = (~np.isin(stacked[:50], stacked[50:])).tolist(), (~np.isin(stacked[50:], stacked[:50])).tolist()
