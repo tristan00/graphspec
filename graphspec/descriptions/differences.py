@@ -28,6 +28,10 @@ READING = (
     "either side, and at a time only one side shows the other holds nothing; only what differs is listed, time by "
     "time, and a kind or a relation equal at every time is counted"
 )
+TRUTH = (
+    READING + "; each of the two graphs is read as it holds once every correction is known: a fact a correction "
+    "replaced holds nothing at any time"
+)
 
 
 @timed("differences.tokens")
@@ -66,23 +70,22 @@ def counted(keys, steps, size):
     return np.bincount(keys[:, 0] * size + keys[:, 1], minlength=steps * size).reshape(steps, size)
 
 
-def spread(since, until, moments):
+def spread(begun, ended):
     started = time.perf_counter()
-    low = np.searchsorted(moments, np.asarray(since, np.int64), "left")
-    high = np.searchsorted(moments, np.asarray(until, np.int64), "left")
-    counts = np.maximum(high - low, 0)
+    counts = ended - begun
     rows = np.repeat(np.arange(len(counts)), counts)
-    result = rows, low[rows] + offsets(counts)
+    result = rows, begun[rows] + offsets(counts)
     LOG.debug("differences spread exit facts=%d rows=%d seconds=%.4f", len(counts), len(rows), time.perf_counter() - started)
     return result
 
 
 def lasting(registry, facts, moments):
     started = time.perf_counter()
-    rows, steps = spread(facts.obs_since, facts.obs_until, moments)
+    rows, steps = spread(*truth.shown(facts, "obs", moments))
     nodes = np.unique(np.stack((steps, np.asarray(facts.obs_entity, np.int64)[rows]), 1), axis=0)
     present = np.flatnonzero(np.asarray(facts.fact_present, bool))
-    rows, steps = spread(np.asarray(facts.fact_since)[present], np.asarray(facts.fact_until)[present], moments)
+    begun, ended = truth.shown(facts, "fact", moments)
+    rows, steps = spread(begun[present], ended[present])
     rows = present[rows]
     ends = [np.asarray(facts.arrays[name], np.int64)[rows] for name in ("fact_code", "fact_source", "fact_target")]
     result = dict(
@@ -329,7 +332,7 @@ def text(record):
         "difference of the truth graphs %s, the first, and %s, the second, of the bank stored as %s, described at "
         "version %d" % (record["first"], record["second"], record["stored_sha256"], record["version"]),
         "%s, %s" % ("no unit" if record["unit"] is None else "unit " + record["unit"], spanned(record["times"])),
-        READING,
+        TRUTH,
     ]
     lines += found_text(record)
     LOG.debug("differences text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)

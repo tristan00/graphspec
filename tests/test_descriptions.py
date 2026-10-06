@@ -58,15 +58,39 @@ FIRST = dict(
     unit="tick",
     times=[0, 1, 2, 3, 4, 5, 6, 7],
     kinds=dict(
-        agent=dict(nodes=2, observations=3, nodes_at=[2, 2, 2, 2, 2, 2, 2, 2], observations_at=[2, 2, 2, 3, 2, 2, 2, 2]),
-        spot=dict(nodes=3, observations=3, nodes_at=[2, 2, 3, 3, 3, 2, 2, 2], observations_at=[2, 2, 3, 3, 3, 2, 2, 2]),
+        agent=dict(
+            nodes=2, observations=3, replaced=0, nodes_at=[2, 2, 2, 2, 2, 2, 2, 2], observations_at=[2, 2, 2, 3, 2, 2, 2, 2]
+        ),
+        spot=dict(
+            nodes=3, observations=3, replaced=0, nodes_at=[2, 2, 3, 3, 3, 2, 2, 2], observations_at=[2, 2, 3, 3, 3, 2, 2, 2]
+        ),
     ),
     relations=dict(
         near=dict(
-            HELD["near"], edges=2, facts=3, absent=1, edges_at=[1, 1, 2, 2, 1, 1, 0, 0], runs=2, bounded=2, least=2, most=6, mean=4.0
+            HELD["near"],
+            edges=2,
+            facts=3,
+            absent=1,
+            replaced=0,
+            edges_at=[1, 1, 2, 2, 1, 1, 0, 0],
+            runs=2,
+            bounded=2,
+            least=2,
+            most=6,
+            mean=4.0,
         ),
         base=dict(
-            HELD["base"], edges=2, facts=3, absent=0, edges_at=[1, 2, 1, 1, 2, 2, 1, 1], runs=3, bounded=2, least=1, most=2, mean=1.5
+            HELD["base"],
+            edges=2,
+            facts=3,
+            absent=0,
+            replaced=0,
+            edges_at=[1, 2, 1, 1, 2, 2, 1, 1],
+            runs=3,
+            bounded=2,
+            least=1,
+            most=2,
+            mean=1.5,
         ),
     ),
     tasks=dict(
@@ -93,12 +117,12 @@ SECOND = dict(
     unit="tick",
     times=[1, 2, 3],
     kinds=dict(
-        agent=dict(nodes=1, observations=1, nodes_at=[1, 1, 1], observations_at=[1, 1, 1]),
-        spot=dict(nodes=2, observations=2, nodes_at=[2, 2, 1], observations_at=[2, 2, 1]),
+        agent=dict(nodes=1, observations=1, replaced=0, nodes_at=[1, 1, 1], observations_at=[1, 1, 1]),
+        spot=dict(nodes=2, observations=2, replaced=0, nodes_at=[2, 2, 1], observations_at=[2, 2, 1]),
     ),
     relations=dict(
-        near=dict(HELD["near"], ends=[], edges=0, facts=0, absent=0, edges_at=[0, 0, 0], runs=0, bounded=0, **NONE),
-        base=dict(HELD["base"], edges=1, facts=1, absent=0, edges_at=[1, 1, 0], runs=1, bounded=0, **NONE),
+        near=dict(HELD["near"], ends=[], edges=0, facts=0, absent=0, replaced=0, edges_at=[0, 0, 0], runs=0, bounded=0, **NONE),
+        base=dict(HELD["base"], edges=1, facts=1, absent=0, replaced=0, edges_at=[1, 1, 0], runs=1, bounded=0, **NONE),
     ),
     tasks=dict(
         turn=dict(tasks=1, splits=dict(train=1, validation=0), unsplit=0),
@@ -121,10 +145,10 @@ splits: train, validation
 %s
 
 graph g0, unit tick, times 8 from 0 to 7
-  kind agent: nodes 2, observations 3
-  kind spot: nodes 3, observations 3
-  relation near of the table near: ends spot to spot; columns weight; edges 2, facts 3, absent 1; runs 2, bounded 2, lasting 2 to 6, mean 4.0
-  relation base of the table base: ends agent to spot; no columns; edges 2, facts 3, absent 0; runs 3, bounded 2, lasting 1 to 2, mean 1.5
+  kind agent: nodes 2, observations 3, replaced 0
+  kind spot: nodes 3, observations 3, replaced 0
+  relation near of the table near: ends spot to spot; columns weight; edges 2, facts 3, absent 1, replaced 0; runs 2, bounded 2, lasting 2 to 6, mean 4.0
+  relation base of the table base: ends agent to spot; no columns; edges 2, facts 3, absent 0, replaced 0; runs 3, bounded 2, lasting 1 to 2, mean 1.5
   held at each time:
     time  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
     0     2            2                   2           2                  1           1
@@ -144,10 +168,10 @@ graph g0, unit tick, times 8 from 0 to 7
     50    5     3        2         1            1
 
 graph g1, unit tick, times 3 from 1 to 3
-  kind agent: nodes 1, observations 1
-  kind spot: nodes 2, observations 2
-  relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0; runs 0, bounded 0
-  relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0; runs 1, bounded 0
+  kind agent: nodes 1, observations 1, replaced 0
+  kind spot: nodes 2, observations 2, replaced 0
+  relation near of the table near: no ends; columns weight; edges 0, facts 0, absent 0, replaced 0; runs 0, bounded 0
+  relation base of the table base: ends agent to spot; no columns; edges 1, facts 1, absent 0, replaced 0; runs 1, bounded 0
   held at each time:
     time  agent nodes  agent observations  spot nodes  spot observations  near edges  base edges
     1     1            1                   2           2                  0           1
@@ -254,6 +278,7 @@ def graph(name, nodes, agents, spots, edges, stated):
 
 NEAR = ("source", "target", "present", "since", "until", "weight")
 BASE = ("source", "target", "present", "since", "until")
+LATER = BASE + ("known", "replaced")
 
 
 @timed("descriptions.case")
@@ -1707,8 +1732,8 @@ def crossing():
     edges = dict(
         near=synthetic.edge("spot", "spot", [], directed=False), base=synthetic.edge("agent", "spot", [], directed=False)
     )
-    columns = dict(load=NUMBER, speed=NUMBER)
-    return dict(held, columns=columns, edges=edges, tasks=dict(held["tasks"], references=references, kinds=kinds))
+    columns, clocks = dict(load=NUMBER, speed=NUMBER), dict(held["time"], model="clocks")
+    return dict(held, time=clocks, columns=columns, edges=edges, tasks=dict(held["tasks"], references=references, kinds=kinds))
 
 
 @timed("descriptions.acted")
@@ -1757,6 +1782,7 @@ def crossed_case():
         [("s0", 0, None, 1.0), ("s1", 0, None, 2.0), ("s2", 0, None, 2.0)],
         [
             ("near", ("spot", "spot"), BASE, [("s1", "s0", True, 0, None)]),
+            ("near", ("spot", "spot"), LATER, [("s1", "s2", True, 0, None, 3, 4), ("s1", "s2", False, 0, None, 4, None)]),
             ("base", ("agent", "spot"), BASE, [("a0", "s0", True, 0, None)]),
         ],
         [],
@@ -2958,7 +2984,7 @@ def test_two_truth_graphs_of_a_bank_differ_by_what_is_written_out_here_and_a_gra
     alone = dict(first="g1", second="g1", unit="tick", differs=False, times=[1, 2, 3], kinds={}, relations={})
     alone, stem = truths(bank, "g1", "g1", dict(alone, equal=dict(kinds=2, relations=2)))
     assert between(bank, "g1", "g1") == alone
-    written = ALONE_TEXT % (alone["stored_sha256"], describing.VERSION, differing.READING)
+    written = ALONE_TEXT % (alone["stored_sha256"], describing.VERSION, differing.TRUTH)
     assert differing.text(alone) == written == stem.with_suffix(".txt").read_text(encoding="utf-8")
     with pytest.raises(KeyError, match="holds no graph named g9; its graphs are g0, g1"):
         between(bank, "g0", "g9")
@@ -2986,7 +3012,7 @@ def test_the_text_of_a_difference_holds_its_record_and_the_verb_prints_what_the_
     assert capsys.readouterr().out == head + DIFFERENCE
     record = between(bank, "g0", "g1")
     expected, stem = truths(bank, "g0", "g1", TRUTHS)
-    written = TRUTHS_TEXT % (expected["stored_sha256"], describing.VERSION, differing.READING)
+    written = TRUTHS_TEXT % (expected["stored_sha256"], describing.VERSION, differing.TRUTH)
     assert differing.text(record) == written
     assert read_json(stem.with_suffix(".json")) == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
@@ -3062,7 +3088,7 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         ),
         equal=dict(kinds=0, relations=0),
     )
-    assert differing.text(record).split("\n", 1)[1] == TIMELESS_TEXT % differing.READING
+    assert differing.text(record).split("\n", 1)[1] == TIMELESS_TEXT % differing.TRUTH
     config = leaned(bank, 1)
     name, graph, grown, low, high = diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), config)[0]
     assert (name, low, high) == ("g0", 0, 8)
@@ -3126,3 +3152,52 @@ def test_a_difference_stops_naming_what_it_cannot_meet(bank, capsys, monkeypatch
             main()
         assert refusal in capsys.readouterr().err
     LOG.info("descriptions difference refused exit seconds=%.3f", time.perf_counter() - started)
+
+
+RETRACTED = dict(
+    table="near",
+    ends=[["spot", "spot"]],
+    columns=[],
+    edges=1,
+    facts=1,
+    absent=1,
+    replaced=1,
+    edges_at=[1, 1, 1],
+    runs=1,
+    bounded=0,
+    **NONE,
+)
+RETRACTED_TEXT = (
+    "  relation near of the table near: ends spot to spot; no columns; edges 1, facts 1, absent 1, replaced 1; runs 1, bounded 0\n"
+)
+
+
+def test_a_fact_a_correction_replaced_holds_nothing_is_counted_apart_and_alone_tells_a_graph_from_its_uncorrected_twin(
+    crossed, monkeypatch
+):
+    started = time.perf_counter()
+    record = describe(crossed)
+    (told,) = record["graphs"]
+    assert told["times"] == [0, 1, 2] and told["relations"]["near"] == RETRACTED
+    assert [held["replaced"] for held in told["kinds"].values()] == [0, 0] and told["relations"]["base"]["replaced"] == 0
+    assert RETRACTED_TEXT in describing.text(record)
+    manifest = read_json(crossed / "manifest.json")
+    held = describing.stored(crossed, manifest["graphs"][0])
+    assert np.asarray(held.fact_replaced_time).tolist() == [4] and sorted(np.asarray(held.fact_known_time).tolist()) == [3, 4]
+    none = np.zeros(0, np.int64)
+    arrays = dict(held.arrays, fact_replaced_row=none, fact_replaced_time=none)
+    twin = Facts("uncorrected", held.keys, held.unit, held.inner, held.observers, held.options, held.generators, **arrays)
+    monkeypatch.setattr(describing, "stored", lambda path, graph: (twin, held)[graph["index"]])
+    assert differing.recorded(crossed, manifest, dict(index=0), dict(index=1)) == dict(
+        version=describing.VERSION,
+        stored_sha256=manifest["stored_sha256"],
+        first="uncorrected",
+        second="h0",
+        unit="tick",
+        differs=True,
+        times=[0, 1, 2],
+        kinds={},
+        relations=dict(near=unlike(EDGED, "both", (3, 0, 0), (0, 1, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0))),
+        equal=dict(kinds=2, relations=1),
+    )
+    LOG.info("descriptions corrected exit seconds=%.3f", time.perf_counter() - started)

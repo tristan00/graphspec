@@ -4,20 +4,27 @@ from pathlib import Path
 
 import numpy as np
 
-from graphspec.facts.stored import Facts, admitted
+from graphspec.facts.stored import GROUPS, Facts, admitted
 from graphspec.infra.files import read_json, sha256_json, write_json
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.schema.declaration import Registry
 from graphspec.schema.time import ALWAYS, NEVER
+from graphspec.views import visible
 
 LOG = logging.getLogger(__name__)
-VERSION = 12
+VERSION = 13
+UNNAMED = -1
+LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
+CORRECTED = (
+    "a graph is described as it holds once every correction is known: a fact a correction replaced holds nothing at "
+    "any time and is counted apart, as replaced"
+)
 READING = (
-    "at a time: the nodes observed and their observations, and the edges a present fact holds; a run: a stretch of "
-    "time over which one edge holds without a break, bounded where it has a start and an end, lasting in the unit "
-    "of its graph"
+    CORRECTED + "; at a time: the nodes observed and their observations, and the edges a present fact holds; a run: a "
+    "stretch of time over which one edge holds without a break, bounded where it has a start and an end, lasting in "
+    "the unit of its graph"
 )
 
 
@@ -69,46 +76,82 @@ def lasting(since, until):
     )
 
 
-def kinds(registry, facts, times):
+@timed("describe.placed")
+def placed(times):
+    return np.r_[np.int64(ALWAYS), np.asarray(times, np.int64)]
+
+
+def shown(facts, group, moments):
+    started = time.perf_counter()
+    stamps = facts.stamps(group)
+    seen = visible.allowed(
+        len(stamps["since"]), facts.arrays[group + "_seen_row"], facts.arrays[group + "_seen_observer"], UNNAMED
+    )
+    result = visible.visible(
+        stamps["since"],
+        stamps["until"],
+        stamps["known"],
+        stamps["replaced"],
+        seen,
+        moments,
+        np.full(len(moments), LAST, np.int64),
+    )
+    LOG.debug(
+        "describe shown exit graph=%s group=%s facts=%d seconds=%.4f",
+        facts.name,
+        group,
+        len(seen),
+        time.perf_counter() - started,
+    )
+    return result
+
+
+def kinds(registry, facts, places):
     started = time.perf_counter()
     entity = np.asarray(facts.obs_entity, np.int64)
-    since, until = np.asarray(facts.obs_since, np.int64), np.asarray(facts.obs_until, np.int64)
+    begun, ended = shown(facts, "obs", places)
+    last, steps = ended > begun, np.arange(len(places))
     owner, result = np.asarray(facts.kinds, np.int64), {}
     for kind in registry.nodes:
         rows = owner[entity] == registry.kind(kind)
+        held = rows & last
         result[kind] = dict(
             nodes=int((owner == registry.kind(kind)).sum()),
-            observations=int(rows.sum()),
-            nodes_at=counted(*runs(entity[rows], since[rows], until[rows]), times),
-            observations_at=counted(since[rows], until[rows], times),
+            observations=int(held.sum()),
+            replaced=int((rows & ~last).sum()),
+            nodes_at=counted(*runs(entity[held], begun[held], ended[held]), steps)[1:],
+            observations_at=counted(begun[held], ended[held], steps)[1:],
         )
     LOG.debug("describe kinds exit graph=%s kinds=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started)
     return result
 
 
-def relations(registry, facts, times):
+def relations(registry, facts, places):
     started = time.perf_counter()
     owner = np.asarray(facts.kinds, np.int64)
     code, present = np.asarray(facts.fact_code, np.int64), np.asarray(facts.fact_present, bool)
     source, target = np.asarray(facts.fact_source, np.int64), np.asarray(facts.fact_target, np.int64)
-    since, until = np.asarray(facts.fact_since, np.int64), np.asarray(facts.fact_until, np.int64)
+    begun, ended = shown(facts, "fact", places)
+    last, steps, bounds = ended > begun, np.arange(len(places)), np.r_[places, np.int64(NEVER)]
     result = {}
     for table, entry in registry.schema.edges.items():
         for name in registry.encoding.relations[table]:
             rows = code == registry.code(name)
-            held = rows & present
+            said = rows & last
+            held = said & present
             pairs = source[held] * len(owner) + target[held]
-            found = runs(pairs, since[held], until[held])
-            ends = sorted(set(zip(owner[source[rows]].tolist(), owner[target[rows]].tolist())))
+            first, stop = runs(pairs, begun[held], ended[held])
+            ends = sorted(set(zip(owner[source[said]].tolist(), owner[target[said]].tolist())))
             result[name] = dict(
                 table=table,
-                ends=[[registry.nodes[first], registry.nodes[second]] for first, second in ends],
+                ends=[[registry.nodes[one], registry.nodes[other]] for one, other in ends],
                 columns=list(entry["columns"]),
                 edges=len(np.unique(pairs)),
                 facts=int(held.sum()),
-                absent=int((rows & ~present).sum()),
-                edges_at=counted(*found, times),
-                **lasting(*found),
+                absent=int((said & ~present).sum()),
+                replaced=int((rows & ~last).sum()),
+                edges_at=counted(first, stop, steps)[1:],
+                **lasting(bounds[first], bounds[stop]),
             )
     LOG.debug(
         "describe relations exit graph=%s relations=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started
@@ -172,10 +215,18 @@ def decisions(registry, facts):
     return result
 
 
-@timed("describe.clocked")
 def clocked(registry, facts):
-    stamps = [facts.arrays[name] for name in ("obs_since", "obs_until", "fact_since", "fact_until")]
-    return moments(*stamps, facts.task_time if registry.schema.model != "none" else [])
+    started = time.perf_counter()
+    tasks = facts.task_time if registry.schema.model != "none" else []
+    names = [(group, group + "_" + name) for group in GROUPS for name in ("since", "until")]
+    every = placed(moments(*[facts.arrays[name] for _, name in names], tasks))
+    held = {}
+    for group in GROUPS:
+        begun, ended = shown(facts, group, every)
+        held[group] = ended > begun
+    result = moments(*[np.asarray(facts.arrays[name], np.int64)[held[group]] for group, name in names], tasks)
+    LOG.debug("describe clocked exit graph=%s times=%d seconds=%.4f", facts.name, len(result), time.perf_counter() - started)
+    return result
 
 
 @timed("describe.stored")
@@ -186,12 +237,13 @@ def stored(path, graph):
 def graphed(registry, facts, splits):
     started = time.perf_counter()
     times = clocked(registry, facts)
+    places = placed(times)
     result = dict(
         name=facts.name,
         unit=facts.unit,
         times=times.tolist(),
-        kinds=kinds(registry, facts, times),
-        relations=relations(registry, facts, times),
+        kinds=kinds(registry, facts, places),
+        relations=relations(registry, facts, places),
         tasks=tasks(registry, facts, splits),
         decisions=decisions(registry, facts),
     )
@@ -222,7 +274,7 @@ def table(header, rows):
 
 @timed("describe.related")
 def related(name, entry):
-    return "  relation %s of the table %s: %s; %s; edges %d, facts %d, absent %d; runs %d, bounded %d%s" % (
+    return "  relation %s of the table %s: %s; %s; edges %d, facts %d, absent %d, replaced %d; runs %d, bounded %d%s" % (
         name,
         entry["table"],
         "ends " + ", ".join("%s to %s" % tuple(pair) for pair in entry["ends"]) if entry["ends"] else "no ends",
@@ -230,6 +282,7 @@ def related(name, entry):
         entry["edges"],
         entry["facts"],
         entry["absent"],
+        entry["replaced"],
         entry["runs"],
         entry["bounded"],
         ", lasting %d to %d, mean %s" % (entry["least"], entry["most"], entry["mean"]) if entry["bounded"] else "",
@@ -276,7 +329,7 @@ def graph_text(graph):
         ),
     ]
     lines += [
-        "  kind %s: nodes %d, observations %d" % (name, entry["nodes"], entry["observations"])
+        "  kind %s: nodes %d, observations %d, replaced %d" % (name, entry["nodes"], entry["observations"], entry["replaced"])
         for name, entry in graph["kinds"].items()
     ]
     lines += [related(name, entry) for name, entry in graph["relations"].items()]
