@@ -71,6 +71,7 @@ def turns(case):
                     observer=tasks["observer"][at],
                     actors=tasks["references"]["agents"][at],
                     options=target["options"],
+                    concurrent=target["concurrent"],
                 )
     LOG.debug("generators decisions exit decisions=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
@@ -117,7 +118,11 @@ def earlier(found, place):
     return [
         other
         for other, held in found.items()
-        if other != place and other[0] == place[0] and held["observer"] == own["observer"] and held["time"] <= own["time"]
+        if other != place
+        and other[0] == place[0]
+        and held["observer"] == own["observer"]
+        and held["time"] <= own["time"]
+        and other[1] not in own["concurrent"]
     ]
 
 
@@ -202,12 +207,12 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=7, probabilities=False),
+        changed=dict(version=8, probabilities=False),
         crossings=dict(version=1, probabilities=True),
         idle=dict(version=1, probabilities=False),
-        nearest=dict(version=7, probabilities=True),
-        others=dict(version=7, probabilities=True),
-        ruled=dict(version=7, probabilities=True),
+        nearest=dict(version=8, probabilities=True),
+        others=dict(version=8, probabilities=True),
+        ruled=dict(version=8, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -346,6 +351,15 @@ def reached(start):
     return found
 
 
+@timed("generators.scalars")
+def scalars(entries):
+    found = set()
+    for held in entries:
+        items = list(held) + list(held.values()) if isinstance(held, dict) else held if isinstance(held, (list, tuple, set, frozenset)) else ()
+        found.update(item for item in items if isinstance(item, (str, float)))
+    return found
+
+
 def test_a_generator_holds_the_parts_it_states_and_reaches_nothing_else_of_the_build(banks):
     started = time.perf_counter()
     held = opened(banks, "base")
@@ -362,20 +376,26 @@ def test_a_generator_holds_the_parts_it_states_and_reaches_nothing_else_of_the_b
     typed = {type(TYPES.named(name)) for name in TYPES.names()}
     back = held.back[truth.name]
     concurrent = {key: set(decision["concurrent"]) for key, decision in zip(back["tasks"]["key"], back["decisions"]) if decision}
-    unknown = Counter()
+    unknown, marked = Counter(), {}
     for seen in generated.KEPT:
         assert sorted(vars(seen)) == sorted(parts + ("generator", "reads", "where"))
         assert not any(hasattr(seen, name) for name in ("world", "frame", "task", "statement", "present"))
         with pytest.raises(ValueError, match="reads the rule of the decision"):
             seen.rule
-        found = {type(entry) for entry in reached(seen) if type(entry).__module__.split(".")[0] in ("graphspec", "tuning")}
+        entries = reached(seen)
+        found = {type(entry) for entry in entries if type(entry).__module__.split(".")[0] in ("graphspec", "tuning")}
         assert {Seen, Check, Past} <= found <= {Seen, Check, Past} | typed
         past = seen.at.__self__.held
         assert max(past) == seen.decision["time"] and all(type(state) is bytes for state in past.values())
         for other in seen.decisions:
-            unknown[other["key"] in concurrent[seen.decision["key"]]] += 1
-            assert all(("chosen" in option) != (other["key"] in concurrent[seen.decision["key"]]) for option in other["options"])
+            hidden = other["key"] in concurrent[seen.decision["key"]]
+            unknown[hidden] += 1
+            assert sorted(other) == (["actors", "key", "kind", "time"] if hidden else ["actors", "key", "kind", "options", "time"])
+            assert hidden or all("chosen" in option for option in other["options"])
+        if seen.decision["key"] != generated.LONE:
+            marked.setdefault(seen.decision["key"] in concurrent[generated.LONE], set()).update({"lone", generated.SPEED} & scalars(entries))
     assert unknown[True] and unknown[False], unknown
+    assert marked == {True: set(), False: {"lone", generated.SPEED}}, marked
     generated.KEPT.clear()
     LOG.info("parts of generators exit seconds=%.3f", time.perf_counter() - started)
 

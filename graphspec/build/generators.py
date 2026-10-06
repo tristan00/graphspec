@@ -325,8 +325,8 @@ class Frame:
             concurrent, parts["decisions"] = set(world.decided[task]["concurrent"]), []
             for other in self.before(task):
                 found = world.shown(other)
-                for option in found["options"] if found["key"] in concurrent else ():
-                    del option["chosen"]
+                if found["key"] in concurrent:
+                    del found["options"]
                 parts["decisions"].append(found)
         if "chosen" in reads:
             parts["chosen"] = [option for option in shown["options"] if option["chosen"]]
@@ -680,7 +680,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 7
+    version = 8
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -690,7 +690,7 @@ class Others(Pooled):
     @timed("generators.Others.__call__")
     def __call__(self, seen, parameters):
         kind = seen.decision["kind"]
-        found = [option for other in seen.decisions if other["kind"] == kind for option in other["options"]]
+        found = [option for other in seen.decisions if other["kind"] == kind and "options" in other for option in other["options"]]
         return self.drawn(seen, found, parameters["count"])
 
 
@@ -703,7 +703,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 7
+    version = 8
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -757,7 +757,7 @@ class Nearest(Pooled):
     @timed("generators.Nearest.__call__")
     def __call__(self, seen, parameters):
         kind, columns = seen.decision["kind"], parameters["columns"]
-        others = [other for other in seen.decisions if other["kind"] == kind]
+        others = [other for other in seen.decisions if other["kind"] == kind and "options" in other]
         if not others:
             return []
         distances = DISTANCES.named(parameters["distance"])(
@@ -769,7 +769,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 7
+    version = 8
     reads = ("chosen",)
     probable = False
 
@@ -832,7 +832,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 7
+    version = 8
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

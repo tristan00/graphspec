@@ -30,6 +30,7 @@ STATED = [
     dict(name="idle", seed=17, repeats=False, parameters={}),
 ]
 ORIGIN = "around"
+LONE, SPEED = 41, 9.25
 CASES = ("base", "later", "turned")
 KEPT = []
 NORTH, SOUTH = "north", "south"
@@ -230,6 +231,17 @@ def tied(graph, place):
     LOG.debug("generated tied exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
 
 
+def lone(graph, place):
+    started = time.perf_counter()
+    tasks = graph["tasks"]
+    (at,) = [at for at, (kind, key) in enumerate(zip(tasks["kind"], tasks["key"])) if kind == KIND and key == LONE]
+    target, actor = tasks["target"][at], tasks["references"]["agents"][at][0]
+    chosen = synthetic.offered("lone", [synthetic.acting("go", actor, dict(to="s3"), dict(speed=SPEED))], "set", "recorded")
+    chosen.update(chosen=True, outcome=synthetic.worth(tasks["time"][at], place, 0))
+    target["options"] = [chosen] + [option for option in target["options"] if option["origin"] != "recorded"]
+    LOG.debug("generated lone exit graph=%s seconds=%.4f", graph["name"], time.perf_counter() - started)
+
+
 @timed("generated.load")
 def load(at, moment, place):
     start = moment - moment % SPAN
@@ -369,6 +381,7 @@ def case(name):
         graph["values"][0]["rows"] = agents(place)
         watched(graph, place)
         tied(graph, place)
+        lone(graph, place)
         if name == "later":
             later(graph)
         if name == "turned":
