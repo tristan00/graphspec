@@ -1,6 +1,7 @@
 import logging
 import time
 from collections import ChainMap
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -11,8 +12,8 @@ from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
+from graphspec.operations import pipeline as pipelines
 from graphspec.operations.operation import Refused
-from graphspec.operations.pipeline import grown
 from graphspec.schema.decisions import ROLES
 from graphspec.views.graph import Graph
 from tuning.bank.bank import Deriver
@@ -24,6 +25,7 @@ from tuning.statement import agreed, state
 
 LOG = logging.getLogger(__name__)
 CONNECTED, APART, ABSENT = "connected", "apart", "absent"
+BOUND = 16
 READING = (
     "connected: joined to a reference of the task at its step by present facts, each taken in either direction, at "
     "the least number of hops, by the relations at each hop of every such shortest path; apart: held at the step and "
@@ -32,7 +34,10 @@ READING = (
     "creates only in the option's own fork; a kind or a parameter is where the targets of its actions are; features: "
     "the columns of a target's kind holding a value at the step; a cut names the last entry after which the field is "
     "no longer connected and, for each setting of that entry and each it reads, the other values under which the "
-    "whole pipeline gives the field back, those under which it does not, and those refused when stated"
+    "whole pipeline gives the field back, those under which it does not, and those it refuses with every parameter "
+    "stated; a value is stated without the parameters it makes inactive and with every value of each parameter it "
+    "makes active, every option of a choice and the two ends of a number's range, named after it; at most %d "
+    "statements are tried for a value, and those past them are listed as not tried" % BOUND
 )
 
 
@@ -41,16 +46,57 @@ def masked(tokens):
     return (np.asarray(tokens).astype(np.uint64) & np.uint64(TOKEN)).astype(np.int64)
 
 
-@timed("reach.others")
-def others(parameter, value):
-    if parameter.kind in ("bool", "choice"):
-        return [option for option in parameter.options if option != value]
-    return [bound for bound in dict.fromkeys((parameter.low, parameter.high)) if bound != value]
+@timed("reach.values")
+def values(parameter):
+    if parameter["kind"] in ("bool", "choice"):
+        return list(parameter["options"])
+    return list(dict.fromkeys((parameter["low"], parameter["high"])))
 
 
 @timed("reach.named")
 def named(entry):
     return entry["label"] if "label" in entry else entry["operation"]
+
+
+@timed("reach.stating")
+def stating(config, name, stated, dropped):
+    pipeline = [
+        dict(entry, parameters={key: value for key, value in {**entry["parameters"], **stated}.items() if key not in dropped})
+        if named(entry) == name
+        else entry
+        for entry in config["pipeline"]
+    ]
+    return dict(config, pipeline=pipeline)
+
+
+def unsettled(registry, entries):
+    started = time.perf_counter()
+    found = pipelines.checked(entries, pipelines.STATED)
+    reads, places = pipelines.readers(found), {name: place for place, (name, _, _, _) in enumerate(found)}
+    stated, growing, result = {}, pipelines.Growing(registry, found), None
+    for name in pipelines.ordered(found, reads, "adds"):
+        _, operation, _, entry = found[places[name]]
+        held = growing.before(places[name], partial(pipelines.specified, stated, reads))
+        if operation.lacking(held) is not None:
+            break
+        own, lacking = {}, None
+        view = ChainMap(own, *[stated[read] for read in reads[name]])
+        for parameter in operation.stated(held):
+            if not parameter.active(view):
+                continue
+            if parameter.name not in entry["parameters"]:
+                lacking = parameter.declaration()
+                break
+            own[parameter.name] = entry["parameters"][parameter.name]
+        unread = sorted(set(entry["parameters"]) - set(own))
+        if lacking is not None or unread:
+            result = name, lacking, unread
+            break
+        if operation.refused(held, own) is not None:
+            break
+        stated[name] = own
+    LOG.debug("reach unsettled exit entries=%d settled=%s seconds=%.4f", len(found), result is None, time.perf_counter() - started)
+    return result
 
 
 def looked(graph, step):
@@ -128,33 +174,57 @@ class Reached:
         self.found, self.columns = offered(deriver), schema.parameters()
         self.fields = {task: [field for field in fielded(schema, task) if field["sort"] in self.entry.reads] for task in schema.decided()}
         self.variants, self.graphs, self.histories, self.walks, self.options = {}, {}, {}, {}, {}
-        self.members, self.besides, self.names = {}, {}, {}
-        held = self.variant(None)
+        self.members, self.besides, self.names, self.restated = {}, {}, {}, {}
+        held = self.entered(None, config)
         self.steps, self.spec, self.registry = held[1], held[2], held[4]
         LOG.debug("reached exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
 
-    def changed(self, holder, name, value):
+    def entered(self, key, cfg):
         started = time.perf_counter()
-        stated = holder.operation.stated(grown(self.deriver.registry, self.steps[: self.steps.index(holder)], None))
-        parameters = dict(holder.parameters, **{name: value})
-        context = ChainMap(parameters, holder.read)
-        kept = {held.name: parameters[held.name] for held in stated if held.name in parameters and held.active(context)}
-        pipeline = [dict(entry, parameters=kept) if named(entry) == holder.name else entry for entry in self.config["pipeline"]]
-        LOG.debug("reached changed exit entry=%s parameter=%s seconds=%.4f", holder.name, name, time.perf_counter() - started)
-        return dict(self.config, pipeline=pipeline)
-
-    def variant(self, key):
-        started = time.perf_counter()
-        if key not in self.variants:
-            cfg = self.config if key is None else self.changed(*key)
-            try:
-                _, steps, spec, chosen = self.deriver.stated(cfg)
-            except Refused as error:
-                self.variants[key] = str(error)
-            else:
-                self.variants[key] = (cfg, steps, spec, chosen, self.deriver.fitted(cfg))
-        LOG.debug("reached variant exit refused=%s seconds=%.4f", type(self.variants[key]) is str, time.perf_counter() - started)
+        _, steps, spec, chosen = self.deriver.stated(cfg)
+        self.variants[key] = (cfg, steps, spec, chosen, self.deriver.fitted(cfg))
+        LOG.debug("reached entered exit entries=%d seconds=%.4f", len(steps), time.perf_counter() - started)
         return self.variants[key]
+
+    def restating(self, holder, parameter, other):
+        started = time.perf_counter()
+        name = (holder.name, parameter["name"], other)
+        if name not in self.restated:
+            pending, tried, untried = [(stating(self.config, holder.name, {parameter["name"]: other}, ()), [])], [], []
+            while pending:
+                cfg, added = pending.pop(0)
+                if len(tried) == BOUND:
+                    untried.append(added)
+                    continue
+                held, key = unsettled(self.deriver.registry, cfg["pipeline"]), name + (len(tried),)
+                if held is None:
+                    try:
+                        self.entered(key, cfg)
+                    except Refused as error:
+                        tried.append((added, None, str(error)))
+                    else:
+                        tried.append((added, key, None))
+                    continue
+                entry, lacking, unread = held
+                if lacking is None:
+                    pending.insert(0, (stating(cfg, entry, {}, unread), added))
+                    continue
+                pending[:0] = [
+                    (
+                        stating(cfg, entry, {lacking["name"]: value}, ()),
+                        added + [dict(entry=entry, parameter=lacking["name"], value=value)],
+                    )
+                    for value in values(lacking)
+                ]
+            self.restated[name] = tried, untried
+        LOG.debug(
+            "reached restating exit entry=%s parameter=%s statements=%d seconds=%.4f",
+            holder.name,
+            parameter["name"],
+            len(self.restated[name][0]),
+            time.perf_counter() - started,
+        )
+        return self.restated[name]
 
     def loaded(self, group):
         started = time.perf_counter()
@@ -169,7 +239,7 @@ class Reached:
 
     def begun(self, key, count, group, space):
         started = time.perf_counter()
-        cfg, steps, spec, chosen, registry = self.variant(key)
+        cfg, steps, spec, chosen, registry = self.variants[key]
         indices, members = self.loaded(group)
         if (key, group) not in self.besides:
             self.besides[key, group] = self.deriver.seconds(steps, indices, cfg, False)
@@ -202,7 +272,7 @@ class Reached:
             begun = self.begun(key, count, group, room(self.deriver))
             self.histories[key, count, group, step] = begun.continued(step, None) if step else begun
         history = self.histories[key, count, group, step]
-        edit = made(self.deriver, self.variant(key)[0], history, Part(group, -1, step, option, UNMOVED), ordered(self.deriver, option))
+        edit = made(self.deriver, self.variants[key][0], history, Part(group, -1, step, option, UNMOVED), ordered(self.deriver, option))
         result = history.continued(step + 1, edit).derived()
         LOG.debug("reached forked exit option=%d seconds=%.4f", option, time.perf_counter() - started)
         return result
@@ -367,7 +437,7 @@ class Reached:
     def read(self, key, count, decision, option):
         started = time.perf_counter()
         if (key, count, option) not in self.options:
-            registry = self.variant(key)[4]
+            registry = self.variants[key][4]
             if self.entry.back:
                 graph = self.forked(key, count, decision["group"], decision["step"], option)
                 looked_at = self.looking(graph, registry, decision)
@@ -412,25 +482,32 @@ class Reached:
             for other in self.steps
             if other.label is None and other.operation.name in step.operation.reads
         ]:
-            stated = holder.operation.stated(grown(self.deriver.registry, self.steps[: self.steps.index(holder)], None))
-            result += [(holder, parameter) for name in names for parameter in stated if parameter.name == name]
+            stated = holder.operation.stated(pipelines.grown(self.deriver.registry, self.steps[: self.steps.index(holder)], None))
+            result += [(holder, parameter.declaration()) for name in names for parameter in stated if parameter.name == name]
         LOG.debug("reached settable exit entry=%s settings=%d seconds=%.4f", step.name, len(result), time.perf_counter() - started)
         return result
 
     def tried(self, decision, option, name, holder, parameter):
         started = time.perf_counter()
-        value, back, still, refused = holder.parameters[parameter.name], [], [], []
-        for other in others(parameter, value):
-            key = (holder, parameter.name, other)
-            held = self.variant(key)
-            if type(held) is str:
-                refused.append([other, held])
-            elif self.read(key, len(held[1]), decision, option)[name]["state"] == CONNECTED:
-                back.append(other)
-            else:
-                still.append(other)
-        result = dict(entry=holder.name, parameter=parameter.name, value=value, back=back, still=still, refused=refused)
-        LOG.debug("reached tried exit parameter=%s back=%d seconds=%.4f", parameter.name, len(back), time.perf_counter() - started)
+        value = holder.parameters[parameter["name"]]
+        result = dict(entry=holder.name, parameter=parameter["name"], value=value, back=[], still=[], refused=[], untried=[])
+        for other in values(parameter):
+            if other == value:
+                continue
+            tried, untried = self.restating(holder, parameter, other)
+            for added, key, reason in tried:
+                if key is None:
+                    result["refused"].append(dict(value=other, stating=added, reason=reason))
+                else:
+                    state = self.read(key, len(self.variants[key][1]), decision, option)[name]["state"]
+                    result["back" if state == CONNECTED else "still"].append(dict(value=other, stating=added))
+            result["untried"] += [dict(value=other, stating=added) for added in untried]
+        LOG.debug(
+            "reached tried exit parameter=%s back=%d seconds=%.4f",
+            parameter["name"],
+            len(result["back"]),
+            time.perf_counter() - started,
+        )
         return result
 
     def cut(self, decision, option, name):
@@ -568,6 +645,28 @@ def spoken(held):
     return "connected at hop %d by %s" % (held["hops"], " then ".join(" or ".join(names) for names in held["relations"]) or "nothing")
 
 
+@timed("reach.trials")
+def trials(setting, part):
+    return listed(
+        "%s%s%s"
+        % (
+            held["value"],
+            "".join(
+                " %s %s %s%s"
+                % (
+                    "and" if place else "with",
+                    stated["parameter"],
+                    stated["value"],
+                    "" if stated["entry"] == setting["entry"] else " of the entry %s" % stated["entry"],
+                )
+                for place, stated in enumerate(held["stating"])
+            ),
+            " (%s)" % held["reason"] if "reason" in held else "",
+        )
+        for held in setting[part]
+    )
+
+
 def cut_text(cut):
     started = time.perf_counter()
     if cut["entry"] is None:
@@ -575,14 +674,15 @@ def cut_text(cut):
     else:
         result = "cut by the entry %s, of the operation %s" % (cut["entry"], cut["operation"])
         result += "".join(
-            "; %s %s of the entry %s gives it back under %s, not under %s, refused under %s"
+            "; %s %s of the entry %s gives it back under %s, not under %s, refused under %s%s"
             % (
                 setting["parameter"],
                 setting["value"],
                 setting["entry"],
-                listed(setting["back"]),
-                listed(setting["still"]),
-                listed("%s (%s)" % tuple(pair) for pair in setting["refused"]),
+                trials(setting, "back"),
+                trials(setting, "still"),
+                trials(setting, "refused"),
+                ", not tried under %s" % trials(setting, "untried") if setting["untried"] else "",
             )
             for setting in cut["settings"]
         )

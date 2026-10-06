@@ -12,7 +12,7 @@ from graphspec.schema.declaration import Registry
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 4
+VERSION = 5
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
 READING = (
     "at a time: the nodes observed and their observations, and the edges a present fact holds; a run: a stretch of "
