@@ -449,6 +449,11 @@ class Edited:
             result = "the mapping of the edit states nothing for %s, so an option holding it cannot be made an edit" % where
         elif not entry["roles"]:
             result = "%s states no role, and an edit makes the facts of an action from its targets" % where
+        elif not any(held["count"][0] for held in entry["roles"].values()):
+            result = (
+                "%s states no role holding a target in every action, and an edit makes the facts of an action from its "
+                "targets, so an action holding none would make no fact" % where
+            )
         elif sorted(self.mapping[task][action]) != sorted(entry["roles"]):
             result = "the mapping of the edit states for %s the roles %s, and it states the roles %s" % (
                 where,

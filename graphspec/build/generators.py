@@ -497,6 +497,19 @@ class Check:
                 or not isinstance(action["parameters"], dict)
             ):
                 raise ValueError("%s states its kind, its actor, its targets and its parameters" % inner)
+            if any(
+                type(role) is not str
+                or not isinstance(aims, list)
+                or not all(
+                    type(aim) is str or isinstance(aim, list) and len(aim) == 3 and all(type(part) is str for part in aim)
+                    for aim in aims
+                )
+                for role, aims in action["targets"].items()
+            ):
+                raise ValueError(
+                    "%s states its targets as a mapping from every role of its kind to the list of its targets, empty "
+                    "where it holds none, found %r" % (inner, action["targets"])
+                )
             for name, value in action["parameters"].items():
                 if name not in self.columns:
                     raise ValueError("%s states the parameter %s, which no kind of action of its kind of task states" % (inner, name))
@@ -706,7 +719,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 9
+    version = 10
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -729,7 +742,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 9
+    version = 10
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -795,7 +808,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 9
+    version = 10
     reads = ("chosen",)
     probable = False
 
@@ -858,7 +871,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 9
+    version = 10
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

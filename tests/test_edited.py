@@ -1,3 +1,4 @@
+import copy
 import gc
 import logging
 import re
@@ -24,7 +25,7 @@ from tuning.bank.options import TOKEN
 from tuning.batches.batching import pack_batch, pack_parts, parted, recipe_batch
 from tuning.batches.tensors import keys, materialise
 from tuning.families import model_spec
-from tuning.families.heads import REALISATION, realisation, refused
+from tuning.families.heads import REALISATION, coded, realisation, refused
 from tuning.families.model_spec import EDITS, VIEWS, realisable, space
 from tuning.families.models import build as network
 from tuning.families.periods import blocks as windows
@@ -129,6 +130,11 @@ def test_an_edit_maps_every_kind_of_action_to_facts_and_is_refused_naming_what_i
         (dict(ACTED, stay=dict(at=went)), RELATIONS, stay, "the kinds of action go and stay of the kind of task turn become facts of the same relations, went, carrying the same parameters, so the field kind has no route"),
     ):
         assert Edited(dict(turn=acted, show=ACTED), relations, 1).refusal(wrong).startswith(message), message
+    optional = varied(registry, "stay", dict(roles=dict(at=dict(sort="node", kinds=["spot"], count=[0, 1])), parameters=[]), {})
+    assert Edited(dict(turn=dict(ACTED, stay=dict(at=went)), show=ACTED), RELATIONS, 1).refusal(optional) == (
+        "the kind of action stay of the kind of task turn states no role holding a target in every action, and an edit "
+        "makes the facts of an action from its targets, so an action holding none would make no fact"
+    )
     assert Edited(dict(turn=ACTED, show=ACTED, visit=ACTED), RELATIONS, 1).refusal(registry).startswith(
         "the mapping of the edit states the kind of task visit, which decides nothing in the schema"
     )
@@ -265,6 +271,29 @@ def test_the_options_of_a_decision_are_forks_of_one_history_each_adding_its_fact
             for part, count in zip(parts[1], actions)
             if count
         )
+        found = forks.offered(held)
+        turned = copy.copy(found)
+        turned.role = {name: values[np.lexsort((-np.arange(len(values)), found.role["code"], found.role["action"]))] for name, values in found.role.items()}
+        edges, created, sizes, unmade = ROLES.index("edge"), ROLES.index("new"), set(), 0
+        putting = coded(held.registry.schema)[0].index(("turn", "put"))
+        for part in [part[0] for held_parts in parts for part in held_parts]:
+            history, order = forks.trunk(held, cfg, part.graph, part.step), forks.ordered(held, part.option)
+            edit = forks.made(held, cfg, history, part, order)
+            low = int(found.roles[0][order[0]]) if order else 0
+            high = int(found.roles[0][order[-1]] + found.roles[1][order[-1]]) if order else 0
+            sorts = found.sorts[found.role["code"][low:high]]
+            assert len(edit.added["facts"]["code"]) == len(sorts) + int((sorts == edges).sum()), part
+            assert len(edit.added["observations"]["entity"]) == int((sorts == created).sum()), part
+            sizes |= set(np.unique(np.stack((found.role["action"], found.role["code"]), 1)[low:high], axis=0, return_counts=True)[1].tolist())
+            unmade += int(putting in found.action["kind"][order].tolist() and not (sorts == created).any())
+            monkeypatch.setattr(forks, "offered", lambda bank: turned)
+            again = forks.made(held, cfg, history, part, order)
+            monkeypatch.setattr(forks, "offered", lambda bank: found)
+            for side in ("observations", "facts"):
+                for name, value in edit.added[side].items():
+                    value = np.asarray(value)
+                    assert np.array_equal(value, np.asarray(again.added[side][name]), equal_nan=value.dtype.kind == "f"), (side, name)
+        assert 2 in sizes and unmade > 0
     LOG.info("forks of one history exit seconds=%.3f", time.perf_counter() - started)
 
 

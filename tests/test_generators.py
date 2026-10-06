@@ -1,5 +1,6 @@
 import copy
 import logging
+import re
 import time
 import types
 from collections import Counter
@@ -10,8 +11,8 @@ import pytest
 import support
 
 from conftest import shared
-from graphspec import GENERATORS, TYPES, Registry
-from graphspec.build.generators import Check, Past, Seen, World, looking, regenerated
+from graphspec import GENERATORS, RULES, TYPES, Registry
+from graphspec.build.generators import Check, Past, Seen, World, looking, regenerated, written
 from graphspec.engine.transform import shown, validate
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
@@ -33,6 +34,19 @@ class Bare:
     @timed("generators.Bare.__call__")
     def __call__(self, seen, parameters):
         return []
+
+
+class Scalar:
+    version = 1
+
+    @timed("generators.Scalar.checked")
+    def checked(self, parameters, schema, where):
+        return parameters
+
+    @timed("generators.Scalar.options")
+    def options(self, seen, parameters):
+        actor = sorted(seen.decision["actors"])[0]
+        return [dict(actions=[dict(kind="go", actor=actor, targets=dict(to="s0"), parameters=dict(speed=1.25))], together="set")]
 
 
 @pytest.fixture(scope="module")
@@ -204,15 +218,23 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     }
     wanted = {("others", "tie"), ("others", "hold"), ("nearest", "tie"), ("nearest", "hold"), ("changed", "hold"), ("ruled", "hold")}
     assert {(name, kind, True) for name, kind in wanted} <= mirrored and all(oriented for *_, oriented in mirrored), mirrored
+    shapes = {
+        (option["origin"]["generator"], len(aims))
+        for options in drawn.values()
+        for option in options
+        for action in option["actions"]
+        for aims in action["targets"].values()
+    }
+    assert {(name, count) for name in ("others", "nearest") for count in (0, 2)} <= shapes, shapes
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=9, probabilities=False),
+        changed=dict(version=10, probabilities=False),
         crossings=dict(version=1, probabilities=True),
         idle=dict(version=1, probabilities=False),
-        nearest=dict(version=9, probabilities=True),
-        others=dict(version=9, probabilities=True),
-        ruled=dict(version=9, probabilities=True),
+        nearest=dict(version=10, probabilities=True),
+        others=dict(version=10, probabilities=True),
+        ruled=dict(version=10, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)
@@ -327,7 +349,41 @@ def test_a_generator_that_reads_what_it_does_not_state_or_draws_what_its_stateme
         registry = Registry.from_declaration(declared)
         with pytest.raises(ValueError, match=message):
             regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1])
+    RULES.register("scalar", Scalar())
+    try:
+        declared = copy.deepcopy(held.manifest["spec"])
+        declared["schema"]["tasks"]["kinds"][generated.KIND]["target"].update(
+            rule=dict(name="scalar", parameters={}), generators=[dict(name="ruled", seed=1, repeats=False, parameters=dict(count=1))]
+        )
+        registry = Registry.from_declaration(declared)
+        scalar = "^the action 0 of the option 0 the rule scalar gives the decision \\d+ of the kind turn of graph g0 " + re.escape(
+            "states its targets as a mapping from every role of its kind to the list of its targets, empty where it holds none, found {'to': 's0'}"
+        )
+        with pytest.raises(ValueError, match=scalar):
+            regenerated(truth, registry, shown(truth, registry, looking(held.splits, held.manifest["trained"]))[1])
+    finally:
+        del RULES.held["scalar"]
     LOG.info("faulty generators exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_content_of_an_option_reads_the_targets_of_a_role_as_a_set_and_a_role_holding_none_apart():
+    started = time.perf_counter()
+    cut = dict(kind="cut", actor="a0", targets=dict(along=[["s1", "near", "s0"], ["s2", "near", "s3"]]), parameters=dict(mode="fast"))
+    put = dict(kind="put", actor="a0", targets=dict(at=["s3", "s1"], made=[]), parameters=dict(lit=True))
+    stated = dict(actions=[cut, put], together="set")
+    turned = dict(
+        actions=[dict(put, targets=dict(at=["s1", "s3"], made=[])), dict(cut, targets=dict(along=[["s3", "near", "s2"], ["s0", "near", "s1"]]))],
+        together="set",
+    )
+    found = {written(option, frozenset({"near"})) for option in (stated, turned)}
+    others = [
+        dict(stated, actions=[cut, dict(put, targets=dict(at=["s3"], made=[]))]),
+        dict(stated, actions=[cut, dict(put, targets=dict(at=["s3", "s1"], made=["m1"]))]),
+        dict(stated, actions=[dict(cut, targets=dict(along=[["s0", "near", "s1"]])), put]),
+    ]
+    assert len(found) == 1 and not found & {written(option, frozenset({"near"})) for option in others}
+    assert len({written(option, frozenset({"near"})) for option in others}) == len(others)
+    LOG.info("content of drawn options exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("generators.reached")
