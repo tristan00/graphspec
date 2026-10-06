@@ -317,8 +317,8 @@ def recorded(path, manifest, first, second):
 
 
 @timed("differences.keyed")
-def keyed(manifest, first, second):
-    return dict(truth.keyed(manifest), part="differences", first=dict(graph=first), second=dict(graph=second))
+def keyed(manifest, first, second, place):
+    return dict(truth.keyed(manifest, place), first=dict(graph=first), second=dict(graph=second))
 
 
 def differences(path, first, second):
@@ -330,8 +330,8 @@ def differences(path, first, second):
         raise ValueError(
             "the bank %s holds no graph named %s; its graphs are %s" % (path, " or ".join(lacking), ", ".join(named))
         )
-    held = Path(path) / "descriptions" / "differences"
-    record = truth.kept(held, keyed(manifest, first, second), lambda: recorded(path, manifest, named[first], named[second]), text)
+    place = truth.located(Path(path) / truth.FOLDER, "bank", "differences", manifest["stored_sha256"])
+    record = truth.kept(place, keyed(manifest, first, second, place), lambda: recorded(path, manifest, named[first], named[second]), text)
     LOG.info("differences exit first=%s second=%s seconds=%.3f", first, second, time.perf_counter() - started)
     return record
 
@@ -378,6 +378,7 @@ def text(record):
     lines = [
         "difference of the truth graphs %s, the first, and %s, the second, of the bank stored as %s, described at "
         "version %d" % (record["first"], record["second"], record["stored_sha256"], record["version"]),
+        truth.kept_text(record),
         "%s, %s" % ("no unit" if record["unit"] is None else "unit " + record["unit"], truth.spanned(named, record["times"][1:])),
         TRUTH[model],
     ]

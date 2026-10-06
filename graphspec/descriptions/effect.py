@@ -9,7 +9,7 @@ from graphspec.operations.operation import Stored
 from graphspec.operations.pipeline import called
 from graphspec.operations.sets import PARAMETER
 
-from .describe import NAMED, table, viewed_text
+from .describe import NAMED, kept_text, table, viewed_text
 from .differences import compared, counted, distinct, numbered, tokens, unmatched
 
 LOG = logging.getLogger(__name__)
@@ -535,6 +535,7 @@ def text(record):
     lines = [
         "variant %s of the bank stored as %s, described at version %d"
         % (record["variant"], record["stored_sha256"], record["version"]),
+        kept_text(record),
         *settled(record),
         READING,
     ]

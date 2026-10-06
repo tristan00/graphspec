@@ -10,7 +10,7 @@ from graphspec import registries
 from graphspec.engine import transform
 from graphspec.facts.stored import GROUPS, Facts, admitted
 from graphspec.infra.files import parsed, read_json, sha256_json, write_json
-from graphspec.infra.runtime import output_path
+from graphspec.infra.runtime import cache_path, output_path, refusal
 from graphspec.infra.timing import timed
 from graphspec.operations.operation import OPERATIONS
 from graphspec.operations.rows import counted as offsets
@@ -24,10 +24,13 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 25
+VERSION = 26
 DIFFERENCE = "graphspec.difference"
 CODED = 16
 UNWRITTEN = "no file is written for the key"
+FOLDER = "descriptions"
+BASED = ("part", "beside", "away", "stored")
+AWAY = dict(code="inside a code checkout", volume="on another volume than the runtime home")
 UNNAMED = -1
 LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
@@ -97,10 +100,24 @@ def merged(codes):
     return dict(held, entries=[list(entry) for entry in sorted(entries)])
 
 
+def located(wanted, beside, part, stored):
+    started = time.perf_counter()
+    away = refusal(wanted)
+    root, shown = (Path(wanted), FOLDER) if away is None else (cache_path(FOLDER, stored), "cache/%s/%s" % (FOLDER, stored))
+    result = dict(folder=root / part, part=part, beside=beside, away=away, stored=stored, shown="%s/%s" % (shown, part))
+    LOG.debug("describe located exit part=%s away=%s seconds=%.4f", part, away, time.perf_counter() - started)
+    return result
+
+
+@timed("describe.based")
+def based(place):
+    return {name: place[name] for name in BASED}
+
+
 @timed("describe.keyed")
-def keyed(manifest):
+def keyed(manifest, place):
     read = Registry.from_declaration(manifest["spec"]).schema.read()
-    return dict(part="truth", stored=manifest["stored_sha256"], code=coded(read))
+    return dict(based(place), code=coded(read))
 
 
 @timed("describe.moments")
@@ -676,11 +693,24 @@ def graph_text(graph, named):
     return lines
 
 
+@timed("describe.kept_text")
+def kept_text(record):
+    held = record["kept"]
+    if held["away"] is None:
+        return "kept beside the %s, in its folder %s" % (held["beside"], held["folder"])
+    return "kept under the runtime home, in its folder %s: the library writes nothing beside the %s, which is %s" % (
+        held["folder"],
+        held["beside"],
+        AWAY[held["away"]],
+    )
+
+
 def text(record):
     started = time.perf_counter()
     held = record["time"]
     lines = [
         "truth graphs of the bank stored as %s, described at version %d" % (record["stored_sha256"], record["version"]),
+        kept_text(record),
         "time: %s, %s" % (MODELS[held["model"]], "units " + ", ".join(held["units"]) if held["units"] else "no unit"),
         "splits: %s" % (", ".join(record["splits"]) or "none"),
         READING[held["model"]],
@@ -768,9 +798,9 @@ def swept(folder, mine):
     return removed
 
 
-def kept(folder, key, made, written):
+def kept(where, key, made, written):
     started = time.perf_counter()
-    folder, key = Path(folder), json.loads(json.dumps(key))
+    folder, key = where["folder"], json.loads(json.dumps(key))
     for place in (folder.parent, folder):
         if place.exists() and not place.is_dir():
             raise NotADirectoryError("%s is a file; descriptions are kept in a folder of that name" % place)
@@ -778,7 +808,7 @@ def kept(folder, key, made, written):
     place, text = held.with_suffix(".json"), held.with_suffix(".txt")
     record, unserved = served(place, key)
     if unserved is not None:
-        record = made()
+        record = dict(made(), kept=dict(beside=where["beside"], away=where["away"], folder=where["shown"]))
         output_path(folder).mkdir(parents=True, exist_ok=True)
         if not (folder / (coding(key) + ".json")).is_file():
             write_json(folder / (coding(key) + ".json"), key["code"])
@@ -797,6 +827,7 @@ def kept(folder, key, made, written):
 def describe(path):
     started = time.perf_counter()
     manifest = manifested(path)
-    record = kept(Path(path) / "descriptions" / "truth", keyed(manifest), lambda: recorded(path, manifest), text)
+    place = located(Path(path) / FOLDER, "bank", "truth", manifest["stored_sha256"])
+    record = kept(place, keyed(manifest, place), lambda: recorded(path, manifest), text)
     LOG.info("describe exit path=%s seconds=%.3f", path, time.perf_counter() - started)
     return record

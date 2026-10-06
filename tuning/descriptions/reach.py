@@ -1028,20 +1028,23 @@ def named(bank, derivers, config, statement):
 
 
 @timed("reach.realised_by")
-def realised_by(deriver, config, key, name):
-    return dict(variant=key, realisation=stated(name), code=coded(deriver, config, [(REALISATIONS, [name])]))
+def realised_by(deriver, config, key, name, place):
+    code = coded(deriver, config, [(REALISATIONS, [name])])
+    return dict(truth.based(place), variant=key, realisation=stated(name), code=code)
 
 
 @timed("reach.keyed")
-def keyed(deriver, config, key, name, refused):
-    return dict(realised_by(deriver, config, key, name), part="reach", refused=refused)
+def keyed(deriver, config, key, name, refused, place):
+    return dict(realised_by(deriver, config, key, name, place), refused=refused)
 
 
 def reach(bank, config, statement):
     started = time.perf_counter()
     deriver, name, key, refused = named(bank, {}, config, statement)
-    held = Path(bank) / "descriptions" / "reach"
-    result = truth.kept(held, keyed(deriver, config, key, name, refused), lambda: recorded(deriver, config, key, name, refused), text)
+    place = truth.located(Path(bank) / truth.FOLDER, "bank", "reach", deriver.source)
+    result = truth.kept(
+        place, keyed(deriver, config, key, name, refused, place), lambda: recorded(deriver, config, key, name, refused), text
+    )
     LOG.info("reach exit variant=%s realisation=%s seconds=%.3f", key[:10], name, time.perf_counter() - started)
     return result
 
@@ -1338,6 +1341,7 @@ def text(record):
         "reach of the options of the variant %s of the bank stored as %s, described at version %d"
         % (record["variant"], record["stored_sha256"], record["version"]),
         *([] if record["refused"] is None else [REFUSAL % record["refused"]]),
+        truth.kept_text(record),
         *realised_text(record["realisation"]),
         *effect.settled(record),
         READING[record["time"]["model"]],

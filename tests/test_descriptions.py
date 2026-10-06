@@ -1,10 +1,12 @@
 import json
 import logging
+import os
 import re
 import shutil
 import sys
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import Mock
 
 import numpy as np
@@ -19,8 +21,10 @@ from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
 from graphspec.engine import transform
 from graphspec.facts.stored import Facts
+from graphspec.infra import runtime
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, sha256_json, write_json
+from graphspec.infra.runtime import cache_path
 from graphspec.infra.timing import timed
 from graphspec.operations import nodes as filtering
 from graphspec.operations import parameters as specs
@@ -181,6 +185,7 @@ SECOND = dict(
     unread=UNREAD,
 )
 TEXT = """truth graphs of the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/truth
 time: one clock, units tick
 splits: train, validation
 %s
@@ -395,6 +400,16 @@ def bank():
     return shared("described", made) / "bank"
 
 
+@timed("descriptions.kept_as")
+def kept_as(part, beside):
+    return dict(beside=beside, away=None, folder="descriptions/" + part)
+
+
+@timed("descriptions.located")
+def located(folder, beside, part):
+    return describing.located(folder / "descriptions", beside, part, read_json(folder / "manifest.json")["stored_sha256"])
+
+
 @timed("descriptions.expected")
 def expected(stored):
     return dict(
@@ -403,12 +418,13 @@ def expected(stored):
         time=dict(model="clock", units=["tick"]),
         splits=["train", "validation"],
         graphs=[FIRST, SECOND],
+        kept=kept_as("truth", "bank"),
     )
 
 
 @timed("descriptions.files")
 def files(bank, stored):
-    key = dict(describing.keyed(read_json(bank / "manifest.json")), stored=stored)
+    key = describing.keyed(read_json(bank / "manifest.json"), dict(located(bank, "bank", "truth"), stored=stored))
     stem = bank / "descriptions" / "truth" / describing.named(key)
     return stem.with_suffix(".json"), stem.with_suffix(".txt")
 
@@ -473,7 +489,7 @@ def test_a_file_is_served_only_where_it_parses_and_holds_its_key_and_the_files_o
     started = time.perf_counter()
     other = tmp_path / "bank"
     shutil.copytree(bank, other, ignore=shutil.ignore_patterns("descriptions"))
-    record, key = describe(other), describing.keyed(read_json(other / "manifest.json"))
+    record, key = describe(other), describing.keyed(read_json(other / "manifest.json"), located(other, "bank", "truth"))
     folder = other / "descriptions" / "truth"
     held, text = [(folder / describing.named(key)).with_suffix(suffix) for suffix in (".json", ".txt")]
     whole, written = dict(key=key, record=record), describing.text(record)
@@ -592,6 +608,71 @@ def test_a_bank_or_a_file_lacking_a_part_stops_the_call_naming_the_file_and_the_
     with pytest.raises(ValueError, match="^the plan.json of .* lists a trial that names no directory: "):
         reach_search(bank, tmp_path)
     LOG.info("descriptions lacking parts exit seconds=%.3f", time.perf_counter() - started)
+
+
+AWAY = (
+    "kept under the runtime home, in its folder cache/descriptions/%s/%s: the library writes nothing beside the %s, "
+    "which is %s"
+)
+INSIDE, ELSEWHERE = "inside a code checkout", "on another volume than the runtime home"
+
+
+def test_a_bank_the_library_may_not_write_beside_is_described_under_the_home_and_every_text_says_where_it_is_kept(
+    bank, tmp_path, monkeypatch
+):
+    started = time.perf_counter()
+    stored = read_json(bank / "manifest.json")["stored_sha256"]
+    (tmp_path / "repository" / ".git").mkdir(parents=True)
+    other = tmp_path / "repository" / "bank"
+    shutil.copytree(bank, other, ignore=shutil.ignore_patterns("descriptions"))
+    assert runtime.refusal(bank / "descriptions") is None and runtime.refusal(other / "descriptions") == "code"
+    config = configuration(bank, MODEL, None, pipeline=[], graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    (tmp_path / "repository" / "search").mkdir()
+    planned = json.dumps(dict(bank_stored_sha256=stored, trials=[]))
+    (tmp_path / "repository" / "search" / "plan.json").write_text(planned, encoding="utf-8")
+    described = [
+        ("truth", "bank", lambda: describe(other), describing.text),
+        ("differences", "bank", lambda: between(other, "g0", "g1"), differing.text),
+        ("variants", "bank", lambda: variant(other, config, STATED), effect.text),
+        ("reaches", "bank", lambda: reach_over(other, [], STATED), reaches.text),
+        ("reaches", "search", lambda: reach_search(bank, tmp_path / "repository" / "search"), reaches.text),
+    ]
+    home = cache_path("descriptions", stored)
+    for part, beside, call, text in described:
+        record = call()
+        assert record["kept"] == dict(beside=beside, away="code", folder="cache/descriptions/%s/%s" % (stored, part))
+        assert text(record).split("\n")[1] == AWAY % (stored, part, beside, INSIDE)
+        written = [path for path in (home / part).glob("*-*.txt") if path.read_text(encoding="utf-8") == text(record)]
+        assert len(written) == 1 and read_json(written[0].with_suffix(".json"))["record"] == record
+        assert call() == record
+    model = dict(MODEL, **{"options/realisation": "vector"})
+    aimed = configuration(bank, model, None, pipeline=[], graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+    undone = [
+        ("reach", lambda: reach(other, aimed, STATED)),
+        ("differences", lambda: against(other, config, STATED, config, STATED)),
+    ]
+    with monkeypatch.context() as patch:
+        patch.setattr(describing, "kept", lambda where, key, made, written: (where, key))
+        for part, call in undone:
+            where, key = call()
+            assert (where["folder"], where["beside"], where["away"]) == (home / part, "bank", "code")
+            assert {name: key[name] for name in describing.BASED} == describing.based(where)
+    assert reaches.row_placed(other, stored)["folder"] == home / "reach_rows"
+    assert sorted(path.name for path in home.iterdir()) == ["differences", "reaches", "truth", "variants"]
+    assert kept_in(tmp_path / "repository") == [".git", "bank", "search"] and kept_in(tmp_path / "repository" / "search") == ["plan.json"]
+    beside = describe(bank)
+    assert kept_in(other) == kept_in(bank)[1:] and kept_in(bank)[0] == "descriptions"
+    assert beside["kept"] == dict(beside="bank", away=None, folder="descriptions/truth")
+    assert describing.text(beside).split("\n")[1] == "kept beside the bank, in its folder descriptions/truth"
+    assert without(describe(other), "kept") == without(beside, "kept")
+    far = dict(beside, kept=dict(beside="bank", away="volume", folder="cache/descriptions/%s/truth" % stored))
+    assert describing.text(far).split("\n")[1] == AWAY % (stored, "truth", "bank", ELSEWHERE)
+    if os.name == "nt":
+        monkeypatch.setattr(runtime, "configured_home", lambda: Path("Q:/home"))
+        assert runtime.refusal(bank / "descriptions") == "volume"
+        with pytest.raises(ValueError, match="^runtime output must use the GRAPHSPEC_HOME volume: "):
+            runtime.output_path(bank / "descriptions")
+    LOG.info("descriptions kept under the home exit seconds=%.3f", time.perf_counter() - started)
 
 
 NODES = {
@@ -952,6 +1033,7 @@ VARIED_SECOND = dict(
 STEPS = "    time  agent nodes  agent anchors  spot nodes  spot anchors  near edges  base edges  relation_forms.loops edges"
 EFFECT = "    held                        before  removed  share    added  share    after"
 VARIANT = """variant %s of the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/variants
 derivation seed 7, device cpu
 splits trained on train, scored on validation; rules of what each sees: train none, validation none
 settings: graphs/join separate, nodes/untyped False, relations/direction inverse, time/steps changes, time/several last
@@ -1118,13 +1200,13 @@ def keyed(bank, config):
 def named(bank, config, part, name, refused):
     started = time.perf_counter()
     deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
-    key = specs.digest(deriver.identity(config))
+    key, place = specs.digest(deriver.identity(config)), located(bank, "bank", part)
     if part == "variants":
-        held = varying.keyed(deriver, config, key)
+        held = varying.keyed(deriver, config, key, place)
     elif part == "reach":
-        held = reaching.keyed(deriver, config, key, name, refused)
+        held = reaching.keyed(deriver, config, key, name, refused, place)
     else:
-        held = reaches.row_keyed(deriver, config, key, name)
+        held = reaches.row_keyed(deriver, config, key, name, place)
     LOG.debug("descriptions named exit part=%s seconds=%.4f", part, time.perf_counter() - started)
     return held
 
@@ -1150,6 +1232,7 @@ def varied(bank, config):
         unshown=[],
         entries=entries("test.cut", CUTTING),
         graphs=[VARIED, VARIED_SECOND],
+        kept=kept_as("variants", "bank"),
     )
     written = VARIANT.replace("%(steps)s", STEPS).replace("%(effect)s", EFFECT) % (
         key,
@@ -1413,7 +1496,9 @@ GROUNDED_TEXT = """    option o0, left out by a fit, lacking a0 base s0 of s0, t
         s2: fact a0 went s2 in its fork; joined to a reference at hop 1 by went and by no path along the direction of its facts, features none
       parameter speed of go: put before the model as the facts its edit makes of it; facts a0 went a1, a0 went s1, a0 went s2 in its fork
 """
+KEPT_REACH = "kept beside the bank, in its folder descriptions/reach"
 REACH = """reach of the options of the variant %s of the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/reach
 realisation of options vector at version %d, reading kind, targets, parameters; options read beside the variant, without the actor of each action
 derivation seed 7, device cpu
 splits trained on train, scored on validation; rules of what each sees: train none, validation none
@@ -1703,6 +1788,7 @@ def expected_reach(bank, config, name, fields):
         tasks=dict(turn=dict(fields=list(GO), unread=[])),
         undecided=["visit"],
         graphs=reached(fields),
+        kept=kept_as("reach", "bank"),
     )
     return record, stemmed(bank, config, "reach", name, None)
 
@@ -1845,13 +1931,14 @@ def test_under_an_edit_the_reach_of_each_option_is_read_in_its_own_fork_where_it
     config = realising(bank, CUTTING, "walked")
     record = reach(bank, config, STATED)
     assert record == expected_reach(bank, config, "walked", walked)[0]
-    assert reaching.text(record).split("\n")[1:3] == WALKED_TEXT
+    assert reaching.text(record).split("\n")[1:4] == [KEPT_REACH] + WALKED_TEXT
     deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
     directed = dict(config, graph=dict(config["graph"], **{"relations/direction": "directed"}))
     assert reaching.unrouted(deriver, config) is None and reaching.unrouted(deriver, directed) == DIRECTED
     refused, routed = (named(bank, directed, "reach", "walked", reason) for reason in (DIRECTED, None))
     assert refused == dict(routed, refused=DIRECTED) and routed["refused"] is None
-    assert reaching.text(dict(record, refused=DIRECTED)).split("\n")[1:3] == [reaching.REFUSAL % DIRECTED, WALKED_TEXT[0]]
+    refused_text = reaching.text(dict(record, refused=DIRECTED)).split("\n")[1:4]
+    assert refused_text == [reaching.REFUSAL % DIRECTED, KEPT_REACH, WALKED_TEXT[0]]
     LOG.info("descriptions reach edit exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -2550,6 +2637,7 @@ def crossed_reach(bank, config, name, references, fields):
         entries=entered(config["pipeline"]),
         tasks=dict(turn=dict(fields=list(FIELDS), unread=[])),
         undecided=[],
+        kept=kept_as("reach", "bank"),
         graphs=[
             dict(
                 name="h0",
@@ -2905,6 +2993,7 @@ SEARCHED = (
     ("vector", STOPPED),
 )
 SEARCHED_TEXT = """reach over 20 trials on the bank stored as %(stored)s, described at version %(version)d
+kept beside the search, in its folder descriptions/reaches
 described 16, of 15 variants and realisations; not described 4
 one row per trial, in the order of the trials; %(reading)s
     trial         variant     realisation  a fit        turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated                                           turn: target along of go, put/held/stated      turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks    a fit is refused because
@@ -2930,6 +3019,7 @@ one row per trial, in the order of the trials; %(reading)s
     trial_000019  %(v19)s  vector       not described: %(stopped)s
 """
 ROW_TEXT = """reach of the options of the variant %s of the bank stored as %s in one row, described at version %d
+kept beside the bank, in its folder descriptions/reach_rows
 %s
     variant     realisation  turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated                                   turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
     %s  vector       12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1  0/0/1                                      0/0/1                                     12/12/13                                      graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
@@ -2967,7 +3057,9 @@ def over_search(bank, configs, stated):
             row.update(graphs=2, tasks=dict(turn=held[1]), cuts=held[2], refused=held[3] if len(held) == 4 else None)
         rows.append(row)
     stored = read_json(bank / "manifest.json")["stored_sha256"]
-    result = dict(version=describing.VERSION, stored_sha256=stored, fields=dict(turn=list(GO)), trials=rows)
+    result = dict(
+        version=describing.VERSION, stored_sha256=stored, fields=dict(turn=list(GO)), trials=rows, kept=kept_as("reaches", "search")
+    )
     LOG.debug("descriptions over search exit trials=%d seconds=%.4f", len(rows), time.perf_counter() - started)
     return result
 
@@ -3004,7 +3096,11 @@ def test_reach_over_the_twenty_trials_of_a_search_equals_the_table_written_out_h
     stem = stemmed(bank, configs[13], "reach_rows", "vector", None)
     kept = {name: value for name, value in rows[13].items() if name not in ("trial", "refused", "reason")}
     assert read_json(stem.with_suffix(".json"))["record"] == dict(
-        kept, version=describing.VERSION, stored_sha256=record["stored_sha256"], fields=record["fields"]
+        kept,
+        version=describing.VERSION,
+        stored_sha256=record["stored_sha256"],
+        fields=record["fields"],
+        kept=kept_as("reach_rows", "bank"),
     )
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == ROW_TEXT % (
         key,
@@ -3030,7 +3126,7 @@ def test_the_text_of_the_table_holds_one_line_per_trial_of_its_record_and_the_ve
     written = SEARCHED_TEXT % dict(
         shown, stored=record["stored_sha256"], version=describing.VERSION, reading=reaches.READING, aimless=AIMLESS, stopped=STOPPED
     )
-    assert reaches.text(record) == written and len(written.split("\n")) == 4 + len(record["trials"]) + 1
+    assert reaches.text(record) == written and len(written.split("\n")) == 5 + len(record["trials"]) + 1
     stem = tabled(searched, record)
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
     monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--reach", str(bank), str(searched)])
@@ -3070,6 +3166,7 @@ def test_a_second_call_reads_the_file_of_the_table_and_a_search_that_gains_a_tri
 
 
 CROSSED_OVER = """reach over 3 trials on the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/reaches
 described 2, of 1 variants and realisations; not described 1
 one row per trial, in the order of the trials; %s
     trial  variant     realisation  a fit        turn: options held/stated in decisions described/shown  turn: kind, put/held/stated  turn: target to of go, put/held/stated                     turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: target by of stay, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks  a fit is refused because
@@ -3099,6 +3196,7 @@ def test_a_plain_list_of_configurations_is_described_beside_its_bank_and_variant
         stored_sha256=stored,
         fields=dict(turn=list(FIELDS)),
         trials=[dict(described, trial=0), dict(described, trial=1), dict(unread, trial=2)],
+        kept=kept_as("reaches", "bank"),
     )
     assert json.loads(json.dumps(record)) == record and rowed.call_count == 1
     written = CROSSED_OVER % (stored, describing.VERSION, reaches.READING, key[:10], key[:10])
@@ -3121,7 +3219,7 @@ def test_a_trial_under_an_edit_on_a_bank_whose_relations_hold_no_column_has_its_
         trial=0, variant=key, realisation="stepped", refused=None, reason=None, graphs=1, tasks=dict(turn=STEPPED_ROW), cuts=[]
     )
     assert record["trials"] == [row]
-    assert reaches.text(record).split("\n", 3)[3] == STEPPED_OVER % key[:10]
+    assert reaches.text(record).split("\n", 4)[4] == STEPPED_OVER % key[:10]
     LOG.info("descriptions reach over an edit without columns exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -3192,7 +3290,7 @@ def test_a_trial_is_not_described_only_for_what_the_checks_of_its_statement_and_
     record = reach_search(bank, folder)
     assert [row["reason"] for row in record["trials"]] == [None] + [message for _, message in refused] + [LACKING, UNMAPPED]
     assert [row["variant"] is None for row in record["trials"]] == [False] + [True] * 10
-    assert len(reaches.text(record).split("\n")) == 4 + len(record["trials"]) + 1
+    assert len(reaches.text(record).split("\n")) == 5 + len(record["trials"]) + 1
     OPERATIONS.register(FAULT.name, FAULT)
     try:
         faulty = dict(good, pipeline=good["pipeline"] + [entry("test.fault", {})])
@@ -3237,14 +3335,15 @@ def every_key(bank, configs):
     started = time.perf_counter()
     manifest = read_json(bank / "manifest.json")
     (deriver, name, key, unrouted), (other, _, second, _) = (reaching.named(bank, {}, config, STATED) for config in configs)
+    stated = [("only", configs[0], (deriver, name, key, unrouted), None), ("none", None, None, "absent")]
     result = dict(
-        truth=describing.keyed(manifest),
-        between=differing.keyed(manifest, "g0", "g1"),
-        variant=varying.keyed(deriver, configs[0], key),
-        reach=reaching.keyed(deriver, configs[0], key, name, unrouted),
-        row=reaches.row_keyed(deriver, configs[0], key, name),
-        table=reaches.keyed(manifest, [("only", configs[0], (deriver, name, key, unrouted), None), ("none", None, None, "absent")]),
-        against=diverging.keyed([(deriver, key), (other, second)], configs),
+        truth=describing.keyed(manifest, located(bank, "bank", "truth")),
+        between=differing.keyed(manifest, "g0", "g1", located(bank, "bank", "differences")),
+        variant=varying.keyed(deriver, configs[0], key, located(bank, "bank", "variants")),
+        reach=reaching.keyed(deriver, configs[0], key, name, unrouted, located(bank, "bank", "reach")),
+        row=reaches.row_keyed(deriver, configs[0], key, name, located(bank, "bank", "reach_rows")),
+        table=reaches.keyed(stated, located(bank, "bank", "reach_rows"), located(bank, "search", "reaches")),
+        against=diverging.keyed([(deriver, key), (other, second)], configs, located(bank, "bank", "differences")),
     )
     LOG.debug("descriptions every key exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
@@ -3286,23 +3385,26 @@ def test_the_key_of_every_description_holds_the_version_of_every_unit_and_entry_
             entries=[[label, name, registries.version(labelled[label].named(name))] for label, name in read],
         )
 
-    row = dict(part="reach_rows", variant=key, realisation=realised("vector"), code=code(REACH_READ))
+    @timed("descriptions.every_key.based")
+    def based(part, beside):
+        return dict(part=part, beside=beside, away=None, stored=stored)
+
+    row = dict(based("reach_rows", "bank"), variant=key, realisation=realised("vector"), code=code(REACH_READ))
     assert before == dict(
-        truth=dict(part="truth", stored=stored, code=code(SCHEMA_READ)),
-        between=dict(part="differences", stored=stored, first=dict(graph="g0"), second=dict(graph="g1"), code=code(SCHEMA_READ)),
-        variant=dict(part="variants", variant=key, code=code(VARIANT_READ)),
-        reach=dict(part="reach", variant=key, realisation=realised("vector"), refused=None, code=code(REACH_READ)),
+        truth=dict(based("truth", "bank"), code=code(SCHEMA_READ)),
+        between=dict(based("differences", "bank"), first=dict(graph="g0"), second=dict(graph="g1"), code=code(SCHEMA_READ)),
+        variant=dict(based("variants", "bank"), variant=key, code=code(VARIANT_READ)),
+        reach=dict(based("reach", "bank"), variant=key, realisation=realised("vector"), refused=None, code=code(REACH_READ)),
         row=row,
         table=dict(
-            part="reaches",
-            stored=stored,
+            based("reaches", "search"),
             trials=[
                 dict(trial="only", row=sha256_json(row), refused=None, reason=None),
                 dict(trial="none", row=None, refused=None, reason="absent"),
             ],
             code=code(REACH_READ),
         ),
-        against=dict(part="differences", first=dict(variant=key), second=dict(variant=second), code=code(VARIANT_READ)),
+        against=dict(based("differences", "bank"), first=dict(variant=key), second=dict(variant=second), code=code(VARIANT_READ)),
     )
     units = [
         (describing, ALL),
@@ -3543,7 +3645,8 @@ def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_anot
         reach_search(bank, tmp_path)
     write_json(tmp_path / "plan.json", dict(bank_stored_sha256=stored, trials=[]))
     empty = dict(version=describing.VERSION, stored_sha256=stored, fields=dict(turn=list(GO)), trials=[])
-    assert reach_search(bank, tmp_path) == empty == reach_over(bank, [], STATED)
+    assert reach_search(bank, tmp_path) == dict(empty, kept=kept_as("reaches", "search"))
+    assert reach_over(bank, [], STATED) == dict(empty, kept=kept_as("reaches", "bank"))
     with pytest.raises(TypeError, match="reads a list of the configurations of fits, found {}"):
         reach_over(bank, {}, STATED)
     with pytest.raises(Refused, match="^the statement lacks alike$"):
@@ -3692,6 +3795,7 @@ entry graphspec.nodes, of the operation graphspec.nodes at version %d: parameter
 entry test.cut, of the operation test.cut at version 1: parameters cut/relation base, cut/kind turn; reads none; splits none; storage none; second graph none
 entry graphspec.relation_forms, of the operation graphspec.relation_forms at version %d: parameters relation_forms/types typed, relation_forms/parallel keep, relation_forms/reverse False, relation_forms/loops True; reads none; splits none; storage none; second graph none"""
 HEAD_TEXT = """difference of the variants %s, the first, and %s, the second, of the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/differences
 %s
 the first:
 %s
@@ -3752,6 +3856,7 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, time
   nothing differs of what is compared; equal at every time: kinds 2, relations 3
 """
 TRUTHS_TEXT = """difference of the truth graphs g0, the first, and g1, the second, of the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/differences
 unit tick, times 8 from 0 to 7
 %s
   kind agent: nodes only the first holds 8, only the second 1; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
@@ -3797,6 +3902,7 @@ unit tick, times 8 from 0 to 7
   equal at every time: kinds 0, relations 0
 """
 ALONE_TEXT = """difference of the truth graphs g1, the first, and g1, the second, of the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/differences
 unit tick, times 3 from 1 to 3
 %s
   nothing differs of what is compared; equal at every time: kinds 2, relations 2
@@ -3864,6 +3970,7 @@ def diverged(bank, degrees, differs, graphs):
         columns=UNCOLUMNED,
         differs=differs,
         graphs=graphs,
+        kept=kept_as("differences", "bank"),
     )
     versions = [OPERATIONS.named(name).version for name in ("graphspec.nodes", "graphspec.relation_forms")]
     written = HEAD_TEXT % (
@@ -3875,18 +3982,18 @@ def diverged(bank, degrees, differs, graphs):
         *[SIDE_TEXT % (versions[0], degree, versions[1]) for degree in degrees],
     )
     configs = [leaned(bank, degree) for degree in degrees]
-    key = diverging.keyed([(deriver, side["variant"]) for side in sides], configs)
+    key = diverging.keyed([(deriver, side["variant"]) for side in sides], configs, located(bank, "bank", "differences"))
     assert (key["part"], key["first"], key["second"]) == ("differences", *[dict(variant=side["variant"]) for side in sides])
     return record, written, bank / "descriptions" / "differences" / describing.named(key)
 
 
 @timed("descriptions.truths")
 def truths(bank, first, second, found):
-    manifest = read_json(bank / "manifest.json")
-    stored, key = manifest["stored_sha256"], differing.keyed(manifest, first, second)
-    assert key == dict(describing.keyed(manifest), part="differences", first=dict(graph=first), second=dict(graph=second))
+    manifest, place = read_json(bank / "manifest.json"), located(bank, "bank", "differences")
+    stored, key = manifest["stored_sha256"], differing.keyed(manifest, first, second, place)
+    assert key == dict(describing.keyed(manifest, place), first=dict(graph=first), second=dict(graph=second))
     return (
-        dict(version=describing.VERSION, stored_sha256=stored, time=CLOCKED, **found),
+        dict(version=describing.VERSION, stored_sha256=stored, time=CLOCKED, kept=kept_as("differences", "bank"), **found),
         bank / "descriptions" / "differences" / describing.named(key),
     )
 
@@ -4090,7 +4197,8 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         ),
         equal=dict(kinds=0, relations=0),
     )
-    assert differing.text(record).split("\n", 1)[1] == TIMELESS_TEXT % differing.TRUTH["clock"]
+    kept = dict(record, kept=kept_as("differences", "bank"))
+    assert differing.text(kept).split("\n", 2)[2] == TIMELESS_TEXT % differing.TRUTH["clock"]
     config = leaned(bank, 1)
     name, graph, grown, low, high = diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), config)[0]
     assert (name, low, high) == ("g0", 0, 8)
@@ -4256,8 +4364,9 @@ def test_an_edge_without_direction_stated_from_both_ends_is_one_edge_and_a_truth
         time=dict(model="clocks", units=["tick"]),
         splits=["train", "validation"],
         graphs=[THIRD],
+        kept=kept_as("truth", "bank"),
     )
-    assert describing.text(record).split("\n", 4)[4] == THIRD_TEXT
+    assert describing.text(record).split("\n", 5)[5] == THIRD_TEXT
     (told,) = record["graphs"]
     (shown,) = variant(crossed, lined(crossed, THINNER, KEPT, "vector"), STATED)["graphs"]
     assert shown["times"] == [0, 1, 2, 3, 4]
@@ -4402,8 +4511,8 @@ def test_under_order_a_description_states_positions_and_no_length_and_the_orders
     unmeasured = {name: dict(found, **NONE) for name, found in FIRST["relations"].items()}
     assert record["time"] == ORDERED and second == dict(SECOND, unit=None)
     assert first == dict(FIRST, unit=None, relations=unmeasured) and FIRST["relations"]["near"]["mean"] == 4.0
-    written = describing.text(record)
-    assert written.split("\n")[1:4] == ["time: order without a clock, no unit", "splits: train, validation", describing.READING["order"]]
+    written = describing.text(dict(record, kept=kept_as("truth", "bank")))
+    assert written.split("\n")[2:5] == ["time: order without a clock, no unit", "splits: train, validation", describing.READING["order"]]
     assert written.split("\n\n")[2] == ORDERED_SECOND
     assert not {"time", "lasting", "unit"} & set(describing.READING["order"].split() + written.split("\n\n", 1)[1].split()) - {"unit,"}
     with pytest.raises(ValueError, match=UNMET):
@@ -4422,7 +4531,8 @@ def test_under_order_a_description_states_positions_and_no_length_and_the_orders
         relations={},
         equal=dict(kinds=2, relations=2),
     )
-    assert differing.text(alone).split("\n", 1)[1] == ORDERED_ALONE % differing.TRUTH["order"]
+    kept = dict(alone, kept=kept_as("differences", "bank"))
+    assert differing.text(kept).split("\n", 2)[2] == ORDERED_ALONE % differing.TRUTH["order"]
     assert "time" not in differing.TRUTH["order"] + differing.READING["order"]
     config = configured(bank, CUTTING)
     stated = effect.text(dict(variant(bank, config, STATED), time=ORDERED))
@@ -4452,13 +4562,14 @@ def test_without_time_a_description_states_no_time_and_counts_once_what_holds_al
         relations={name: dict(found, edges_at=[]) for name, found in SECOND["relations"].items()},
         decisions=dict(turn=dict(turn, each=[dict(turn["each"][0], time=None)])),
     )
-    written = describing.text(record)
-    assert written.split("\n")[1:4] == ["time: no time, no unit", "splits: train, validation", describing.READING["none"]]
+    written = describing.text(dict(record, kept=kept_as("truth", "bank")))
+    assert written.split("\n")[2:5] == ["time: no time, no unit", "splits: train, validation", describing.READING["none"]]
     assert written.split("\n\n")[2] == STILL_SECOND
     apart = differing.recorded(bank, manifest, *manifest["graphs"])
     assert (apart["time"], apart["unit"], apart["times"], apart["differs"]) == (STILL, None, [None], True)
     assert apart["relations"]["near"] == unlike(EDGED, "both", (2, 0, 0), (None, 2, 0, 0))
-    assert differing.text(apart).split("\n", 1)[1] == STILL_APART % differing.TRUTH["none"]
+    kept = dict(apart, kept=kept_as("differences", "bank"))
+    assert differing.text(kept).split("\n", 2)[2] == STILL_APART % differing.TRUTH["none"]
     name, graph, grown, low, high = diverging.ended(Deriver(bank, "cpu", STATED["derivation_seed"], RESIDENT), leaned(bank, 1))[1]
     assert (name, low, high, np.asarray(graph.step_time).tolist()) == ("g1", 0, 3, [1, 2, 3])
     monkeypatch.setattr(grown.schema, "model", "none")
@@ -4621,6 +4732,7 @@ WATCHED_SECOND = dict(
     ),
 )
 UNSAID_TEXT = """truth graphs of the bank stored as %s, described at version %d
+kept beside the bank, in its folder descriptions/truth
 time: two clocks, units tick
 splits: train, validation
 %s
@@ -4865,6 +4977,7 @@ def test_a_truth_description_counts_what_it_leaves_out_and_holds_an_edge_about_a
         time=dict(model="clocks", units=["tick"]),
         splits=["train", "validation"],
         graphs=[WATCHED_FIRST, WATCHED_SECOND],
+        kept=kept_as("truth", "bank"),
     )
     assert json.loads(json.dumps(record)) == record
     assert describing.text(record) == UNSAID_TEXT % (manifest["stored_sha256"], describing.VERSION, describing.READING["clocks"])
@@ -5024,5 +5137,6 @@ def test_a_kind_of_task_whose_options_a_rule_gives_names_the_rule_beside_the_opt
     finally:
         del RULES.held["test.listed"]
     assert [graph["decisions"]["turn"]["rule"] for graph in record["graphs"]] == [rule, rule]
-    assert RULED_TEXT in describing.text(record) and "no rule of options" not in describing.text(record)
+    written = describing.text(dict(record, kept=kept_as("truth", "bank")))
+    assert RULED_TEXT in written and "no rule of options" not in written
     LOG.info("descriptions ruled exit seconds=%.3f", time.perf_counter() - started)

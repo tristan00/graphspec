@@ -204,17 +204,23 @@ def rowed(deriver, config, key, name, fields):
     return result
 
 
+@timed("reaches.row_placed")
+def row_placed(bank, stored):
+    return truth.located(Path(bank) / truth.FOLDER, "bank", "reach_rows", stored)
+
+
 @timed("reaches.row_keyed")
-def row_keyed(deriver, config, key, name):
-    return dict(reaching.realised_by(deriver, config, key, name), part="reach_rows")
+def row_keyed(deriver, config, key, name, place):
+    return reaching.realised_by(deriver, config, key, name, place)
 
 
-def keyed(manifest, stated):
+def keyed(stated, rowing, place):
     started = time.perf_counter()
-    rows = [None if found is None else row_keyed(found[0], config, found[2], found[1]) for _, config, found, _ in stated]
+    rows = [
+        None if found is None else row_keyed(found[0], config, found[2], found[1], rowing) for _, config, found, _ in stated
+    ]
     result = dict(
-        part="reaches",
-        stored=manifest["stored_sha256"],
+        truth.based(place),
         trials=[
             dict(
                 trial=trial,
@@ -230,7 +236,7 @@ def keyed(manifest, stated):
     return result
 
 
-def recorded(bank, manifest, fields, stated):
+def recorded(rowing, fields, stated):
     started = time.perf_counter()
     rows = []
     for trial, config, found, reason in stated:
@@ -238,23 +244,25 @@ def recorded(bank, manifest, fields, stated):
         if found is not None:
             deriver, name, key, refused = found
             row.update(variant=key, realisation=name, refused=refused)
-            held, named = Path(bank) / "descriptions" / "reach_rows", row_keyed(deriver, config, key, name)
+            named = row_keyed(deriver, config, key, name, rowing)
             try:
-                kept = truth.kept(held, named, lambda: rowed(deriver, config, key, name, fields), row_text)
+                kept = truth.kept(rowing, named, lambda: rowed(deriver, config, key, name, fields), row_text)
                 row.update({part: kept[part] for part in ("graphs", "tasks", "cuts")})
             except STOPS as error:
                 row.update(reason=STOPPED % (type(error).__name__, lined(error)))
         rows.append(row)
-    result = dict(version=truth.VERSION, stored_sha256=manifest["stored_sha256"], fields=fields, trials=rows)
+    result = dict(version=truth.VERSION, stored_sha256=rowing["stored"], fields=fields, trials=rows)
     LOG.info("reaches recorded exit trials=%d seconds=%.3f", len(rows), time.perf_counter() - started)
     return result
 
 
-def tabled(bank, manifest, trials, folder):
+def tabled(bank, manifest, trials, folder, beside):
     started = time.perf_counter()
     schema = Bank(bank).registry.schema
     if not schema.decided():
         raise ValueError("the bank %s holds no kind of task that decides; reach describes the options of decisions" % bank)
+    rowing = row_placed(bank, manifest["stored_sha256"])
+    place = truth.located(Path(folder) / truth.FOLDER, beside, "reaches", manifest["stored_sha256"])
     derivers, stated = {}, []
     for trial, config, statement, reason in trials:
         found = None
@@ -265,8 +273,7 @@ def tabled(bank, manifest, trials, folder):
                 reason = lined(error)
         stated.append((trial, config, found, reason))
     fields = {task: [field["name"] for field in fielded(schema, task)] for task in schema.decided()}
-    held = Path(folder) / "descriptions" / "reaches"
-    result = truth.kept(held, keyed(manifest, stated), lambda: recorded(bank, manifest, fields, stated), text)
+    result = truth.kept(place, keyed(stated, rowing, place), lambda: recorded(rowing, fields, stated), text)
     LOG.info("reaches tabled exit trials=%d seconds=%.3f", len(stated), time.perf_counter() - started)
     return result
 
@@ -278,7 +285,7 @@ def over(bank, configs, statement):
         raise TypeError("reach over a set of variants reads a list of the configurations of fits, found %r" % (configs,))
     state(statement)
     trials = [(place, config, statement, None) for place, config in enumerate(configs)]
-    result = tabled(bank, manifest, trials, bank)
+    result = tabled(bank, manifest, trials, bank, "bank")
     LOG.info("reaches over exit configurations=%d seconds=%.3f", len(configs), time.perf_counter() - started)
     return result
 
@@ -310,7 +317,7 @@ def search(bank, folder):
             trials.append((item["directory"], None, None, "the trial holds no " + " and no ".join(lacking)))
         else:
             trials.append((item["directory"], read_json(trial / FILES[0]), read_json(trial / FILES[1]), None))
-    result = tabled(bank, manifest, trials, folder)
+    result = tabled(bank, manifest, trials, folder, "search")
     LOG.info("reaches search exit trials=%d seconds=%.3f", len(trials), time.perf_counter() - started)
     return result
 
@@ -402,6 +409,7 @@ def row_text(record):
     lines = [
         "reach of the options of the variant %s of the bank stored as %s in one row, described at version %d"
         % (record["variant"], record["stored_sha256"], record["version"]),
+        truth.kept_text(record),
         READING,
     ]
     lines += tabled_lines(heads(record["fields"]), [cells(record, record["fields"])])
@@ -416,6 +424,7 @@ def text(record):
     lines = [
         "reach over %d trials on the bank stored as %s, described at version %d"
         % (len(rows), record["stored_sha256"], record["version"]),
+        truth.kept_text(record),
         "described %d, of %d variants and realisations; not described %d"
         % (len(described), len({(row["variant"], row["realisation"]) for row in described}), len(rows) - len(described)),
         "one row per trial, in the order of the trials; " + READING,

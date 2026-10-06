@@ -72,15 +72,15 @@ def recorded(deriver, config, key):
 
 
 @timed("variant.keyed")
-def keyed(deriver, config, key):
-    return dict(part="variants", variant=key, code=coded(deriver, config, []))
+def keyed(deriver, config, key, place):
+    return dict(truth.based(place), variant=key, code=coded(deriver, config, []))
 
 
 def describe(bank, config, statement):
     started = time.perf_counter()
     deriver, key = opened(bank, {}, config, statement)
-    held = Path(bank) / "descriptions" / "variants"
-    result = truth.kept(held, keyed(deriver, config, key), lambda: recorded(deriver, config, key), effect.text)
+    place = truth.located(Path(bank) / truth.FOLDER, "bank", "variants", deriver.source)
+    result = truth.kept(place, keyed(deriver, config, key, place), lambda: recorded(deriver, config, key), effect.text)
     LOG.info("variant describe exit variant=%s seconds=%.3f", key[:10], time.perf_counter() - started)
     return result
 

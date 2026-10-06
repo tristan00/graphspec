@@ -153,9 +153,9 @@ def recorded(sides, configs):
 
 
 @timed("differences.keyed")
-def keyed(sides, configs):
+def keyed(sides, configs, place):
     return dict(
-        part="differences",
+        truth.based(place),
         first=dict(variant=sides[0][1]),
         second=dict(variant=sides[1][1]),
         code=truth.merged([coded(deriver, config, []) for (deriver, _), config in zip(sides, configs)]),
@@ -166,8 +166,8 @@ def differences(bank, config, statement, other, other_statement):
     started = time.perf_counter()
     derivers = {}
     sides = [varying.opened(bank, derivers, *held) for held in ((config, statement), (other, other_statement))]
-    held = Path(bank) / "descriptions" / "differences"
-    result = truth.kept(held, keyed(sides, (config, other)), lambda: recorded(sides, (config, other)), text)
+    place = truth.located(Path(bank) / truth.FOLDER, "bank", "differences", sides[0][0].source)
+    result = truth.kept(place, keyed(sides, (config, other), place), lambda: recorded(sides, (config, other)), text)
     LOG.info(
         "differences exit first=%s second=%s seconds=%.3f", sides[0][1][:10], sides[1][1][:10], time.perf_counter() - started
     )
@@ -181,6 +181,7 @@ def text(record):
     lines = [
         "difference of the variants %s, the first, and %s, the second, of the bank stored as %s, described at version %d"
         % (record["first"]["variant"], record["second"]["variant"], record["stored_sha256"], record["version"]),
+        truth.kept_text(record),
         differing.READING[model],
     ]
     for side in differing.SIDES:
