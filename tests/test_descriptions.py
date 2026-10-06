@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from conftest import SPLITS, shared
-from graphspec import OPERATIONS, RULES, Operation, Phase, Registry, describe, registries
+from graphspec import ENCODERS, OPERATIONS, RULES, Operation, Phase, Registry, describe, registries
 from graphspec import differences as between
 from graphspec.budgets import GraphCapacityError, Refused
 from graphspec.descriptions import describe as describing
@@ -408,7 +408,7 @@ def expected(stored):
 @timed("descriptions.files")
 def files(bank, stored):
     key = dict(describing.keyed(read_json(bank / "manifest.json")), stored=stored)
-    stem = bank / "descriptions" / "truth" / sha256_json(key)
+    stem = bank / "descriptions" / "truth" / describing.named(key)
     return stem.with_suffix(".json"), stem.with_suffix(".txt")
 
 
@@ -459,6 +459,77 @@ def test_a_second_call_reads_the_file_of_the_first_and_a_bank_of_other_stored_co
     monkeypatch.undo()
     assert describe(other) == dict(record, stored_sha256="0" * 64, graphs=[SECOND, FIRST])
     assert files(other, "0" * 64)[0].exists() and describe(bank) == record
+
+
+@timed("descriptions.kept_in")
+def kept_in(folder):
+    return sorted(path.name for path in folder.iterdir())
+
+
+def test_a_file_is_served_only_where_it_parses_and_holds_its_key_and_the_files_other_code_made_are_removed(
+    bank, tmp_path, monkeypatch, caplog
+):
+    started = time.perf_counter()
+    other = tmp_path / "bank"
+    shutil.copytree(bank, other, ignore=shutil.ignore_patterns("descriptions"))
+    record, key = describe(other), describing.keyed(read_json(other / "manifest.json"))
+    folder = other / "descriptions" / "truth"
+    held, text = [(folder / describing.named(key)).with_suffix(suffix) for suffix in (".json", ".txt")]
+    whole, written = dict(key=key, record=record), describing.text(record)
+    assert read_json(held) == whole and text.read_text(encoding="utf-8") == written
+    earlier = dict(key, code=dict(key["code"], description=key["code"]["description"] - 1))
+    broken = [
+        (json.dumps(whole)[: len(json.dumps(whole)) // 2], "it is no JSON"),
+        ("", "it is no JSON"),
+        ("{}", "it holds no key and record"),
+        (json.dumps(record), "it holds no key and record"),
+        (json.dumps(dict(key=dict(key, stored="0" * 64), record=record)), "it holds another key"),
+        (json.dumps(dict(key=earlier, record=dict(record, graphs=[]))), "it holds another key"),
+    ]
+    for content, why in broken:
+        held.write_text(content, encoding="utf-8")
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=describing.LOG.name):
+            assert describe(other) == record
+        assert [(str(held) in message, why in message) for message in caplog.messages] == [(True, True)]
+        assert read_json(held) == whole
+    text.unlink()
+    monkeypatch.setattr(describing, "recorded", refused)
+    assert describe(other) == record and text.read_text(encoding="utf-8") == written
+    monkeypatch.undo()
+    code, marked = key["code"], held.name.split("-")[0] + ".json"
+    mine = sorted([marked, held.name, text.name])
+    version = code["description"]
+    older = ["0" * 64 + ".json", "0" * 64 + ".txt"]
+    moved = ["a" * 16 + ".json", "a" * 16 + "-" + "1" * 64 + ".json", "a" * 16 + "-" + "1" * 64 + ".txt"]
+    absent = ["b" * 16 + ".json", "b" * 16 + "-" + "2" * 64 + ".json"]
+    lone = ["c" * 16 + "-" + "3" * 64 + ".txt"]
+    assert kept_in(folder) == mine and read_json(folder / marked) == code
+    for name in older + moved[1:] + absent[1:] + lone:
+        (folder / name).write_text("{}", encoding="utf-8")
+    later = dict(code, description=version + 1)
+    write_json(folder / moved[0], dict(later, entries=code["entries"] + [["encoder", "standard", 99]]))
+    write_json(folder / absent[0], dict(later, entries=code["entries"] + [["operation", "test.absent", 1]]))
+    between(other, "g0", "g1")
+    apart = kept_in(other / "descriptions" / "differences")
+    assert describe(other) == record and kept_in(folder) == sorted(mine + older + moved + absent + lone)
+    caplog.clear()
+    with raised(describing), caplog.at_level(logging.INFO, logger=describing.LOG.name):
+        assert describe(other) == dict(record, version=version + 1)
+        newer = kept_in(folder)
+        assert len(newer) == 5 and set(absent) < set(newer) and not set(newer) & set(mine + older + moved + lone)
+    removed = [message for message in caplog.messages if "removed" in message]
+    assert len(removed) == 4 and all(str(folder) in message for message in removed)
+    for reason in (
+        "the encoder standard at version 99, now %d" % registries.version(ENCODERS.named("standard")),
+        "description at version %d, now %d" % (version, version + 1),
+        "it holds no record of the code that made it",
+        "its record of the code that made it is not one this code writes",
+    ):
+        assert sum(reason in message for message in removed) == 1, reason
+    assert describe(other) == record and kept_in(folder) == mine
+    assert kept_in(other / "descriptions" / "differences") == apart and len(apart) == 3
+    LOG.info("descriptions served and removed exit seconds=%.3f", time.perf_counter() - started)
 
 
 NODES = {
@@ -998,7 +1069,7 @@ def named(bank, config, part, name, refused):
 
 @timed("descriptions.stemmed")
 def stemmed(bank, config, part, name, refused):
-    return bank / "descriptions" / part / sha256_json(named(bank, config, part, name, refused))
+    return bank / "descriptions" / part / describing.named(named(bank, config, part, name, refused))
 
 
 @timed("descriptions.varied")
@@ -1691,6 +1762,7 @@ def test_an_edit_of_another_mapping_at_the_same_version_is_not_served_the_reach_
             if relation == "went":
                 served.parent.mkdir(parents=True, exist_ok=True)
                 write_json(served, dict(key=keys[0], record=dict(served="the edit that makes facts of went")))
+                served.with_suffix(".txt").write_text("the edit that makes facts of went", encoding="utf-8")
                 assert reach(bank, config, STATED) == read_json(served)["record"]
             else:
                 with pytest.raises(AssertionError, match="the description was computed again"):
@@ -2840,10 +2912,10 @@ def over_search(bank, configs, stated):
 
 def tabled(folder, record):
     started = time.perf_counter()
-    kept = sorted((folder / "descriptions" / "reaches").glob("*.json"))
+    kept = sorted((folder / "descriptions" / "reaches").glob("*-*.json"))
     (found,) = [path for path in kept if read_json(path)["record"] == record]
     held = read_json(found)["key"]
-    assert held["part"] == "reaches" and held["stored"] == record["stored_sha256"] and found.stem == sha256_json(held)
+    assert held["part"] == "reaches" and held["stored"] == record["stored_sha256"] and found.stem == describing.named(held)
     assert [(trial["trial"], trial["refused"], trial["row"] is None) for trial in held["trials"]] == [
         (row["trial"], row["refused"], row["variant"] is None) for row in record["trials"]
     ]
@@ -3743,7 +3815,7 @@ def diverged(bank, degrees, differs, graphs):
     configs = [leaned(bank, degree) for degree in degrees]
     key = diverging.keyed([(deriver, side["variant"]) for side in sides], configs)
     assert (key["part"], key["first"], key["second"]) == ("differences", *[dict(variant=side["variant"]) for side in sides])
-    return record, written, bank / "descriptions" / "differences" / sha256_json(key)
+    return record, written, bank / "descriptions" / "differences" / describing.named(key)
 
 
 @timed("descriptions.truths")
@@ -3753,7 +3825,7 @@ def truths(bank, first, second, found):
     assert key == dict(describing.keyed(manifest), part="differences", first=dict(graph=first), second=dict(graph=second))
     return (
         dict(version=describing.VERSION, stored_sha256=stored, time=CLOCKED, **found),
-        bank / "descriptions" / "differences" / sha256_json(key),
+        bank / "descriptions" / "differences" / describing.named(key),
     )
 
 

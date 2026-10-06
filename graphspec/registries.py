@@ -132,6 +132,18 @@ def versions(read):
     return [list(entry) for entry in found]
 
 
+def moved(entries):
+    started = time.perf_counter()
+    held = {registry.label: registry.held for registry in REGISTRIES if registry.versioned}
+    found = [
+        "the %s %s at version %s, now %s" % (label, name, stated, version(held[label][name]))
+        for label, name, stated in entries
+        if label in held and name in held[label] and version(held[label][name]) != stated
+    ]
+    LOG.debug("moved exit entries=%d found=%d seconds=%.4f", len(entries), len(found), time.perf_counter() - started)
+    return found
+
+
 def reader(frame):
     started = time.perf_counter()
     library, found, below = {registry.module.partition(".")[0] for registry in REGISTRIES}, None, True

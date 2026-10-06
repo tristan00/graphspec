@@ -1,4 +1,6 @@
+import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -7,7 +9,7 @@ import numpy as np
 from graphspec import registries
 from graphspec.engine import transform
 from graphspec.facts.stored import GROUPS, Facts, admitted
-from graphspec.infra.files import read_json, sha256_json, write_json
+from graphspec.infra.files import parsed, read_json, sha256_json, write_json
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.operations.operation import OPERATIONS
@@ -22,8 +24,10 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 23
+VERSION = 24
 DIFFERENCE = "graphspec.difference"
+CODED = 16
+UNWRITTEN = "no file is written for the key"
 UNNAMED = -1
 LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
@@ -697,18 +701,93 @@ def manifested(path):
     return result
 
 
+@timed("describe.coding")
+def coding(key):
+    return sha256_json(key["code"])[:CODED]
+
+
+@timed("describe.named")
+def named(key):
+    return "%s-%s" % (coding(key), sha256_json(key))
+
+
+def served(place, key):
+    started = time.perf_counter()
+    record, unserved = None, UNWRITTEN
+    if place.is_file():
+        found, unread = parsed(place)
+        if unread is not None:
+            unserved = "it is no JSON: %s" % unread
+        elif type(found) is not dict or sorted(found) != ["key", "record"]:
+            unserved = "it holds no key and record"
+        elif found["key"] != key:
+            unserved = "it holds another key than the one it is named by"
+        else:
+            record, unserved = found["record"], None
+    LOG.debug("describe served exit file=%s served=%s seconds=%.4f", place.name, unserved is None, time.perf_counter() - started)
+    return record, unserved
+
+
+def outdated(code):
+    started = time.perf_counter()
+    running = coded([])
+    result = "its record of the code that made it is not one this code writes"
+    if (
+        type(code) is dict
+        and sorted(code) == sorted(running)
+        and type(code["entries"]) is list
+        and all(type(entry) is list and len(entry) == 3 and type(entry[0]) is str and type(entry[1]) is str for entry in code["entries"])
+    ):
+        found = ["%s at version %s, now %s" % (name, code[name], running[name]) for name in running if name != "entries" and code[name] != running[name]]
+        found += registries.moved(code["entries"])
+        result = ", ".join(found) if found else None
+    LOG.debug("describe outdated exit outdated=%s seconds=%.4f", result is not None, time.perf_counter() - started)
+    return result
+
+
+def swept(folder, mine):
+    started = time.perf_counter()
+    grouped = {}
+    for name in sorted(os.listdir(folder)):
+        if (folder / name).is_file():
+            grouped.setdefault(name.split("-")[0].split(".")[0], []).append(name)
+    removed = 0
+    for code, names in grouped.items():
+        if code == mine:
+            continue
+        reason = "it holds no record of the code that made it"
+        if code + ".json" in names:
+            found, unread = parsed(folder / (code + ".json"))
+            reason = outdated(found if unread is None else None)
+        if reason is not None:
+            for name in names:
+                (folder / name).unlink(missing_ok=True)
+            removed += len(names)
+            LOG.info("describe removed folder=%s files=%s made by other code than this: %s", folder, ", ".join(names), reason)
+    LOG.info("describe swept exit folder=%s codes=%d files=%d seconds=%.3f", folder, len(grouped), removed, time.perf_counter() - started)
+    return removed
+
+
 def kept(folder, key, made, written):
     started = time.perf_counter()
-    held = Path(folder) / sha256_json(key)
-    served = held.with_suffix(".json").exists()
-    if served:
-        record = read_json(held.with_suffix(".json"))["record"]
-    else:
+    folder, key = Path(folder), json.loads(json.dumps(key))
+    held = folder / named(key)
+    place, text = held.with_suffix(".json"), held.with_suffix(".txt")
+    record, unserved = served(place, key)
+    if unserved is not None:
         record = made()
-        output_path(held.parent).mkdir(parents=True, exist_ok=True)
-        output_path(held.with_suffix(".txt")).write_text(written(record), encoding="utf-8")
-        write_json(held.with_suffix(".json"), dict(key=key, record=record))
-    LOG.info("describe kept exit key=%s served=%s seconds=%.3f", held.name, served, time.perf_counter() - started)
+        output_path(folder).mkdir(parents=True, exist_ok=True)
+        if not (folder / (coding(key) + ".json")).is_file():
+            write_json(folder / (coding(key) + ".json"), key["code"])
+            swept(folder, coding(key))
+        text.write_text(written(record), encoding="utf-8")
+        write_json(place, dict(key=key, record=record))
+        if unserved is not UNWRITTEN:
+            LOG.warning("describe replaced file=%s because %s", place, unserved)
+    elif not text.is_file():
+        text.write_text(written(record), encoding="utf-8")
+        LOG.warning("describe wrote again text=%s because the record was kept without it", text)
+    LOG.info("describe kept exit key=%s served=%s seconds=%.3f", held.name, unserved is None, time.perf_counter() - started)
     return record
 
 

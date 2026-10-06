@@ -56,6 +56,16 @@ def write_json(path, value):
             temporary.unlink(missing_ok=True)
 
 
+@timed("files.parsed")
+def parsed(path):
+    with open_read(path) as stream:
+        held = stream.buffer.read()
+    try:
+        return json.loads(held), None
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        return None, str(error)
+
+
 @timed("files.read_json")
 def read_json(path):
     with open_read(path) as stream:
