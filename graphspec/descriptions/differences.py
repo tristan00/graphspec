@@ -14,7 +14,7 @@ from . import describe as truth
 
 LOG = logging.getLogger(__name__)
 SIDES = ("first", "second")
-NODES = ("first", "second", "first_anchors", "second_anchors")
+NODES = ("first", "second", "first_anchors", "second_anchors", "valued")
 EDGES = ("first", "second", "valued")
 STATED = dict(both="", first=", which only the first states", second=", which only the second states")
 OWNED = (
@@ -23,12 +23,21 @@ OWNED = (
     "observed only because a reference of a task names it, is counted apart; an edge is two ends a present fact of "
     "its relation joins, in either order for a relation without direction, met as the difference of two graphs meets "
     "them; other values: the edges both hold of which one holds a fact whose values the other holds no fact of, as "
-    "that difference tells them under difference/match values"
+    "that difference tells them under difference/match values, and the nodes both hold of which one holds values the "
+    "other does not, bit for bit"
+)
+UNCOMPARED = "not compared: periods, tasks and their targets, options, the negatives drawn for a link"
+VARIED = (
+    "; the values of a node are those of the columns both sides hold for its kind, as the encoders of each side give "
+    "them, and the columns only one side holds are named once, per kind and per relation both state; "
+    + UNCOMPARED
+    + ", and the graphs nodes hold"
 )
 PLACED = "first and second: at a %(one)s, " + OWNED
 STEPPED = (
     PLACED + "; the %(many)s are those of either side, and at a %(one)s only one side shows the other holds nothing; "
     "only what differs is listed, %(one)s by %(one)s, and a kind or a relation equal at every %(one)s is counted"
+    + VARIED
 )
 LAST = (
     "each of the two graphs is read as it holds once every correction is known, a fact a correction replaced "
@@ -41,18 +50,23 @@ HELD = (
     "states no start is held before every %(one)s and on until it ends; only what differs is listed, %(one)s by "
     "%(one)s, and a kind or a relation equal before and at every %(one)s is counted"
 )
+STATED_VALUES = (
+    "; the values of a node are those its facts state, the two graphs being of one bank and holding the same columns; "
+    + UNCOMPARED
+    + ", the members of set edges and the graphs nodes hold"
+)
 READING = dict(
     none="first and second: " + OWNED + "; the graphs hold no time and each side shows a graph at one step, where the "
-    "two are compared once; only what differs is listed, and a kind or a relation equal there is counted",
+    "two are compared once; only what differs is listed, and a kind or a relation equal there is counted" + VARIED,
     order=STEPPED % truth.NAMED["order"],
     clock=STEPPED % truth.NAMED["clock"],
 )
 READING["clocks"] = READING["clock"]
 TRUTH = dict(
     none="first and second: " + OWNED + "; " + LAST + "; the graphs hold no time, so every fact holds always and the "
-    "two are compared once; only what differs is listed, and a kind or a relation equal is counted",
-    order=HELD % truth.NAMED["order"],
-    clock=HELD % truth.NAMED["clock"],
+    "two are compared once; only what differs is listed, and a kind or a relation equal is counted" + STATED_VALUES,
+    order=HELD % truth.NAMED["order"] + STATED_VALUES,
+    clock=HELD % truth.NAMED["clock"] + STATED_VALUES,
 )
 TRUTH["clocks"] = TRUTH["clock"]
 
@@ -95,13 +109,13 @@ def counted(keys, steps, size):
 
 def lasting(registry, facts, moments):
     started = time.perf_counter()
-    rows, steps = truth.spread(*truth.shown(facts, "obs", moments))
-    nodes = np.unique(np.stack((steps, np.asarray(facts.obs_entity, np.int64)[rows]), 1), axis=0)
+    stated, moment = truth.spread(*truth.shown(facts, "obs", moments))
+    nodes = np.stack((moment, np.asarray(facts.obs_entity, np.int64)[stated]), 1)
     present = np.flatnonzero(np.asarray(facts.fact_present, bool))
     begun, ended = truth.shown(facts, "fact", moments)
     rows, steps = truth.spread(begun[present], ended[present])
     rows = present[rows]
-    kept = truth.lapsing(registry, facts, nodes[:, 0] * len(facts.kinds) + nodes[:, 1], rows, steps, moments)
+    kept = truth.lapsing(registry, facts, np.unique(nodes[:, 0] * len(facts.kinds) + nodes[:, 1]), rows, steps, moments)
     rows, steps = rows[kept], steps[kept]
     ends = [np.asarray(facts.arrays[name], np.int64)[rows] for name in ("fact_code", "fact_source", "fact_target")]
     result = dict(
@@ -110,6 +124,8 @@ def lasting(registry, facts, moments):
         tokens=tokens(facts),
         nodes=nodes,
         anchored=np.zeros(len(nodes), bool),
+        values=np.asarray(facts.obs_values),
+        valued=stated,
         facts=np.stack([steps] + ends, 1),
         table=np.asarray(facts.fact_values),
         reference=rows,
@@ -165,7 +181,14 @@ def kinded(sides, numbers, kinds, times):
     counts = []
     for anchored in (False, True):
         held = [key[side["anchored"] == anchored] for key, side in zip(keys, sides)]
-        counts += [counted(table[alone], len(times), len(kinds)) for table, alone in zip(held, compared(*held))]
+        counts += [
+            counted(np.unique(table[alone], axis=0), len(times), len(kinds)) for table, alone in zip(held, compared(*held))
+        ]
+    values = valued(*[(side["values"], side["valued"]) for side in sides])
+    wide = [np.c_[key, value][~side["anchored"]] for key, value, side in zip(keys, values, sides)]
+    alone, unlike = compared(*[held[:, :3] for held in wide]), compared(*wide)
+    both = [held[~apart & other, :3] for held, apart, other in zip(wide, alone, unlike)]
+    counts.append(counted(np.unique(np.concatenate(both), axis=0), len(times), len(kinds)))
     declared = {name for side in sides for name in side["registry"].declared}
     observed = set(np.unique(np.concatenate(keys)[:, 1]).tolist())
     found, equal = {}, 0
@@ -331,16 +354,18 @@ def found_text(found, named):
     for name, entry in found["kinds"].items():
         lines.append(
             "  kind %s%s: nodes only the first holds %d, only the second %d; anchors only the first holds %d, only the "
-            "second %d" % (name, STATED[entry["stated"]], *[entry[label] for label in NODES])
+            "second %d; nodes both hold with other values %d"
+            % (name, STATED[entry["stated"]], *[entry[label] for label in NODES])
         )
-        lines += tabled(named, ["first nodes", "second nodes", "first anchors", "second anchors"], NODES, entry["at"])
+        headers = ["first nodes", "second nodes", "first anchors", "second anchors", "other values"]
+        lines += tabled(named, headers, NODES, entry["at"])
     for name, entry in found["relations"].items():
         lines.append(
             "  relation %s%s: edges only the first holds %d, only the second %d, held by both with other values %d"
             % (name, STATED[entry["stated"]], *[entry[label] for label in EDGES])
         )
         lines += tabled(named, ["first", "second", "other values"], EDGES, entry["at"])
-    lines.append("  %s" % equal if lines else "  nothing differs; %s" % equal)
+    lines.append("  %s" % equal if lines else "  nothing differs of what is compared; %s" % equal)
     LOG.debug("differences found text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
     return lines
 

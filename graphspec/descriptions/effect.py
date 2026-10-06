@@ -6,6 +6,7 @@ import numpy as np
 from graphspec.engine.segments import Derivation
 from graphspec.infra.timing import timed
 from graphspec.operations.operation import Stored
+from graphspec.operations.pipeline import called
 from graphspec.operations.sets import PARAMETER
 
 from .describe import NAMED, table, viewed_text
@@ -21,7 +22,14 @@ READING = (
     "the tasks of a kind of task where one was held before it is named as removing every one; alone: a later entry "
     "named so too, which leaves none where the pipeline is derived without the entries named before it for the same, "
     "or, where the pipeline is refused without one of them, with the one parameter of it re-stated after which the "
-    "graph holds the most"
+    "graph holds the most; columns of values and values of nodes: per kind and per relation of which the entry adds, "
+    "removes or fills a column of values or changes the values of a node, and no other: adds, the columns the entry "
+    "adds to it in the registry of the pipeline; fills, the columns of which no node held of the kind, or no present "
+    "fact of the relation, holds a value before the entry and one does after it; removes, those of which one does "
+    "before it and none after; changes the values of, the nodes held before and after the entry whose values, as the "
+    "encoders give them, are not the same, summed over the steps; not compared between the states before and after an "
+    "entry: the values of the edges it leaves, the graphs nodes hold, periods, tasks and their targets, options, and "
+    "the negatives drawn for a link"
 )
 ALONE = dict(absent="without the entry", least="with one parameter re-stated of the entry")
 
@@ -172,10 +180,74 @@ def left(graph, sort, name, task):
     return result
 
 
-def effected(step, earlier, later, before, after, kinds, names, places, registry, tasks, times):
+def filled(graph, registry, low, high, names):
+    started = time.perf_counter()
+    step, table = np.asarray(graph.obs_step, np.int64), np.asarray(graph.x_table)
+    inside = np.flatnonzero((step >= low) & (step < high) & ~np.asarray(graph.obs_anchor, bool))
+    owner = np.asarray(graph.kinds, np.int64)[np.asarray(graph.obs_entity, np.int64)[inside]]
+    reference, entities = np.asarray(graph.obs_ref, np.int64)[inside], registry.schema.entities()
+    found = dict(kinds={}, relations={})
+    for code, kind in enumerate(registry.nodes):
+        rows = table[np.unique(reference[owner == code])]
+        flags = [(column, registry.encoding.slots(column)[1]) for column in entities[kind]]
+        found["kinds"][kind] = [column for column, held in flags if len(held) and (rows[:, held[0]] > 0).any()]
+    moment = np.asarray(graph.fact_step, np.int64)
+    present = np.asarray(graph.fact_present, bool) & (moment >= low) & (moment < high)
+    relation, valued = np.asarray(graph.fact_code, np.int64)[present], np.asarray(graph.fact_ref, np.int64)[present]
+    values = np.asarray(graph.value_table)
+    for name in names:
+        place = int(registry.value_group[registry.code(name)])
+        columns = registry.attributes(registry.valued[place]) if place >= 0 else ()
+        rows = values[np.unique(valued[(relation == registry.code(name)) & (valued >= 0)])]
+        found["relations"][name] = [column for at, column in enumerate(columns) if not np.isnan(rows[:, at]).all()]
+    LOG.debug("effect filled exit steps=%d seconds=%.4f", high - low, time.perf_counter() - started)
+    return found
+
+
+def altered(earlier, later, apart, size):
+    started = time.perf_counter()
+    kept = [(keys[~alone], table, reference[~alone]) for (keys, table, reference), alone in zip((earlier, later), apart)]
+    order = [np.lexsort(keys.T[::-1]) for keys, _, _ in kept]
+    rows = [table[reference[chosen]] for (_, table, reference), chosen in zip(kept, order)]
+    differs = (rows[0] != rows[1]).any(1)
+    result = np.bincount(kept[0][0][order[0]][differs, 1], minlength=size).tolist()
+    LOG.debug("effect altered exit nodes=%d altered=%d seconds=%.4f", len(differs), int(differs.sum()), time.perf_counter() - started)
+    return result
+
+
+def valued(step, registry, kinds, names, before, after, altered_nodes):
+    started = time.perf_counter()
+    grown = dict(registry.schema.grown)
+    made = grown[called(step)].declaration() if called(step) in grown else dict(kinds={}, placed={}, relations={})
+    result = dict(kinds={}, relations={})
+    for at, kind in enumerate(kinds):
+        own = made["kinds"][kind]["columns"] if kind in made["kinds"] else []
+        entry = dict(
+            added=own + (made["placed"][kind] if kind in made["placed"] else []),
+            removed=[column for column in before["kinds"][kind] if column not in after["kinds"][kind]],
+            filled=[column for column in after["kinds"][kind] if column not in before["kinds"][kind]],
+            changed=altered_nodes[at],
+        )
+        if any(entry.values()):
+            result["kinds"][kind] = entry
+    for name in names:
+        entry = dict(
+            added=made["relations"][name]["columns"] if name in made["relations"] else [],
+            removed=[column for column in before["relations"][name] if column not in after["relations"][name]],
+            filled=[column for column in after["relations"][name] if column not in before["relations"][name]],
+        )
+        if any(entry.values()):
+            result["relations"][name] = entry
+    LOG.debug("effect valued exit entry=%s seconds=%.4f", step.name, time.perf_counter() - started)
+    return result
+
+
+def effected(step, earlier, later, before, after, kinds, names, places, registry, tasks, times, held_values, rows):
     started = time.perf_counter()
     seen = earlier[0][~earlier[1]], later[0][~later[1]]
-    removed, added = changed(*seen, compared(*seen), len(kinds))
+    apart = compared(*seen)
+    removed, added = changed(*seen, apart, len(kinds))
+    both = [(keys, table, reference[~state[1]]) for keys, (table, reference), state in zip(seen, rows, (earlier, later))]
     lost, made = changed(
         placed(earlier[2], places), placed(later[2], places), unmatched(registry, earlier[2], later[2]), len(names)
     )
@@ -190,6 +262,7 @@ def effected(step, earlier, later, before, after, kinds, names, places, registry
             name: tallied(before["relations"][name], after["relations"][name], lost[at], made[at], "edges")
             for at, name in enumerate(names)
         },
+        values=valued(step, registry, kinds, names, *held_values, altered(*both, apart, len(kinds))),
         cuts=[
             found
             for kind in kinds
@@ -216,17 +289,19 @@ def tasked(graph, registry, low, high):
     return result
 
 
-def graphed(name, first, found, steps, registry, low, high, kinds):
+def graphed(name, graphs, found, steps, registry, low, high, kinds):
     started = time.perf_counter()
-    size = high - low
+    size, first = high - low, graphs[0]
     times = [None] * size if registry.schema.model == "none" else np.asarray(first.step_time, np.int64)[low:high].tolist()
     tasks = tasked(first, registry, low, high)
-    own = []
-    for keys, anchored, ends in found:
+    own, rows = [], []
+    for (keys, anchored, ends), graph in zip(found, graphs):
         inside, chosen = within(keys, low, high)
         own.append((inside, anchored[chosen], within(ends, low, high)[0]))
+        rows.append((np.asarray(graph.x_table), np.asarray(graph.obs_ref, np.int64)[chosen]))
     names, places = related(own, registry)
     states = [held(state, size, kinds, names, places) for state in own]
+    valued_columns = [filled(graph, registry, low, high, names) for graph in graphs]
     result = dict(
         name=name,
         times=times,
@@ -234,7 +309,19 @@ def graphed(name, first, found, steps, registry, low, high, kinds):
         held=states[0],
         effects=[
             effected(
-                step, own[at], own[at + 1], states[at], states[at + 1], kinds, names, places, registry, tasks, times
+                step,
+                own[at],
+                own[at + 1],
+                states[at],
+                states[at + 1],
+                kinds,
+                names,
+                places,
+                registry,
+                tasks,
+                times,
+                valued_columns[at : at + 2],
+                rows[at : at + 2],
             )
             for at, step in enumerate(steps)
         ],
@@ -252,7 +339,7 @@ def told(graphs, members, registry, steps):
     for at, graph in enumerate(members):
         inside = np.flatnonzero(member == at)
         low, high = int(inside[0]), int(inside[-1]) + 1
-        result.append(graphed(graph.name, graphs[0], found, steps, registry, low, high, kinds))
+        result.append(graphed(graph.name, graphs, found, steps, registry, low, high, kinds))
     LOG.debug("effect told exit graphs=%d states=%d seconds=%.4f", len(result), len(graphs), time.perf_counter() - started)
     return result
 
@@ -344,6 +431,24 @@ def cut_text(effect, found, named):
     )
 
 
+def values_text(found):
+    started = time.perf_counter()
+    parts = []
+    for sort, part in (("kind", "kinds"), ("relation", "relations")):
+        for name, entry in found[part].items():
+            said = [
+                "%s %s" % (verb, ", ".join(entry[held]))
+                for verb, held in (("adds", "added"), ("removes", "removed"), ("fills", "filled"))
+                if entry[held]
+            ]
+            if sort == "kind" and entry["changed"]:
+                said.append("changes the values of %d nodes" % entry["changed"])
+            parts.append("%s %s %s" % (sort, name, ", ".join(said)))
+    result = "  columns of values and values of nodes: %s" % ("; ".join(parts) or "none added, removed, filled or changed")
+    LOG.debug("effect values text exit parts=%d seconds=%.4f", len(parts), time.perf_counter() - started)
+    return result
+
+
 def effect_text(effect, times, named):
     started = time.perf_counter()
     rows = [(kind + " nodes", entry) for kind, entry in effect["kinds"].items()]
@@ -364,6 +469,7 @@ def effect_text(effect, times, named):
             for label, entry in rows
         ],
     )
+    lines.append(values_text(effect["values"]))
     lines.append("  held at each %s after it:" % stepping(named))
     lines += stepped(times, effect, named)
     lines += [cut_text(effect, found, named) for found in effect["cuts"]]

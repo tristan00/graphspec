@@ -701,9 +701,12 @@ def holding(agent, spot, near, base, loops):
     )
 
 
+UNVALUED = dict(kinds={}, relations={})
+
+
 @timed("descriptions.effected")
 def effected(entry, kinds, relations, cuts):
-    return dict(entry=entry, operation=entry, kinds=kinds, relations=relations, cuts=cuts)
+    return dict(entry=entry, operation=entry, kinds=kinds, relations=relations, values=UNVALUED, cuts=cuts)
 
 
 EVERY = ["train", "validation"]
@@ -837,6 +840,7 @@ graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 st
     near edges                  8       0        0.0      0      0.0      8
     base edges                  11      0        0.0      0      0.0      11
     relation_forms.loops edges  0       0        nothing  0      nothing  0
+  columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
 %(steps)s
     0     1            0              2           0             1           1           0
@@ -854,6 +858,7 @@ graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 st
     near edges                  8       0        0.0      0      0.0      8
     base edges                  11      5        0.4545   0      0.0      6
     relation_forms.loops edges  0       0        nothing  0      nothing  0
+  columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
 %(steps)s
     0     1            0              2           0             1           1           0
@@ -872,6 +877,7 @@ graph g0, the graph g0 as the tasks of the splits train, validation see it, 8 st
     near edges                  8       0        0.0      0      0.0      8
     base edges                  6       0        0.0      0      0.0      6
     relation_forms.loops edges  0       0        nothing  30     nothing  30
+  columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
 %(steps)s
     0     1            0              2           0             1           1           3
@@ -897,6 +903,7 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 st
     near edges                  0       0        nothing  0      nothing  0
     base edges                  2       0        0.0      0      0.0      2
     relation_forms.loops edges  0       0        nothing  0      nothing  0
+  columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
 %(steps)s
     1     1            0              2           0             0           1           0
@@ -909,6 +916,7 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 st
     near edges                  0       0        nothing  0      nothing  0
     base edges                  2       1        0.5      0      0.0      1
     relation_forms.loops edges  0       0        nothing  0      nothing  0
+  columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
 %(steps)s
     1     1            0              2           0             0           1           0
@@ -922,6 +930,7 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, 3 st
     near edges                  0       0        nothing  0      nothing  0
     base edges                  1       0        0.0      0      0.0      1
     relation_forms.loops edges  0       0        nothing  7      nothing  7
+  columns of values and values of nodes: none added, removed, filled or changed
   held at each time after it:
 %(steps)s
     1     1            0              2           0             0           1           3
@@ -1094,6 +1103,31 @@ def test_a_relation_an_entry_adds_is_listed_in_a_graph_where_it_holds_no_edge_an
         tally(0, 0, None, 0, None, 0, edges=EMPTY),
     ]
     assert joined["graphs"] == apart["graphs"]
+    degree = dict(added=["measures.degree"], removed=[], filled=["measures.degree"])
+    valued = dict(added=["product.value"], removed=[], filled=["product.value"])
+    assert [[held["values"] for held in graph["effects"]] for graph in apart["graphs"]] == [
+        [
+            dict(kinds={}, relations=dict(product=valued)),
+            dict(kinds=dict(agent=dict(degree, changed=16), spot=dict(degree, changed=19)), relations={}),
+            dict(kinds=dict(spot=dict(added=[], removed=[], filled=[], changed=7)), relations={}),
+        ],
+        [
+            dict(kinds={}, relations=dict(product=dict(valued, filled=[]))),
+            dict(kinds=dict(agent=dict(degree, changed=3), spot=dict(degree, changed=5)), relations={}),
+            dict(kinds=dict(spot=dict(added=[], removed=[], filled=[], changed=2)), relations={}),
+        ],
+    ]
+    written = effect.text(apart)
+    assert [line for line in written.split("\n") if line.startswith("  columns of values")] == [
+        "  columns of values and values of nodes: relation product adds product.value, fills product.value",
+        "  columns of values and values of nodes: kind agent adds measures.degree, fills measures.degree, changes the "
+        "values of 16 nodes; kind spot adds measures.degree, fills measures.degree, changes the values of 19 nodes",
+        "  columns of values and values of nodes: kind spot changes the values of 7 nodes",
+        "  columns of values and values of nodes: relation product adds product.value",
+        "  columns of values and values of nodes: kind agent adds measures.degree, fills measures.degree, changes the "
+        "values of 3 nodes; kind spot adds measures.degree, fills measures.degree, changes the values of 5 nodes",
+        "  columns of values and values of nodes: kind spot changes the values of 2 nodes",
+    ]
     LOG.info("descriptions variant added relation exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -3099,8 +3133,9 @@ def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_anot
 
 
 DEGREE = "nodes/agent/min_degree"
-NODAL = ("first", "second", "first_anchors", "second_anchors")
+NODAL = ("first", "second", "first_anchors", "second_anchors", "valued")
 EDGED = ("first", "second", "valued")
+UNCOLUMNED = dict(kinds={}, relations={})
 SWAPPED = dict(first="second", second="first", first_anchors="second_anchors", second_anchors="first_anchors")
 UNSHARED = dict(first=[], second=[])
 
@@ -3123,15 +3158,15 @@ LEANER = dict(
         agent=unlike(
             NODAL,
             "both",
-            (11, 0, 0, 3),
-            (0, 1, 0, 0, 0),
-            (1, 2, 0, 0, 1),
-            (2, 1, 0, 0, 0),
-            (3, 1, 0, 0, 1),
-            (4, 2, 0, 0, 0),
-            (5, 2, 0, 0, 1),
-            (6, 1, 0, 0, 0),
-            (7, 1, 0, 0, 0),
+            (11, 0, 0, 3, 0),
+            (0, 1, 0, 0, 0, 0),
+            (1, 2, 0, 0, 1, 0),
+            (2, 1, 0, 0, 0, 0),
+            (3, 1, 0, 0, 1, 0),
+            (4, 2, 0, 0, 0, 0),
+            (5, 2, 0, 0, 1, 0),
+            (6, 1, 0, 0, 0, 0),
+            (7, 1, 0, 0, 0, 0),
         )
     ),
     relations={
@@ -3157,7 +3192,7 @@ LEANER_SECOND = dict(
     view=VIEWED["g1"],
     times=[1, 2, 3],
     alone=UNSHARED,
-    kinds=dict(agent=unlike(NODAL, "both", (2, 0, 0, 1), (1, 1, 0, 0, 0), (2, 1, 0, 0, 1))),
+    kinds=dict(agent=unlike(NODAL, "both", (2, 0, 0, 1, 0), (1, 1, 0, 0, 0, 0), (2, 1, 0, 0, 1, 0))),
     relations={
         "base": unlike(EDGED, "both", (1, 0, 0), (1, 1, 0, 0)),
         LOOPS: unlike(EDGED, "both", (2, 0, 0), (1, 1, 0, 0), (2, 1, 0, 0)),
@@ -3174,29 +3209,29 @@ TRUTHS = dict(
         agent=unlike(
             NODAL,
             "both",
-            (8, 1, 0, 0),
-            (None, 0, 1, 0, 0),
-            (0, 1, 0, 0, 0),
-            (1, 1, 0, 0, 0),
-            (2, 1, 0, 0, 0),
-            (3, 1, 0, 0, 0),
-            (4, 1, 0, 0, 0),
-            (5, 1, 0, 0, 0),
-            (6, 1, 0, 0, 0),
-            (7, 1, 0, 0, 0),
+            (8, 1, 0, 0, 0),
+            (None, 0, 1, 0, 0, 0),
+            (0, 1, 0, 0, 0, 0),
+            (1, 1, 0, 0, 0, 0),
+            (2, 1, 0, 0, 0, 0),
+            (3, 1, 0, 0, 0, 0),
+            (4, 1, 0, 0, 0, 0),
+            (5, 1, 0, 0, 0, 0),
+            (6, 1, 0, 0, 0, 0),
+            (7, 1, 0, 0, 0, 0),
         ),
         spot=unlike(
             NODAL,
             "both",
-            (9, 1, 0, 0),
-            (None, 0, 1, 0, 0),
-            (0, 1, 0, 0, 0),
-            (2, 1, 0, 0, 0),
-            (3, 2, 0, 0, 0),
-            (4, 2, 0, 0, 0),
-            (5, 1, 0, 0, 0),
-            (6, 1, 0, 0, 0),
-            (7, 1, 0, 0, 0),
+            (9, 1, 0, 0, 0),
+            (None, 0, 1, 0, 0, 0),
+            (0, 1, 0, 0, 0, 0),
+            (2, 1, 0, 0, 0, 0),
+            (3, 2, 0, 0, 0, 0),
+            (4, 2, 0, 0, 0, 0),
+            (5, 1, 0, 0, 0, 0),
+            (6, 1, 0, 0, 0, 0),
+            (7, 1, 0, 0, 0, 0),
         ),
     ),
     relations=dict(
@@ -3233,19 +3268,20 @@ the first:
 %s
 the second:
 %s
+columns of values only one side holds: none
 """
 DIFFERENCE = """
 graph g0, the graph g0 as the tasks of the splits train, validation see it, times 8 from 0 to 7; times only the first shows: none; times only the second shows: none
-  kind agent: nodes only the first holds 11, only the second 0; anchors only the first holds 0, only the second 3
-    time  first nodes  second nodes  first anchors  second anchors
-    0     1            0             0              0
-    1     2            0             0              1
-    2     1            0             0              0
-    3     1            0             0              1
-    4     2            0             0              0
-    5     2            0             0              1
-    6     1            0             0              0
-    7     1            0             0              0
+  kind agent: nodes only the first holds 11, only the second 0; anchors only the first holds 0, only the second 3; nodes both hold with other values 0
+    time  first nodes  second nodes  first anchors  second anchors  other values
+    0     1            0             0              0               0
+    1     2            0             0              1               0
+    2     1            0             0              0               0
+    3     1            0             0              1               0
+    4     2            0             0              0               0
+    5     2            0             0              1               0
+    6     1            0             0              0               0
+    7     1            0             0              0               0
   relation base: edges only the first holds 6, only the second 0, held by both with other values 0
     time  first  second  other values
     0     1      0       0
@@ -3266,10 +3302,10 @@ graph g0, the graph g0 as the tasks of the splits train, validation see it, time
   equal at every time: kinds 1, relations 1
 
 graph g1, the graph g1 as the tasks of the splits train, validation see it, times 3 from 1 to 3; times only the first shows: none; times only the second shows: none
-  kind agent: nodes only the first holds 2, only the second 0; anchors only the first holds 0, only the second 1
-    time  first nodes  second nodes  first anchors  second anchors
-    1     1            0             0              0
-    2     1            0             0              1
+  kind agent: nodes only the first holds 2, only the second 0; anchors only the first holds 0, only the second 1; nodes both hold with other values 0
+    time  first nodes  second nodes  first anchors  second anchors  other values
+    1     1            0             0              0               0
+    2     1            0             0              1               0
   relation base: edges only the first holds 1, only the second 0, held by both with other values 0
     time  first  second  other values
     1     1      0       0
@@ -3279,31 +3315,37 @@ graph g1, the graph g1 as the tasks of the splits train, validation see it, time
     2     1      0       0
   equal at every time: kinds 1, relations 1
 """
-SAME_TEXT = "nothing differs: the two hold the same nodes, anchors and edges at every time of each of the 2 graphs of the view\n"
+SAME_TEXT = """
+graph g0, the graph g0 as the tasks of the splits train, validation see it, times 8 from 0 to 7; times only the first shows: none; times only the second shows: none
+  nothing differs of what is compared; equal at every time: kinds 2, relations 3
+
+graph g1, the graph g1 as the tasks of the splits train, validation see it, times 3 from 1 to 3; times only the first shows: none; times only the second shows: none
+  nothing differs of what is compared; equal at every time: kinds 2, relations 3
+"""
 TRUTHS_TEXT = """difference of the truth graphs g0, the first, and g1, the second, of the bank stored as %s, described at version %d
 unit tick, times 8 from 0 to 7
 %s
-  kind agent: nodes only the first holds 8, only the second 1; anchors only the first holds 0, only the second 0
-    time    first nodes  second nodes  first anchors  second anchors
-    before  0            1             0              0
-    0       1            0             0              0
-    1       1            0             0              0
-    2       1            0             0              0
-    3       1            0             0              0
-    4       1            0             0              0
-    5       1            0             0              0
-    6       1            0             0              0
-    7       1            0             0              0
-  kind spot: nodes only the first holds 9, only the second 1; anchors only the first holds 0, only the second 0
-    time    first nodes  second nodes  first anchors  second anchors
-    before  0            1             0              0
-    0       1            0             0              0
-    2       1            0             0              0
-    3       2            0             0              0
-    4       2            0             0              0
-    5       1            0             0              0
-    6       1            0             0              0
-    7       1            0             0              0
+  kind agent: nodes only the first holds 8, only the second 1; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
+    time    first nodes  second nodes  first anchors  second anchors  other values
+    before  0            1             0              0               0
+    0       1            0             0              0               0
+    1       1            0             0              0               0
+    2       1            0             0              0               0
+    3       1            0             0              0               0
+    4       1            0             0              0               0
+    5       1            0             0              0               0
+    6       1            0             0              0               0
+    7       1            0             0              0               0
+  kind spot: nodes only the first holds 9, only the second 1; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
+    time    first nodes  second nodes  first anchors  second anchors  other values
+    before  0            1             0              0               0
+    0       1            0             0              0               0
+    2       1            0             0              0               0
+    3       2            0             0              0               0
+    4       2            0             0              0               0
+    5       1            0             0              0               0
+    6       1            0             0              0               0
+    7       1            0             0              0               0
   relation near: edges only the first holds 8, only the second 0, held by both with other values 0
     time  first  second  other values
     0     1      0       0
@@ -3328,16 +3370,16 @@ unit tick, times 8 from 0 to 7
 ALONE_TEXT = """difference of the truth graphs g1, the first, and g1, the second, of the bank stored as %s, described at version %d
 unit tick, times 3 from 1 to 3
 %s
-  nothing differs; equal at every time: kinds 2, relations 2
+  nothing differs of what is compared; equal at every time: kinds 2, relations 2
 """
 TIMELESS_TEXT = """unit tick, no time
 %s
-  kind agent: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
-    time    first nodes  second nodes  first anchors  second anchors
-    before  1            0             0              0
-  kind spot: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
-    time    first nodes  second nodes  first anchors  second anchors
-    before  1            0             0              0
+  kind agent: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
+    time    first nodes  second nodes  first anchors  second anchors  other values
+    before  1            0             0              0               0
+  kind spot: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
+    time    first nodes  second nodes  first anchors  second anchors  other values
+    before  1            0             0              0               0
   relation near: edges only the first holds 2, only the second 0, held by both with other values 0
     time    first  second  other values
     before  2      0       0
@@ -3390,6 +3432,7 @@ def diverged(bank, degrees, differs, graphs):
         time=CLOCKED,
         first=sides[0],
         second=sides[1],
+        columns=UNCOLUMNED,
         differs=differs,
         graphs=graphs,
     )
@@ -3427,7 +3470,8 @@ def test_two_variants_that_differ_by_one_setting_differ_in_the_description_by_wh
     assert json.loads(json.dumps(record)) == record
     assert against(bank, second, STATED, first, STATED) == turned_over(record)
     assert turned_over(record) == diverged(bank, (2, 1), True, [turned_over(LEANER), turned_over(LEANER_SECOND)])[0]
-    assert turned_over(LEANER)["kinds"]["agent"]["at"][1] == dict(time=1, first=0, second=2, first_anchors=1, second_anchors=0)
+    turned = dict(time=1, first=0, second=2, first_anchors=1, second_anchors=0, valued=0)
+    assert turned_over(LEANER)["kinds"]["agent"]["at"][1] == turned
     same = [
         dict(
             name=name, view=VIEWED[name], times=times, alone=UNSHARED, kinds={}, relations={}, equal=dict(kinds=2, relations=3)
@@ -3442,6 +3486,59 @@ def test_two_variants_that_differ_by_one_setting_differ_in_the_description_by_wh
     reseeded = against(bank, first, STATED, first, dict(STATED, derivation_seed=8))
     assert (reseeded["first"]["seed"], reseeded["second"]["seed"], reseeded["differs"]) == (7, 8, False)
     LOG.info("descriptions difference of variants exit seconds=%.3f", time.perf_counter() - started)
+
+
+CORED = dict(MEASURED, **{"measures/degree": False, "measures/cores": True})
+UNNEARED = {"relations/near/keep": False, "relations/base/keep": True}
+COLUMNS_TEXT = (
+    "\ncolumns of values only one side holds: kind agent, the first measures.degree, the second measures.cores; kind "
+    "spot, the first measures.degree, the second measures.cores\n"
+)
+EQUAL_TEXT = "  nothing differs of what is compared; equal at every time: kinds 2, relations 2\n"
+UNLIKE_VALUES = """  kind spot: nodes only the first holds 0, only the second 0; anchors only the first holds 0, only the second 0; nodes both hold with other values 14
+    time  first nodes  second nodes  first anchors  second anchors  other values
+    0     0            0             0              0               2
+    1     0            0             0              0               2
+    2     0            0             0              0               3
+    3     0            0             0              0               3
+    4     0            0             0              0               2
+    5     0            0             0              0               2
+"""
+UNCOMPARED = ("periods", "tasks", "targets", "options", "negatives")
+
+
+@timed("descriptions.measuring")
+def measuring(bank, *entries):
+    pipeline = [dict(operation=operation, parameters=parameters) for operation, parameters in entries]
+    return configuration(bank, MODEL, None, pipeline=pipeline, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+
+
+def test_two_variants_differ_by_the_columns_of_values_one_alone_holds_and_by_the_nodes_both_hold_with_other_values(bank):
+    started = time.perf_counter()
+    degree = measuring(bank, ("graphspec.measures", MEASURED))
+    record = against(bank, degree, STATED, measuring(bank, ("graphspec.measures", CORED)), STATED)
+    only = dict(first=["measures.degree"], second=["measures.cores"])
+    assert record["differs"] and record["columns"] == dict(kinds=dict(agent=only, spot=only), relations={})
+    found = [(graph["kinds"], graph["relations"], graph["equal"]) for graph in record["graphs"]]
+    assert found == [({}, {}, dict(kinds=2, relations=2))] * 2
+    written = diverging.text(record)
+    assert COLUMNS_TEXT in written and written.count(EQUAL_TEXT) == 2
+    unneared = measuring(bank, ("graphspec.relations", UNNEARED), ("graphspec.measures", MEASURED))
+    record = against(bank, degree, STATED, unneared, STATED)
+    first, second = record["graphs"]
+    assert record["differs"] and record["columns"] == UNCOLUMNED
+    unlike_values = [(0, 0, 0, 0, 0, 2), (1, 0, 0, 0, 0, 2), (2, 0, 0, 0, 0, 3), (3, 0, 0, 0, 0, 3), (4, 0, 0, 0, 0, 2), (5, 0, 0, 0, 0, 2)]
+    assert first["kinds"] == dict(spot=unlike(NODAL, "both", (0, 0, 0, 0, 14), *unlike_values))
+    unlike_edges = [(0, 1, 0, 0), (1, 1, 0, 0), (2, 2, 0, 0), (3, 2, 0, 0), (4, 1, 0, 0), (5, 1, 0, 0)]
+    assert first["relations"] == dict(near=unlike(EDGED, "both", (8, 0, 0), *unlike_edges))
+    assert (first["equal"], second["kinds"], second["relations"]) == (dict(kinds=1, relations=1), {}, {})
+    assert second["equal"] == dict(kinds=2, relations=2) and UNLIKE_VALUES in diverging.text(record)
+    for legend in (effect.READING, differing.READING["clock"], differing.TRUTH["clock"]):
+        assert [word for word in UNCOMPARED if word not in legend] == []
+    sized = [Mock(encoding=Mock(table=("load",), sizes=dict(load=held))) for held in ((1, 1), (2, 1))]
+    with pytest.raises(ValueError, match="^the first variant encodes the column load as 1 values and 1 flags and the second as 2 and 1; "):
+        diverging.shared(sized)
+    LOG.info("descriptions difference of values exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_two_truth_graphs_of_a_bank_differ_by_what_is_written_out_here_and_a_graph_beside_itself_in_nothing(bank):
@@ -3553,8 +3650,8 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         differs=True,
         times=[None],
         kinds=dict(
-            agent=unlike(NODAL, "both", (1, 0, 0, 0), (None, 1, 0, 0, 0)),
-            spot=unlike(NODAL, "both", (1, 0, 0, 0), (None, 1, 0, 0, 0)),
+            agent=unlike(NODAL, "both", (1, 0, 0, 0, 0), (None, 1, 0, 0, 0, 0)),
+            spot=unlike(NODAL, "both", (1, 0, 0, 0, 0), (None, 1, 0, 0, 0, 0)),
         ),
         relations=dict(
             near=unlike(EDGED, "both", (2, 0, 0), (None, 2, 0, 0)), base=unlike(EDGED, "both", (1, 0, 0), (None, 1, 0, 0))
@@ -3570,8 +3667,8 @@ def test_edges_both_hold_with_other_values_graphs_that_hold_no_time_and_steps_on
         times=[0, 1, 2, 3, 4, 5, 6, 7],
         alone=dict(first=[0, 7], second=[]),
         kinds=dict(
-            agent=unlike(NODAL, "both", (2, 0, 0, 0), (0, 1, 0, 0, 0), (7, 1, 0, 0, 0)),
-            spot=unlike(NODAL, "both", (4, 0, 0, 0), (0, 2, 0, 0, 0), (7, 2, 0, 0, 0)),
+            agent=unlike(NODAL, "both", (2, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0), (7, 1, 0, 0, 0, 0)),
+            spot=unlike(NODAL, "both", (4, 0, 0, 0, 0), (0, 2, 0, 0, 0, 0), (7, 2, 0, 0, 0, 0)),
         ),
         relations={
             "near": unlike(EDGED, "both", (1, 0, 0), (0, 1, 0, 0)),
@@ -3797,7 +3894,7 @@ ORDERED_SECOND = """graph g1, no unit, positions 3 from 1 to 3
 """
 ORDERED_ALONE = """no unit, positions 3 from 1 to 3
 %s
-  nothing differs; equal at every position: kinds 2, relations 2
+  nothing differs of what is compared; equal at every position: kinds 2, relations 2
 """
 ORDERED_CUT = (
     "  entry test.cut, of the operation test.cut, removes every edge of the relation base at the positions of the tasks "
@@ -3825,12 +3922,12 @@ STILL_SECOND = """graph g1, no unit, no time
 """
 STILL_APART = """no unit, no time
 %s
-  kind agent: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
-    first nodes  second nodes  first anchors  second anchors
-    1            0             0              0
-  kind spot: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0
-    first nodes  second nodes  first anchors  second anchors
-    1            0             0              0
+  kind agent: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
+    first nodes  second nodes  first anchors  second anchors  other values
+    1            0             0              0               0
+  kind spot: nodes only the first holds 1, only the second 0; anchors only the first holds 0, only the second 0; nodes both hold with other values 0
+    first nodes  second nodes  first anchors  second anchors  other values
+    1            0             0              0               0
   relation near: edges only the first holds 2, only the second 0, held by both with other values 0
     first  second  other values
     2      0       0
@@ -4367,7 +4464,8 @@ def test_a_variant_names_the_graphs_of_the_bank_its_view_does_not_show_and_the_s
     unsaid, bank
 ):
     started = time.perf_counter()
-    pipeline = [dict(operation="graphspec.relation_forms", parameters=FORMS)]
+    kept = {"relations/%s/keep" % name: name != "near" for name in ("near", "base", "back", "note", "group.lead", "group.other", "group")}
+    pipeline = [dict(operation="graphspec.relations", parameters=kept)]
     config = configuration(unsaid, MODEL, None, pipeline=pipeline, graph=WATCHING, seed=STATED["seed"], splits=SPLITS)
     record = variant(unsaid, config, STATED)
     assert record["unshown"] == [dict(name="w1", tasks=0, stated=0, sequences=0)]
@@ -4375,6 +4473,10 @@ def test_a_variant_names_the_graphs_of_the_bank_its_view_does_not_show_and_the_s
     assert (shown["name"], shown["view"], shown["times"]) == ("w0", VIEWED["w0"], [0, 1, 2, 3, 4, 5, 6])
     written = effect.text(record)
     assert UNSHOWN_TEXT in written and "\ngraph w0, %s, 7 steps from time 0 to 6\n" % (SEEN_BY % "w0") in written
+    unweighed = dict(kinds={}, relations=dict(near=dict(added=[], removed=["weight"], filled=[])))
+    assert [held["values"] for held in shown["effects"]] == [unweighed]
+    assert "\n  columns of values and values of nodes: relation near removes weight\n" in written
+    assert shown["effects"][0]["relations"]["near"] == tally(21, 21, 1.0, 0, 0.0, 0, edges=[0] * 7)
     noted = WATCHED_FIRST["relations"]["note"]["edges_at"]
     assert shown["held"]["relations"]["note"]["edges"] == noted == [1, 2, 2, 2, 1, 1, 1]
     assert shown["held"]["kinds"]["group"]["nodes"] == WATCHED_FIRST["kinds"]["group"]["nodes_at"]
