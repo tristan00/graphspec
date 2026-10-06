@@ -196,7 +196,7 @@ def covered(case):
     return found
 
 
-def test_a_decision_states_its_actors_kinds_of_action_and_the_option_that_does_nothing():
+def test_a_decision_states_its_actors_kinds_of_action_and_the_option_that_does_nothing(tmp_path):
     stated = synthetic.decision_schema()
     schema = Schema(stated)
     assert schema.decided() == ("turn", "show") and schema.parameters() == ("speed", "mode", "lit")
@@ -257,6 +257,16 @@ def test_a_decision_states_its_actors_kinds_of_action_and_the_option_that_does_n
         message = "the option %d of the graph g0, the task 10, of the key %s, states as its outcome per action %r, " % (place, key, outcome)
         with pytest.raises(ValueError, match="^" + re.escape(message + "the outcome of none of its actions; an option with no outcome states none") + "$"):
             kind.staged(given, aim, "the graph g0, the task 10")
+    given = copy.deepcopy(first)
+    given["options"][1]["actions"][0]["targets"]["to"] = "s1"
+    listed = "the action 0 of the option 1 of the graph g0, the task 10 states its targets as a mapping from every role of its kind to the list of its targets, empty where it holds none, each the key of a node or of an element it creates, or the key of the first node, the relation and the key of the second node of an edge, found {'to': 's1'}"
+    with pytest.raises(ValueError, match="^" + re.escape(listed) + "$"):
+        kind.staged(given, aim, "the graph g0, the task 10")
+    case = synthetic.decisions(GENERATOR)
+    del case["graphs"][0]["tasks"]["target"][0]["options"][3]["actions"][1]["targets"]["made"]
+    roles = "the graph g0, the decision 10 states an action of the kind put with the roles at; an action states every role of its kind, at, made, with the list of its targets, empty where it holds none"
+    with pytest.raises(ValueError, match="^" + re.escape(roles) + "$"):
+        synthetic.stage(tmp_path, "roles", case)
     held = copy.deepcopy(stated)
     held["tasks"]["kinds"]["turn"]["target"]["rule"] = dict(name="listed", parameters=dict(within=2))
     ruled = Schema(held)
