@@ -200,8 +200,8 @@ A decision, as a script states it as the target of its task:
 |---|---|
 | `options` | Its options, in order, one chosen at least. |
 | `concurrent` | The keys of the tasks of the decisions of other actors taken at the same time: each a decision of the same graph at the same time, none of whose actors is one of its own, which names this one in turn. Read back in the order of the keys. |
-| `next` | A mapping from the key of each of its actors that decides again to the key of the task of the next decision of that actor: a later decision of the same graph among whose actors it is. |
-| `ended` | Whether the episode ends at this decision, true or false, or none where decisions do not follow one another; a decision that ends its episode names no next decision. |
+| `next` | A mapping from the key of each of its actors that decides again in its episode to the key of the task of the next decision of that actor: the first decision of the same graph at a later time among whose actors it is and that states whether its episode ends. An actor is left out where this decision ends its episode, where it states none for `ended`, and where the actor takes no such later decision. Any other mapping, an actor left out that decides again included, stops the build naming the two decisions, the actor and the decision it should name, or none. An actor takes the decisions that state whether their episode ends at different times, so that each has one next decision; two at one time stop the build naming them, the actor and the time. |
+| `ended` | Whether the episode ends at this decision, true or false, or none where decisions do not follow one another: a decision that states none is in no episode, so it names no next decision and no decision names it; a decision that ends its episode names no next decision. |
 | `discount` | The discount, a number from 0 to 1, or none. Nothing reads it before the measures that read the links between decisions. |
 
 An option states:

@@ -35,13 +35,13 @@ class Decided:
         self.actors = self.acting(members)
         LOG.debug("decided exit graph=%s tasks=%d seconds=%.4f", name, len(owner), time.perf_counter() - started)
 
+    @timed("decided.named")
+    def named(self, task):
+        return "the decision %d of the kind %s" % (self.tasks["task_key"][task], self.listed[self.tasks["task_kind"][task]])
+
     @timed("decided.where")
     def where(self, task):
-        return "the decision %d of the kind %s of graph %s" % (
-            self.tasks["task_key"][task],
-            self.listed[self.tasks["task_kind"][task]],
-            self.name,
-        )
+        return "%s of graph %s" % (self.named(task), self.name)
 
     def acting(self, members):
         started = time.perf_counter()
@@ -285,27 +285,64 @@ class Decided:
         LOG.debug("decided resolved exit edge seconds=%.6f", time.perf_counter() - started)
         return source, other, code
 
-    def followed(self, table, options, place):
+    def episodic(self, decided):
         started = time.perf_counter()
         times, ended = self.tasks["task_time"], self.tasks["task_ended"]
+        held = {}
+        for task in sorted((task for task in decided if ended[task] >= 0), key=lambda task: (times[task], task)):
+            for actor in self.actors[task]:
+                held.setdefault(actor, []).append(task)
+        result = {}
+        for actor, tasks in held.items():
+            for first, second in zip(tasks, tasks[1:]):
+                if times[first] == times[second]:
+                    raise ValueError(
+                        "the actor %s takes %s and %s of graph %s at the time %d, both stating whether their episode "
+                        "ends; an actor takes such decisions at different times, so that each has one next decision"
+                        % (actor, self.named(first), self.named(second), self.name, times[first])
+                    )
+                if ended[first] == 0:
+                    result[(first, actor)] = second
+        LOG.debug("decided episodic exit graph=%s links=%d seconds=%.4f", self.name, len(result), time.perf_counter() - started)
+        return result
+
+    @timed("decided.wanted")
+    def wanted(self, first, second):
+        if second is not None:
+            return "%s, the first decision of that actor at a later time that states whether its episode ends" % self.named(second)
+        if self.tasks["task_ended"][first] == 1:
+            return "none: its episode ends there"
+        if self.tasks["task_ended"][first] < 0:
+            return "none: it states no end of an episode, so no decision follows it"
+        return "none: that actor takes no decision at a later time that states whether its episode ends"
+
+    def followed(self, table, options, place):
+        started = time.perf_counter()
         decided = set(options["option_task"].tolist())
         task, other = (place[np.asarray(table.column(name).to_numpy(), np.int64)].tolist() for name in ("task", "other"))
-        rows = []
+        stated = {}
         for first, second, actor in zip(task, other, table.column("actor").to_pylist()):
             where = self.where(first) if first in decided else "the task %d of graph %s" % (self.tasks["task_key"][first], self.name)
             if first not in decided or second not in decided:
                 raise ValueError("%s names as the next decision of an actor a task that is no decision, or is none" % where)
-            if actor not in self.actors[first] or actor not in self.actors[second] or times[second] <= times[first]:
+            if actor not in self.actors[first]:
+                raise ValueError("%s names a next decision of %s, which is not one of its actors" % (where, actor))
+            if (first, actor) in stated:
+                raise ValueError("%s names two next decisions of the actor %s" % (where, actor))
+            stated[(first, actor)] = second
+        wanted = self.episodic(decided)
+        for first, actor in sorted(set(stated) | set(wanted)):
+            if stated.get((first, actor)) != wanted.get((first, actor)):
                 raise ValueError(
-                    "%s names as the next decision of the actor %s the decision %d, a later decision of that actor"
-                    " it is not" % (where, actor, self.tasks["task_key"][second])
+                    "%s names %s as the next decision of the actor %s, which is %s"
+                    % (
+                        self.where(first),
+                        "no decision" if (first, actor) not in stated else self.named(stated[(first, actor)]),
+                        actor,
+                        self.wanted(first, wanted.get((first, actor))),
+                    )
                 )
-            if ended[first] == 1:
-                raise ValueError("%s ends its episode and names a next decision" % where)
-            rows.append((first, self.actors[first][actor], second))
-        rows.sort()
-        if len({row[:2] for row in rows}) != len(rows):
-            raise ValueError("a decision of graph %s names two next decisions of one actor" % self.name)
+        rows = sorted((first, self.actors[first][actor], second) for (first, actor), second in stated.items())
         result = {
             "next_" + name: np.asarray([row[place] for row in rows], np.int32).reshape(-1)
             for place, name in enumerate(("task", "actor", "other"))

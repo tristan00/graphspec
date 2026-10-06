@@ -4,11 +4,13 @@ import re
 import time
 
 import numpy as np
+import pyarrow as pa
 import pytest
 import support
 
 from conftest import SPLITS, inline, shared
 from graphspec import GENERATORS, RULES
+from graphspec.build.decisions import Decided
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, read_pack, write_json
@@ -379,6 +381,57 @@ def test_a_node_or_an_edge_an_action_targets_unobserved_at_the_step_of_its_decis
         seen = "never observed" if name == "unheld" else "first observed at the time 4"
         refused(change, message + "decision, at the time 1; it is %s$" % seen, tmp_path / name)
     LOG.info("unobserved targets exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("decisions.followed")
+def followed(truth, registry, rows, changed):
+    tasks = {name: np.asarray(truth.arrays[name]).copy() for name in ("task_key", "task_kind", "task_time", "task_ended")}
+    keyed = {key: at for at, key in enumerate(tasks["task_key"].tolist())}
+    for name, key, value in changed:
+        tasks[name][keyed[key]] = value
+    members = {name: truth.arrays[name] for name in ("member_task", "member_name", "member_source")}
+    seen = dict(entity=truth.obs_entity, since=truth.obs_since)
+    held = Decided(registry, tasks, members, truth.keys, truth.kinds, seen, truth.name)
+    table = pa.table(
+        dict(
+            task=pa.array([keyed[row[0]] for row in rows], pa.int64()),
+            other=pa.array([keyed[row[2]] for row in rows], pa.int64()),
+            actor=pa.array([row[1] for row in rows], pa.string()),
+        )
+    )
+    return held.followed(table, dict(option_task=truth.option_task), np.arange(len(keyed)))
+
+
+def test_next_names_the_first_later_decision_of_each_actor_in_its_episode_and_any_other_stops_the_build(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    truth = Facts.load(held.truth(0))
+    keys, places = np.asarray(truth.task_key).tolist(), ("task", "actor", "other")
+    stated = [(keys[first], truth.keys[actor], keys[other]) for first, actor, other in zip(*(truth.arrays["next_" + name].tolist() for name in places))]
+    found = followed(truth, held.registry, stated, ())
+    assert all(np.array_equal(found["next_" + name], truth.arrays["next_" + name]) for name in places)
+    assert (10, "a0", 20) in stated and (20, "a0", 30) in stated and (51, "a1", 60) in stated
+    skipped = [row for row in stated if row != (10, "a0", 20)]
+    named = "the decision %d of the kind turn of graph g0 names %s as the next decision of the actor a0, which is %s"
+    first = "the decision 20 of the kind turn, the first decision of that actor at a later time that states whether its episode ends"
+    later = named % (10, "the decision 30 of the kind turn", first)
+    for rows, changed, message in (
+        (skipped + [(10, "a0", 30)], (), later),
+        ([row for row in skipped if row[0] != 20] + [(10, "a0", 30)], (("task_ended", 20, 1),), later),
+        (stated, (("task_ended", 10, -1),), named % (10, "the decision 20 of the kind turn", "none: it states no end of an episode, so no decision follows it")),
+        (skipped, (), named % (10, "no decision", first)),
+        (stated, (("task_ended", 20, 1),), named % (20, "the decision 30 of the kind turn", "none: its episode ends there")),
+        (
+            stated,
+            (("task_time", 30, 2),),
+            "the actor a0 takes the decision 20 of the kind turn and the decision 30 of the kind turn of graph g0 at the "
+            "time 2, both stating whether their episode ends; an actor takes such decisions at different times, so that "
+            "each has one next decision",
+        ),
+    ):
+        with pytest.raises(ValueError, match="^" + re.escape(message) + "$"):
+            followed(truth, held.registry, rows, changed)
+    LOG.info("next decisions exit seconds=%.3f", time.perf_counter() - started)
 
 
 @timed("decisions.equal")
