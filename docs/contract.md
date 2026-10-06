@@ -1,4 +1,4 @@
-**The contract: schema, time, tasks, kinds of target, decisions, their generators and realisations of options, edges beyond pairs, held graphs, tables and bank version 18**
+**The contract: schema, time, tasks, kinds of target, decisions, their generators and realisations of options, edges beyond pairs, held graphs, tables, bank version 18 and its description**
 
 A source holds one or more graphs. What the graphs hold is stated once, by a schema; the tables of the source and the bank built from them are checked against it. Nothing is read from the names or the types of the tables beyond what the schema states.
 
@@ -546,6 +546,21 @@ A source with kinds of set edge, held graphs or decisions is read from a staging
 | `graph_values` | The attributes of the graph as stated. |
 
 A time before every time is stored as minus two to the power 62, and the absence of an end or of a time from which a target is known as two to the power 62. `Facts.stated(registry, splits, observers)` gives a graph back as it was stated: keys for entities, names for relations, kinds of task, splits and observers, times as stated, values in their stated form, every member of a reference as its first key, its relation and its second key, under `sets` every member of a set edge as the key of the set edge, the key of the node, the role and its values, under `held` every held node as the key of its holder, its held kind, its key and values, and every held edge as the key of the holder, the keys of its two held nodes, its relation and values, and under `decisions`, per task in the order of the tasks, its decision in the form a script states it (see Decisions), the targets of each role in the order they are stored and an empty list for a role that holds none, or none for a task that states none.
+
+**Descriptions**
+
+What the truth graphs of a bank hold is written by the library from their stored arrays, never from the schema alone, so that a relation stated and holding no edge is described as holding none. `graphspec.describe(path)` and the verb `graphspec describe PATH` read the bank at `path`, its `manifest.json` and its graphs under `truth/` (`Facts.load`), and give its description. It is written when the bank is first described, never when it is built, into the bank's folder as `descriptions/truth/<key>.json`, the record a program reads, and `descriptions/truth/<key>.txt`, the text a person reads, made from that record, so that the two cannot disagree; `<key>` is the digest of `stored_sha256` and of the version of the description (`graphspec.descriptions.describe.VERSION`), so that a later call reads the record written and a bank of other stored content is never given it. The call gives the record and the verb prints the text. `tests/test_standing.py` holds the version and a digest of the code of the description, and fails when the code changes and the version does not. The record holds `version`, `stored_sha256`, `time`, the `model` and `units` of the schema, `splits`, the splits of the manifest, and under `graphs`, per graph in the order of the manifest:
+
+| Field | Holds |
+|---|---|
+| `name`, `unit` | The name of the graph and its unit, none where the model has no clock. |
+| `times` | The times of the graph in ascending order, in its unit: every time from which or until which a fact about a node, a set edge or an edge holds, and the time of every task. A time before every time and no end are not times; under the model `none` there is none. |
+| `kinds` | Per kind of node and of set edge, in the order of the schema: `nodes`, its entities, those the build made for elements an action creates included; `observations`, the facts about them; at each of the `times`, `nodes_at`, the nodes a fact about them holds at, and `observations_at`, the facts holding then. |
+| `relations` | Per relation stated or taken from a column, in the order of the edge tables and of the values of a column: `table`; `ends`, the pairs of kinds its facts join, none where it holds none; `columns`, the columns of its table; `edges`, the distinct pairs of ends of its present facts; `facts`, its present facts; `absent`, its facts stating that an edge does not hold, which hold no edge; at each of the `times`, `edges_at`, the edges a present fact holds then; and its runs, a run being a stretch of time over which one edge holds without a break, the present facts about one pair of ends that overlap or meet joined: `runs`, their number, `bounded`, the number of those with a start and an end, and `least`, `most` and `mean`, the lengths of the bounded runs, each none where none is bounded. |
+| `tasks` | Per kind of task: `tasks`, its tasks; `splits`, per split of the bank, the tasks naming it; `unsplit`, the tasks naming none. |
+| `decisions` | Per kind of task that decides: `decisions`, its tasks stating a decision; `options`, `recorded` and `regenerated`, their options, all, recorded and drawn by a generator; `generators`, per generator its kind states, then per other generator an option names, in the order of their names, the options it drew; and `each`, the same per decision in the order of the tasks, with its `key` and its `time`, none under the model `none`. |
+
+How long an edge holds is given as the least, the most and the mean length of its runs, not as a count per length: three numbers read the same however many distinct lengths there are, which on a fine clock grow with the facts. The members of set edges and the graphs nodes hold are not described.
 
 **Views**
 

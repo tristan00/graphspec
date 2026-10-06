@@ -9,7 +9,7 @@
 | `measures/` | The registry of measures, `MEASURES` (`measures.py`), and the score by which a search ranks trials (`objective.py`) |
 | `fits/` | One training (`training.py`), the registry of losses, `LOSSES` (`losses.py`), the checks of a realisation of options before a fit, `Guard`, and of one that edits the graph, `Forked` (`guards.py`), its budget of time (`budget.py`), the check of models (`check.py`) |
 | `searches/` | The runner (`run.py`), selectors (`selector.py`), candidates (`space.py`), surrogates (`surrogates.py`, `tpe.py`), records (`records.py`) and reports (`report.py`) of a search |
-| `api.py`, `dashboard.py`, `web/`, `__main__.py` | Public calls, the dashboard, the command |
+| `api.py`, `dashboard.py`, `web/`, `__main__.py` | Public calls, the dashboard, the command `graphspec` and its verbs: `inspect`, `describe`, `synthetic`, `build`, `search`, `check`, `database` and `dashboard` |
 
 A module imports only its own group, the groups below it and any of `graphspec`; `tests/test_standing.py` holds the order.
 

@@ -8,6 +8,7 @@ from .build.calls import GraphTables, write_task
 from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
 from .build.output import Stage
+from .descriptions.describe import describe
 from .descriptions.inspect import inspect
 from .operations.negatives import NEGATIVES
 from .operations.operation import OPERATIONS, Operation, Phase
@@ -54,6 +55,7 @@ __all__ = [
     "Schema",
     "Scripted",
     "Stage",
+    "describe",
     "inspect",
     "write_task",
 ]

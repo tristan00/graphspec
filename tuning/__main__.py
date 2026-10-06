@@ -9,6 +9,7 @@ def main():
     started = time.perf_counter()
     commands = {
         "inspect": ("graphspec.descriptions.inspect", "main"),
+        "describe": ("graphspec.descriptions.describe", "main"),
         "synthetic": ("graphspec.sources.synthetic", "main"),
         "build": ("tuning.bank.build", "main"),
         "search": ("tuning.searches.run", "main"),
