@@ -15,7 +15,7 @@ from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline as pipelines
 from graphspec.operations.operation import Refused
 from graphspec.schema.decisions import ROLES
-from tuning.bank.bank import Deriver
+from tuning.bank.bank import Deriver, editing
 from tuning.bank.forks import UNMOVED, Part, made, members, ordered, room
 from tuning.bank.options import TOKEN, offered
 from tuning.families.heads import REALISATION, fielded, realisation
@@ -616,7 +616,7 @@ def recorded(deriver, config, key, name):
         version=truth.VERSION,
         variant=key,
         stored_sha256=deriver.source,
-        realisation=dict(name=name, version=entry.version, reads=list(entry.reads), back=entry.back),
+        realisation=stated(name),
         seed=deriver.seed,
         device=deriver.device,
         splits=config["splits"],
@@ -656,9 +656,26 @@ def realising(deriver, config):
     return name
 
 
+def stated(name):
+    started = time.perf_counter()
+    entry = realisation(name)
+    result = dict(
+        name=name,
+        version=entry.version,
+        reads=list(entry.reads),
+        back=entry.back,
+        structure=entry.structure,
+        actor=entry.actor,
+        mapping=entry.mapping if entry.back else None,
+        relations=editing(name)[1].declaration()["relations"] if entry.back else None,
+    )
+    LOG.debug("reach stated exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
+    return result
+
+
 @timed("reach.stemmed")
 def stemmed(key, name):
-    return sha256_json(dict(variant=key, realisation=dict(name=name, version=realisation(name).version), version=truth.VERSION))
+    return sha256_json(dict(variant=key, realisation=stated(name), version=truth.VERSION))
 
 
 def reach(bank, config, statement):
@@ -762,19 +779,45 @@ def graph_text(graph):
     return lines
 
 
+def realised_text(held):
+    started = time.perf_counter()
+    if held["back"]:
+        placed = "each option an edit of the graph, read in its own fork"
+    else:
+        placed = "options put into the graph of its family as structure" if held["structure"] else "options read"
+        placed += " beside the variant, %s the actor of each action" % ("with" if held["actor"] else "without")
+    lines = [
+        "realisation of options %s at version %d, reading %s; %s"
+        % (held["name"], held["version"], ", ".join(held["reads"]), placed)
+    ]
+    if held["back"]:
+        made = [
+            "%s of %s of %s a fact of %s %s the actor" % (role, action, task, found["relation"], "from" if found["actor"] == "source" else "to")
+            for task, actions in held["mapping"].items()
+            for action, roles in actions.items()
+            for role, found in roles.items()
+        ]
+        added = [
+            "%s from %s, %s, with %s"
+            % (
+                name,
+                " or ".join("%s to %s" % tuple(pair) for pair in found["pairs"]),
+                "directed" if found["directed"] else "without direction",
+                ", ".join(found["columns"]) or "no columns",
+            )
+            for name, found in held["relations"].items()
+        ]
+        lines.append("the edit makes %s; it adds the relations %s" % ("; ".join(made), "; ".join(added) or "none"))
+    LOG.debug("reach realised text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
+    return lines
+
+
 def text(record):
     started = time.perf_counter()
-    held = record["realisation"]
     lines = [
         "reach of the options of the variant %s of the bank stored as %s, described at version %d"
         % (record["variant"], record["stored_sha256"], record["version"]),
-        "realisation of options %s at version %d, reading %s; %s"
-        % (
-            held["name"],
-            held["version"],
-            ", ".join(held["reads"]),
-            "each option an edit of the graph, read in its own fork" if held["back"] else "options read beside the variant",
-        ),
+        *realised_text(record["realisation"]),
         *effect.settled(record),
         READING,
     ]

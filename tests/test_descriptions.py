@@ -978,8 +978,26 @@ UNTRIED_TEXT = (
     "cut/kind turn, which decides, and the entry cuts only at the times of the tasks of kinds that decide nothing), "
     "not tried under tasks with cut/kind visit"
 )
+EVERY_FIELD = ["kind", "targets", "parameters"]
+WENT_STATED = dict(went=dict(pairs=[["agent", "spot"], ["agent", "agent"]], directed=True, columns=["speed"]))
+BESIDE = dict(reads=EVERY_FIELD, back=False, structure=False, actor=False, mapping=None, relations=None)
+EDITING = dict(reads=EVERY_FIELD, back=True, structure=False, actor=True, relations=WENT_STATED)
+REALISED = dict(
+    vector=BESIDE,
+    aimed=dict(BESIDE, reads=["targets"]),
+    actor_edge=dict(BESIDE, structure=True, actor=True),
+    walked=dict(EDITING, mapping=dict(turn=dict(go=STEPS_OF_GO))),
+    stepped=dict(EDITING, mapping=dict(turn=dict(go=STEPS_OF_GO, stay=dict(by=STEP)))),
+)
+WALKED_TEXT = [
+    "realisation of options walked at version 1, reading kind, targets, parameters; each option an edit of the graph, "
+    "read in its own fork",
+    "the edit makes to of go of turn a fact of went from the actor; along of go of turn a fact of went from the actor; "
+    "made of go of turn a fact of went from the actor; it adds the relations went from agent to spot or agent to agent, "
+    "directed, with speed",
+]
 REACH = """reach of the options of the variant %s of the bank stored as %s, described at version %d
-realisation of options vector at version %d, reading kind, targets, parameters; options read beside the variant
+realisation of options vector at version %d, reading kind, targets, parameters; options read beside the variant, without the actor of each action
 derivation seed 7, device cpu
 splits trained on train, scored on validation; rules of what each sees: train none, validation none
 settings: graphs/join separate, nodes/untyped False, relations/direction inverse, time/steps changes, time/several last
@@ -1151,16 +1169,21 @@ def reached(fields):
     ]
 
 
+@timed("descriptions.realised")
+def realised(name):
+    return dict(name=name, version=REALISATIONS.named(name).version, **REALISED[name])
+
+
 @timed("descriptions.expected_reach")
 def expected_reach(bank, config, name, fields):
-    key, entry = keyed(bank, config), REALISATIONS.named(name)
-    stem = sha256_json(dict(variant=key, realisation=dict(name=name, version=entry.version), version=describing.VERSION))
+    key = keyed(bank, config)
+    stem = sha256_json(dict(variant=key, realisation=realised(name), version=describing.VERSION))
     cutter = config["pipeline"][1]
     record = dict(
         version=describing.VERSION,
         variant=key,
         stored_sha256=read_json(bank / "manifest.json")["stored_sha256"],
-        realisation=dict(name=name, version=entry.version, reads=["kind", "targets", "parameters"], back=entry.back),
+        realisation=realised(name),
         seed=STATED["derivation_seed"],
         device="cpu",
         splits=SPLITS,
@@ -1264,6 +1287,36 @@ def test_a_second_call_reads_the_file_of_reach_and_another_realisation_or_settin
     LOG.info("descriptions reach served exit seconds=%.3f", time.perf_counter() - started)
 
 
+def test_an_edit_of_another_mapping_at_the_same_version_is_not_served_the_reach_or_the_row_of_the_first(bank, cutting, monkeypatch):
+    started = time.perf_counter()
+    added = dict(WENT_ADDED, gone=WENT_ADDED["went"])
+    stated = dict(EDITING, relations=dict(WENT_STATED, gone=WENT_STATED["went"]))
+    monkeypatch.setattr(reaching, "recorded", refused)
+    keys, stems, held = [], [], []
+    for relation in ("went", "gone"):
+        mapping = {role: dict(relation=relation, actor="source") for role in ("to", "along", "made")}
+        REALISATIONS.register("moving", Edited(dict(turn=dict(go=mapping)), added, 1))
+        try:
+            config = realising(bank, CUTTING, "moving")
+            keys.append(keyed(bank, config))
+            stems.append(reaching.stemmed(keys[-1], "moving"))
+            held.append(dict(stated, name="moving", version=1, mapping=dict(turn=dict(go=mapping))))
+            served = (bank / "descriptions" / "reach" / stems[0]).with_suffix(".json")
+            if relation == "went":
+                served.parent.mkdir(parents=True, exist_ok=True)
+                write_json(served, dict(served="the edit that makes facts of went"))
+                assert reach(bank, config, STATED) == read_json(served)
+            else:
+                with pytest.raises(AssertionError, match="the description was computed again"):
+                    reach(bank, config, STATED)
+            assert reaching.stated("moving") == held[-1]
+        finally:
+            del REALISATIONS.held["moving"]
+    assert keys[0] == keys[1] and stems[0] != stems[1]
+    assert stems == [sha256_json(dict(variant=keys[0], realisation=found, version=describing.VERSION)) for found in held]
+    LOG.info("descriptions reach of another mapping exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_under_an_edit_the_reach_of_each_option_is_read_in_its_own_fork_where_its_facts_join_the_actor_to_its_target(
     bank, cutting, walking
 ):
@@ -1271,6 +1324,7 @@ def test_under_an_edit_the_reach_of_each_option_is_read_in_its_own_fork_where_it
     config = realising(bank, CUTTING, "walked")
     record = reach(bank, config, STATED)
     assert record == expected_reach(bank, config, "walked", walked)[0]
+    assert reaching.text(record).split("\n")[1:3] == WALKED_TEXT
     LOG.info("descriptions reach edit exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -1595,7 +1649,6 @@ def held_whole(lone, near, edge, features):
 
 @timed("descriptions.crossed_reach")
 def crossed_reach(bank, config, name, references, fields):
-    entry = REALISATIONS.named(name)
     decisions = [
         (10, 0, [("o0", fields[0]), ("o1", fields[1])]),
         (20, 1, [("o0", fields[2]), ("o1", fields[3])]),
@@ -1605,7 +1658,7 @@ def crossed_reach(bank, config, name, references, fields):
         version=describing.VERSION,
         variant=keyed(bank, config),
         stored_sha256=read_json(bank / "manifest.json")["stored_sha256"],
-        realisation=dict(name=name, version=entry.version, reads=["kind", "targets", "parameters"], back=entry.back),
+        realisation=realised(name),
         seed=STATED["derivation_seed"],
         device="cpu",
         splits=SPLITS,
