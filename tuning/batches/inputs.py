@@ -469,16 +469,61 @@ def pointed(bank, window, b, rows, owner):
     )
 
 
-def edged(window, moments, ends, relation):
+def edged(held, start, stop, moments, ends, relation):
     started = time.perf_counter()
-    held = window.held
-    low, high = between(held.numpy("spatial_step"), window.start, window.stop)
+    low, high = between(held.numpy("spatial_step"), start, stop)
     spatial, entity = held.numpy("spatial")[low:high].astype(np.int64), held.numpy("entity").astype(np.int64)
     shown = hashed(
         held.numpy("spatial_step")[low:high].astype(np.int64), entity[spatial[:, 0]], entity[spatial[:, 1]], spatial[:, 2]
     )
     result = np.isin(hashed(moments, entity[ends[:, 0]], entity[ends[:, 1]], relation), shown)
-    LOG.debug("edged exit graph=%s edges=%d seconds=%.4f", window.graph, len(result), time.perf_counter() - started)
+    LOG.debug("edged exit start=%d stop=%d edges=%d seconds=%.4f", start, stop, len(result), time.perf_counter() - started)
+    return result
+
+
+@dataclass(frozen=True)
+class Aimed:
+    action: np.ndarray
+    acting: np.ndarray
+    role: np.ndarray
+    roling: np.ndarray
+    code: np.ndarray
+    sort: np.ndarray
+    relation: np.ndarray
+    ends: np.ndarray
+    observed: np.ndarray
+    unheld: np.ndarray
+    left: np.ndarray
+
+
+def aimed(found, name, held, start, stop, option, steps):
+    started = time.perf_counter()
+    action = np.repeat(found.actions[0][option], found.actions[1][option]) + counted(found.actions[1][option])
+    acting = np.repeat(np.arange(len(option)), found.actions[1][option])
+    role = np.repeat(found.roles[0][action], found.roles[1][action]) + counted(found.roles[1][action])
+    actor = np.arange(len(action)) if realisation(name).actor else action[:0]
+    absent = np.full(len(actor), -1)
+    roling = np.r_[np.repeat(np.arange(len(action)), found.roles[1][action]), actor]
+    by = np.argsort(roling, kind="stable")
+    roling, code = roling[by], np.r_[found.role["code"][role], np.full(len(actor), len(found.sorts))][by]
+    sort = np.r_[found.sorts[found.role["code"][role]], np.full(len(actor), ROLES.index("node"))][by]
+    relation = np.r_[found.role["relation"][role], absent][by]
+    moments = steps[acting[roling]]
+    sources = np.r_[found.role["source"][role], found.action["actor"][action[actor]]]
+    ends = np.stack((sources, np.r_[found.role["target"][role], absent]), 1)[by]
+    observed = np.full(ends.shape, -1, np.int64)
+    for column, sorts in enumerate(((ROLES.index("node"), ROLES.index("edge")), (ROLES.index("edge"),))):
+        wanted = np.flatnonzero(np.isin(sort, sorts))
+        observed[wanted, column] = observing(held, moments[wanted], ends[wanted, column], held.numpy("entity_token"))
+    edge = np.flatnonzero(sort == ROLES.index("edge"))
+    unheld = (observed[:, 0] < 0) & (sort != ROLES.index("new"))
+    whole = edge[(observed[edge] >= 0).all(1)]
+    unheld[edge] |= observed[edge, 1] < 0
+    unheld[whole] |= ~edged(held, start, stop, moments[whole], observed[whole], relation[whole])
+    left = np.zeros(len(option), bool)
+    np.logical_or.at(left, acting[roling], unheld)
+    result = Aimed(action, acting, np.r_[role, absent][by], roling, code, sort, relation, ends, observed, unheld, left)
+    LOG.debug("aimed exit options=%d left=%d seconds=%.4f", len(option), int(left.sum()), time.perf_counter() - started)
     return result
 
 
@@ -491,30 +536,17 @@ def optioned(bank, window, b, rows, owner, place):
     task, row = owner[chosen[first]], place[chosen[first]]
     option = np.repeat(found.first[ids], found.count[ids]) + counted(found.count[ids])
     decided = np.repeat(np.arange(len(ids)), found.count[ids])
-    action = np.repeat(found.actions[0][option], found.actions[1][option]) + counted(found.actions[1][option])
-    acting = np.repeat(np.arange(len(option)), found.actions[1][option])
-    role = np.repeat(found.roles[0][action], found.roles[1][action]) + counted(found.roles[1][action])
-    actor = np.arange(len(action)) if realisation(realised(window.cfg["model"], registry.schema)).actor else action[:0]
-    absent = np.full(len(actor), -1)
-    roling = np.r_[np.repeat(np.arange(len(action)), found.roles[1][action]), actor]
-    by = np.argsort(roling, kind="stable")
-    roling, code = roling[by], np.r_[found.role["code"][role], np.full(len(actor), len(found.sorts))][by]
-    sort = np.r_[found.sorts[found.role["code"][role]], np.full(len(actor), ROLES.index("node"))][by]
-    relation = np.r_[found.role["relation"][role], absent][by]
-    moments = b["row_steps"][task[decided[acting[roling]]]].astype(np.int64) + window.start
-    sources = np.r_[found.role["source"][role], found.action["actor"][action[actor]]]
-    ends = np.stack((sources, np.r_[found.role["target"][role], absent]), 1)[by]
-    observed = np.full(ends.shape, -1, np.int64)
-    for column, sorts in enumerate(((ROLES.index("node"), ROLES.index("edge")), (ROLES.index("edge"),))):
-        wanted = np.flatnonzero(np.isin(sort, sorts))
-        observed[wanted, column] = observing(held, moments[wanted], ends[wanted, column], held.numpy("entity_token"))
-    edge = np.flatnonzero(sort == ROLES.index("edge"))
-    unheld = (observed[:, 0] < 0) & (sort != ROLES.index("new"))
-    whole = edge[(observed[edge] >= 0).all(1)]
-    unheld[edge] |= observed[edge, 1] < 0
-    unheld[whole] |= ~edged(window, moments[whole], observed[whole], relation[whole])
-    left = np.zeros(len(option), bool)
-    np.logical_or.at(left, acting[roling], unheld)
+    aims = aimed(
+        found,
+        realised(window.cfg["model"], registry.schema),
+        held,
+        window.start,
+        window.stop,
+        option,
+        b["row_steps"][task[decided]].astype(np.int64) + window.start,
+    )
+    action, acting, roling, code, sort = aims.action, aims.acting, aims.roling, aims.code, aims.sort
+    relation, observed, left = aims.relation, aims.observed, aims.left
     kept = np.flatnonzero(~left)
     acts = np.flatnonzero(~left[acting])
     roles = np.flatnonzero(~left[acting[roling]])

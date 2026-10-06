@@ -29,13 +29,19 @@ from graphspec.sources import synthetic
 from tuning import REALISATIONS, Edited, configuration, reach, reach_over, reach_search
 from tuning import describe as variant
 from tuning import differences as against
+from tuning.bank import forks
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
+from tuning.bank.options import offered
+from tuning.batches import batching
+from tuning.batches.tensors import Host
 from tuning.descriptions import differences as diverging
 from tuning.descriptions import reach as reaching
 from tuning.descriptions import reaches
 from tuning.descriptions import variant as varying
 from tuning.families import heads
+from tuning.families.options import slots
+from tuning.families.periods import blocks as windows
 from tuning.statement import VERSION as STATEMENT
 
 LOG = logging.getLogger(__name__)
@@ -928,55 +934,61 @@ STEPS_OF_GO = {role: STEP for role in ("to", "along", "made")}
 WENT_ADDED = dict(went=dict(pairs=(("agent", "spot"), ("agent", "agent")), directed=True, columns=("speed",)))
 WALKED = Edited(dict(turn=dict(go=STEPS_OF_GO)), WENT_ADDED, 1)
 STEPPED = Edited(dict(turn=dict(go=STEPS_OF_GO, stay=dict(by=STEP))), WENT_ADDED, 1)
+GROUND = dict(STEPS_OF_GO, to=dict(relation="base", actor="source"))
+GROUNDED = Edited(dict(turn=dict(go=GROUND)), WENT_ADDED, 1)
 LOAD = ["load"]
-APART = dict(state="apart", hops=None, relations=None)
-ABSENT = dict(state="absent", hops=None, relations=None)
-ADJACENT = dict(state="connected", hops=1, relations=[["base"]])
-WENT = dict(state="connected", hops=1, relations=[["went"]])
-FARTHER = dict(state="connected", hops=2, relations=[["base"], ["near"]])
-NOWHERE = dict(entry=None, operation=None, settings=[])
+APART = dict(state="unjoined", hops=None, relations=None)
+CREATED = dict(state="created", hops=None, relations=None)
+UNHELD = dict(state="unheld", hops=None, relations=None)
+ADJACENT = dict(state="joined", hops=1, relations=[["base"]])
+WENT = dict(state="joined", hops=1, relations=[["went"]])
+FARTHER = dict(state="joined", hops=2, relations=[["base"], ["near"]])
+SKIRTED = dict(state="joined", hops=2, relations=[["went"], ["near"]])
 EDGE = "a1 base s1"
 SEVERING = {"cut/relation": "base", "cut/kind": "visit"}
 PARTING = {"cut/relation": "base", "cut/times": "all"}
 REFUSING = "the entry %s of the pipeline states cut/kind turn, which " + UNDECIDED
 REFUSAL = REFUSING % "test.sever"
 SEVERED = (
-    "apart; cut by the entry test.cut, of the operation test.cut; cut/relation base of the entry test.cut gives it "
-    "back under near, not under none, refused under none; cut/kind turn of the entry test.cut gives it back under %s, "
-    "not under %s, refused under none"
+    "joined to a reference by no path, features load; cut by the entry test.cut, of the operation test.cut, before "
+    "which it is joined to a reference; cut/relation base of the entry test.cut gives it back under near, not under "
+    "none, refused under none; cut/kind turn of the entry test.cut gives it back under %s, not under %s, refused "
+    "under none"
 )
-AIMED_TEXT = """    option o1
-      target to of go: %(severed)s
-        s0: apart, features load
-        s1: apart, features load
-      target along of go: absent; cut by the entry test.cut, of the operation test.cut; cut/relation base of the entry test.cut gives it back under none, not under near, refused under none; cut/kind turn of the entry test.cut gives it back under visit, not under none, refused under none
-        a1 base s1: absent, features none
-      target made of go: absent; cut by no entry: connected in no state, the view before the first entry included
-        s2: absent, features none
-      parameter speed of go: %(severed)s"""
-APART_TEXT = """    option o1
-      target to of go: apart; cut by no entry: connected in no state, the view before the first entry included
-        s1: apart, features load
-      parameter speed of go: apart; cut by no entry: connected in no state, the view before the first entry included"""
+UNREACHED = (
+    "joined to a reference by no path, features load; cut by no entry: joined to a reference in no state, the view "
+    "before the first entry included"
+)
+HELD_TEXT = """    option %(key)s, held by a fit
+      target to of go: put before the model as the targets the variant holds
+        %(target)s: %(joined)s
+      parameter speed of go: put before the model with the option"""
+LEFT_TEXT = (
+    "    option o1, left out by a fit, lacking a1 base s1, target along of go: no present fact of its relation joins its "
+    "ends at the step; cut by the entry test.cut, of the operation test.cut, before which it is held by a fit; "
+    "cut/relation base of the entry test.cut gives it back under near, not under none, refused under none; cut/kind "
+    "turn of the entry test.cut gives it back under visit, not under none, refused under none; nothing is put before "
+    "the model of the fields it states, target to of go, target along of go, target made of go, parameter speed of go"
+)
 REFUSED_TEXT = (
-    "      target to of go: apart; cut by the entry test.sever, of the operation test.sever; cut/relation base of the "
-    "entry test.sever gives it back under near, not under none, refused under none; cut/kind visit of the entry "
-    "test.sever gives it back under none, not under none, refused under turn (the entry test.sever of the pipeline "
-    "states cut/kind turn, which decides, and the entry cuts only at the times of the tasks of kinds that decide "
-    "nothing)\n"
+    "        s0: joined to a reference by no path, features load; cut by the entry test.sever, of the operation "
+    "test.sever, before which it is joined to a reference; cut/relation base of the entry test.sever gives it back "
+    "under near, not under none, refused under none; cut/kind visit of the entry test.sever gives it back under none, "
+    "not under none, refused under turn (the entry test.sever of the pipeline states cut/kind turn, which decides, and "
+    "the entry cuts only at the times of the tasks of kinds that decide nothing)\n"
 )
 PARTED_TEXT = (
-    "      target to of go: apart; cut by the entry test.part, of the operation test.part; cut/relation base of the "
-    "entry test.part gives it back under near, not under none, refused under none; cut/times all of the entry "
-    "test.part gives it back under %s, not under %s, refused under tasks with cut/kind turn (the entry test.part of "
-    "the pipeline states cut/kind turn, which decides, and the entry cuts only at the times of the tasks of kinds "
-    "that decide nothing)\n"
+    "cut by the entry test.part, of the operation test.part, before which it is %s; cut/relation base of the entry "
+    "test.part gives it back under near, not under none, refused under none; cut/times all of the entry test.part "
+    "gives it back under %s, not under %s, refused under tasks with cut/kind turn (the entry test.part of the pipeline "
+    "states cut/kind turn, which decides, and the entry cuts only at the times of the tasks of kinds that decide "
+    "nothing)"
 )
 UNTRIED_TEXT = (
-    "cut by the entry test.part, of the operation test.part; cut/times all of the entry test.part gives it back under "
-    "none, not under none, refused under tasks with cut/kind turn (the entry test.part of the pipeline states "
-    "cut/kind turn, which decides, and the entry cuts only at the times of the tasks of kinds that decide nothing), "
-    "not tried under tasks with cut/kind visit"
+    "cut by the entry test.part, of the operation test.part, before which it is joined to a reference; cut/times all of "
+    "the entry test.part gives it back under none, not under none, refused under tasks with cut/kind turn (the entry "
+    "test.part of the pipeline states cut/kind turn, which decides, and the entry cuts only at the times of the tasks "
+    "of kinds that decide nothing), not tried under tasks with cut/kind visit"
 )
 EVERY_FIELD = ["kind", "targets", "parameters"]
 WENT_STATED = dict(went=dict(pairs=[["agent", "spot"], ["agent", "agent"]], directed=True, columns=["speed"]))
@@ -996,6 +1008,22 @@ WALKED_TEXT = [
     "made of go of turn a fact of went from the actor; it adds the relations went from agent to spot or agent to agent, "
     "directed, with speed",
 ]
+GROUND_CUT = (
+    "cut by the entry test.cut, of the operation test.cut, before which it is %s; cut/relation base of the entry test.cut "
+    "gives it back under near, not under none, refused under none; cut/kind turn of the entry test.cut gives it back "
+    "under visit, not under none, refused under none"
+)
+GROUNDED_TEXT = """    option o0, left out by a fit, lacking a0 base s0 of s0, target to of go: not in its fork; %(held)s; nothing is put before the model of the fields it states, target to of go, parameter speed of go
+    option o1, held by a fit
+      target to of go: not put before the model, its fork holding none of the facts its edit makes of it
+        s0: fact a0 base s0 not in its fork; joined to a reference at hop 2 by went then near, features load; %(put)s
+        s1: fact a0 base s1 not in its fork; joined to a reference at hop 1 by went, features load; %(put)s
+      target along of go: put before the model as the facts its edit makes of it
+        a1 base s1: facts a0 went a1, a0 went s1 in its fork; joined to a reference at hop 1 by went, features load
+      target made of go: put before the model as the facts its edit makes of it
+        s2: fact a0 went s2 in its fork; joined to a reference at hop 1 by went, features none
+      parameter speed of go: put before the model as the facts its edit makes of it; facts a0 went a1, a0 went s1, a0 went s2 in its fork
+""" % dict(held=GROUND_CUT % "held by a fit", put=GROUND_CUT % "put before the model")
 REACH = """reach of the options of the variant %s of the bank stored as %s, described at version %d
 realisation of options vector at version %d, reading kind, targets, parameters; options read beside the variant, without the actor of each action
 derivation seed 7, device cpu
@@ -1012,12 +1040,12 @@ kinds of task that decide nothing, which hold no option: visit"""
 @pytest.fixture
 def walking():
     started = time.perf_counter()
-    REALISATIONS.register("walked", WALKED)
-    REALISATIONS.register("stepped", STEPPED)
+    for name, entry in (("walked", WALKED), ("stepped", STEPPED), ("grounded", GROUNDED)):
+        REALISATIONS.register(name, entry)
     LOG.debug("descriptions walking registered seconds=%.4f", time.perf_counter() - started)
     yield WALKED
-    del REALISATIONS.held["walked"]
-    del REALISATIONS.held["stepped"]
+    for name in ("walked", "stepped", "grounded"):
+        del REALISATIONS.held[name]
 
 
 @timed("descriptions.realising")
@@ -1026,9 +1054,45 @@ def realising(bank, cut, name):
     return configuration(bank, model, None, pipeline=pipelined(cut), graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
 
 
+@timed("descriptions.told")
+def told(facts):
+    return [dict(fact=fact, held=held) for fact, held in facts]
+
+
+@timed("descriptions.aim")
+def aim(target, held, features, cut, *facts):
+    put = not facts or any(found for _, found in facts)
+    return dict(target=target, put=put, facts=told(facts), **held, features=features, cut=cut)
+
+
 @timed("descriptions.role")
-def role(held, cut, *targets):
-    return dict(held, targets=[dict(found, target=target, features=features) for target, found, features in targets], cut=cut)
+def role(route, *targets):
+    return dict(put=any(target["put"] for target in targets), route=route, targets=list(targets))
+
+
+@timed("descriptions.own")
+def own(route, cut, *facts):
+    return dict(put=not facts or any(found for _, found in facts), route=route, facts=told(facts), cut=cut)
+
+
+@timed("descriptions.kept")
+def kept(fields):
+    return dict(held=True, lacking=[], cut=None, fields=fields)
+
+
+@timed("descriptions.left")
+def left(lacking, cut, *names):
+    return dict(held=False, lacking=lacking, cut=cut, fields={name: None for name in names})
+
+
+@timed("descriptions.lack")
+def lack(field, target, lacks, fact, *unobserved):
+    return dict(field=field, target=target, lacks=lacks, fact=fact, unobserved=list(unobserved))
+
+
+@timed("descriptions.nowhere")
+def nowhere(on):
+    return dict(on=on, entry=None, operation=None, settings=[])
 
 
 @timed("descriptions.under")
@@ -1050,47 +1114,42 @@ def setting(entry, parameter, value, back, still, refused):
 
 
 @timed("descriptions.severing")
-def severing(entry, relation, kind):
+def severing(on, entry, relation, kind):
     settings = [setting(entry, "cut/relation", *relation), setting(entry, kind[0], *kind[1:])]
-    return dict(entry=entry, operation=entry, settings=settings)
+    return dict(on=on, entry=entry, operation=entry, settings=settings)
 
 
 @timed("descriptions.aimed")
 def aimed(held, cut, target):
-    return {GO[0]: role(held, cut, (target, held, LOAD)), GO[3]: dict(held, cut=cut)}
+    return kept({GO[0]: role("target", aim(target, held, LOAD, cut)), GO[3]: own("option", None)})
 
 
 @timed("descriptions.cut_at")
-def cut_at(given, back, still):
+def cut_at(on, given, back, still):
     kind = ("cut/kind", "turn", ["visit"], [], []) if given else ("cut/kind", "turn", [], ["visit"], [])
-    return severing("test.cut", ("base", back, still, []), kind)
+    return severing(on, "test.cut", ("base", back, still, []), kind)
 
 
 @timed("descriptions.parted_at")
-def parted_at(given, back, still):
+def parted_at(on, given, back, still):
     visit = under("tasks", ("test.part", "cut/kind", "visit"))
     turn = dict(under("tasks", ("test.part", "cut/kind", "turn")), reason=REFUSING % "test.part")
     times = ("cut/times", "all", [visit], [], [turn]) if given else ("cut/times", "all", [], [visit], [turn])
-    return severing("test.part", ("base", back, still, []), times)
+    return severing(on, "test.part", ("base", back, still, []), times)
 
 
 @timed("descriptions.unreached")
 def unreached(target):
-    return {GO[0]: role(APART, NOWHERE, (target, APART, LOAD)), GO[3]: dict(APART, cut=NOWHERE)}
+    return aimed(APART, nowhere("joined"), target)
 
 
 @timed("descriptions.lost")
 def lost(cut, graph, task, key, target, given):
     if (graph, task, key) == ("g0", 10, "o1"):
-        return {
-            GO[0]: role(APART, cut(given, ["near"], []), ("s0", APART, LOAD), ("s1", APART, LOAD)),
-            GO[1]: role(ABSENT, cut(True, [], ["near"]), (EDGE, ABSENT, [])),
-            GO[2]: role(ABSENT, NOWHERE, ("s2", ABSENT, [])),
-            GO[3]: dict(APART, cut=cut(given, ["near"], [])),
-        }
+        return left([lack(GO[1], EDGE, "fact", None)], cut("held", True, ["near"], []), *GO)
     if (graph, task, key) == ("g1", 10, "o1"):
         return unreached("s1")
-    return aimed(APART, cut(given, ["near"], []), target)
+    return aimed(APART, cut("joined", given, ["near"], []), target)
 
 
 @timed("descriptions.severed")
@@ -1106,13 +1165,15 @@ def parted(graph, task, key, target, given):
 @timed("descriptions.given_back")
 def given_back(graph, task, key, target, given):
     if (graph, task, key) == ("g0", 10, "o1"):
-        along = severing("test.cut", ("near", [], ["base"], []), ("cut/kind", "turn", ["visit"], [], []))
-        return {
-            GO[0]: role(ADJACENT, None, ("s0", ADJACENT, LOAD), ("s1", APART, LOAD)),
-            GO[1]: role(APART, along, (EDGE, APART, LOAD)),
-            GO[2]: role(ABSENT, NOWHERE, ("s2", ABSENT, [])),
-            GO[3]: dict(ADJACENT, cut=None),
-        }
+        along = severing("joined", "test.cut", ("near", [], ["base"], []), ("cut/kind", "turn", ["visit"], [], []))
+        return kept(
+            {
+                GO[0]: role("target", aim("s0", ADJACENT, LOAD, None), aim("s1", APART, LOAD, along)),
+                GO[1]: role("target", aim(EDGE, APART, LOAD, along)),
+                GO[2]: role("role", aim("s2", CREATED, [], None)),
+                GO[3]: own("option", None),
+            }
+        )
     if (graph, task, key) == ("g1", 10, "o1"):
         return unreached("s1")
     return aimed(ADJACENT, None, target)
@@ -1121,36 +1182,58 @@ def given_back(graph, task, key, target, given):
 @timed("descriptions.walked")
 def walked(graph, task, key, target, given):
     if (graph, task, key) == ("g0", 10, "o1"):
-        return {
-            GO[0]: role(WENT, None, ("s0", WENT, LOAD), ("s1", WENT, LOAD)),
-            GO[1]: role(WENT, None, (EDGE, WENT, LOAD)),
-            GO[2]: role(WENT, None, ("s2", WENT, [])),
-            GO[3]: dict(WENT, cut=None),
+        every = [("a0 went a1", True), ("a0 went s0", True), ("a0 went s1", True), ("a0 went s2", True)]
+        return kept(
+            {
+                GO[0]: role("fact", aim("s0", WENT, LOAD, None, every[1]), aim("s1", WENT, LOAD, None, every[2])),
+                GO[1]: role("fact", aim(EDGE, WENT, LOAD, None, every[0], every[2])),
+                GO[2]: role("fact", aim("s2", WENT, [], None, every[3])),
+                GO[3]: own("fact", None, *every),
+            }
+        )
+    aimed_at = "s1" if (graph, task, key) == ("g1", 10, "o1") else target
+    made = ("%s went %s" % ("a1" if task == 30 else "a0", aimed_at), True)
+    return kept({GO[0]: role("fact", aim(aimed_at, WENT, LOAD, None, made)), GO[3]: own("fact", None, made)})
+
+
+@timed("descriptions.grounded")
+def grounded(key):
+    if key != "o1":
+        return left([lack(GO[0], "s0", "fact", "a0 base s0")], cut_at("held", True, ["near"], []), GO[0], GO[3])
+    cut = cut_at("put", True, ["near"], [])
+    went = [("a0 went a1", True), ("a0 went s1", True), ("a0 went s2", True)]
+    based = [aim("s0", SKIRTED, LOAD, cut, ("a0 base s0", False)), aim("s1", WENT, LOAD, cut, ("a0 base s1", False))]
+    return kept(
+        {
+            GO[0]: role("fact", *based),
+            GO[1]: role("fact", aim(EDGE, WENT, LOAD, None, went[0], went[1])),
+            GO[2]: role("fact", aim("s2", WENT, [], None, went[2])),
+            GO[3]: own("fact", None, *went),
         }
-    if (graph, task, key) == ("g1", 10, "o1"):
-        return aimed(WENT, None, "s1")
-    return aimed(WENT, None, target)
+    )
 
 
 @timed("descriptions.refusing")
 def refusing(graph, task, key, target, given):
     if (graph, task, key) == ("g0", 10, "o1"):
-        return {
-            GO[0]: role(ADJACENT, None, ("s0", ADJACENT, LOAD), ("s1", FARTHER, LOAD)),
-            GO[1]: role(FARTHER, None, (EDGE, FARTHER, LOAD)),
-            GO[2]: role(ABSENT, NOWHERE, ("s2", ABSENT, [])),
-            GO[3]: dict(ADJACENT, cut=None),
-        }
+        return kept(
+            {
+                GO[0]: role("target", aim("s0", ADJACENT, LOAD, None), aim("s1", FARTHER, LOAD, None)),
+                GO[1]: role("target", aim(EDGE, FARTHER, LOAD, None)),
+                GO[2]: role("role", aim("s2", CREATED, [], None)),
+                GO[3]: own("option", None),
+            }
+        )
     if (graph, task, key) == ("g1", 10, "o1"):
         return unreached("s1")
     if (graph, task) == ("g0", 50):
         refused = ("cut/kind", "visit", [], [], [["turn", REFUSAL]])
-        return aimed(APART, severing("test.sever", ("base", ["near"], [], []), refused), target)
+        return aimed(APART, severing("joined", "test.sever", ("base", ["near"], [], []), refused), target)
     return aimed(ADJACENT, None, target)
 
 
 @timed("descriptions.reached")
-def reached(fields):
+def reached(stated):
     return [
         dict(
             name=graph,
@@ -1161,7 +1244,7 @@ def reached(fields):
                     kind="turn",
                     time=moment,
                     references=dict(agents=[actor]),
-                    options=[dict(key=key, fields=fields(graph, task, key, target, given)) for key in options],
+                    options=[dict(key=key, **stated(graph, task, key, target, given)) for key in options],
                 )
                 for task, moment, actor, options, target, given in decisions
             ],
@@ -1218,12 +1301,11 @@ def spelled(record):
             lines.append("  decision %d of turn at time %d, references agents %s" % (task, moment, actor))
             for key in options:
                 if (graph, task, key) == ("g0", 10, "o1"):
-                    lines.append(AIMED_TEXT % dict(severed=cut))
+                    lines.append(LEFT_TEXT)
                 elif (graph, task, key) == ("g1", 10, "o1"):
-                    lines.append(APART_TEXT)
+                    lines.append(HELD_TEXT % dict(key=key, target="s1", joined=UNREACHED))
                 else:
-                    lines += ["    option " + key, "      %s: %s" % (GO[0], cut), "        %s: apart, features load" % target]
-                    lines.append("      %s: %s" % (GO[3], cut))
+                    lines.append(HELD_TEXT % dict(key=key, target=target, joined=cut))
     return "\n".join(lines) + "\n"
 
 
@@ -1329,6 +1411,19 @@ def test_under_an_edit_the_reach_of_each_option_is_read_in_its_own_fork_where_it
     LOG.info("descriptions reach edit exit seconds=%.3f", time.perf_counter() - started)
 
 
+def test_under_an_edit_a_field_is_put_before_the_model_only_where_the_fork_of_its_option_holds_the_fact_its_edit_makes_of_it(
+    bank, cutting, walking
+):
+    started = time.perf_counter()
+    deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
+    held = reaching.Reached(deriver, realising(bank, CUTTING, "grounded"), "grounded")
+    (decision,) = [found for found in held.decided(held.derived(None, 3, 0), 0) if found["key"] == 10]
+    options = [held.option(decision, option) for option in held.optioned(decision)]
+    assert options == [dict(key=key, **grounded(key)) for key in THREE]
+    assert "".join(line + "\n" for option in options[1:] for line in reaching.option_text(option)) == GROUNDED_TEXT
+    LOG.info("descriptions reach edit facts exit seconds=%.3f", time.perf_counter() - started)
+
+
 def test_the_reach_of_a_joined_group_is_described_graph_by_graph_as_its_graphs_derived_apart_are(bank, cutting):
     started = time.perf_counter()
     model = dict(MODEL, **{"options/realisation": "vector"})
@@ -1364,8 +1459,9 @@ def test_a_value_that_makes_a_parameter_active_is_tried_with_each_value_of_it_an
     assert json.loads(json.dumps(record)) == record
     written = stem.with_suffix(".txt").read_text(encoding="utf-8")
     assert written == reaching.text(record)
-    assert written.count(PARTED_TEXT % ("tasks with cut/kind visit", "none")) == 9
-    assert written.count(PARTED_TEXT % ("none", "tasks with cut/kind visit")) == 3
+    assert written.count(PARTED_TEXT % ("joined to a reference", "tasks with cut/kind visit", "none")) == 8
+    assert written.count(PARTED_TEXT % ("joined to a reference", "none", "tasks with cut/kind visit")) == 3
+    assert written.count(PARTED_TEXT % ("held by a fit", "tasks with cut/kind visit", "none")) == 1
     LOG.info("descriptions reach made active exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -1379,11 +1475,11 @@ def test_past_the_bound_of_statements_tried_for_a_value_the_rest_are_recorded_as
     (decision,) = [found for found in held.decided(held.derived(None, 3, 0), 0) if found["key"] == 50]
     option = int(held.found.first[decision["decision"]])
     times = [(holder, parameter) for holder, parameter in held.settable(1) if parameter["name"] == "cut/times"]
-    found = [held.tried(decision, option, GO[0], holder, parameter) for holder, parameter in times]
+    found = [held.tried(decision, option, ("joined", GO[0], 0), holder, parameter) for holder, parameter in times]
     turn = dict(under("tasks", ("test.part", "cut/kind", "turn")), reason=REFUSING % "test.part")
     untried = [under("tasks", ("test.part", "cut/kind", "visit"))]
     assert found == [dict(setting("test.part", "cut/times", "all", [], [], [turn]), untried=untried)]
-    assert reaching.cut_text(dict(entry="test.part", operation="test.part", settings=found)) == UNTRIED_TEXT
+    assert reaching.cut_text(dict(on="joined", entry="test.part", operation="test.part", settings=found)) == UNTRIED_TEXT
     LOG.info("descriptions reach bound exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -1455,9 +1551,9 @@ FIELDS = ("kind", "target to of go", "target along of go", "target made of go", 
 OVER = [["a0", "base", "s0"]]
 REFERRED = dict(agents=["a0"], over=["a0 base s0"])
 BOTH = "s0 near s1"
-HERE = dict(state="connected", hops=0, relations=[])
-NEARBY = dict(state="connected", hops=1, relations=[["near"]])
-EITHER = dict(state="connected", hops=1, relations=[["near", "went"]])
+HERE = dict(state="joined", hops=0, relations=[])
+NEARBY = dict(state="joined", hops=1, relations=[["near"]])
+EITHER = dict(state="joined", hops=1, relations=[["near", "went"]])
 LONE = {name: value for name, value in SETTINGS.items() if name != "time/several"}
 CROSSED = {name: value for name, value in SETTLED.items() if name != "time/several"}
 KEPT = {
@@ -1472,45 +1568,66 @@ THINNER = "graphspec.nodes"
 CONTRACTING = "graphspec.contract"
 CONTRACTED = {"contract/grouping": "spot:load", "contract/aggregate": "mean", "contract/parallel": "keep"}
 GROUPED = "contract in place of a0"
+LOOPED, BASED, NEARED = ("a0 went a0", True), ("a0 went s0", True), ("a0 went s1", True)
+UNSEEN_TEXT = (
+    "    option o1, left out by a fit, lacking s0 base a0, target along of go: a0 not observed at the step; cut by the "
+    "entry graphspec.contract, of the operation graphspec.contract, before which it is held by a fit; contract/grouping "
+    "agent:load of the entry graphspec.contract gives it back under none, not under spot:load, refused under none; "
+    "contract/aggregate mean of the entry graphspec.contract gives it back under none, not under sum, min, max, refused "
+    "under none; contract/parallel keep of the entry graphspec.contract gives it back under none, not under first, "
+    "last, sum, mean, min, max, refused under none; nothing is put before the model of the fields it states, kind, "
+    "target to of go, target along of go, parameter speed of go\n"
+)
 CROSSED_TEXT = """kind of task turn: fields kind, target to of go, target along of go, target made of go, target by of stay, parameter speed of go; not read by the realisation: none
 kinds of task that decide nothing, which hold no option: none
 
 graph h0, decisions of turn 4, described 3, 1 holding no point a fit reads
   decision 10 of turn at time 0, references agents a0; over a0 base s0
-    option o0
-      kind: apart; cut by no entry: connected in no state, the view before the first entry included
-      target to of go: apart; cut by no entry: connected in no state, the view before the first entry included
-        s2: apart, features load
-      parameter speed of go: apart; cut by no entry: connected in no state, the view before the first entry included
-    option o1
-      kind: connected at hop 1 by near
-      target by of stay: connected at hop 1 by near
-        s1: connected at hop 1 by near, features load
+    option o0, held by a fit
+      kind: put before the model with the option
+      target to of go: put before the model as the targets the variant holds
+        s2: joined to a reference by no path, features load; cut by no entry: joined to a reference in no state, the view before the first entry included
+      parameter speed of go: put before the model with the option
+    option o1, held by a fit
+      kind: put before the model with the option
+      target by of stay: put before the model as the targets the variant holds
+        s1: joined to a reference at hop 1 by near, features load
   decision 20 of turn at time 1, references agents a0; over a0 base s0
-    option o0
-      kind: connected at hop 0 by nothing
-      target to of go: connected at hop 0 by nothing
-        s0: connected at hop 0 by nothing, features load
-      target along of go: connected at hop 0 by nothing
-        a0 base s0: connected at hop 0 by nothing, features load
-        s0 near s1: connected at hop 0 by nothing, features load
-      parameter speed of go: connected at hop 0 by nothing
-    option o1
-      kind: connected at hop 0 by nothing
-      target to of go: connected at hop 1 by near
-        s1: connected at hop 1 by near, features load
-      target along of go: connected at hop 0 by nothing
-        s0 base a0: connected at hop 0 by nothing, features load
-        s0 near s1: connected at hop 0 by nothing, features load
-      parameter speed of go: connected at hop 0 by nothing
+    option o0, held by a fit
+      kind: put before the model with the option
+      target to of go: put before the model as the targets the variant holds
+        s0: joined to a reference at hop 0 by nothing, features load
+      target along of go: put before the model as the targets the variant holds
+        a0 base s0: joined to a reference at hop 0 by nothing, features load
+        s0 near s1: joined to a reference at hop 0 by nothing, features load
+      parameter speed of go: put before the model with the option
+    option o1, held by a fit
+      kind: put before the model with the option
+      target to of go: put before the model as the targets the variant holds
+        s1: joined to a reference at hop 1 by near, features load
+      target along of go: put before the model as the targets the variant holds
+        s0 base a0: joined to a reference at hop 0 by nothing, features load
+        s0 near s1: joined to a reference at hop 0 by nothing, features load
+      parameter speed of go: put before the model with the option
   decision 30 of turn at time 2, references agents a0; over a0 base s0
-    option o0
-      kind: connected at hop 0 by nothing
-      target by of stay: connected at hop 0 by nothing
-        s0: connected at hop 0 by nothing, features load
+    option o0, held by a fit
+      kind: put before the model with the option
+      target by of stay: put before the model as the targets the variant holds
+        s0: joined to a reference at hop 0 by nothing, features load
+"""
+STEPPED_TEXT = """  decision 20 of turn at time 1, references agents a0; over a0 base s0
+    option o0, held by a fit
+      kind: put before the model as the facts its edit makes of it; facts a0 went a0, a0 went s0, a0 went s1 in its fork
+      target to of go: put before the model as the facts its edit makes of it
+        s0: fact a0 went s0 in its fork; joined to a reference at hop 0 by nothing, features load
+      target along of go: put before the model as the facts its edit makes of it
+        a0 base s0: facts a0 went a0, a0 went s0 in its fork; joined to a reference at hop 0 by nothing, features load
+        s0 near s1: facts a0 went s0, a0 went s1 in its fork; joined to a reference at hop 0 by nothing, features load
+      parameter speed of go: put before the model as the facts its edit makes of it; facts a0 went a0, a0 went s0, a0 went s1 in its fork
 """
 THINNED_TEXT = (
-    "      target to of go: absent; cut by the entry graphspec.nodes, of the operation graphspec.nodes; "
+    "    option o0, left out by a fit, lacking a0 went s2 of s2, target to of go: not in its fork; "
+    "cut by the entry graphspec.nodes, of the operation graphspec.nodes, before which it is held by a fit; "
     "nodes/agent/keep True of the entry graphspec.nodes gives it back under none, not under False, refused under none; "
     "nodes/spot/keep True of the entry graphspec.nodes gives it back under none, not under False, refused under none; "
     "nodes/referenced keep of the entry graphspec.nodes gives it back under none, not under none, refused under none; "
@@ -1524,8 +1641,8 @@ THINNED_TEXT = (
     "not under total_degree, core with nodes/spot/core 2, core with nodes/spot/core 16, "
     "activity with nodes/spot/min_activity 2, activity with nodes/spot/min_activity 16, "
     "sample with nodes/spot/sample 0.1, refused under none; "
-    "nodes/spot/min_degree 2 of the entry graphspec.nodes gives it back under 1, not under 16, refused under none\n"
-    "        s2: absent, features none\n"
+    "nodes/spot/min_degree 2 of the entry graphspec.nodes gives it back under 1, not under 16, refused under none; "
+    "nothing is put before the model of the fields it states, kind, target to of go, parameter speed of go\n"
 )
 
 
@@ -1619,34 +1736,59 @@ def lined(bank, operation, parameters, name):
 
 
 @timed("descriptions.gone")
-def gone(held, cut, features):
-    return {FIELDS[0]: dict(held, cut=cut), FIELDS[1]: role(held, cut, ("s2", held, features)), FIELDS[5]: dict(held, cut=cut)}
+def gone(held, cut):
+    lone = role("target", aim("s2", held, LOAD, cut))
+    return kept({FIELDS[0]: own("option", None), FIELDS[1]: lone, FIELDS[5]: own("option", None)})
 
 
 @timed("descriptions.along")
-def along(aim, target, based, edge, features):
-    return {
-        FIELDS[0]: dict(HERE, cut=None),
-        FIELDS[1]: role(aim, None, (target, aim, LOAD)),
-        FIELDS[2]: role(HERE, None, (based, edge, features), (BOTH, HERE, LOAD)),
-        FIELDS[5]: dict(HERE, cut=None),
-    }
+def along(held, target, based):
+    return kept(
+        {
+            FIELDS[0]: own("option", None),
+            FIELDS[1]: role("target", aim(target, held, LOAD, None)),
+            FIELDS[2]: role("target", aim(based, HERE, LOAD, None), aim(BOTH, HERE, LOAD, None)),
+            FIELDS[5]: own("option", None),
+        }
+    )
 
 
 @timed("descriptions.stayed")
 def stayed(held, target):
-    return {FIELDS[0]: dict(held, cut=None), FIELDS[4]: role(held, None, (target, held, LOAD))}
+    return kept({FIELDS[0]: own("option", None), FIELDS[4]: role("target", aim(target, held, LOAD, None))})
+
+
+@timed("descriptions.unseen")
+def unseen(edge):
+    settings = [
+        setting(CONTRACTING, "contract/grouping", "agent:load", [], ["spot:load"], []),
+        setting(CONTRACTING, "contract/aggregate", "mean", [], ["sum", "min", "max"], []),
+        setting(CONTRACTING, "contract/parallel", "keep", [], ["first", "last", "sum", "mean", "min", "max"], []),
+    ]
+    cut = dict(on="held", entry=CONTRACTING, operation=CONTRACTING, settings=settings)
+    return left([lack(FIELDS[2], edge, "observation", None, "a0")], cut, FIELDS[0], FIELDS[1], FIELDS[2], FIELDS[5])
+
+
+@timed("descriptions.stepping")
+def stepping(held, target, made, based):
+    return kept(
+        {
+            FIELDS[0]: own("fact", None, LOOPED, BASED, NEARED),
+            FIELDS[1]: role("fact", aim(target, held, LOAD, None, made)),
+            FIELDS[2]: role("fact", aim(based, HERE, LOAD, None, LOOPED, BASED), aim(BOTH, HERE, LOAD, None, BASED, NEARED)),
+            FIELDS[5]: own("fact", None, LOOPED, BASED, NEARED),
+        }
+    )
+
+
+@timed("descriptions.staying")
+def staying(held, target, made):
+    return kept({FIELDS[0]: own("fact", None, made), FIELDS[4]: role("fact", aim(target, held, LOAD, None, made))})
 
 
 @timed("descriptions.held_whole")
-def held_whole(lone, near, edge, features):
-    return [
-        lone,
-        stayed(near, "s1"),
-        along(HERE, "s0", "a0 base s0", edge, features),
-        along(near, "s1", "s0 base a0", edge, features),
-        stayed(HERE, "s0"),
-    ]
+def held_whole(lone, first, second):
+    return [lone, stayed(NEARBY, "s1"), first, second, stayed(HERE, "s0")]
 
 
 @timed("descriptions.crossed_reach")
@@ -1678,7 +1820,7 @@ def crossed_reach(bank, config, name, references, fields):
                         kind="turn",
                         time=moment,
                         references=references,
-                        options=[dict(key=option, fields=found) for option, found in options],
+                        options=[dict(key=option, **found) for option, found in options],
                     )
                     for task, moment, options in decisions
                 ],
@@ -1716,7 +1858,7 @@ def thinning():
         setting(THINNER, "nodes/spot/filter", "degree", kept, lost, []),
         setting(THINNER, "nodes/spot/min_degree", 2, [1], [16], []),
     ]
-    return dict(entry=THINNER, operation=THINNER, settings=settings)
+    return dict(on="held", entry=THINNER, operation=THINNER, settings=settings)
 
 
 @timed("descriptions.halved")
@@ -1730,7 +1872,7 @@ def test_reach_reads_an_edge_without_direction_stated_either_way_a_reference_tha
     started = time.perf_counter()
     config = lined(crossed, THINNER, KEPT, "vector")
     record = reach(crossed, config, STATED)
-    fields = held_whole(gone(APART, NOWHERE, LOAD), NEARBY, HERE, LOAD)
+    fields = held_whole(gone(APART, nowhere("joined")), along(HERE, "s0", "a0 base s0"), along(NEARBY, "s1", "s0 base a0"))
     assert record == crossed_reach(crossed, config, "vector", REFERRED, fields)
     assert json.loads(json.dumps(record)) == record
     held = describe(crossed)["graphs"][0]["decisions"]["turn"]
@@ -1753,9 +1895,16 @@ def test_under_an_edit_on_a_bank_whose_relations_hold_no_column_the_entry_that_r
     monkeypatch.setattr(filtering, "unit", halved)
     config = lined(crossed, THINNER, THINNED, "stepped")
     record = reach(crossed, config, STATED)
-    fields = held_whole(gone(ABSENT, thinning(), []), EITHER, HERE, LOAD)
+    fields = [
+        left([lack(FIELDS[1], "s2", "fact", "a0 went s2")], thinning(), FIELDS[0], FIELDS[1], FIELDS[5]),
+        staying(EITHER, "s1", NEARED),
+        stepping(HERE, "s0", BASED, "a0 base s0"),
+        stepping(EITHER, "s1", NEARED, "s0 base a0"),
+        staying(HERE, "s0", BASED),
+    ]
     assert record == crossed_reach(crossed, config, "stepped", REFERRED, fields)
-    assert THINNED_TEXT in reaching.text(record)
+    written = reaching.text(record)
+    assert THINNED_TEXT in written and STEPPED_TEXT in written
     LOG.info("descriptions reach edit cut exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -1766,8 +1915,9 @@ def test_a_reference_the_pipeline_puts_in_a_node_it_adds_is_named_by_the_kind_of
     config = lined(crossed, CONTRACTING, dict(CONTRACTED, **{"contract/grouping": "agent:load"}), "vector")
     record = reach(crossed, config, STATED)
     grouped = dict(agents=[GROUPED], over=[GROUPED + " base s0"])
-    fields = held_whole(gone(APART, NOWHERE, LOAD), NEARBY, ABSENT, [])
+    fields = held_whole(gone(APART, nowhere("joined")), unseen("a0 base s0"), unseen("s0 base a0"))
     assert record == crossed_reach(crossed, config, "vector", grouped, fields)
+    assert UNSEEN_TEXT in reaching.text(record)
     assert "  decision 10 of turn at time 0, references agents %s; over %s base s0\n" % (GROUPED, GROUPED) in reaching.text(record)
     config = lined(crossed, CONTRACTING, CONTRACTED, "vector")
     held = reaching.Reached(Deriver(crossed, STATED["device"], STATED["derivation_seed"], RESIDENT), config, "vector")
@@ -1902,27 +2052,54 @@ def searched(bank, searching):
     return result
 
 
-@timed("descriptions.tallying")
-def tallying(held, connected, apart, absent, least, most, *cut):
+@timed("descriptions.stopped")
+def stopped(part, found):
+    return [{"entry": name, "operation": name, part: count} for name, count in found]
+
+
+@timed("descriptions.owned")
+def owned(stated, held, put, *unput):
     return dict(
+        stated=stated,
         held=held,
-        connected=connected,
-        apart=apart,
-        absent=absent,
-        least=least,
-        most=most,
-        cut=[dict(entry=name, operation=name, options=options) for name, options in cut],
+        put=put,
+        unput=stopped("options", unput),
+        targets=None,
+        joined=None,
+        least=None,
+        most=None,
+        parted=None,
     )
 
 
+@timed("descriptions.roled")
+def roled(stated, held, put, targets, joined, least, most, *parted):
+    return dict(
+        stated=stated,
+        held=held,
+        put=put,
+        unput=[],
+        targets=targets,
+        joined=joined,
+        least=least,
+        most=most,
+        parted=stopped("targets", parted),
+    )
+
+
+@timed("descriptions.tasked")
+def tasked(held, left, *fields):
+    return dict(decisions=4, described=4, options=13, held=held, left=stopped("options", left), fields=dict(zip(GO, fields)))
+
+
 NEVER = (None, 1)
-UNMADE = tallying(1, 0, 0, 1, None, None, NEVER)
-FAR = tallying(1, 1, 0, 0, 2, 2)
-MOSTLY = tallying(13, 12, 1, 0, 1, 1, NEVER)
-EVERY = tallying(13, 13, 0, 0, 1, 1)
-ONE = tallying(1, 1, 0, 0, 1, 1)
-WHOLE = [MOSTLY, FAR, UNMADE, MOSTLY]
-EDITED = [EVERY, ONE, ONE, EVERY]
+SPED = owned(13, 13, 13)
+UNMADE = roled(1, 1, 1, 1, 0, None, None)
+UNSTATED = roled(1, 0, 0, 0, 0, None, None)
+FAR = roled(1, 1, 1, 1, 1, 2, 2)
+ONE = roled(1, 1, 1, 1, 1, 1, 1)
+WHOLE = tasked(13, [], roled(13, 13, 13, 14, 13, 1, 2, NEVER), FAR, UNMADE, SPED)
+EDITED = tasked(13, [], roled(13, 13, 13, 14, 14, 1, 1), ONE, ONE, SPED)
 BASE_TURN = ("relation", "base", "turn", 2)
 BASE_VISIT = ("relation", "base", "visit", 2)
 NEAR_AT_TURN = ("relation", "near", "turn", 1)
@@ -1932,19 +2109,24 @@ AGENTS = (("kind", "agent", "turn", 2), ("kind", "agent", "visit", 2))
 
 @timed("descriptions.gone_by")
 def gone_by(name):
-    every = tallying(13, 0, 13, 0, None, None, (name, 12), NEVER)
-    return [every, tallying(1, 0, 0, 1, None, None, (name, 1)), UNMADE, every]
+    every = roled(13, 12, 12, 12, 0, None, None, (name, 11), NEVER)
+    return tasked(12, [(name, 1)], every, UNSTATED, UNSTATED, owned(13, 12, 12))
 
 
 @timed("descriptions.near_by")
 def near_by(name):
-    return [MOSTLY, tallying(1, 0, 1, 0, None, None, (name, 1)), UNMADE, MOSTLY]
+    most = roled(13, 13, 13, 14, 12, 1, 1, (name, 1), NEVER)
+    return tasked(13, [], most, roled(1, 1, 1, 1, 0, None, None, (name, 1)), UNMADE, SPED)
 
 
 @timed("descriptions.visited_by")
 def visited_by(name):
-    some = tallying(13, 9, 4, 0, 1, 1, (name, 3), NEVER)
-    return [some, FAR, UNMADE, some]
+    return tasked(13, [], roled(13, 13, 13, 14, 10, 1, 2, (name, 3), NEVER), FAR, UNMADE, SPED)
+
+
+@timed("descriptions.unsped")
+def unsped(held):
+    return dict(held, fields=dict(held["fields"], **{GO[3]: None}))
 
 
 @timed("descriptions.left_by")
@@ -1971,7 +2153,7 @@ SEARCHED = (
     ("vector", gone_by("graphspec.nodes"), left_by("graphspec.nodes", *AGENTS, BASE_TURN, BASE_VISIT)),
     (None, UNREALISED),
     (None, UNSTARTED),
-    ("aimed", visited_by("test.cut")[:3] + [None], left_by("test.cut", BASE_VISIT)),
+    ("aimed", unsped(visited_by("test.cut")), left_by("test.cut", BASE_VISIT)),
     ("vector", gone_by("test.cut"), left_by("test.cut", BASE_TURN)),
     ("walked", EDITED, left_by("test.cut", NEAR_AT_TURN)),
     ("vector", HALTED),
@@ -1979,52 +2161,56 @@ SEARCHED = (
 SEARCHED_TEXT = """reach over 20 trials on the bank stored as %(stored)s, described at version %(version)d
 described 16, of 15 variants and realisations; not described 4
 one row per trial, in the order of the trials; %(reading)s
-    trial         variant     realisation  turn: options in decisions  turn: target to of go                                      turn: target along of go                 turn: target made of go           turn: parameter speed of go                                nothing left at the steps of tasks
-    trial_000000  %(v0)s  vector       13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
-    trial_000001  %(v1)s  vector       13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
-    trial_000002  %(v2)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  0/1, apart 1, cut by test.cut 1          0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  test.cut: relation near at turn 1/2
-    trial_000003  %(v3)s  vector       13 in 4                     9/13, hops 1, apart 4, cut by test.cut 3 and no entry 1    1/1, hops 2                              0/1, absent 1, cut by no entry 1  9/13, hops 1, apart 4, cut by test.cut 3 and no entry 1    test.cut: relation base at visit 2/2
-    trial_000004  %(v4)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  1/1, hops 2                              0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  test.cut: relation near at visit 1/2
-    trial_000005  %(v5)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  1/1, hops 2                              0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  none
-    trial_000006  %(v6)s  walked       13 in 4                     13/13, hops 1                                              1/1, hops 1                              1/1, hops 1                       13/13, hops 1                                              test.cut: relation base at turn 2/2
-    trial_000007  %(v7)s  actor_edge   13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
+    trial         variant     realisation  turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated                                           turn: target along of go, put/held/stated      turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
+    trial_000000  %(v0)s  vector       12/13 in 4/4, left out cut by test.cut 1                12/12/13, joined 0/12, no path cut by test.cut 11 and no entry 1                 0/0/1                                          0/0/1                                     12/12/13                                      test.cut: relation base at turn 2/2
+    trial_000001  %(v1)s  vector       12/13 in 4/4, left out cut by test.cut 1                12/12/13, joined 0/12, no path cut by test.cut 11 and no entry 1                 0/0/1                                          0/0/1                                     12/12/13                                      test.cut: relation base at turn 2/2
+    trial_000002  %(v2)s  vector       13/13 in 4/4                                            13/13/13, joined 12/14, hops 1, no path cut by test.cut 1 and no entry 1         1/1/1, joined 0/1, no path cut by test.cut 1   1/1/1, joined 0/1                         13/13/13                                      test.cut: relation near at turn 1/2
+    trial_000003  %(v3)s  vector       13/13 in 4/4                                            13/13/13, joined 10/14, hops 1 to 2, no path cut by test.cut 3 and no entry 1    1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         13/13/13                                      test.cut: relation base at visit 2/2
+    trial_000004  %(v4)s  vector       13/13 in 4/4                                            13/13/13, joined 13/14, hops 1 to 2, no path cut by no entry 1                   1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         13/13/13                                      test.cut: relation near at visit 1/2
+    trial_000005  %(v5)s  vector       13/13 in 4/4                                            13/13/13, joined 13/14, hops 1 to 2, no path cut by no entry 1                   1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         13/13/13                                      none
+    trial_000006  %(v6)s  walked       13/13 in 4/4                                            13/13/13, joined 14/14, hops 1                                                   1/1/1, joined 1/1, hops 1                      1/1/1, joined 1/1, hops 1                 13/13/13                                      test.cut: relation base at turn 2/2
+    trial_000007  %(v7)s  actor_edge   12/13 in 4/4, left out cut by test.cut 1                12/12/13, joined 0/12, no path cut by test.cut 11 and no entry 1                 0/0/1                                          0/0/1                                     12/12/13                                      test.cut: relation base at turn 2/2
     trial_000008  -           -            not described: the entry test.sever of the pipeline states cut/kind turn, which decides, and the entry cuts only at the times of the tasks of kinds that decide nothing
-    trial_000009  %(v9)s  vector       13 in 4                     9/13, hops 1, apart 4, cut by test.sever 3 and no entry 1  1/1, hops 2                              0/1, absent 1, cut by no entry 1  9/13, hops 1, apart 4, cut by test.sever 3 and no entry 1  test.sever: relation base at visit 2/2
-    trial_000010  %(v10)s  vector       13 in 4                     0/13, apart 13, cut by test.part 12 and no entry 1         0/1, absent 1, cut by test.part 1        0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.part 12 and no entry 1         test.part: relation base at turn 2/2, relation base at visit 2/2
-    trial_000011  %(v11)s  vector       13 in 4                     12/13, hops 1, apart 1, cut by no entry 1                  0/1, apart 1, cut by test.part 1         0/1, absent 1, cut by no entry 1  12/13, hops 1, apart 1, cut by no entry 1                  test.part: relation near at turn 1/2, relation near at visit 1/2
-    trial_000012  %(v12)s  vector       13 in 4                     9/13, hops 1, apart 4, cut by test.part 3 and no entry 1   1/1, hops 2                              0/1, absent 1, cut by no entry 1  9/13, hops 1, apart 4, cut by test.part 3 and no entry 1   test.part: relation base at visit 2/2
-    trial_000013  %(v13)s  vector       13 in 4                     0/13, apart 13, cut by graphspec.nodes 12 and no entry 1   0/1, absent 1, cut by graphspec.nodes 1  0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by graphspec.nodes 12 and no entry 1   graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
+    trial_000009  %(v9)s  vector       13/13 in 4/4                                            13/13/13, joined 10/14, hops 1 to 2, no path cut by test.sever 3 and no entry 1  1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         13/13/13                                      test.sever: relation base at visit 2/2
+    trial_000010  %(v10)s  vector       12/13 in 4/4, left out cut by test.part 1               12/12/13, joined 0/12, no path cut by test.part 11 and no entry 1                0/0/1                                          0/0/1                                     12/12/13                                      test.part: relation base at turn 2/2, relation base at visit 2/2
+    trial_000011  %(v11)s  vector       13/13 in 4/4                                            13/13/13, joined 12/14, hops 1, no path cut by test.part 1 and no entry 1        1/1/1, joined 0/1, no path cut by test.part 1  1/1/1, joined 0/1                         13/13/13                                      test.part: relation near at turn 1/2, relation near at visit 1/2
+    trial_000012  %(v12)s  vector       13/13 in 4/4                                            13/13/13, joined 10/14, hops 1 to 2, no path cut by test.part 3 and no entry 1   1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         13/13/13                                      test.part: relation base at visit 2/2
+    trial_000013  %(v13)s  vector       12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1          0/0/1                                          0/0/1                                     12/12/13                                      graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
     trial_000014  -           -            not described: the model of the configuration states options/realisation none, which puts no option before it; reach describes the options of decisions as a realisation puts them before a model
     trial_000015  -           -            not described: the trial holds no statement.json
-    trial_000016  %(v16)s  aimed        13 in 4                     9/13, hops 1, apart 4, cut by test.cut 3 and no entry 1    1/1, hops 2                              0/1, absent 1, cut by no entry 1  unread                                                     test.cut: relation base at visit 2/2
-    trial_000017  %(v17)s  vector       13 in 4                     0/13, apart 13, cut by test.cut 12 and no entry 1          0/1, absent 1, cut by test.cut 1         0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by test.cut 12 and no entry 1          test.cut: relation base at turn 2/2
-    trial_000018  %(v18)s  walked       13 in 4                     13/13, hops 1                                              1/1, hops 1                              1/1, hops 1                       13/13, hops 1                                              test.cut: relation near at turn 1/2
+    trial_000016  %(v16)s  aimed        13/13 in 4/4                                            13/13/13, joined 10/14, hops 1 to 2, no path cut by test.cut 3 and no entry 1    1/1/1, joined 1/1, hops 2                      1/1/1, joined 0/1                         unread                                        test.cut: relation base at visit 2/2
+    trial_000017  %(v17)s  vector       12/13 in 4/4, left out cut by test.cut 1                12/12/13, joined 0/12, no path cut by test.cut 11 and no entry 1                 0/0/1                                          0/0/1                                     12/12/13                                      test.cut: relation base at turn 2/2
+    trial_000018  %(v18)s  walked       13/13 in 4/4                                            13/13/13, joined 14/14, hops 1                                                   1/1/1, joined 1/1, hops 1                      1/1/1, joined 1/1, hops 1                 13/13/13                                      test.cut: relation near at turn 1/2
     trial_000019  %(v19)s  vector       not described: the entry test.halt derives no graph
 """
 ROW_TEXT = """reach of the options of the variant %s of the bank stored as %s in one row, described at version %d
 %s
-    variant     realisation  turn: options in decisions  turn: target to of go                                     turn: target along of go                 turn: target made of go           turn: parameter speed of go                               nothing left at the steps of tasks
-    %s  vector       13 in 4                     0/13, apart 13, cut by graphspec.nodes 12 and no entry 1  0/1, absent 1, cut by graphspec.nodes 1  0/1, absent 1, cut by no entry 1  0/13, apart 13, cut by graphspec.nodes 12 and no entry 1  graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
+    variant     realisation  turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated                                   turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
+    %s  vector       12/13 in 4/4, left out cut by graphspec.nodes 1         12/12/13, joined 0/12, no path cut by graphspec.nodes 11 and no entry 1  0/0/1                                      0/0/1                                     12/12/13                                      graphspec.nodes: kind agent at turn 2/2, kind agent at visit 2/2, relation base at turn 2/2, relation base at visit 2/2
 """
 STOPPED_TEXT = """reach of the options of the variant %s of the bank stored as %s in one row, described at version %d
 %s
-    variant     realisation  turn: options in decisions  turn: target to of go  turn: target along of go  turn: target made of go  turn: parameter speed of go  nothing left at the steps of tasks
+    variant     realisation  turn: options held/stated in decisions described/shown  turn: target to of go, put/held/stated  turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
     %s  vector       not described: the entry test.halt derives no graph
 """
 CROSSED_ROW = dict(
     turn=dict(
-        decisions=3,
+        decisions=4,
+        described=3,
         options=5,
+        held=5,
+        left=[],
         fields={
-            FIELDS[0]: tallying(5, 4, 1, 0, 0, 1, NEVER),
-            FIELDS[1]: tallying(3, 2, 1, 0, 0, 1, NEVER),
-            FIELDS[2]: tallying(2, 2, 0, 0, 0, 0),
-            FIELDS[3]: tallying(0, 0, 0, 0, None, None),
-            FIELDS[4]: tallying(2, 2, 0, 0, 0, 1),
-            FIELDS[5]: tallying(3, 2, 1, 0, 0, 0, NEVER),
+            FIELDS[0]: owned(5, 5, 5),
+            FIELDS[1]: roled(3, 3, 3, 3, 2, 0, 1, NEVER),
+            FIELDS[2]: roled(2, 2, 2, 4, 4, 0, 0),
+            FIELDS[3]: roled(0, 0, 0, 0, 0, None, None),
+            FIELDS[4]: roled(2, 2, 2, 2, 2, 0, 1),
+            FIELDS[5]: owned(3, 3, 3),
         },
     )
 )
+STEPPED_ROW = dict(CROSSED_ROW["turn"], fields=dict(CROSSED_ROW["turn"]["fields"], **{FIELDS[1]: roled(3, 3, 3, 3, 3, 0, 1)}))
 
 
 def over_search(bank, configs, stated):
@@ -2037,8 +2223,7 @@ def over_search(bank, configs, stated):
         if len(held) == 2:
             row["reason"] = held[1]
         else:
-            fields = dict(zip(GO, held[1]))
-            row.update(graphs=2, tasks=dict(turn=dict(decisions=4, options=13, fields=fields)), cuts=held[2])
+            row.update(graphs=2, tasks=dict(turn=held[1]), cuts=held[2])
         rows.append(row)
     stored = read_json(bank / "manifest.json")["stored_sha256"]
     result = dict(version=describing.VERSION, stored_sha256=stored, fields=dict(turn=list(GO)), trials=rows)
@@ -2144,10 +2329,13 @@ def test_a_second_call_reads_the_file_of_the_table_and_a_search_that_gains_a_tri
 CROSSED_OVER = """reach over 3 trials on the bank stored as %s, described at version %d
 described 2, of 1 variants and realisations; not described 1
 one row per trial, in the order of the trials; %s
-    trial  variant     realisation  turn: options in decisions  turn: kind                                    turn: target to of go                         turn: target along of go  turn: target made of go  turn: target by of stay  turn: parameter speed of go              nothing left at the steps of tasks
-    0      %s  vector       5 in 3                      4/5, hops 0 to 1, apart 1, cut by no entry 1  2/3, hops 0 to 1, apart 1, cut by no entry 1  2/2, hops 0               held by none             2/2, hops 0 to 1         2/3, hops 0, apart 1, cut by no entry 1  none
-    1      %s  vector       5 in 3                      4/5, hops 0 to 1, apart 1, cut by no entry 1  2/3, hops 0 to 1, apart 1, cut by no entry 1  2/2, hops 0               held by none             2/2, hops 0 to 1         2/3, hops 0, apart 1, cut by no entry 1  none
+    trial  variant     realisation  turn: options held/stated in decisions described/shown  turn: kind, put/held/stated  turn: target to of go, put/held/stated                     turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: target by of stay, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
+    0      %s  vector       5/5 in 3/4                                              5/5/5                        3/3/3, joined 2/3, hops 0 to 1, no path cut by no entry 1  2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
+    1      %s  vector       5/5 in 3/4                                              5/5/5                        3/3/3, joined 2/3, hops 0 to 1, no path cut by no entry 1  2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
     2      -           -            not described: the seed of the configuration is 6 and the seed of the statement is 5
+"""
+STEPPED_OVER = """    trial  variant     realisation  turn: options held/stated in decisions described/shown  turn: kind, put/held/stated  turn: target to of go, put/held/stated  turn: target along of go, put/held/stated  turn: target made of go, put/held/stated  turn: target by of stay, put/held/stated  turn: parameter speed of go, put/held/stated  nothing left at the steps of tasks
+    0      %s  stepped      5/5 in 3/4                                              5/5/5                        3/3/3, joined 3/3, hops 0 to 1          2/2/2, joined 4/4, hops 0                  stated by none                            2/2/2, joined 2/2, hops 0 to 1            3/3/3                                         none
 """
 
 
@@ -2184,11 +2372,166 @@ def test_a_plain_list_of_configurations_is_described_beside_its_bank_and_variant
 
 def test_a_trial_under_an_edit_on_a_bank_whose_relations_hold_no_column_has_its_row_in_the_table(crossed, walking):
     started = time.perf_counter()
-    record = reach_over(crossed, [lined(crossed, THINNER, KEPT, "stepped")], STATED)
-    (row,) = record["trials"]
-    assert (row["reason"], row["realisation"], row["graphs"]) == (None, "stepped", 1)
-    assert (row["tasks"]["turn"]["decisions"], row["tasks"]["turn"]["options"]) == (3, 5)
+    config = lined(crossed, THINNER, KEPT, "stepped")
+    record = reach_over(crossed, [config], STATED)
+    key = keyed(crossed, config)
+    row = dict(trial=0, variant=key, realisation="stepped", reason=None, graphs=1, tasks=dict(turn=STEPPED_ROW), cuts=[])
+    assert record["trials"] == [row]
+    assert reaches.text(record).split("\n", 3)[3] == STEPPED_OVER % key[:10]
     LOG.info("descriptions reach over an edit without columns exit seconds=%.3f", time.perf_counter() - started)
+
+
+@timed("descriptions.plain")
+def plain(value):
+    return np.asarray(value.value if isinstance(value, Host) else value)
+
+
+def grouped(held, cfg, partition):
+    started = time.perf_counter()
+    blocks = windows(held, held.blocks(partition, cfg["graph"]["time/history"], cfg), cfg)
+    result = batching.batches(blocks, len(blocks), held.sizes(cfg), None, frame_budget=1024) if blocks else []
+    LOG.debug("descriptions grouped exit partition=%d batches=%d seconds=%.4f", partition, len(result), time.perf_counter() - started)
+    return result
+
+
+def batched(held, cfg, name, partition):
+    started = time.perf_counter()
+    found, registry, schema = offered(held), held.fitted(cfg), held.registry.schema
+    columns, kinds, reads = schema.parameters(), list(schema.tasks["kinds"]), REALISATIONS.named(name).reads
+    fields = {task: [field for field in heads.fielded(schema, task) if field["sort"] in reads] for task in schema.decided()}
+    stated, kept = set(), {}
+    for group in grouped(held, cfg, partition):
+        b = batching.recipe_batch(held, group, cfg)
+        rows = np.r_[plain(b["rows"]), plain(b["drawn"])][plain(b["placed"])]
+        decided = dict(zip(plain(b["point_row"]).tolist(), found.decision[rows].tolist()))
+        for decision in {decision for decision in decided.values() if decision >= 0}:
+            stated |= set(range(int(found.first[decision]), int(found.first[decision] + found.count[decision])))
+        options = b["options"]
+        owner, acted, values = (plain(options[part]) for part in ("action_option", "action_kind", "action_values"))
+        roled, codes = plain(options["role_action"]), plain(options["role_code"])
+        for at, (row, content) in enumerate(zip(plain(options["row"]).tolist(), plain(options["content"]).tolist())):
+            first, count = int(found.first[decided[row]]), int(found.count[decided[row]])
+            (option,) = [first + place for place in range(count) if int(found.option["content"][first + place]) == content]
+            acts = np.flatnonzero(owner == at)
+            aimed, held_fields = codes[np.isin(roled, acts)], set()
+            for field in fields[kinds[int(found.option["kind"][option])]]:
+                if field["sort"] == "kind":
+                    holds = len(acts) > 0
+                elif field["sort"] == "targets":
+                    holds = bool((aimed == field["code"]).any())
+                else:
+                    assert registry.encoding.sizes[field["column"]][1] == 1
+                    flag = slots(registry.encoding, columns, field["column"])[-1]
+                    holds = bool(((acted[acts] == field["code"]) & (values[acts, flag] > 0)).any())
+                if holds:
+                    held_fields.add(field["name"])
+            kept[option] = held_fields
+    LOG.debug("descriptions batched exit options=%d held=%d seconds=%.4f", len(stated), len(kept), time.perf_counter() - started)
+    return stated, kept
+
+
+def branched(held, cfg, partition):
+    started = time.perf_counter()
+    registry, result = held.fitted(cfg), {}
+    with forks.Forks(held):
+        for group in grouped(held, cfg, partition):
+            kept = set(plain(batching.recipe_batch(held, group, cfg)["options"]["option"]).tolist())
+            for part in [part for part, *_ in batching.parted(held, group, cfg) if part.option >= 0]:
+                fork, seen = held.resident(part, cfg, "cpu"), {}
+                entity, tokens = fork.numpy("entity").astype(np.int64), fork.numpy("entity_token")
+                rows = np.flatnonzero(fork.numpy("spatial_step") == part.step)
+                for at, (source, target, code) in zip(rows.tolist(), fork.numpy("spatial")[rows].tolist()):
+                    place = int(registry.value_group[code])
+                    columns = registry.attributes(registry.valued[place]) if place >= 0 else ()
+                    table = fork.numpy("attributes_" + registry.valued[place]) if place >= 0 else None
+                    values = table[int(fork.numpy("spatial_attribute_row")[at])] if place >= 0 else ()
+                    key = (int(tokens[entity[source]]), int(tokens[entity[target]]), code)
+                    seen.setdefault(key, set()).update(column for column, value in zip(columns, values) if not np.isnan(value))
+                history = forks.trunk(held, cfg, part.graph, part.step)
+                plan = forks.planned(held, cfg, history, part, forks.ordered(held, part.option))
+                marks = np.r_[reaching.masked(plan.graph.entity_token), reaching.masked([made for made, _ in plan.made])].tolist()
+                facts = []
+                for code, first, second, *_ in plan.facts:
+                    ends = (marks[first], marks[second])
+                    keys = [(*ends, code)] + ([(*ends[::-1], code)] if registry.by_code[code].symmetric else [])
+                    shown = [seen[key] for key in keys if key in seen]
+                    facts.append((bool(shown), sorted(set().union(*shown))))
+                result[part.option] = part.option in kept, facts
+    LOG.debug("descriptions branched exit options=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def said(held, cfg, name):
+    started = time.perf_counter()
+    told = reaching.Reached(held, cfg, name)
+    last, result = len(told.steps), {}
+    for group in held.graphs(cfg):
+        for decision in told.decided(told.derived(None, last, group), group):
+            for option in told.optioned(decision):
+                found = told.read(None, last, decision, option)
+                put = {field for field, entry in found["fields"].items() if entry is not None and entry["put"]}
+                facts = None
+                if told.entry.back:
+                    facts = [(fact["held"], sorted(fact["valued"])) for fact in told.edits(None, last, decision, option)[0]]
+                result[option] = found["held"], put, facts
+            told.decision_done()
+        told.group_done()
+    LOG.debug("descriptions said exit options=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def agreeing(held, cfg, name, partitions):
+    started = time.perf_counter()
+    told, counts = said(held, cfg, name), dict(stated=0, held=0, put=0, facts=0, shown=0)
+    for partition in partitions:
+        if REALISATIONS.named(name).back:
+            packed = branched(held, cfg, partition)
+            assert {option: (told[option][0], told[option][2]) for option in packed} == packed
+            stated, kept = set(packed), {option for option, (found, _) in packed.items() if found}
+            counts["facts"] += sum(len(facts) for _, facts in packed.values())
+            counts["shown"] += sum(found for _, facts in packed.values() for found, _ in facts)
+        else:
+            stated, kept = batched(held, cfg, name, partition)
+            assert {option for option in stated if told[option][0]} == set(kept)
+            assert {option: told[option][1] for option in kept} == kept
+        counts["stated"] += len(stated)
+        counts["held"] += len(kept)
+        counts["put"] += sum(len(told[option][1]) for option in kept)
+    LOG.info("descriptions agreeing exit realisation=%s counts=%s seconds=%.3f", name, counts, time.perf_counter() - started)
+    return counts
+
+
+EDGED = {
+    "edges/direction": "inverse",
+    "edges/near/drop": 0.0,
+    "edges/near/persistence": 1,
+    "edges/near/cap": 0,
+    "edges/base/drop": 0.0,
+    "edges/base/persistence": 2,
+    "edges/base/cap": 0,
+}
+LASTING = [dict(operation="graphspec.edges", parameters=EDGED)]
+BESIDE_HELD = dict(stated=13, held=12, put=24, facts=0, shown=0)
+PACKED = (
+    ("vector", None, BESIDE_HELD),
+    ("action_nodes", None, BESIDE_HELD),
+    ("actor_edge", None, BESIDE_HELD),
+    ("set_edge", None, BESIDE_HELD),
+    ("grounded", LASTING, dict(stated=13, held=10, put=12, facts=17, shown=12)),
+)
+
+
+def test_reach_says_of_every_option_and_field_what_the_batches_and_forks_a_fit_packs_hold_under_each_realisation(
+    bank, cutting, walking
+):
+    started = time.perf_counter()
+    held = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
+    for name, pipeline, counts in PACKED:
+        model = dict(MODEL, **{"options/realisation": name}, **({"options/depth": 1} if REALISATIONS.named(name).structure else {}))
+        stated = pipelined(CUTTING) if pipeline is None else pipeline
+        config = configuration(bank, model, None, pipeline=stated, graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+        assert agreeing(held, config, name, (0, 1)) == counts, name
+    LOG.info("descriptions reach against the packing exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_reach_over_a_search_stops_naming_a_folder_without_a_plan_a_plan_of_another_bank_and_a_set_that_is_no_list(

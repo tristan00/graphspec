@@ -1,13 +1,14 @@
 import logging
 import time
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 
 from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from tuning.bank.bank import ROWS
-from tuning.bank.forks import UNMOVED, Forks, Part, shown
+from tuning.bank.forks import UNMOVED, Forks, Part, left, shown
 from tuning.bank.options import offered
 from tuning.families.heads import FIELD, realisation
 from tuning.families.model_spec import realised
@@ -255,7 +256,7 @@ def branched(bank, blocks, offsets, cfg):
         part = block[0]
         if not isinstance(part, Part) or part.option < 0:
             continue
-        if part.move == UNMOVED and found.actions[1][part.option] and not shown(bank, cfg, part):
+        if part.move == UNMOVED and left(found, part.option, partial(shown, bank, cfg, part)):
             lost.append((at, part.option))
             continue
         chosen.append((at, part, decisions.setdefault((part.graph, part.place), len(decisions))))

@@ -23,19 +23,28 @@ SHOWN = 10
 READING = (
     "variant: the first %d characters of the key of the variant of the trial, trials of one key and one realisation "
     "being described once; realisation: the realisation of options the model of the trial states; per kind of task "
-    "that decides: its options in its decisions holding a point, then per field of the content of its options, the "
-    "options whose field is connected to a reference of their task at its step over the options holding the field, "
-    "the fewest and the most hops of those connected, those in which it is apart, held and joined to no reference, "
-    "those in which it is absent, not held at the step, and the entries of the pipeline after which the field of "
-    "those not connected stops being connected, each with its options, no entry where it is connected in no state, "
-    "the view before the first entry included; unread: a field of a sort the realisation does not read; held by "
-    "none: a field no option holds; nothing left at the steps of tasks: the entries of the pipeline that leave no "
-    "node of a kind or no edge of a relation at the steps of the tasks of a kind of task where one was held before "
-    "them, each with the graphs of the view in which it does over the graphs of the view; not described: in place of "
-    "the columns of a trial, what its statement refuses of its configuration, what the trial lacks, or what stopped "
-    "the derivation of its variant, with no variant and no realisation where its statement names none; the settings "
-    "under which a field comes back are in the reach of one trial, which the verb describe --reach prints for the "
-    "bank and the config.json and statement.json of the trial" % SHOWN
+    "that decides, options held/stated in decisions described/shown: the options the batches of a fit of the trial "
+    "hold, by the rule that packs them, over the options stated by the decisions described, those of which an option "
+    "holds a point, over the decisions the graphs of the view show; an option a fit leaves out is put before no "
+    "model, and after left out come the entries of the pipeline after which a fit stops holding such options, each "
+    "with its options, no entry where a fit holds them in no state, the view before the first entry included; then "
+    "per field of the content of its options, put/held/stated: the options to which the field is put before the "
+    "model, of those a fit holds, of those stating the field; beside the variant every field of an option a fit holds "
+    "is put before the model, a kind, a parameter and an element an action creates with the option itself and a node "
+    "or an edge as the target the variant holds; under an edit a field is put before the model only as the facts the "
+    "edit makes of it, where the option's own fork holds one, and after not put come the entries after which it stops "
+    "being put before the model, each with its options; for a role, joined: the targets the graph the family reads, "
+    "the variant or under an edit the option's own fork, joins to a reference of their task at its step, over the "
+    "targets of the role in the options a fit holds, with the fewest and the most hops, which a model does not need "
+    "to read a target beside the variant; and after no path the entries after which the targets that graph holds and "
+    "joins to no reference stop being joined, each with its targets; unread: a field of a sort the realisation does "
+    "not read; stated by none: a field no option states; nothing left at the steps of tasks: the entries of the "
+    "pipeline that leave no node of a kind or no edge of a relation at the steps of the tasks of a kind of task where "
+    "one was held before them, each with the graphs of the view in which it does over the graphs of the view; not "
+    "described: in place of the columns of a trial, what its statement refuses of its configuration, what the trial "
+    "lacks, or what stopped the derivation of its variant, with no variant and no realisation where its statement "
+    "names none; the settings under which an option, a field or a target comes back are in the reach of one trial, "
+    "which the verb describe --reach prints for the bank and the config.json and statement.json of the trial" % SHOWN
 )
 
 
@@ -68,42 +77,65 @@ def severed(reached, group, states, cuts):
     return len(told)
 
 
+@timed("reaches.stopping")
+def stopping(reached, decision, option, site, found):
+    place = reached.stopped(decision, option, site)
+    found[place] = found.get(place, 0) + 1
+
+
 def tallied(reached, decision, task):
     started = time.perf_counter()
     options, last = reached.optioned(decision), len(reached.steps)
-    task["decisions"] += 1
+    task["described"] += 1
     task["options"] += len(options)
     for option in options:
-        for name, held in reached.read(None, last, decision, option).items():
+        held = reached.read(None, last, decision, option)
+        task["held"] += held["held"]
+        if not held["held"]:
+            stopping(reached, decision, option, (reaching.HELD,), task["left"])
+        for name, field in held["fields"].items():
             cell = task["fields"][name]
+            cell["stated"] += 1
+            if field is None:
+                continue
             cell["held"] += 1
-            cell[held["state"]] += 1
-            if held["state"] == reaching.CONNECTED:
-                cell["hops"].append(held["hops"])
-            else:
-                place = reached.stopped(decision, option, name)
-                cell["cut"][place] = cell["cut"].get(place, 0) + 1
+            cell["put"] += field["put"]
+            if not field["put"]:
+                stopping(reached, decision, option, (reaching.PUT, name, None), cell["unput"])
+            for place, target in enumerate(field["targets"]) if "targets" in field else ():
+                cell["targets"] += 1
+                if target["state"] == reaching.JOINED:
+                    cell["hops"].append(target["hops"])
+                elif target["state"] == reaching.UNJOINED:
+                    stopping(reached, decision, option, (reaching.JOINED, name, place), cell["parted"])
     LOG.debug("reaches tallied exit decision=%d options=%d seconds=%.4f", decision["key"], len(options), time.perf_counter() - started)
+
+
+@timed("reaches.cutting")
+def cutting(found, steps, part):
+    return [
+        {
+            "entry": None if place is None else steps[place].name,
+            "operation": None if place is None else steps[place].operation.name,
+            part: count,
+        }
+        for place, count in sorted(found.items(), key=lambda pair: len(steps) if pair[0] is None else pair[0])
+    ]
 
 
 @timed("reaches.counted")
 def counted(cell, steps):
-    cut = sorted(cell["cut"].items(), key=lambda pair: len(steps) if pair[0] is None else pair[0])
+    aimed = cell["role"]
     return dict(
+        stated=cell["stated"],
         held=cell["held"],
-        connected=cell[reaching.CONNECTED],
-        apart=cell[reaching.APART],
-        absent=cell[reaching.ABSENT],
+        put=cell["put"],
+        unput=cutting(cell["unput"], steps, "options"),
+        targets=cell["targets"] if aimed else None,
+        joined=len(cell["hops"]) if aimed else None,
         least=min(cell["hops"]) if cell["hops"] else None,
         most=max(cell["hops"]) if cell["hops"] else None,
-        cut=[
-            dict(
-                entry=None if place is None else steps[place].name,
-                operation=None if place is None else steps[place].operation.name,
-                options=options,
-            )
-            for place, options in cut
-        ],
+        parted=cutting(cell["parted"], steps, "targets") if aimed else None,
     )
 
 
@@ -114,9 +146,12 @@ def summed(deriver, config, name):
     tasks = {
         task: dict(
             decisions=0,
+            described=0,
             options=0,
+            held=0,
+            left={},
             fields={
-                field["name"]: {"held": 0, reaching.CONNECTED: 0, reaching.APART: 0, reaching.ABSENT: 0, "hops": [], "cut": {}}
+                field["name"]: dict(role=field["sort"] == "targets", stated=0, held=0, put=0, unput={}, targets=0, hops=[], parted={})
                 if field["sort"] in reached.entry.reads
                 else None
                 for field in fielded(schema, task)
@@ -128,6 +163,9 @@ def summed(deriver, config, name):
     for group in deriver.graphs(config):
         states = [reached.derived(None, count, group) for count in range(len(steps) + 1)]
         graphs += severed(reached, group, states, cuts)
+        for shown in reached.counted(states[-1], group).values():
+            for task, count in shown.items():
+                tasks[task]["decisions"] += count
         for decision in reached.decided(states[-1], group):
             tallied(reached, decision, tasks[reached.registry.tasks[decision["kind"]]])
             reached.decision_done()
@@ -138,6 +176,7 @@ def summed(deriver, config, name):
         tasks={
             task: dict(
                 held,
+                left=cutting(held["left"], steps, "options"),
                 fields={field: None if cell is None else counted(cell, steps) for field, cell in held["fields"].items()},
             )
             for task, held in tasks.items()
@@ -266,26 +305,38 @@ def heads(fields):
     held = [
         head
         for task, names in fields.items()
-        for head in ["%s: options in decisions" % task] + ["%s: %s" % (task, name) for name in names]
+        for head in ["%s: options held/stated in decisions described/shown" % task]
+        + ["%s: %s, put/held/stated" % (task, name) for name in names]
     ]
     return ["variant", "realisation"] + held + ["nothing left at the steps of tasks"]
+
+
+@timed("reaches.cut_by")
+def cut_by(found, part):
+    return "cut by " + " and ".join("%s %d" % ("no entry" if held["entry"] is None else held["entry"], held[part]) for held in found)
+
+
+@timed("reaches.task_cell")
+def task_cell(held):
+    result = "%d/%d in %d/%d" % (held["held"], held["options"], held["described"], held["decisions"])
+    return result + (", left out %s" % cut_by(held["left"], "options") if held["left"] else "")
 
 
 @timed("reaches.field_cell")
 def field_cell(cell):
     if cell is None:
         return "unread"
-    if not cell["held"]:
-        return "held by none"
-    parts = ["%d/%d" % (cell["connected"], cell["held"])]
-    if cell["connected"]:
+    if not cell["stated"]:
+        return "stated by none"
+    parts = ["%d/%d/%d" % (cell["put"], cell["held"], cell["stated"])]
+    if cell["unput"]:
+        parts.append("not put %s" % cut_by(cell["unput"], "options"))
+    if cell["targets"]:
+        parts.append("joined %d/%d" % (cell["joined"], cell["targets"]))
+    if cell["least"] is not None:
         parts.append("hops %d" % cell["least"] if cell["least"] == cell["most"] else "hops %d to %d" % (cell["least"], cell["most"]))
-    parts += ["%s %d" % (name, cell[name]) for name in (reaching.APART, reaching.ABSENT) if cell[name]]
-    if cell["cut"]:
-        parts.append(
-            "cut by "
-            + " and ".join("%s %d" % ("no entry" if held["entry"] is None else held["entry"], held["options"]) for held in cell["cut"])
-        )
+    if cell["parted"]:
+        parts.append("no path %s" % cut_by(cell["parted"], "targets"))
     return ", ".join(parts)
 
 
@@ -305,7 +356,7 @@ def cells(row, fields):
     if row["reason"] is None:
         for task, names in fields.items():
             held = row["tasks"][task]
-            result.append("%d in %d" % (held["options"], held["decisions"]))
+            result.append(task_cell(held))
             result += [field_cell(held["fields"][name]) for name in names]
         result.append(cut_cell(row["cuts"], row["graphs"]))
     else:
