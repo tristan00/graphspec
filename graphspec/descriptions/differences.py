@@ -6,7 +6,6 @@ import numpy as np
 
 from graphspec.infra.timing import timed
 from graphspec.operations.difference import valued
-from graphspec.operations.rows import fact_keys
 from graphspec.schema.declaration import Registry
 
 from . import describe as truth
@@ -85,27 +84,31 @@ def tokens(graph):
 
 @timed("differences.numbered")
 def numbered(*tables):
-    inverse = np.unique(np.concatenate(tables), axis=0, return_inverse=True)[1].reshape(-1)
+    inverse = np.unique(truth.packed(np.concatenate(tables).T), return_inverse=True)[1].reshape(-1)
     bounds = np.cumsum([0] + [len(held) for held in tables])
     return [inverse[low:high] for low, high in zip(bounds[:-1], bounds[1:])]
 
 
 @timed("differences.distinct")
 def distinct(registry, facts):
-    return facts[np.unique(fact_keys(registry, facts.T)[0], return_index=True)[1]]
+    return facts[np.unique(truth.met(registry, facts)[0], return_index=True)[1]]
+
+
+@timed("differences.single")
+def single(rows):
+    return rows[np.unique(truth.packed(rows.T), return_index=True)[1]]
 
 
 @timed("differences.unmatched")
 def unmatched(registry, first, second):
-    mine, theirs = fact_keys(registry, first.T, second.T)
+    mine, theirs = truth.met(registry, first, second)
     return ~np.isin(mine, theirs), ~np.isin(theirs, mine)
 
 
 @timed("differences.compared")
 def compared(first, second):
-    _, inverse = np.unique(np.concatenate((first, second)), axis=0, return_inverse=True)
-    inverse = inverse.reshape(-1)
-    mine, theirs = inverse[: len(first)], inverse[len(first) :]
+    keys = truth.packed(np.concatenate((first, second)).T)
+    mine, theirs = keys[: len(first)], keys[len(first) :]
     return ~np.isin(mine, theirs), ~np.isin(theirs, mine)
 
 
@@ -184,14 +187,12 @@ def kinded(sides, numbers, kinds, times):
     counts = []
     for anchored in (False, True):
         held = [key[side["anchored"] == anchored] for key, side in zip(keys, sides)]
-        counts += [
-            counted(np.unique(table[alone], axis=0), len(times), len(kinds)) for table, alone in zip(held, compared(*held))
-        ]
+        counts += [counted(single(table[alone]), len(times), len(kinds)) for table, alone in zip(held, compared(*held))]
     values = valued(*[(side["values"], side["valued"]) for side in sides])
     wide = [np.c_[key, value][~side["anchored"]] for key, value, side in zip(keys, values, sides)]
     alone, unlike = compared(*[held[:, :3] for held in wide]), compared(*wide)
     both = [held[~apart & other, :3] for held, apart, other in zip(wide, alone, unlike)]
-    counts.append(counted(np.unique(np.concatenate(both), axis=0), len(times), len(kinds)))
+    counts.append(counted(single(np.concatenate(both)), len(times), len(kinds)))
     declared = {name for side in sides for name in side["registry"].declared}
     observed = set(np.unique(np.concatenate(keys)[:, 1]).tolist())
     found, equal = {}, 0

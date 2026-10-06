@@ -33,7 +33,7 @@ from graphspec.operations import nodes as filtering
 from graphspec.operations import parameters as specs
 from graphspec.operations.operation import Need
 from graphspec.operations.parameters import choice, equals, number
-from graphspec.operations.rows import made_rows
+from graphspec.operations.rows import fact_keys, made_rows
 from graphspec.representations import groups as representing
 from graphspec.schema.schema import VERSION as SCHEMA
 from graphspec.schema.time import ALWAYS as EARLIEST
@@ -55,7 +55,7 @@ from tuning.descriptions import reach as reaching
 from tuning.descriptions import reaches
 from tuning.descriptions import restated as restating
 from tuning.descriptions import variant as varying
-from tuning.families import heads
+from tuning.families import heads, model_spec
 from tuning.families.options import slots
 from tuning.families.periods import blocks as windows
 from tuning.statement import VERSION as STATEMENT
@@ -5447,3 +5447,61 @@ def test_the_texts_of_a_variant_and_of_a_difference_are_bounded_as_that_of_a_tru
     assert [line.split()[0] for line in lines[4:16]] == [str(moment) for moment in (*range(100, 111), 149)]
     assert lines[16] == LONG_DIFFERENCE.split("\n")[14]
     LOG.info("descriptions bounded variant and difference exit seconds=%.3f", time.perf_counter() - started)
+
+
+BEGUN_WITH, BEGIN = [], effect.begun
+
+
+@timed("descriptions.begun_with")
+def begun_with(members, beside, registry, steps, spec, groups, seed, limits, partitions, room):
+    BEGUN_WITH.append(tuple(groups))
+    return BEGIN(members, beside, registry, steps, spec, groups, seed, limits, partitions, room)
+
+
+@timed("descriptions.alike")
+def alike(keys):
+    return (keys[:, None] == keys[None, :]).tolist()
+
+
+def test_rows_are_met_as_one_integer_whatever_their_range_and_a_variant_is_described_without_its_representations(
+    bank, cutting, monkeypatch
+):
+    started = time.perf_counter()
+    rng = np.random.default_rng(3)
+    far = rng.integers(-(1 << 62), 1 << 62, 60)
+    rows = np.stack((rng.integers(0, 4, 60), far, rng.integers(0, 3, 60) * (1 << 61), far[::-1], rng.integers(0, 2, 60)), 1)
+    rows = np.concatenate((rows, rows[:20], rows[40:]))
+    assert alike(describing.packed(rows.T)) == alike(np.unique(rows, axis=0, return_inverse=True)[1].reshape(-1))
+    assert len(np.unique(describing.packed(rows.T))) == 60 and describing.packed(rows[:0].T).tolist() == []
+    first, second = rows[:50, :3], rows[30:, :3]
+    stacked = np.unique(np.concatenate((first, second)), axis=0, return_inverse=True)[1].reshape(-1)
+    apart = (~np.isin(stacked[:50], stacked[50:])).tolist(), (~np.isin(stacked[50:], stacked[:50])).tolist()
+    assert [found.tolist() for found in differing.compared(first, second)] == list(apart) and sum(apart[0]) == 10
+    assert [alike(found) for found in differing.numbered(first, second)] == [alike(stacked[:50]), alike(stacked[50:])]
+    registry = Registry.from_declaration(read_json(bank / "manifest.json")["spec"])
+    assert registry.by_name["near"].symmetric and not registry.by_name["base"].symmetric
+    codes = np.asarray([registry.code("near"), registry.code("base")], np.int64)
+    facts = np.stack((rng.integers(0, 3, 200), codes[rng.integers(0, 2, 200)], rng.integers(0, 6, 200), rng.integers(0, 6, 200)), 1)
+    turned = facts[rng.permutation(200)[:120]][:, [0, 1, 3, 2]]
+    met = facts[np.unique(fact_keys(registry, facts.T)[0], return_index=True)[1]]
+    assert differing.distinct(registry, facts).tolist() == met.tolist() and 30 < len(met) < 200
+    for held in ((facts, turned), (np.c_[facts, rng.integers(-1, 2, 200)], np.c_[turned, rng.integers(-1, 2, 120)])):
+        mine, theirs = fact_keys(registry, *[table.T for table in held])
+        alone = (~np.isin(mine, theirs)).tolist(), (~np.isin(theirs, mine)).tolist()
+        assert [found.tolist() for found in differing.unmatched(registry, *held)] == list(alone) and 0 < sum(alone[0]) < 200
+    monkeypatch.setattr(effect, "begun", begun_with)
+    deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
+    model = model_spec.configured(deriver.registry, dict(MODEL, view="event_graph", **{"options/realisation": "vector"}))
+    graph = specs.configured(specs.settings(deriver.registry, model_spec.groups(model)), SETTINGS)
+    config = configuration(bank, model, None, pipeline=pipelined(CUTTING), graph=graph, seed=STATED["seed"], splits=SPLITS)
+    chosen = tuple(deriver.stated(config)[3])
+    assert len(chosen) > 0 and tuple(deriver.stated(configured(bank, CUTTING))[3]) == ()
+    BEGUN_WITH.clear()
+    assert varying.recorded(deriver, config, keyed(bank, config))["graphs"] == [VARIED, VARIED_SECOND]
+    assert len(BEGUN_WITH) >= 8 and set(BEGUN_WITH) == {()}
+    BEGUN_WITH.clear()
+    assert [name for name, _, _, _, _ in diverging.ended(deriver, config)] == ["g0", "g1"] and BEGUN_WITH == [(), ()]
+    BEGUN_WITH.clear()
+    reaching.Reached(deriver, config, "vector").derived(None, 3, 0)
+    assert BEGUN_WITH == [chosen]
+    LOG.info("descriptions keys and prefixes exit seconds=%.3f", time.perf_counter() - started)

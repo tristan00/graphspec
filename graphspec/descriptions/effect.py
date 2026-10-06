@@ -9,7 +9,19 @@ from graphspec.operations.operation import Stored
 from graphspec.operations.pipeline import called
 from graphspec.operations.sets import PARAMETER
 
-from .describe import CHOSEN, NAMED, SHOWN, counts, kept_text, lasted, over, several, table, viewed_text
+from .describe import (
+    CHOSEN,
+    NAMED,
+    SHOWN,
+    counts,
+    kept_text,
+    lasted,
+    over,
+    packed,
+    several,
+    table,
+    viewed_text,
+)
 from .differences import compared, counted, distinct, numbered, tokens, unmatched
 
 LOG = logging.getLogger(__name__)
@@ -61,11 +73,9 @@ def ended(members, beside, registry, steps, spec, groups, seed, limits, partitio
 
 
 @timed("effect.nodes")
-def nodes(graph):
+def nodes(graph, number):
     entity = np.asarray(graph.obs_entity, np.int64)
-    keys = np.stack(
-        (np.asarray(graph.obs_step, np.int64), np.asarray(graph.kinds, np.int64)[entity], tokens(graph)[entity]), 1
-    )
+    keys = np.stack((np.asarray(graph.obs_step, np.int64), np.asarray(graph.kinds, np.int64)[entity], number[entity]), 1)
     return keys, np.asarray(graph.obs_anchor, bool)
 
 
@@ -222,9 +232,11 @@ def filled(graph, registry, low, high, names):
 def altered(earlier, later, apart, size):
     started = time.perf_counter()
     kept = [(keys[~alone], table, reference[~alone]) for (keys, table, reference), alone in zip((earlier, later), apart)]
-    order = [np.lexsort(keys.T[::-1]) for keys, _, _ in kept]
-    rows = [table[reference[chosen]] for (_, table, reference), chosen in zip(kept, order)]
-    differs = (rows[0] != rows[1]).any(1)
+    met = packed(np.concatenate([keys for keys, _, _ in kept]).T)
+    order = [np.argsort(found, kind="stable") for found in (met[: len(kept[0][0])], met[len(kept[0][0]) :])]
+    rows = [reference[chosen] for (_, _, reference), chosen in zip(kept, order)]
+    _, first, pair = np.unique(packed(rows), return_index=True, return_inverse=True)
+    differs = (kept[0][1][rows[0][first]] != kept[1][1][rows[1][first]]).any(1)[pair.reshape(-1)]
     result = np.bincount(kept[0][0][order[0]][differs, 1], minlength=size).tolist()
     LOG.debug("effect altered exit nodes=%d altered=%d seconds=%.4f", len(differs), int(differs.sum()), time.perf_counter() - started)
     return result
@@ -348,7 +360,7 @@ def graphed(name, graphs, found, steps, registry, low, high, kinds):
 def told(graphs, members, registry, steps):
     started = time.perf_counter()
     numbers = numbered(*[np.stack((np.asarray(graph.kinds, np.int64), tokens(graph)), 1) for graph in graphs])
-    found = [nodes(graph) + (edges(graph, registry, number),) for graph, number in zip(graphs, numbers)]
+    found = [nodes(graph, number) + (edges(graph, registry, number),) for graph, number in zip(graphs, numbers)]
     kinds, member = list(registry.nodes), np.asarray(graphs[0].step_graph, np.int64)
     result = []
     for at, graph in enumerate(members):

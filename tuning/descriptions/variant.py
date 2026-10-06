@@ -20,19 +20,19 @@ LOG = logging.getLogger(__name__)
 
 def grouped(deriver, config):
     started = time.perf_counter()
-    _, steps, spec, chosen = deriver.stated(config)
+    _, steps, spec, _ = deriver.stated(config)
     registry, joining, groups = deriver.fitted(config), deriver.joining(config), deriver.graphs(config)
     for index in groups:
         indices = deriver.groups(config)[index] if joining else [index]
         members = [Graph.load(deriver.view(member, config)).dense() for member in indices]
         beside = deriver.seconds(steps, indices, config, False)
-        yield indices, (members, beside, registry, steps, spec, chosen, deriver.seed, deriver.limits(), deriver.partitions(config))
+        yield indices, (members, beside, registry, steps, spec, (), deriver.seed, deriver.limits(), deriver.partitions(config))
     LOG.debug("variant grouped exit groups=%d seconds=%.4f", len(groups), time.perf_counter() - started)
 
 
 def graphed(deriver, config):
     started = time.perf_counter()
-    held, found = Derived(deriver, config), {}
+    held, found = Derived(deriver, config, False), {}
     for group in deriver.graphs(config):
         found.update(zip(held.loaded(group)[0], held.effects(group)))
         held.group_done()

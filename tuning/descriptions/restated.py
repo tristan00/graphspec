@@ -166,9 +166,9 @@ def unviewed(deriver, config):
 
 
 class Derived:
-    def __init__(self, deriver, config):
+    def __init__(self, deriver, config, represented):
         started = time.perf_counter()
-        self.deriver, self.config = deriver, config
+        self.deriver, self.config, self.represented = deriver, config, represented
         self.variants, self.restated, self.lifts, self.members, self.names = {}, {}, {}, {}, {}
         self.derivations, self.graphs, self.arrays, self.histories, self.besides = {}, {}, {}, {}, {}
         self.caches = [self.derivations, self.graphs, self.arrays, self.histories, self.besides]
@@ -258,7 +258,7 @@ class Derived:
             registry,
             steps[:count],
             spec,
-            chosen,
+            chosen if self.represented else (),
             self.deriver.seed,
             self.deriver.limits(),
             self.deriver.partitions(cfg),

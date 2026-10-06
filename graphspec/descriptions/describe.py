@@ -24,7 +24,7 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 27
+VERSION = 28
 DIFFERENCE = "graphspec.difference"
 CODED = 16
 UNWRITTEN = "no file is written for the key"
@@ -33,6 +33,7 @@ BASED = ("part", "beside", "away", "stored")
 AWAY = dict(code="inside a code checkout", volume="on another volume than the runtime home")
 UNNAMED = -1
 LAST = NEVER - 1
+LIMIT = 1 << 62
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
 BEFORE = "before"
 NAMED = dict(
@@ -140,6 +141,35 @@ def keyed(manifest, place):
 def moments(*stamps):
     held = np.concatenate([np.asarray(values, np.int64) for values in stamps])
     return np.unique(held[(held > ALWAYS) & (held < NEVER)])
+
+
+def packed(columns):
+    started = time.perf_counter()
+    key, size = np.zeros(len(columns[0]), np.int64), 1
+    for column in columns:
+        column = np.asarray(column, np.int64)
+        low = int(column.min()) if len(column) else 0
+        span = int(column.max()) - low + 1 if len(column) else 1
+        if size * span >= LIMIT:
+            found, key = np.unique(key, return_inverse=True)
+            key, size = key.reshape(-1), len(found)
+        if size * span >= LIMIT:
+            found, column = np.unique(column, return_inverse=True)
+            column, low, span = column.reshape(-1), 0, len(found)
+        key, size = key * span + (column - low), size * span
+    LOG.debug("describe packed exit rows=%d columns=%d seconds=%.4f", len(key), len(columns), time.perf_counter() - started)
+    return key
+
+
+def met(registry, *tables):
+    started = time.perf_counter()
+    whole = np.concatenate(tables)
+    found, first, place = np.unique(packed(whole[:, 1:4].T), return_index=True, return_inverse=True)
+    (edge,) = fact_keys(registry, (np.zeros(len(first), np.int64), *whole[first, 1:4].T))
+    keys = packed([whole[:, 0], edge[place.reshape(-1)], *whole[:, 4:].T])
+    bounds = np.cumsum([0] + [len(table) for table in tables])
+    LOG.debug("describe met exit rows=%d edges=%d seconds=%.4f", len(whole), len(found), time.perf_counter() - started)
+    return [keys[low:high] for low, high in zip(bounds[:-1], bounds[1:])]
 
 
 def counted(groups, begun, ended, size, places):
@@ -333,7 +363,7 @@ def relations(registry, facts, places, seen, labels):
     source, target = np.asarray(facts.fact_source, np.int64), np.asarray(facts.fact_target, np.int64)
     begun, ended = seen["fact"]
     last, bounds = ended > begun, np.r_[places, np.int64(NEVER)]
-    (edge,) = fact_keys(registry, (np.zeros(len(code), np.int64), code, source, target))
+    (edge,) = met(registry, np.stack((np.zeros(len(code), np.int64), code, source, target), 1))
     piece, opened, closed = ruled(registry, facts, places, seen)
     names = [(table, name) for table in registry.schema.edges for name in registry.encoding.relations[table]]
     placed_at = np.full(registry.relations, -1, np.int64)

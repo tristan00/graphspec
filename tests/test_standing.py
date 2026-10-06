@@ -178,7 +178,7 @@ RECORDED = {
     "views": (79, "b44e5a980fc558c87eb145bc4b189d1b2a3c2b3103630e6f143fd142a5391a50"),
     "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
     "index": (6, "a6ad6b5034763801ebfb30ec58db4be41f482f0ff61717a64e76250e55ce4ec0"),
-    "description": (27, "de7a368927044267e561be3739c12b83453ac31f5b5053c84865783e19070f09"),
+    "description": (28, "640ad03a476e915a226ba711b8ab18b8ca3064f0b1ad763c011a6f7e800d662e"),
     "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
     "sort of reference graph": (1, "24c024a38804e098c970eb76d2c06bb0529d30901259df6aa5e098c9696ca51e"),
     "sort of reference node": (1, "5130e549da2053ab17d7ad3ddb45baaf74b38153c74af98f470f297b7c42489c"),

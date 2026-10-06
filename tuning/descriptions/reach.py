@@ -217,7 +217,7 @@ def traced(walk, names, starts):
 class Reached(Derived):
     def __init__(self, deriver, config, name):
         started = time.perf_counter()
-        super().__init__(deriver, config)
+        super().__init__(deriver, config, True)
         self.name, self.entry = name, realisation(name)
         schema = deriver.registry.schema
         self.found, self.columns = offered(deriver), schema.parameters()
