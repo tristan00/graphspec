@@ -28,6 +28,10 @@ APART = (
     "the score of an option of the kind of task %s differs from its score where it is the only option of its "
     "decision, and the realisation of options %s does not state that it reads the options of a decision together"
 )
+TARGETED = (
+    "the encoding of an option of the kind of task %s changes when the %d targets of its role %s of %s are %s, under "
+    "the realisation of options %s; the targets of a role are a set"
+)
 PLACED = (
     "the score of an option of the kind of task %s changes when the options of its decision are %s, under the "
     "realisation of options %s; permuting the options of a decision permutes their scores"
@@ -359,12 +363,34 @@ class Guard:
                 raise ValueError(PLACED % (self.kinds[int(np.asarray(turning["kind"])[wrong[0]])], name, self.name))
         LOG.debug("guard placed exit options=%d seconds=%.4f", len(decision), time.perf_counter() - started)
 
+    def targeted(self, b, fields, options, actions):
+        started = time.perf_counter()
+        held = b["options"]
+        owner = np.asarray(held["action_option"].cpu(), np.int64)
+        acting, code = (np.asarray(held[name].cpu(), np.int64) for name in ("role_action", "role_code"))
+        group = np.unique(acting * (len(self.roles) + 1) + code, return_inverse=True)[1].reshape(-1)
+        several = np.bincount(group, minlength=1)[group] > 1
+        self.sets += len(np.unique(group[several]))
+        for name, step in ORDERS.items() if several.any() else ():
+            rows = torch.as_tensor(turned(group, step), device=held["role_member"].device)
+            turning = dict(held, role_member=held["role_member"][rows], role_relation=held["role_relation"][rows])
+            with torch.no_grad():
+                again, acted = self.head.options.encoded(dict(fields, targets=fields["targets"][rows]), dict(b, options=turning))
+            same = torch.isclose(again, options, rtol=SUMMED, atol=SUMMED).all(-1).cpu().numpy()
+            np.logical_and.at(same, owner, torch.isclose(acted, actions, rtol=SUMMED, atol=SUMMED).all(-1).cpu().numpy())
+            wrong = [row for row in np.flatnonzero(several).tolist() if not same[owner[acting[row]]]]
+            if wrong:
+                task, action, role, *_ = self.roles[int(code[wrong[0]])]
+                raise ValueError(TARGETED % (task, int((group == group[wrong[0]]).sum()), role, action, name, self.name))
+        LOG.debug("guard targeted exit groups=%d seconds=%.4f", len(np.unique(group[several])), time.perf_counter() - started)
+
     def ordered(self, b, fields, options, actions):
         started = time.perf_counter()
         held = b["options"]
         owner = np.asarray(held["action_option"].cpu(), np.int64)
         count = np.bincount(owner, minlength=len(options))
         sets = ~np.asarray(held["sequence"].cpu(), bool) & (count > 1)
+        self.targeted(b, fields, options, actions)
         if not sets.any():
             LOG.debug("guard ordered exit sets=0 seconds=%.4f", time.perf_counter() - started)
             return
@@ -433,7 +459,7 @@ class Guard:
             for field in fields:
                 held = mine
                 if field["sort"] == "targets":
-                    held = mine & (kind == self.actions.index(self.roles[field["code"]][:2]))
+                    held = mine & np.isin(np.arange(len(owner)), found.role["action"][found.role["code"] == field["code"]])
                 elif field["sort"] == "parameters":
                     values = found.action["values"][:, columns.index(field["column"])]
                     held = mine & (kind == field["code"]) & ~np.isnan(values)
@@ -551,8 +577,8 @@ class Forked(Guard):
         kinds = found.action["kind"][first : first + count]
         result = int(found.option["kind"][option]) == self.kinds.index(task) and count > 0
         if result and field["sort"] == "targets":
-            owner = self.actions.index(self.roles[field["code"]][:2])
-            result = bool((kinds == owner).any())
+            low, high = int(found.roles[0][first]), int(found.roles[0][first + count - 1] + found.roles[1][first + count - 1])
+            result = bool((found.role["code"][low:high] == field["code"]).any())
         elif result and field["sort"] == "parameters":
             column = self.schema.parameters().index(field["column"])
             values = found.action["values"][first : first + count][kinds == field["code"], column]

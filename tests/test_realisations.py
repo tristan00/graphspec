@@ -167,6 +167,16 @@ class Palindrome(Pooled):
         return total / count.clamp_min(1)[:, None], action
 
 
+class Ranked(Pooled):
+    def acted(self, fields, held):
+        key = held["role_action"] * (int(held["role_code"].max()) + 1) + held["role_code"]
+        starts = torch.ones(len(key), dtype=torch.bool)
+        starts[1:] = key[1:] != key[:-1]
+        index = torch.arange(len(key))
+        place = index - torch.cummax(torch.where(starts, index, 0), 0).values
+        return super().acted(dict(fields, targets=fields["targets"] * (1 + place)[:, None]), held)
+
+
 class Realised:
     version = 1
     reads = FIELDS
@@ -213,6 +223,7 @@ REALISED = dict(
     detached=Realised(Detached),
     uniform=Together(Uniform),
     palindrome=Realised(Palindrome),
+    ranked=Realised(Ranked),
 )
 FINITE = "with the moves drawn by the seed 5, the score of no option of the splits scored on changes when its own field %s of the kind of task turn moves by a finite amount, under the realisation of options %s$"
 APART = "the score of an option of the kind of task (turn|show) differs from its score where it is the only option of its decision, and the realisation of options %s does not state that it reads"
@@ -570,6 +581,38 @@ def test_a_set_of_three_actions_gives_the_same_encoding_whichever_two_are_swappe
         with pytest.raises(ValueError, match=stops % (refusal, name)):
             guard.ordered(b, fields, options, actions)
     LOG.info("sets of three exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_guards_read_the_targets_of_a_role_as_a_set_held_by_the_options_naming_one_and_moved_all_at_once(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    with pytest.raises(ValueError, match="^the encoding of an option of the kind of task turn changes when the 2 targets of its role (along of cut|at of put) are swapped, under the realisation of options ranked; the targets of a role are a set$"):
+        guarded(held, "ranked")
+    cfg, net = built(held, "whole")
+    guard = Guard(held, cfg, net, 5)
+    b = packed(held, "whole", 1, graph=PLAIN)[0]
+    fields = guard.head.options.fields(b, captured(net, b)[1])
+    with torch.no_grad():
+        options, actions = guard.head.options.encoded(fields, b)
+    guard.ordered(b, fields, options, actions)
+    found = b["options"]
+    key = found["role_action"].numpy() * len(coded(held.registry.schema)[1]) + found["role_code"].numpy()
+    several = int((np.unique(key, return_counts=True)[1] > 1).sum())
+    count = np.bincount(found["action_option"].numpy(), minlength=len(found["sequence"]))
+    assert several > 0 and guard.sets == int((~found["sequence"].numpy() & (count > 1)).sum()) + several
+    located = {key: rows for key, sort, rows, _, _ in guard.located(found) if sort == "targets"}
+    for role in ("target at of put", "target along of cut"):
+        assert np.bincount(found["role_action"].numpy()[located[("turn", role)]]).max() == 2, role
+    case, holding = synthetic.decisions(GENERATOR), {}
+    for graph in case["graphs"]:
+        for kind, split, target in zip(graph["tasks"]["kind"], graph["tasks"]["split"], graph["tasks"]["target"]):
+            for option in target["options"] if kind == "turn" and split == "validation" else ():
+                named = {"target %s of %s" % (role, action["kind"]) for action in option["actions"] for role, aims in action["targets"].items() if aims}
+                for name in named:
+                    holding[name] = holding.get(name, 0) + 1
+    banked = guard.banked()
+    assert {name: banked[("turn", name)] for name in holding} == holding and holding["target made of put"] < holding["target at of put"]
+    LOG.info("targets in the guards exit seconds=%.3f", time.perf_counter() - started)
 
 
 def test_the_guards_stop_a_fit_whose_splits_scored_on_hold_no_option_naming_them(banks):

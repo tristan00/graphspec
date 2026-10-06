@@ -405,6 +405,13 @@ def test_every_guard_holds_for_an_edit_and_one_refuses_a_field_whose_facts_the_f
             found[spatial] = guard.concluded(0.0)
         except ValueError as error:
             found[spatial] = str(error)
+    offered, fields = forks.offered(held), {field["name"]: field for field in guard.fields["turn"]}
+    created = offered.role["code"] == [code for code, entry in enumerate(guard.roles) if entry[:3] == ("turn", "put", "made")][0]
+    putting = np.unique(offered.action["option"][offered.action["kind"] == guard.actions.index(("turn", "put"))])
+    making = set(offered.action["option"][offered.role["action"][created]].tolist())
+    held_made = {option: guard.holding(option, "turn", fields["target made of put"]) for option in putting.tolist()}
+    assert set(held_made.values()) == {True, False} and {option for option, holds in held_made.items() if holds} == making
+    assert all(guard.holding(option, "turn", fields["target at of put"]) for option in putting.tolist())
     assert found["relational"]["state"] == BACK and found["relational"]["unseen"] == UNSEEN
     assert found["relational"]["sets"] == 0 and found["relational"]["pairs"] > 0 and found["relational"]["share"] == 0.0
     stops = "with the weights drawn by the seed 5, the prediction does not move with the field %s of the kind of task turn for any option of the splits scored on, under the realisation of options edited"
