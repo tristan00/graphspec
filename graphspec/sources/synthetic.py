@@ -1290,7 +1290,7 @@ def turned(moment, place, actors, generator):
     spot, edge_at = SPOTS[(moment + place) % 5], (moment + place) % 4
     along = [SPOTS[edge_at], "near", SPOTS[edge_at + 1]]
     actor = actors[0]
-    made = "m0" if (place, moment, actor) == (0, 3, "a0") else "m%d_%d_%s" % (place, moment, actor)
+    made = "m0" if (place, moment, actor) == (0, 3, "a0") else "m0_%d_%s" % (moment, actor)
     options = [
         offered("wait", [], "set", RECORDED),
         offered("go", [acting("go", actor, dict(to=spot), dict(speed=0.5 * moment + place))], "set", RECORDED),

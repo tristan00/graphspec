@@ -11,6 +11,7 @@ from graphspec.infra.arrays import Resident
 from graphspec.infra.hashing import hashed
 from graphspec.infra.timing import timed
 from graphspec.infra.workspace import MEMORY_BYTES
+from graphspec.schema.decisions import ROLES
 from graphspec.views.graph import Graph
 from tuning.families.heads import coded, realisation
 
@@ -88,6 +89,13 @@ def editing(bank, cfg):
     return name
 
 
+@timed("forks.room")
+def room(bank):
+    found = offered(bank)
+    created = found.sorts[found.role["code"]] == ROLES.index("new")
+    return int(np.bincount(found.action["option"][found.role["action"][created]], minlength=1).max())
+
+
 def begun(bank, cfg, graph):
     started = time.perf_counter()
     _, steps, spec, chosen = bank.variant(cfg)
@@ -96,7 +104,7 @@ def begun(bank, cfg, graph):
     members = [widened(Graph.load(bank.view(member, cfg)).dense(), registry) for member in indices]
     beside = bank.seconds(steps, indices, cfg, False)
     result = Derivation.begun(
-        members, beside, registry, steps, spec, chosen, bank.seed, bank.limits(), bank.partitions(cfg), 0
+        members, beside, registry, steps, spec, chosen, bank.seed, bank.limits(), bank.partitions(cfg), room(bank)
     )
     LOG.debug("forks begun exit graph=%d members=%d seconds=%.4f", graph, len(members), time.perf_counter() - started)
     return result
@@ -156,7 +164,7 @@ def stated(bank, cfg, option, order):
     for action in order:
         low, many = int(found.roles[0][action]), int(found.roles[1][action])
         roles = [
-            (int(found.role["code"][role]), int(found.role["source"][role]), int(found.role["target"][role]))
+            tuple(int(found.role[name][role]) for name in ("code", "source", "target", "element"))
             for role in range(low, low + many)
         ]
         result.append(
@@ -186,22 +194,29 @@ def made(bank, cfg, history, part, order):
     entry, (acts, roles) = realisation(editing(bank, cfg)), coded(registry.schema)
     plan = history.source.plan
     graph = history.source.members[int(np.searchsorted(plan.steps, part.step, "right")) - 1]
-    facts, observed = [], set()
-    for kind, actor, values, held in stated(bank, cfg, part.option, order):
+    actions, created = stated(bank, cfg, part.option, order), {}
+    for _, _, _, held in actions:
+        for code, source, _, element in held:
+            if roles[code][3] == "new" and part.move != ("target", code):
+                created[source] = (min(created[source][0], element) if source in created else element, registry.kind(roles[code][4][0]))
+    made = sorted(set(created.values()))
+    numbered = {source: len(graph.kinds) + made.index(found) for source, found in created.items()}
+    every = np.r_[np.asarray(graph.kinds, np.int64), np.asarray([kind for _, kind in made], np.int64)]
+    facts = []
+    for kind, actor, values, held in actions:
         task, action = acts[kind]
         own = registry.schema.tasks["kinds"][task]["target"]["actions"][action]["parameters"]
-        tokens = [actor] + [token for _, source, target in held for token in (source, target) if token >= 0]
+        tokens = [actor] + [token for code, source, target, _ in held if roles[code][3] != "new" for token in (source, target) if token >= 0]
         known = dict(zip(tokens, entities(graph, tokens).tolist()))
-        for code, source, target in held:
+        for code, source, target, _ in held:
             if part.move == ("target", code):
                 continue
             _, _, role, sort, _ = roles[code]
             mapped = entry.mapping[task][action][role]
-            if sort == "new":
-                observed.add(known[source])
-            for end in [known[source]] + ([known[target]] if sort == "edge" else []):
+            first = numbered[source] if sort == "new" else known[source]
+            for end in [first] + ([known[target]] if sort == "edge" else []):
                 pair = (known[actor], end) if mapped["actor"] == "source" else (end, known[actor])
-                kinds = np.asarray(graph.kinds)[list(pair)]
+                kinds = every[list(pair)]
                 relation = registry.by_name[mapped["relation"]]
                 if part.move == ("kind",):
                     relation = other(registry, entry, relation, kinds)
@@ -209,16 +224,14 @@ def made(bank, cfg, history, part, order):
                     pair = pair[::-1]
                 facts.append((relation.code, pair[0], pair[1], valued(registry, relation.code, kind, values, own, part.move)))
     facts.sort(key=lambda fact: (fact[0], fact[1], fact[2], tuple(np.nan_to_num(fact[3], nan=np.inf).tolist())))
-    observed = sorted(observed)
-    missing = np.full((len(observed), len(view.encoding.layout)), np.nan, np.float32)
-    x = encoded(view, missing, unheld(view, len(observed)), None, lambda row: "the element an option creates")
+    observed = len(graph.kinds) + np.arange(len(made), dtype=np.int64)
+    missing = np.full((len(made), len(view.encoding.layout)), np.nan, np.float32)
+    x = encoded(view, missing, unheld(view, len(made)), None, lambda row: "the element an option creates")
     result = Edit(
-        dict(kind=np.zeros(0, np.int64), token=np.zeros(0, np.uint64)),
+        dict(kind=every[observed], token=np.asarray([found for found, _ in made], np.uint64)),
         dict(observations=dict(entity=[], step=[]), facts=dict(code=[], source=[], target=[], step=[])),
         dict(
-            observations=dict(
-                entity=np.asarray(observed, np.int64), step=np.full(len(observed), part.step, np.int64), x=x
-            ),
+            observations=dict(entity=observed, step=np.full(len(made), part.step, np.int64), x=x),
             facts=dict(
                 source=np.asarray([fact[1] for fact in facts], np.int64),
                 target=np.asarray([fact[2] for fact in facts], np.int64),
@@ -230,10 +243,10 @@ def made(bank, cfg, history, part, order):
         ),
     )
     LOG.debug(
-        "forks made exit option=%d facts=%d observations=%d seconds=%.4f",
+        "forks made exit option=%d facts=%d created=%d seconds=%.4f",
         part.option,
         len(facts),
-        len(observed),
+        len(made),
         time.perf_counter() - started,
     )
     return result

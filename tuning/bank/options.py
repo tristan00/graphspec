@@ -97,6 +97,7 @@ class Offered:
                     decision=located(unique, graph["index"], np.asarray(held["task_key"], np.int64)[task]),
                     sequence=np.asarray(held["option_sequence"], bool),
                     kind=np.asarray(held["task_kind"], np.int64)[task],
+                    decided=hashed(np.full(len(task), token(graph["name"]), np.uint64), np.asarray(held["task_key"], np.int64)[task]),
                 )
             )
             found["action"].append(
@@ -135,6 +136,7 @@ class Offered:
         self.actions = (self.actions[0][order], self.actions[1][order])
         self.action["option"] = inverse[self.action["option"]]
         self.first, self.count = starts(self.option["decision"], len(unique))
+        self.role["element"] = self.elements()
         decision = bank.task_of.astype(np.int64)
         aimed = np.isin([row["kind"] for row in bank.rows], schema.decided())
         self.decision = np.where(aimed & (self.first[decision] >= 0), decision, -1)
@@ -169,10 +171,26 @@ class Offered:
         np.add.at(summed, self.role["action"], role)
         values = np.ascontiguousarray(self.action["values"]).view(np.uint32).astype(np.int64)
         action = hashed(self.action["kind"], summed, *values.T)
+        self.action["content"] = action
         sequence = self.option["sequence"] & (self.actions[1] > 1)
         placed = np.where(sequence[self.action["option"]], hashed(action, self.action["place"]), action)
         total = np.zeros(len(sequence), np.uint64)
         np.add.at(total, self.action["option"], placed)
         result = hashed(sequence.astype(np.int64), total, self.actions[1]).view(np.int64)
         LOG.debug("offered contents exit options=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
+
+    def elements(self):
+        started = time.perf_counter()
+        option, content = self.action["option"], self.action["content"]
+        order = np.lexsort((content, option))
+        held = np.stack((option[order], content[order].view(np.int64)), 1)
+        fresh = np.ones(len(order), bool)
+        fresh[1:] = (held[1:] != held[:-1]).any(1)
+        count = np.empty(len(order), np.int64)
+        count[order] = np.arange(len(order)) - np.maximum.accumulate(np.where(fresh, np.arange(len(order)), 0))
+        action = self.role["action"]
+        owner = option[action]
+        result = hashed(self.option["decided"][owner], self.option["content"][owner], self.role["code"], content[action], count[action])
+        LOG.debug("offered elements exit roles=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result

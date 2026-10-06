@@ -275,7 +275,8 @@ def test_every_decision_reads_back_as_stated_with_its_fields_in_the_type_of_thei
     for name, found in back.items():
         assert support.differing(found, meant[name], schema) == [], name
     assert meant["g0"]["nodes"]["mark"][0] == "m0" and "m0_3_a0" not in meant["g0"]["nodes"]["mark"]
-    assert len(meant["g0"]["nodes"]["mark"]) > 2 and "m1_3_a0" in meant["g1"]["nodes"]["mark"]
+    assert len(meant["g0"]["nodes"]["mark"]) > 2 and "m0_3_a0" in meant["g1"]["nodes"]["mark"]
+    assert set(meant["g0"]["nodes"]["mark"]) - {"m0"} < set(meant["g1"]["nodes"]["mark"])
     truth = Facts.load(held.truth(0))
     dtypes = dict(
         option_shown=np.float64,

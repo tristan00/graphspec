@@ -14,10 +14,13 @@ from test_realisations import PLAIN, SAMPLED, canonical, modelled, varied
 from conftest import SPLITS, inline
 from graphspec.engine.segments import Derivation
 from graphspec.infra.files import read_json
+from graphspec.infra.hashing import token
 from graphspec.infra.timing import timed
+from graphspec.schema.decisions import ROLES
 from tuning import REALISATIONS, Edited
 from tuning.bank import forks
 from tuning.bank.options import READ as OFFERED
+from tuning.bank.options import TOKEN
 from tuning.batches.batching import pack_batch, pack_parts, parted, recipe_batch
 from tuning.batches.tensors import keys, materialise
 from tuning.families import model_spec
@@ -263,6 +266,31 @@ def test_the_options_of_a_decision_are_forks_of_one_history_each_adding_its_fact
             if count
         )
     LOG.info("forks of one history exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_an_element_an_option_creates_reads_in_its_fork_as_no_entity_the_model_sees_elsewhere_chosen_or_not(banks):
+    started = time.perf_counter()
+    held = opened(banks, "stated")
+    cfg = configured(held, "edited", "snapshot")
+    mark, found = held.registry.kind("mark"), forks.offered(held)
+    assert cfg["model"]["keys/embedding"] and held.shared_kinds()[mark]
+    created = found.sorts[found.role["code"]] == ROLES.index("new")
+    elements = dict(zip(found.action["option"][found.role["action"][created]].tolist(), found.role["source"][created].tolist()))
+    chosen, seen, made = token("mark:m0") & TOKEN, set(), {}
+    with forks.Forks(held):
+        for index in held.graphs(cfg):
+            whole = held.resident(index, cfg, "cpu")
+            seen |= set(held.tokens(whole)[np.unique(whole.numpy("entity"))].tolist())
+        blocks = sorted(block for block in held.blocks(0, 2, cfg) if block[0] == 0)
+        parts = {part for part, *_ in parted(held, windows(held, blocks, cfg), cfg) if part.option in elements}
+        for part in sorted(parts, key=lambda part: (part.step, part.option)):
+            fork = held.resident(part, cfg, "cpu")
+            entity, step = fork.numpy("entity"), fork.numpy("step")
+            (element,) = np.unique(entity[(step == part.step) & (fork.numpy("entity_kind")[entity] == mark)]).tolist()
+            made[elements[part.option]] = int(held.tokens(fork)[element])
+    assert chosen in seen and chosen in made and len(made) > 2
+    assert -1 not in made.values() and not set(made.values()) & seen and len(set(made.values())) == len(made)
+    LOG.info("elements of forks exit forks=%d seconds=%.3f", len(made), time.perf_counter() - started)
 
 
 def test_the_chains_and_forks_a_batch_reads_are_released_once_it_is_packed(banks, monkeypatch):
