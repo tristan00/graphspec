@@ -1404,6 +1404,9 @@ KEPT = {
 }
 THINNED = dict(KEPT, **{"nodes/spot/filter": "degree", "nodes/spot/min_degree": 2})
 THINNER = "graphspec.nodes"
+CONTRACTING = "graphspec.contract"
+CONTRACTED = {"contract/grouping": "spot:load", "contract/aggregate": "mean", "contract/parallel": "keep"}
+GROUPED = "contract in place of a0"
 CROSSED_TEXT = """kind of task turn: fields kind, target to of go, target along of go, target made of go, target by of stay, parameter speed of go; not read by the realisation: none
 kinds of task that decide nothing, which hold no option: none
 
@@ -1539,10 +1542,10 @@ def crossed():
     return result
 
 
-@timed("descriptions.noded")
-def noded(bank, parameters, name):
+@timed("descriptions.lined")
+def lined(bank, operation, parameters, name):
     model = dict(MODEL, **{"options/realisation": name})
-    pipeline = [dict(operation="graphspec.nodes", parameters=parameters)]
+    pipeline = [dict(operation=operation, parameters=parameters)]
     return configuration(bank, model, None, pipeline=pipeline, graph=LONE, seed=STATED["seed"], splits=SPLITS)
 
 
@@ -1552,11 +1555,11 @@ def gone(held, cut, features):
 
 
 @timed("descriptions.along")
-def along(aim, target, based):
+def along(aim, target, based, edge, features):
     return {
         FIELDS[0]: dict(HERE, cut=None),
         FIELDS[1]: role(aim, None, (target, aim, LOAD)),
-        FIELDS[2]: role(HERE, None, (based, HERE, LOAD), (BOTH, HERE, LOAD)),
+        FIELDS[2]: role(HERE, None, (based, edge, features), (BOTH, HERE, LOAD)),
         FIELDS[5]: dict(HERE, cut=None),
     }
 
@@ -1566,13 +1569,24 @@ def stayed(held, target):
     return {FIELDS[0]: dict(held, cut=None), FIELDS[4]: role(held, None, (target, held, LOAD))}
 
 
+@timed("descriptions.held_whole")
+def held_whole(lone, near, edge, features):
+    return [
+        lone,
+        stayed(near, "s1"),
+        along(HERE, "s0", "a0 base s0", edge, features),
+        along(near, "s1", "s0 base a0", edge, features),
+        stayed(HERE, "s0"),
+    ]
+
+
 @timed("descriptions.crossed_reach")
-def crossed_reach(bank, config, name, lone, near):
+def crossed_reach(bank, config, name, references, fields):
     entry = REALISATIONS.named(name)
     decisions = [
-        (10, 0, [("o0", lone), ("o1", stayed(near, "s1"))]),
-        (20, 1, [("o0", along(HERE, "s0", "a0 base s0")), ("o1", along(near, "s1", "s0 base a0"))]),
-        (30, 2, [("o0", stayed(HERE, "s0"))]),
+        (10, 0, [("o0", fields[0]), ("o1", fields[1])]),
+        (20, 1, [("o0", fields[2]), ("o1", fields[3])]),
+        (30, 2, [("o0", fields[4])]),
     ]
     return dict(
         version=describing.VERSION,
@@ -1594,8 +1608,8 @@ def crossed_reach(bank, config, name, lone, near):
                         task=task,
                         kind="turn",
                         time=moment,
-                        references=REFERRED,
-                        options=[dict(key=option, fields=fields) for option, fields in options],
+                        references=references,
+                        options=[dict(key=option, fields=found) for option, found in options],
                     )
                     for task, moment, options in decisions
                 ],
@@ -1645,9 +1659,10 @@ def test_reach_reads_an_edge_without_direction_stated_either_way_a_reference_tha
     crossed,
 ):
     started = time.perf_counter()
-    config = noded(crossed, KEPT, "vector")
+    config = lined(crossed, THINNER, KEPT, "vector")
     record = reach(crossed, config, STATED)
-    assert record == crossed_reach(crossed, config, "vector", gone(APART, NOWHERE, LOAD), NEARBY)
+    fields = held_whole(gone(APART, NOWHERE, LOAD), NEARBY, HERE, LOAD)
+    assert record == crossed_reach(crossed, config, "vector", REFERRED, fields)
     assert json.loads(json.dumps(record)) == record
     written = reaching.text(record)
     assert written[written.index("kind of task turn") :] == CROSSED_TEXT
@@ -1661,8 +1676,38 @@ def test_under_an_edit_the_entry_that_removes_the_node_an_option_targets_in_its_
 ):
     started = time.perf_counter()
     monkeypatch.setattr(filtering, "unit", halved)
-    config = noded(crossed, THINNED, "stepped")
+    config = lined(crossed, THINNER, THINNED, "stepped")
     record = reach(crossed, config, STATED)
-    assert record == crossed_reach(crossed, config, "stepped", gone(ABSENT, thinning(), []), EITHER)
+    fields = held_whole(gone(ABSENT, thinning(), []), EITHER, HERE, LOAD)
+    assert record == crossed_reach(crossed, config, "stepped", REFERRED, fields)
     assert THINNED_TEXT in reaching.text(record)
     LOG.info("descriptions reach edit cut exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_reference_the_pipeline_puts_in_a_node_it_adds_is_named_by_the_kind_of_that_node_and_the_node_in_whose_place_it_stands(
+    crossed,
+):
+    started = time.perf_counter()
+    config = lined(crossed, CONTRACTING, dict(CONTRACTED, **{"contract/grouping": "agent:load"}), "vector")
+    record = reach(crossed, config, STATED)
+    grouped = dict(agents=[GROUPED], over=[GROUPED + " base s0"])
+    fields = held_whole(gone(APART, NOWHERE, LOAD), NEARBY, ABSENT, [])
+    assert record == crossed_reach(crossed, config, "vector", grouped, fields)
+    assert "  decision 10 of turn at time 0, references agents %s; over %s base s0\n" % (GROUPED, GROUPED) in reaching.text(record)
+    config = lined(crossed, CONTRACTING, CONTRACTED, "vector")
+    held = reaching.Reached(Deriver(crossed, STATED["device"], STATED["derivation_seed"], RESIDENT), config, "vector")
+    trunk = held.derived(None, 1, 0)
+    found = held.decided(trunk, 0)
+    assert [held.references(trunk, decision) for decision in found] == [dict(agents=["a0"], over=["a0 base contract in place of s0"])] * 3
+    decision = found[0]
+    edge = [member for member in held.referred(trunk, decision) if member[2] >= 0]
+    where = "the reference over of the decision 10 of the kind turn of graph h0"
+    assert held.ended(trunk, decision, edge, 0, 1, where) == "a0"
+    with pytest.raises(
+        ValueError,
+        match="^%s names a node of the kind contract, which the pipeline adds, and the references of its task hold 1 "
+        "members after the pipeline and 2 in the view, or the same in another order, so reach cannot say in place of "
+        "which node of the view that node stands$" % where,
+    ):
+        held.ended(trunk, decision, edge, 0, 2, where)
+    LOG.info("descriptions reach contracted exit seconds=%.3f", time.perf_counter() - started)

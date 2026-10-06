@@ -37,7 +37,9 @@ READING = (
     "whole pipeline gives the field back, those under which it does not, and those it refuses with every parameter "
     "stated; a value is stated without the parameters it makes inactive and with every value of each parameter it "
     "makes active, every option of a choice and the two ends of a number's range, named after it; at most %d "
-    "statements are tried for a value, and those past them are listed as not tried" % BOUND
+    "statements are tried for a value, and those past them are listed as not tried; an end of a reference that the "
+    "pipeline replaced by a node of a kind it adds is named by that kind and the node of the view in whose place it "
+    "stands" % BOUND
 )
 
 
@@ -339,19 +341,39 @@ class Reached:
         LOG.debug("reached referred exit members=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result
 
+    def ended(self, graph, decision, members, place, side, where):
+        started = time.perf_counter()
+        end = members[place][side]
+        token, kind = int(masked(graph.entity_token)[end]), self.registry.nodes[int(graph.kinds[end])]
+        if token in self.names or kind in self.deriver.registry.nodes:
+            result = self.keyed(token, where)
+        else:
+            view = self.derived(None, 0, decision["group"])
+            stated = self.referred(view, decision)
+            if [held[0] for held in stated] != [held[0] for held in members]:
+                raise ValueError(
+                    "%s names a node of the kind %s, which the pipeline adds, and the references of its task hold %d "
+                    "members after the pipeline and %d in the view, or the same in another order, so reach cannot say "
+                    "in place of which node of the view that node stands" % (where, kind, len(members), len(stated))
+                )
+            result = "%s in place of %s" % (kind, self.keyed(int(masked(view.entity_token)[stated[place][side]]), where))
+        LOG.debug("reached ended exit end=%s seconds=%.4f", result, time.perf_counter() - started)
+        return result
+
     def references(self, graph, decision):
         started = time.perf_counter()
-        tokens, result = masked(graph.entity_token), {}
-        for name, source, target, code in self.referred(graph, decision):
+        members, result = self.referred(graph, decision), {}
+        for place, (name, _, target, code) in enumerate(members):
             where = "the reference %s of the decision %d of the kind %s of graph %s" % (
                 self.registry.references[name],
                 decision["key"],
                 self.registry.tasks[decision["kind"]],
                 decision["graph"],
             )
-            spoken = self.keyed(int(tokens[source]), where)
+            spoken = self.ended(graph, decision, members, place, 1, where)
             if target >= 0:
-                spoken = "%s %s %s" % (spoken, self.registry.by_code[code].name, self.keyed(int(tokens[target]), where))
+                second = self.ended(graph, decision, members, place, 2, where)
+                spoken = "%s %s %s" % (spoken, self.registry.by_code[code].name, second)
             result.setdefault(self.registry.references[name], []).append(spoken)
         LOG.debug("reached references exit references=%d seconds=%.4f", len(result), time.perf_counter() - started)
         return result
