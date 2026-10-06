@@ -328,10 +328,14 @@ def test_a_second_call_reads_the_file_of_the_first_and_a_bank_of_other_stored_co
     other = tmp_path / "bank"
     shutil.copytree(bank, other)
     assert files(other, stored)[0].exists()
+    truth = other / "truth"
+    (truth / "graph_0000").rename(truth / "held")
+    (truth / "graph_0001").rename(truth / "graph_0000")
+    (truth / "held").rename(truth / "graph_0001")
     manifest = read_json(other / "manifest.json")
     write_json(other / "manifest.json", dict(manifest, stored_sha256="0" * 64))
     with pytest.raises(AssertionError, match="the description was computed again"):
         describe(other)
     monkeypatch.undo()
-    assert describe(other) == dict(record, stored_sha256="0" * 64)
-    assert files(other, "0" * 64)[0].exists()
+    assert describe(other) == dict(record, stored_sha256="0" * 64, graphs=[SECOND, FIRST])
+    assert files(other, "0" * 64)[0].exists() and describe(bank) == record
