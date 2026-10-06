@@ -171,7 +171,7 @@ ROWS = {
         "kick-off, predict the difference of the final scores; a model must use the ratings as they were "
         "published by then, not as revised later. Matches are split by season, a column of `matches.parquet`.",
         15,
-        dict(sources=4, declarations=11, functions=0),
+        dict(sources=4, declarations=10, functions=0),
     ),
     "22_dispatch.py": (
         "A dispatch centre. `calls.jsonl` has one record per call: its time, its place, its priority, the "
@@ -184,6 +184,33 @@ ROWS = {
         "sent is the one chosen, and the minutes until arrival are the outcome of the chosen option alone.",
         10,
         dict(sources=4, declarations=6, functions=0),
+    ),
+    "23_grid.py": (
+        "A power grid. `substations.csv` has one row per substation: its name, its region and its voltage class. "
+        "`lines.csv` has one row per power line between two substations: its length and capacity, the day it "
+        "entered service and, for some, the day it was retired. `load.parquet` holds a reading of the load of "
+        "every substation every fifteen minutes, in one wide table with one column per substation. `outages.csv` "
+        "has one row per outage of a line: when it began, when it ended, and its cause, which is entered by an "
+        "engineer some days after the outage ends, the day of entry being a column. For every line, at the start "
+        "of every day it is in service, predict whether it will have an outage within the next seven days; the "
+        "readings and the causes may be used only as they were known at that moment; the lines of two named "
+        "regions are kept apart for scoring.",
+        12,
+        dict(sources=4, declarations=8, functions=0),
+    ),
+    "24_tutoring.py": (
+        "A tutoring system. `sessions.jsonl` has one record per session of a student: the student, the start, "
+        "and a list of steps; each step holds the exercise shown, the hints the tutor could have given at that "
+        "step (a list, each with its type and its length in words), the one hint it gave, and whether the "
+        "student then answered correctly, which is known when the step ends, twenty to ninety seconds later, "
+        "the time of the answer being in the step. `exercises.csv` gives each exercise its topic and "
+        "difficulty, and `prerequisites.csv` lists pairs of topics, one needed before the other. Giving no hint "
+        "is always possible and is logged as such. The model is to learn, at each step, which hint to give: the "
+        "hints the tutor could have given and giving none are the options, the one given is the one chosen, and "
+        "whether the answer was correct is the outcome of the chosen option alone. The sessions of the last "
+        "four weeks of the data are for scoring.",
+        12,
+        dict(sources=3, declarations=9, functions=0),
     ),
 }
 REASONS = {
@@ -414,7 +441,7 @@ def read(name, text):
 def test_every_described_script_is_declarations_alone_counted_within_its_ceiling_with_its_functions_listed():
     started = time.perf_counter()
     assert sorted(path.name for path in ROOT.iterdir()) == sorted(ROWS)
-    assert len(ROWS) == 22 and len({description for description, _, _ in ROWS.values()}) == 22
+    assert len(ROWS) == 24 and len({description for description, _, _ in ROWS.values()}) == 24
     for name, (description, ceiling, expected) in ROWS.items():
         found = read(name, (ROOT / name).read_text(encoding="utf-8"))
         assert found["description"] == description, name

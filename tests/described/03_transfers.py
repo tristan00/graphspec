@@ -50,7 +50,7 @@ suspect = tasks(
         value="'laundering' if laundering else 'clean'",
         known="day + 30",
         about="moved",
-        utility=dict(name="weighted", better="higher", weights=dict(laundering=1.0, clean=0.0)),
+        utility=dict(name="weighted", better="lower", weights=dict(laundering=1.0, clean=0.0)),
     ),
     split=dict(name="time", parts=dict(train=0.6, validation=0.2, test=0.2)),
 )

@@ -1,4 +1,4 @@
-from graphspec import edges, join, nodes, order, sets, source, tasks
+from graphspec import join, nodes, order, sets, source, tasks
 
 DESCRIPTION = (
     "A league. `matches.parquet` has one row per match: its two teams, the kick-off, the final score. "
@@ -74,6 +74,7 @@ player = nodes(lineups, distinct=["player"], holds="always", known=None)
 match = nodes(
     matches,
     key="match",
+    features=dict(home_goals="value", away_goals="value"),
     links=dict(
         home=dict(of=team, key="home", absent="stop"),
         away=dict(of=team, key="away", absent="stop"),
@@ -127,15 +128,6 @@ substitution = sets(
         dict(rows=swapped, set="row()", node=dict(of=player, key="on", absent="stop"), role="'on'"),
         dict(rows=swapped, set="row()", node=dict(of=match, key="match", absent="stop"), role="'match'"),
     ],
-)
-result = edges(
-    matches,
-    source=dict(of=team, key="home", absent="stop"),
-    target=dict(of=team, key="away", absent="stop"),
-    directed=True,
-    features=dict(home_goals="value", away_goals="value"),
-    holds=dict(name="event", at="kickoff + span(3, 'hour')"),
-    known=None,
 )
 margin = tasks(
     matches,

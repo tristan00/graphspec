@@ -47,7 +47,7 @@ leaves = tasks(
         later=dict(rows=shop.orders, on=dict(customer="id"), at="placed", within=90),
         known="moment + 90",
         about="buyer",
-        utility=dict(name="weighted", better="higher", weights=dict(leaves=1.0, stays=0.0)),
+        utility=dict(name="weighted", better="lower", weights=dict(leaves=1.0, stays=0.0)),
     ),
     split=dict(name="time", parts=dict(train=0.7, validation=0.15, test=0.15)),
 )
