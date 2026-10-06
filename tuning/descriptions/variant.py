@@ -12,6 +12,8 @@ from graphspec.views.graph import Graph
 from tuning.bank.bank import Deriver
 from tuning.statement import agreed, state
 
+from . import reach as reaching
+
 LOG = logging.getLogger(__name__)
 
 
@@ -94,13 +96,21 @@ def main():
         help="the configuration and the statement of a fit, JSON files, which name the variant described; "
         "without them the truth graphs of the bank are described",
     )
+    parser.add_argument(
+        "--reach",
+        action="store_true",
+        help="describe the reach of the options of the decisions of the variant, as the realisation the model of "
+        "the configuration states puts them before it",
+    )
     args = parser.parse_args()
-    if len(args.variant) not in (0, 2):
+    if len(args.variant) not in (0, 2) or (args.reach and not args.variant):
         parser.error(
-            "describe takes a bank, or a bank, the configuration and the statement of a fit; found %d files"
-            % len(args.variant)
+            "describe takes a bank, or a bank, the configuration and the statement of a fit, and --reach the "
+            "latter; found %d files" % len(args.variant)
         )
-    if args.variant:
+    if args.reach:
+        written = reaching.text(reaching.reach(args.path, *[read(parser, name) for name in args.variant]))
+    elif args.variant:
         written = effect.text(describe(args.path, *[read(parser, name) for name in args.variant]))
     else:
         written = truth.text(truth.describe(args.path))

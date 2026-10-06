@@ -133,6 +133,7 @@ class Offered:
         inverse = np.empty(len(order), np.int64)
         inverse[order] = np.arange(len(order))
         self.option = {name: values[order] for name, values in self.option.items()}
+        self.keys = [keys[at] for at in order.tolist()]
         self.actions = (self.actions[0][order], self.actions[1][order])
         self.action["option"] = inverse[self.action["option"]]
         self.first, self.count = starts(self.option["decision"], len(unique))

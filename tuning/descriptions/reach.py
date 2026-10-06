@@ -1,0 +1,630 @@
+import logging
+import time
+from collections import ChainMap
+from pathlib import Path
+
+import numpy as np
+
+from graphspec.descriptions import describe as truth
+from graphspec.descriptions import effect
+from graphspec.infra.arrays import RESIDENT
+from graphspec.infra.files import sha256_json
+from graphspec.infra.timing import timed
+from graphspec.operations import parameters as specs
+from graphspec.operations.operation import Refused
+from graphspec.operations.pipeline import grown
+from graphspec.schema.decisions import ROLES
+from graphspec.views.graph import Graph
+from tuning.bank.bank import Deriver
+from tuning.bank.forks import UNMOVED, Part, made, ordered, room
+from tuning.bank.options import TOKEN, offered
+from tuning.families.heads import REALISATION, fielded, realisation
+from tuning.families.model_spec import realised
+from tuning.statement import agreed, state
+
+LOG = logging.getLogger(__name__)
+CONNECTED, APART, ABSENT = "connected", "apart", "absent"
+READING = (
+    "connected: joined to a reference of the task at its step by present facts, each taken in either direction, at "
+    "the least number of hops, by the relations at each hop of every such shortest path; apart: held at the step and "
+    "joined to no reference; absent: not held at the step; a node is held where it is observed, an edge where both "
+    "its ends are and, unless options are edits, a present fact of its relation joins them, an element an option "
+    "creates only in the option's own fork; a kind or a parameter is where the targets of its actions are; features: "
+    "the columns of a target's kind holding a value at the step; a cut names the last entry after which the field is "
+    "no longer connected and, for each setting of that entry and each it reads, the other values under which the "
+    "whole pipeline gives the field back, those under which it does not, and those refused when stated"
+)
+
+
+@timed("reach.masked")
+def masked(tokens):
+    return (np.asarray(tokens).astype(np.uint64) & np.uint64(TOKEN)).astype(np.int64)
+
+
+@timed("reach.others")
+def others(parameter, value):
+    if parameter.kind in ("bool", "choice"):
+        return [option for option in parameter.options if option != value]
+    return [bound for bound in dict.fromkeys((parameter.low, parameter.high)) if bound != value]
+
+
+@timed("reach.named")
+def named(entry):
+    return entry["label"] if "label" in entry else entry["operation"]
+
+
+def looked(graph, step):
+    started = time.perf_counter()
+    tokens = masked(graph.entity_token)
+    order = np.argsort(tokens, kind="stable")
+    entity, moment = np.asarray(graph.obs_entity, np.int64), np.asarray(graph.obs_step, np.int64)
+    rows = np.full(len(tokens), -1, np.int64)
+    at = np.flatnonzero(moment == step)
+    rows[entity[at]] = at
+    present = np.asarray(graph.fact_present, bool) & (np.asarray(graph.fact_step, np.int64) == step)
+    facts = tuple(np.asarray(graph.arrays[name], np.int64)[present] for name in ("fact_source", "fact_target", "fact_code"))
+    result = dict(tokens=tokens[order], order=order, rows=rows, facts=facts)
+    LOG.debug("reach looked exit step=%d facts=%d seconds=%.4f", step, len(facts[0]), time.perf_counter() - started)
+    return result
+
+
+@timed("reach.entity")
+def entity(seen, token):
+    place = int(np.searchsorted(seen["tokens"], token))
+    return int(seen["order"][place]) if place < len(seen["tokens"]) and seen["tokens"][place] == token else -1
+
+
+def walked(seen, sources):
+    started = time.perf_counter()
+    source, target, code = seen["facts"]
+    start, end = np.r_[source, target], np.r_[target, source]
+    hops = np.full(len(seen["rows"]), -1, np.int64)
+    frontier, depth = np.unique(np.asarray(sources, np.int64)), 0
+    hops[frontier] = 0
+    while len(frontier):
+        depth += 1
+        reached = end[np.isin(start, frontier)]
+        frontier = np.unique(reached[hops[reached] < 0])
+        hops[frontier] = depth
+    result = hops, (start, end, np.r_[code, code])
+    LOG.debug("reach walked exit sources=%d hops=%d seconds=%.4f", len(sources), depth - 1, time.perf_counter() - started)
+    return result
+
+
+def traced(walk, names, starts):
+    started = time.perf_counter()
+    hops, (start, end, code) = walk
+    layer, found = np.asarray(starts, np.int64), []
+    for depth in range(int(hops[layer[0]]), 0, -1):
+        chosen = np.isin(end, layer) & (hops[start] == depth - 1)
+        found.append(sorted({names[held] for held in np.unique(code[chosen]).tolist()}))
+        layer = np.unique(start[chosen])
+    LOG.debug("reach traced exit hops=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found[::-1]
+
+
+def summed(results):
+    started = time.perf_counter()
+    connected = [held for held in results if held["state"] == CONNECTED]
+    if connected:
+        least = min(held["hops"] for held in connected)
+        nearest = [held["relations"] for held in connected if held["hops"] == least]
+        result = dict(
+            state=CONNECTED,
+            hops=least,
+            relations=[sorted({name for found in nearest for name in found[at]}) for at in range(least)],
+        )
+    else:
+        result = dict(state=APART if any(held["state"] == APART for held in results) else ABSENT, hops=None, relations=None)
+    LOG.debug("reach summed exit targets=%d state=%s seconds=%.4f", len(results), result["state"], time.perf_counter() - started)
+    return result
+
+
+class Reached:
+    def __init__(self, deriver, config, name):
+        started = time.perf_counter()
+        self.deriver, self.config, self.entry = deriver, config, realisation(name)
+        schema = deriver.registry.schema
+        self.found, self.columns = offered(deriver), schema.parameters()
+        self.fields = {task: [field for field in fielded(schema, task) if field["sort"] in self.entry.reads] for task in schema.decided()}
+        self.variants, self.graphs, self.histories, self.walks, self.options = {}, {}, {}, {}, {}
+        self.members, self.besides, self.names = {}, {}, {}
+        held = self.variant(None)
+        self.steps, self.spec, self.registry = held[1], held[2], held[4]
+        LOG.debug("reached exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
+
+    def changed(self, holder, name, value):
+        started = time.perf_counter()
+        stated = holder.operation.stated(grown(self.deriver.registry, self.steps[: self.steps.index(holder)], None))
+        parameters = dict(holder.parameters, **{name: value})
+        context = ChainMap(parameters, holder.read)
+        kept = {held.name: parameters[held.name] for held in stated if held.name in parameters and held.active(context)}
+        pipeline = [dict(entry, parameters=kept) if named(entry) == holder.name else entry for entry in self.config["pipeline"]]
+        LOG.debug("reached changed exit entry=%s parameter=%s seconds=%.4f", holder.name, name, time.perf_counter() - started)
+        return dict(self.config, pipeline=pipeline)
+
+    def variant(self, key):
+        started = time.perf_counter()
+        if key not in self.variants:
+            cfg = self.config if key is None else self.changed(*key)
+            try:
+                _, steps, spec, chosen = self.deriver.stated(cfg)
+            except Refused as error:
+                self.variants[key] = str(error)
+            else:
+                self.variants[key] = (cfg, steps, spec, chosen, self.deriver.fitted(cfg))
+        LOG.debug("reached variant exit refused=%s seconds=%.4f", type(self.variants[key]) is str, time.perf_counter() - started)
+        return self.variants[key]
+
+    def loaded(self, group):
+        started = time.perf_counter()
+        if group not in self.members:
+            indices = self.deriver.groups(self.config)[group] if self.deriver.joining(self.config) else [group]
+            views = [Graph.load(self.deriver.view(index, self.config)) for index in indices]
+            for view in views:
+                self.names.update(zip(masked(view.entity_token).tolist(), view.keys))
+            self.members[group] = indices, [view.dense() for view in views]
+        LOG.debug("reached loaded exit group=%d seconds=%.4f", group, time.perf_counter() - started)
+        return self.members[group]
+
+    def begun(self, key, count, group, space):
+        started = time.perf_counter()
+        cfg, steps, spec, chosen, registry = self.variant(key)
+        indices, members = self.loaded(group)
+        if (key, group) not in self.besides:
+            self.besides[key, group] = self.deriver.seconds(steps, indices, cfg, False)
+        result = effect.begun(
+            members,
+            self.besides[key, group],
+            registry,
+            steps[:count],
+            spec,
+            chosen,
+            self.deriver.seed,
+            self.deriver.limits(),
+            self.deriver.partitions(cfg),
+            space,
+        )
+        LOG.debug("reached begun exit group=%d entries=%d seconds=%.4f", group, count, time.perf_counter() - started)
+        return result
+
+    def derived(self, key, count, group):
+        started = time.perf_counter()
+        if (key, count, group) not in self.graphs:
+            total = sum(member.steps for member in self.loaded(group)[1])
+            self.graphs[key, count, group] = self.begun(key, count, group, 0).continued(total, None).derived()
+        LOG.debug("reached derived exit group=%d entries=%d seconds=%.4f", group, count, time.perf_counter() - started)
+        return self.graphs[key, count, group]
+
+    def forked(self, key, count, group, step, option):
+        started = time.perf_counter()
+        if (key, count, group, step) not in self.histories:
+            begun = self.begun(key, count, group, room(self.deriver))
+            self.histories[key, count, group, step] = begun.continued(step, None) if step else begun
+        history = self.histories[key, count, group, step]
+        edit = made(self.deriver, self.variant(key)[0], history, Part(group, -1, step, option, UNMOVED), ordered(self.deriver, option))
+        result = history.continued(step + 1, edit).derived()
+        LOG.debug("reached forked exit option=%d seconds=%.4f", option, time.perf_counter() - started)
+        return result
+
+    def decided(self, graph, group):
+        started = time.perf_counter()
+        rows, tasks = np.asarray(graph.label_row, np.int64), np.asarray(graph.label_task, np.int64)
+        decision = self.found.decision[rows]
+        chosen = np.flatnonzero(decision >= 0)
+        picked = chosen[np.unique(decision[chosen], return_index=True)[1]]
+        picked = picked[np.argsort(tasks[picked], kind="stable")]
+        indices = self.loaded(group)[0]
+        result = []
+        for at in picked.tolist():
+            task = int(tasks[at])
+            step = int(graph.task_step[task])
+            result.append(
+                dict(
+                    decision=int(decision[at]),
+                    group=group,
+                    view=indices[int(graph.step_graph[step])],
+                    step=step,
+                    time=int(graph.step_time[step]),
+                    key=int(graph.task_key[task]),
+                    kind=int(graph.task_kind[task]),
+                )
+            )
+        LOG.debug("reached decided exit group=%d decisions=%d seconds=%.4f", group, len(result), time.perf_counter() - started)
+        return result
+
+    def referred(self, graph, decision):
+        started = time.perf_counter()
+        task = np.flatnonzero(
+            (np.asarray(graph.task_step) == decision["step"])
+            & (np.asarray(graph.task_key) == decision["key"])
+            & (np.asarray(graph.task_kind) == decision["kind"])
+        )
+        rows = np.flatnonzero(
+            (np.asarray(graph.member_task) == task[0]) & (np.asarray(graph.member_name) < len(self.registry.references))
+        )
+        result = [
+            (int(graph.member_name[row]), int(graph.member_source[row]), int(graph.member_target[row]), int(graph.member_code[row]))
+            for row in rows.tolist()
+        ]
+        LOG.debug("reached referred exit members=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
+
+    def references(self, graph, decision):
+        started = time.perf_counter()
+        tokens, result = masked(graph.entity_token), {}
+        for name, source, target, code in self.referred(graph, decision):
+            spoken = self.names[int(tokens[source])]
+            if target >= 0:
+                spoken = "%s %s %s" % (spoken, self.registry.by_code[code].name, self.names[int(tokens[target])])
+            result.setdefault(self.registry.references[name], []).append(spoken)
+        LOG.debug("reached references exit references=%d seconds=%.4f", len(result), time.perf_counter() - started)
+        return result
+
+    def looking(self, graph, registry, decision):
+        started = time.perf_counter()
+        seen = looked(graph, decision["step"])
+        sources = [end for _, source, target, _ in self.referred(graph, decision) for end in (source, target) if end >= 0]
+        result = seen, walked(seen, sources), [registry.by_code[code].name for code in range(registry.relations)]
+        LOG.debug("reached looking exit decision=%d seconds=%.4f", decision["decision"], time.perf_counter() - started)
+        return result
+
+    def featured(self, graph, registry, seen, ends):
+        started = time.perf_counter()
+        entities, table, refs = registry.schema.entities(), np.asarray(graph.x_table), np.asarray(graph.obs_ref, np.int64)
+        found = []
+        for end in ends:
+            row = table[refs[seen["rows"][end]]]
+            for column in entities[registry.nodes[int(graph.kinds[end])]]:
+                flags = registry.encoding.slots(column)[1]
+                if len(flags) and row[flags[0]] > 0 and column not in found:
+                    found.append(column)
+        LOG.debug("reached featured exit columns=%d seconds=%.4f", len(found), time.perf_counter() - started)
+        return found
+
+    def placed(self, graph, registry, looked_at, ends, relation):
+        started = time.perf_counter()
+        seen, walk, names = looked_at
+        held = all(end >= 0 and seen["rows"][end] >= 0 for end in ends)
+        if held and relation >= 0:
+            source, target, code = seen["facts"]
+            joined = (source == ends[0]) & (target == ends[1])
+            if registry.by_code[relation].symmetric:
+                joined |= (source == ends[1]) & (target == ends[0])
+            held = bool((joined & (code == relation)).any())
+        result = dict(state=ABSENT, hops=None, relations=None, features=[])
+        if held:
+            hops = walk[0][list(ends)]
+            reached = hops[hops >= 0]
+            features = self.featured(graph, registry, seen, ends)
+            result = dict(state=APART, hops=None, relations=None, features=features)
+            if len(reached):
+                least = int(reached.min())
+                starts = [end for end, hop in zip(ends, hops.tolist()) if hop == least]
+                result = dict(state=CONNECTED, hops=least, relations=traced(walk, names, starts), features=features)
+        LOG.debug("reached placed exit state=%s seconds=%.4f", result["state"], time.perf_counter() - started)
+        return result
+
+    def targets(self, graph, registry, looked_at, option):
+        started = time.perf_counter()
+        found, bank = self.found, self.deriver.registry.by_code
+        first, count = int(found.actions[0][option]), int(found.actions[1][option])
+        rows = [
+            (action, role)
+            for action in range(first, first + count)
+            for role in range(int(found.roles[0][action]), int(found.roles[0][action] + found.roles[1][action]))
+        ]
+        sorts = {role: ROLES[int(found.sorts[found.role["code"][role]])] for _, role in rows}
+        elements = {}
+        for _, role in rows:
+            if sorts[role] == "new":
+                source, element = int(found.role["source"][role]), int(found.role["element"][role])
+                elements[source] = min(elements[source], element) if source in elements else element
+        result = []
+        for action, role in rows:
+            source, target = int(found.role["source"][role]), int(found.role["target"][role])
+            relation, sort = int(found.role["relation"][role]), sorts[role]
+            spoken = self.names[source]
+            if sort == "edge":
+                spoken = "%s %s %s" % (spoken, bank[relation].name, self.names[target])
+            if sort == "new" and not self.entry.back:
+                placed = dict(state=ABSENT, hops=None, relations=None, features=[])
+            elif sort == "new":
+                placed = self.placed(graph, registry, looked_at, (entity(looked_at[0], int(masked([elements[source]])[0])),), -1)
+            else:
+                ends = (source, target) if sort == "edge" else (source,)
+                joining = relation if sort == "edge" and not self.entry.back else -1
+                placed = self.placed(graph, registry, looked_at, tuple(entity(looked_at[0], end) for end in ends), joining)
+            result.append(dict(action=action, code=int(found.role["code"][role]), target=spoken, **placed))
+        LOG.debug("reached targets exit option=%d targets=%d seconds=%.4f", option, len(result), time.perf_counter() - started)
+        return result
+
+    def read(self, key, count, decision, option):
+        started = time.perf_counter()
+        if (key, count, option) not in self.options:
+            registry = self.variant(key)[4]
+            if self.entry.back:
+                graph = self.forked(key, count, decision["group"], decision["step"], option)
+                looked_at = self.looking(graph, registry, decision)
+            else:
+                graph = self.derived(key, count, decision["group"])
+                if (key, count) not in self.walks:
+                    self.walks[key, count] = self.looking(graph, registry, decision)
+                looked_at = self.walks[key, count]
+            targets = self.targets(graph, registry, looked_at, option)
+            found, task = self.found, self.registry.tasks[decision["kind"]]
+            first, many = int(found.actions[0][option]), int(found.actions[1][option])
+            result = {}
+            for field in self.fields[task]:
+                if field["sort"] == "kind":
+                    held = targets if many else None
+                elif field["sort"] == "targets":
+                    held = [target for target in targets if target["code"] == field["code"]] or None
+                else:
+                    values = found.action["values"][first : first + many, self.columns.index(field["column"])]
+                    acting = [
+                        first + at
+                        for at in range(many)
+                        if int(found.action["kind"][first + at]) == field["code"] and not np.isnan(values[at])
+                    ]
+                    held = [target for target in targets if target["action"] in acting] if acting else None
+                if held is None:
+                    continue
+                result[field["name"]] = summed(held)
+                if field["sort"] == "targets":
+                    result[field["name"]]["targets"] = [
+                        {name: target[name] for name in ("target", "state", "hops", "relations", "features")} for target in held
+                    ]
+            self.options[key, count, option] = result
+        LOG.debug("reached read exit option=%d seconds=%.4f", option, time.perf_counter() - started)
+        return self.options[key, count, option]
+
+    def settable(self, place):
+        started = time.perf_counter()
+        step, result = self.steps[place], []
+        for holder, names in [(step, list(step.parameters))] + [
+            (other, [name for name in step.read if name in other.parameters])
+            for other in self.steps
+            if other.label is None and other.operation.name in step.operation.reads
+        ]:
+            stated = holder.operation.stated(grown(self.deriver.registry, self.steps[: self.steps.index(holder)], None))
+            result += [(holder, parameter) for name in names for parameter in stated if parameter.name == name]
+        LOG.debug("reached settable exit entry=%s settings=%d seconds=%.4f", step.name, len(result), time.perf_counter() - started)
+        return result
+
+    def tried(self, decision, option, name, holder, parameter):
+        started = time.perf_counter()
+        value, back, still, refused = holder.parameters[parameter.name], [], [], []
+        for other in others(parameter, value):
+            key = (holder, parameter.name, other)
+            held = self.variant(key)
+            if type(held) is str:
+                refused.append([other, held])
+            elif self.read(key, len(held[1]), decision, option)[name]["state"] == CONNECTED:
+                back.append(other)
+            else:
+                still.append(other)
+        result = dict(entry=holder.name, parameter=parameter.name, value=value, back=back, still=still, refused=refused)
+        LOG.debug("reached tried exit parameter=%s back=%d seconds=%.4f", parameter.name, len(back), time.perf_counter() - started)
+        return result
+
+    def cut(self, decision, option, name):
+        started = time.perf_counter()
+        last = next(
+            (
+                count
+                for count in range(len(self.steps) - 1, -1, -1)
+                if self.read(None, count, decision, option)[name]["state"] == CONNECTED
+            ),
+            None,
+        )
+        result = dict(entry=None, operation=None, settings=[])
+        if last is not None:
+            step = self.steps[last]
+            result = dict(
+                entry=step.name,
+                operation=step.operation.name,
+                settings=[self.tried(decision, option, name, holder, parameter) for holder, parameter in self.settable(last)],
+            )
+        LOG.debug("reached cut exit field=%s entry=%s seconds=%.4f", name, result["entry"], time.perf_counter() - started)
+        return result
+
+    def option(self, decision, option):
+        started = time.perf_counter()
+        fields = {}
+        for name, field in self.read(None, len(self.steps), decision, option).items():
+            fields[name] = dict(field, cut=None if field["state"] == CONNECTED else self.cut(decision, option, name))
+        result = dict(key=self.found.keys[option], fields=fields)
+        LOG.debug("reached option exit option=%d seconds=%.4f", option, time.perf_counter() - started)
+        return result
+
+    def graphed(self):
+        started = time.perf_counter()
+        found, held = self.found, {}
+        for group in self.deriver.graphs(self.config):
+            trunk = self.derived(None, len(self.steps), group)
+            for decision in self.decided(trunk, group):
+                first, count = int(found.first[decision["decision"]]), int(found.count[decision["decision"]])
+                options = sorted(range(first, first + count), key=lambda option: found.keys[option])
+                held.setdefault(decision["view"], []).append(
+                    dict(
+                        task=decision["key"],
+                        kind=self.registry.tasks[decision["kind"]],
+                        time=decision["time"],
+                        references=self.references(trunk, decision),
+                        options=[self.option(decision, option) for option in options],
+                    )
+                )
+                for done in (self.histories, self.walks, self.options):
+                    done.clear()
+            for done in (self.graphs, self.besides, self.members):
+                done.clear()
+        result = [
+            dict(name=graph["name"], decisions=held[graph["index"]] if graph["index"] in held else [])
+            for graph in self.deriver.viewed(self.config).graphs
+        ]
+        LOG.info("reached graphed exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
+        return result
+
+
+def recorded(deriver, config, key, name):
+    started = time.perf_counter()
+    reached = Reached(deriver, config, name)
+    schema, entry = deriver.registry.schema, reached.entry
+    every = {task: fielded(schema, task) for task in schema.decided()}
+    result = dict(
+        version=truth.VERSION,
+        variant=key,
+        stored_sha256=deriver.source,
+        realisation=dict(name=name, version=entry.version, reads=list(entry.reads), back=entry.back),
+        seed=deriver.seed,
+        device=deriver.device,
+        splits=config["splits"],
+        settings=specs.materialized(reached.spec),
+        entries=[effect.entered(step, deriver.registry, reached.spec, config["splits"]) for step in reached.steps],
+        tasks={
+            task: dict(
+                fields=[field["name"] for field in fields if field["sort"] in entry.reads],
+                unread=[field["name"] for field in fields if field["sort"] not in entry.reads],
+            )
+            for task, fields in every.items()
+        },
+        undecided=[kind for kind in schema.tasks["kinds"] if kind not in every],
+        graphs=reached.graphed(),
+    )
+    LOG.info("reach recorded exit realisation=%s seconds=%.3f", name, time.perf_counter() - started)
+    return result
+
+
+def realising(deriver, config):
+    started = time.perf_counter()
+    schema = deriver.registry.schema
+    if not schema.decided():
+        raise ValueError(
+            "the bank %s holds no kind of task that decides; reach describes the options of decisions" % deriver.directory
+        )
+    name = realised(config["model"], schema)
+    if name is None:
+        raise ValueError(
+            "the model of the configuration states %s none, which puts no option before it; reach describes the "
+            "options of decisions as a realisation puts them before a model" % REALISATION
+        )
+    reason = realisation(name).refusal(deriver.registry)
+    if reason is not None:
+        raise ValueError("the realisation of options %s cannot read the options of this bank: %s" % (name, reason))
+    LOG.debug("reach realising exit realisation=%s seconds=%.4f", name, time.perf_counter() - started)
+    return name
+
+
+def reach(bank, config, statement):
+    started = time.perf_counter()
+    truth.manifested(bank)
+    stated = state(statement)
+    agreed(config, stated)
+    deriver = Deriver(bank, stated.device, stated.derivation_seed, RESIDENT)
+    name = realising(deriver, config)
+    key = specs.digest(deriver.identity(config))
+    stem = sha256_json(dict(variant=key, realisation=dict(name=name, version=realisation(name).version), version=truth.VERSION))
+    held = Path(bank) / "descriptions" / "reach" / stem
+    result = truth.kept(held, lambda: recorded(deriver, config, key, name), text)
+    LOG.info("reach exit variant=%s realisation=%s seconds=%.3f", key[:10], name, time.perf_counter() - started)
+    return result
+
+
+@timed("reach.listed")
+def listed(values):
+    return ", ".join(map(str, values)) or "none"
+
+
+@timed("reach.spoken")
+def spoken(held):
+    if held["state"] != CONNECTED:
+        return held["state"]
+    return "connected at hop %d by %s" % (held["hops"], " then ".join(" or ".join(names) for names in held["relations"]) or "nothing")
+
+
+def cut_text(cut):
+    started = time.perf_counter()
+    if cut["entry"] is None:
+        result = "cut by no entry: connected in no state, the view before the first entry included"
+    else:
+        result = "cut by the entry %s, of the operation %s" % (cut["entry"], cut["operation"])
+        result += "".join(
+            "; %s %s of the entry %s gives it back under %s, not under %s, refused under %s"
+            % (
+                setting["parameter"],
+                setting["value"],
+                setting["entry"],
+                listed(setting["back"]),
+                listed(setting["still"]),
+                listed("%s (%s)" % tuple(pair) for pair in setting["refused"]),
+            )
+            for setting in cut["settings"]
+        )
+    LOG.debug("reach cut text exit settings=%d seconds=%.4f", len(cut["settings"]), time.perf_counter() - started)
+    return result
+
+
+def field_text(name, field):
+    started = time.perf_counter()
+    lines = ["      %s: %s%s" % (name, spoken(field), "" if field["cut"] is None else "; " + cut_text(field["cut"]))]
+    for target in field["targets"] if "targets" in field else ():
+        lines.append("        %s: %s, features %s" % (target["target"], spoken(target), listed(target["features"])))
+    LOG.debug("reach field text exit field=%s lines=%d seconds=%.4f", name, len(lines), time.perf_counter() - started)
+    return lines
+
+
+def graph_text(graph):
+    started = time.perf_counter()
+    lines = ["", "graph %s, decisions %d" % (graph["name"], len(graph["decisions"]))]
+    for decision in graph["decisions"]:
+        lines.append(
+            "  decision %s of %s at time %d, references %s"
+            % (
+                decision["task"],
+                decision["kind"],
+                decision["time"],
+                "; ".join("%s %s" % (name, ", ".join(held)) for name, held in decision["references"].items()) or "none",
+            )
+        )
+        for option in decision["options"]:
+            lines.append("    option %s" % option["key"])
+            for name, field in option["fields"].items():
+                lines += field_text(name, field)
+    LOG.debug("reach graph text exit graph=%s lines=%d seconds=%.4f", graph["name"], len(lines), time.perf_counter() - started)
+    return lines
+
+
+def text(record):
+    started = time.perf_counter()
+    splits, held = record["splits"], record["realisation"]
+    lines = [
+        "reach of the options of the variant %s of the bank stored as %s, described at version %d"
+        % (record["variant"], record["stored_sha256"], record["version"]),
+        "realisation of options %s at version %d, reading %s; %s"
+        % (
+            held["name"],
+            held["version"],
+            ", ".join(held["reads"]),
+            "each option an edit of the graph, read in its own fork" if held["back"] else "options read beside the variant",
+        ),
+        "derivation seed %d, device %s" % (record["seed"], record["device"]),
+        "splits trained on %s, scored on %s; rules of what each sees: %s"
+        % (
+            ", ".join(splits["trained"]),
+            ", ".join(splits["scored"]),
+            effect.listed({name: ", ".join(rules) or "none" for name, rules in splits["sees"].items()}),
+        ),
+        "settings: %s" % effect.listed(record["settings"]),
+        READING,
+    ]
+    lines += [effect.entry_text(entry) for entry in record["entries"]]
+    lines += [
+        "kind of task %s: fields %s; not read by the realisation: %s" % (task, listed(entry["fields"]), listed(entry["unread"]))
+        for task, entry in record["tasks"].items()
+    ]
+    lines.append("kinds of task that decide nothing, which hold no option: %s" % listed(record["undecided"]))
+    for graph in record["graphs"]:
+        lines += graph_text(graph)
+    LOG.debug("reach text exit lines=%d seconds=%.4f", len(lines), time.perf_counter() - started)
+    return "\n".join(lines) + "\n"

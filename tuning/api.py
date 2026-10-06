@@ -48,6 +48,15 @@ def describe(bank, config, statement):
     return result
 
 
+def reach(bank, config, statement):
+    from .descriptions.reach import reach as reached
+
+    started = time.perf_counter()
+    result = reached(bank, config, statement)
+    LOG.info("reach exit seconds=%.3f bank=%s", time.perf_counter() - started, bank)
+    return result
+
+
 @exclusive
 def fit(bank, config, output, statement):
     from graphspec.infra import compute

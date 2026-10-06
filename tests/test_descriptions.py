@@ -18,10 +18,11 @@ from graphspec.operations import parameters as specs
 from graphspec.operations.parameters import choice
 from graphspec.schema.schema import VERSION as SCHEMA
 from graphspec.sources import synthetic
-from tuning import configuration
+from tuning import REALISATIONS, Edited, configuration, reach
 from tuning import describe as variant
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
+from tuning.descriptions import reach as reaching
 from tuning.descriptions import variant as varying
 from tuning.statement import VERSION as STATEMENT
 
@@ -252,11 +253,11 @@ def case():
             ),
         ],
         [
-            (10, "turn", 1, "train", ["a0"], turned("a0", [("s0", 1.0), ("s1", 2.0)], 0, 1.0)),
+            (10, "turn", 1, "train", ["a0"], turned("a0", [("s0", 1.0), ("s0", 2.0)], 0, 1.0)),
             (20, "visit", 2, "train", "s2", 1.5),
-            (30, "turn", 3, "train", ["a1"], turned("a1", [("s0", 2.0), ("s1", 1.0), ("s2", 3.0)], 1, 3.0)),
+            (30, "turn", 3, "train", ["a1"], turned("a1", [("s1", 2.0), ("s1", 1.0), ("s1", 3.0)], 1, 3.0)),
             (40, "visit", 4, "train", "s0", 2.5),
-            (50, "turn", 5, "validation", ["a0"], turned("a0", [("s0", 1.0), ("s1", 2.0)], 0, 2.0)),
+            (50, "turn", 5, "validation", ["a0"], turned("a0", [("s0", 1.0), ("s0", 2.0)], 0, 2.0)),
             (51, "visit", 5, "validation", "s1", 0.5),
             (60, "visit", 6, None, "s0", None),
         ],
@@ -269,7 +270,7 @@ def case():
         [("base", ("agent", "spot"), BASE, [("a0", "s0", True, None, 3)])],
         [
             (20, "visit", 1, "validation", "s1", 1.0),
-            (10, "turn", 2, "train", ["a0"], turned("a0", [("s0", 1.0), ("s1", 2.0)], 0, 4.0)),
+            (10, "turn", 2, "train", ["a0"], turned("a0", [("s0", 1.0), ("s0", 2.0)], 0, 4.0)),
         ],
     )
     return dict(schema=schema(), graphs=[first, second])
@@ -690,10 +691,41 @@ graph g1, 3 steps from time 1 to 3
 """
 
 
+SETTLED = {
+    "graphs/join": "separate",
+    "nodes/untyped": False,
+    "relations/direction": "inverse",
+    "time/steps": "changes",
+    "time/several": "last",
+}
+
+
+@timed("descriptions.entries")
+def entries(cut):
+    return [
+        dict(
+            name=name,
+            operation=name,
+            version=OPERATIONS.named(name).version,
+            graph=None,
+            parameters=parameters,
+            reads={},
+            splits={},
+            storage={},
+        )
+        for name, parameters in (("graphspec.nodes", NODES), ("test.cut", cut), ("graphspec.relation_forms", FORMS))
+    ]
+
+
+@timed("descriptions.keyed")
+def keyed(bank, config):
+    return specs.digest(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT).identity(config))
+
+
 @timed("descriptions.varied")
 def varied(bank, config):
     stored = read_json(bank / "manifest.json")["stored_sha256"]
-    key = specs.digest(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT).identity(config))
+    key = keyed(bank, config)
     record = dict(
         version=describing.VERSION,
         variant=key,
@@ -701,26 +733,8 @@ def varied(bank, config):
         seed=STATED["derivation_seed"],
         device="cpu",
         splits=SPLITS,
-        settings={
-            "graphs/join": "separate",
-            "nodes/untyped": False,
-            "relations/direction": "inverse",
-            "time/steps": "changes",
-            "time/several": "last",
-        },
-        entries=[
-            dict(
-                name=name,
-                operation=name,
-                version=OPERATIONS.named(name).version,
-                graph=None,
-                parameters=parameters,
-                reads={},
-                splits={},
-                storage={},
-            )
-            for name, parameters in (("graphspec.nodes", NODES), ("test.cut", CUTTING), ("graphspec.relation_forms", FORMS))
-        ],
+        settings=SETTLED,
+        entries=entries(CUTTING),
         graphs=[VARIED, VARIED_SECOND],
     )
     written = VARIANT.replace("%(steps)s", STEPS).replace("%(effect)s", EFFECT) % (
@@ -787,21 +801,219 @@ def test_a_second_call_reads_the_file_of_a_variant_and_a_statement_differing_in_
     LOG.info("descriptions variant served exit seconds=%.3f", time.perf_counter() - started)
 
 
+JOINED = {
+    "graphs/join": "single",
+    "graphs/join_size": 2,
+    "graphs/connect/agent": True,
+    "graphs/connect/spot": True,
+    "graphs/connect_fraction": 1.0,
+}
+
+
 def test_a_joined_group_is_described_graph_by_graph_as_its_graphs_derived_apart_are(bank, cutting):
     started = time.perf_counter()
-    joined = dict(
-        SETTINGS,
-        **{
-            "graphs/join": "single",
-            "graphs/join_size": 2,
-            "graphs/connect/agent": True,
-            "graphs/connect/spot": True,
-            "graphs/connect_fraction": 1.0,
-        },
-    )
     config = configuration(
-        bank, MODEL, None, pipeline=pipelined(CUTTING), graph=joined, seed=STATED["seed"], splits=SPLITS
+        bank, MODEL, None, pipeline=pipelined(CUTTING), graph=dict(SETTINGS, **JOINED), seed=STATED["seed"], splits=SPLITS
     )
     record = variant(bank, config, STATED)
     assert record["settings"]["graphs/join"] == "single" and record["graphs"] == [VARIED, VARIED_SECOND]
     LOG.info("descriptions variant joined exit seconds=%.3f", time.perf_counter() - started)
+
+
+GO = ("target to of go", "parameter speed of go")
+THREE = ["changed.0.0", "o0", "o1"]
+FOUR = ["changed.0.0", "o0", "o1", "o2"]
+DECIDED = (
+    ("g0", ((10, 1, "a0", THREE, "s0", True), (30, 3, "a1", FOUR, "s1", True), (50, 5, "a0", THREE, "s0", False))),
+    ("g1", ((10, 2, "a0", THREE, "s0", True),)),
+)
+WALKED = Edited(
+    dict(turn=dict(go=dict(to=dict(relation="went", actor="source")))),
+    dict(went=dict(pairs=(("agent", "spot"),), directed=True, columns=("speed",))),
+    1,
+)
+SEVERED = (
+    "apart; cut by the entry test.cut, of the operation test.cut; cut/relation base of the entry test.cut gives it "
+    "back under near, not under none, refused under none; cut/kind turn of the entry test.cut gives it back under %s, "
+    "not under %s, refused under none"
+)
+REACH = """reach of the options of the variant %s of the bank stored as %s, described at version %d
+realisation of options vector at version %d, reading kind, targets, parameters; options read beside the variant
+derivation seed 7, device cpu
+splits trained on train, scored on validation; rules of what each sees: train none, validation none
+settings: graphs/join separate, nodes/untyped False, relations/direction inverse, time/steps changes, time/several last
+%s
+entry graphspec.nodes, of the operation graphspec.nodes at version %d: parameters nodes/agent/keep True, nodes/spot/keep True, nodes/referenced keep, nodes/agent/filter degree, nodes/agent/min_degree 1, nodes/spot/filter none; reads none; splits none; storage none; second graph none
+entry test.cut, of the operation test.cut at version 1: parameters cut/relation base, cut/kind turn; reads none; splits none; storage none; second graph none
+entry graphspec.relation_forms, of the operation graphspec.relation_forms at version %d: parameters relation_forms/types typed, relation_forms/parallel keep, relation_forms/reverse False, relation_forms/loops True; reads none; splits none; storage none; second graph none
+kind of task turn: fields target to of go, parameter speed of go; not read by the realisation: none
+kinds of task that decide nothing, which hold no option: visit"""
+
+
+@pytest.fixture
+def walking():
+    started = time.perf_counter()
+    REALISATIONS.register("walked", WALKED)
+    LOG.debug("descriptions walking registered seconds=%.4f", time.perf_counter() - started)
+    yield WALKED
+    del REALISATIONS.held["walked"]
+
+
+@timed("descriptions.realising")
+def realising(bank, cut, name):
+    model = dict(MODEL, **{"options/realisation": name})
+    return configuration(bank, model, None, pipeline=pipelined(cut), graph=SETTINGS, seed=STATED["seed"], splits=SPLITS)
+
+
+@timed("descriptions.aimed")
+def aimed(state, hops, relations, cut, target):
+    held = dict(state=state, hops=hops, relations=relations)
+    return {GO[0]: dict(held, targets=[dict(held, target=target, features=["load"])], cut=cut), GO[1]: dict(held, cut=cut)}
+
+
+@timed("descriptions.severed")
+def severed(target, given):
+    kind = dict(back=["visit"], still=[]) if given else dict(back=[], still=["visit"])
+    settings = [
+        dict(entry="test.cut", parameter="cut/relation", value="base", back=["near"], still=[], refused=[]),
+        dict(entry="test.cut", parameter="cut/kind", value="turn", refused=[], **kind),
+    ]
+    return aimed("apart", None, None, dict(entry="test.cut", operation="test.cut", settings=settings), target)
+
+
+@timed("descriptions.reached")
+def reached(fields):
+    return [
+        dict(
+            name=graph,
+            decisions=[
+                dict(
+                    task=task,
+                    kind="turn",
+                    time=moment,
+                    references=dict(agents=[actor]),
+                    options=[dict(key=key, fields=fields(target, given)) for key in options],
+                )
+                for task, moment, actor, options, target, given in decisions
+            ],
+        )
+        for graph, decisions in DECIDED
+    ]
+
+
+@timed("descriptions.expected_reach")
+def expected_reach(bank, config, name, fields):
+    key, entry = keyed(bank, config), REALISATIONS.named(name)
+    stem = sha256_json(dict(variant=key, realisation=dict(name=name, version=entry.version), version=describing.VERSION))
+    record = dict(
+        version=describing.VERSION,
+        variant=key,
+        stored_sha256=read_json(bank / "manifest.json")["stored_sha256"],
+        realisation=dict(name=name, version=entry.version, reads=["kind", "targets", "parameters"], back=entry.back),
+        seed=STATED["derivation_seed"],
+        device="cpu",
+        splits=SPLITS,
+        settings=SETTLED,
+        entries=entries(config["pipeline"][1]["parameters"]),
+        tasks=dict(turn=dict(fields=list(GO), unread=[])),
+        undecided=["visit"],
+        graphs=reached(fields),
+    )
+    return record, bank / "descriptions" / "reach" / stem
+
+
+@timed("descriptions.spelled")
+def spelled(record):
+    lines = [
+        REACH
+        % (
+            record["variant"],
+            record["stored_sha256"],
+            describing.VERSION,
+            REALISATIONS.named("vector").version,
+            reaching.READING,
+            OPERATIONS.named("graphspec.nodes").version,
+            OPERATIONS.named("graphspec.relation_forms").version,
+        )
+    ]
+    for graph, decisions in DECIDED:
+        lines += ["", "graph %s, decisions %d" % (graph, len(decisions))]
+        for task, moment, actor, options, target, given in decisions:
+            cut = SEVERED % (("visit", "none") if given else ("none", "visit"))
+            lines.append("  decision %d of turn at time %d, references agents %s" % (task, moment, actor))
+            for key in options:
+                lines += ["    option " + key, "      %s: %s" % (GO[0], cut), "        %s: apart, features load" % target]
+                lines.append("      %s: %s" % (GO[1], cut))
+    return "\n".join(lines) + "\n"
+
+
+def test_the_reach_of_every_option_names_the_entry_its_operation_and_the_setting_that_cut_its_edges_at_its_decision(bank, cutting):
+    started = time.perf_counter()
+    config = realising(bank, CUTTING, "vector")
+    record = reach(bank, config, STATED)
+    assert record == expected_reach(bank, config, "vector", severed)[0]
+    assert json.loads(json.dumps(record)) == record
+    LOG.info("descriptions reach cut exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_with_the_setting_changed_the_reach_lists_every_field_of_every_option_at_one_hop_by_the_relation_joining_it(bank, cutting):
+    started = time.perf_counter()
+    config = realising(bank, dict(CUTTING, **{"cut/relation": "near"}), "vector")
+    record = reach(bank, config, STATED)
+    assert record == expected_reach(bank, config, "vector", lambda target, given: aimed("connected", 1, [["base"]], None, target))[0]
+    LOG.info("descriptions reach given back exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_text_of_reach_holds_its_record_and_the_verb_prints_what_the_call_writes(bank, cutting, tmp_path, capsys, monkeypatch):
+    from tuning.__main__ import main
+
+    started = time.perf_counter()
+    config = realising(bank, CUTTING, "vector")
+    record = reach(bank, config, STATED)
+    expected, stem = expected_reach(bank, config, "vector", severed)
+    written = spelled(record)
+    assert reaching.text(record) == written
+    assert read_json(stem.with_suffix(".json")) == record == expected
+    assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
+    write_json(tmp_path / "config.json", config)
+    write_json(tmp_path / "statement.json", STATED)
+    arguments = [str(bank), str(tmp_path / "config.json"), str(tmp_path / "statement.json")]
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--reach"] + arguments)
+    main()
+    assert capsys.readouterr().out == written
+    LOG.info("descriptions reach text exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_a_second_call_reads_the_file_of_reach_and_another_realisation_or_setting_is_not_served_it(bank, cutting, monkeypatch):
+    started = time.perf_counter()
+    config = realising(bank, CUTTING, "vector")
+    record = reach(bank, config, STATED)
+    assert expected_reach(bank, config, "vector", severed)[1].with_suffix(".json").exists()
+    monkeypatch.setattr(reaching, "recorded", refused)
+    assert reach(bank, config, STATED) == record
+    for other in (realising(bank, CUTTING, "node"), realising(bank, dict(CUTTING, **{"cut/kind": "visit"}), "vector")):
+        with pytest.raises(AssertionError, match="the description was computed again"):
+            reach(bank, other, STATED)
+    with pytest.raises(ValueError, match="states options/realisation none, which puts no option before it"):
+        reach(bank, configured(bank, CUTTING), STATED)
+    LOG.info("descriptions reach served exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_under_an_edit_the_reach_of_each_option_is_read_in_its_own_fork_where_its_facts_join_the_actor_to_its_target(
+    bank, cutting, walking
+):
+    started = time.perf_counter()
+    config = realising(bank, CUTTING, "walked")
+    record = reach(bank, config, STATED)
+    assert record == expected_reach(bank, config, "walked", lambda target, given: aimed("connected", 1, [["went"]], None, target))[0]
+    LOG.info("descriptions reach edit exit seconds=%.3f", time.perf_counter() - started)
+
+
+def test_the_reach_of_a_joined_group_is_described_graph_by_graph_as_its_graphs_derived_apart_are(bank, cutting):
+    started = time.perf_counter()
+    model = dict(MODEL, **{"options/realisation": "vector"})
+    graph = dict(SETTINGS, **JOINED)
+    config = configuration(bank, model, None, pipeline=pipelined(CUTTING), graph=graph, seed=STATED["seed"], splits=SPLITS)
+    record = reach(bank, config, STATED)
+    assert record["settings"]["graphs/join"] == "single" and record["graphs"] == reached(severed)
+    LOG.info("descriptions reach joined exit seconds=%.3f", time.perf_counter() - started)

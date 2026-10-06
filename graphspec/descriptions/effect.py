@@ -20,16 +20,23 @@ READING = (
 )
 
 
+def begun(members, beside, registry, steps, spec, groups, seed, limits, partitions, room):
+    started = time.perf_counter()
+    named = sorted({step.graph for step in steps if step.graph is not None})
+    result = Derivation.begun(
+        members, {name: beside[name] for name in named}, registry, steps, spec, groups, seed, limits, partitions, room
+    )
+    LOG.debug("effect begun exit entries=%d seconds=%.4f", len(steps), time.perf_counter() - started)
+    return result
+
+
 def derived(members, beside, registry, steps, spec, groups, seed, limits, partitions):
     started = time.perf_counter()
-    total, result = sum(member.steps for member in members), []
-    for count in range(len(steps) + 1):
-        cut = steps[:count]
-        named = sorted({step.graph for step in cut if step.graph is not None})
-        begun = Derivation.begun(
-            members, {name: beside[name] for name in named}, registry, cut, spec, groups, seed, limits, partitions, 0
-        )
-        result.append(begun.continued(total, None).derived())
+    total = sum(member.steps for member in members)
+    result = [
+        begun(members, beside, registry, steps[:count], spec, groups, seed, limits, partitions, 0).continued(total, None).derived()
+        for count in range(len(steps) + 1)
+    ]
     LOG.info(
         "effect derived exit graphs=%d states=%d seconds=%.3f", len(members), len(result), time.perf_counter() - started
     )
