@@ -1154,6 +1154,7 @@ def reached(fields):
     return [
         dict(
             name=graph,
+            decided=dict(turn=dict(decisions=count, described=count)),
             decisions=[
                 dict(
                     task=task,
@@ -1165,7 +1166,7 @@ def reached(fields):
                 for task, moment, actor, options, target, given in decisions
             ],
         )
-        for graph, decisions in DECIDED
+        for (graph, decisions), count in zip(DECIDED, (3, 1))
     ]
 
 
@@ -1210,8 +1211,8 @@ def spelled(record):
             OPERATIONS.named("graphspec.relation_forms").version,
         )
     ]
-    for graph, decisions in DECIDED:
-        lines += ["", "graph %s, decisions %d" % (graph, len(decisions))]
+    for (graph, decisions), counted in zip(DECIDED, ("decisions of turn 3, described 3", "decisions of turn 1, described 1")):
+        lines += ["", "graph %s, %s" % (graph, counted)]
         for task, moment, actor, options, target, given in decisions:
             cut = SEVERED % (("visit", "none") if given else ("none", "visit"))
             lines.append("  decision %d of turn at time %d, references agents %s" % (task, moment, actor))
@@ -1474,7 +1475,7 @@ GROUPED = "contract in place of a0"
 CROSSED_TEXT = """kind of task turn: fields kind, target to of go, target along of go, target made of go, target by of stay, parameter speed of go; not read by the realisation: none
 kinds of task that decide nothing, which hold no option: none
 
-graph h0, decisions 3
+graph h0, decisions of turn 4, described 3, 1 holding no point a fit reads
   decision 10 of turn at time 0, references agents a0; over a0 base s0
     option o0
       kind: apart; cut by no entry: connected in no state, the view before the first entry included
@@ -1553,7 +1554,7 @@ def over(stated):
     started = time.perf_counter()
     result = dict(key=[], kind=[], time=[], split=[], weight=[], target=[], known=[], references=dict(agents=[], over=[]))
     for key, moment, split, gain, options in stated:
-        options[0].update(chosen=True, outcome=dict(gain=gain))
+        options[0].update(chosen=True, outcome=None if gain is None else dict(gain=gain))
         target = dict(options=options, concurrent=[], next={}, ended=None, discount=None)
         held = dict(key=key, kind="turn", time=moment, split=split, weight=None, target=target, known=moment + 1)
         for name, value in held.items():
@@ -1580,6 +1581,7 @@ def crossed_case():
                 ],
             ),
             (30, 2, "validation", 3.0, [acted("o0", "stay", dict(by=["s0"]), {})]),
+            (40, 2, "validation", None, [acted("o0", "stay", dict(by=["s2"]), {})]),
         ]
     )
     held = graph(
@@ -1669,6 +1671,7 @@ def crossed_reach(bank, config, name, references, fields):
         graphs=[
             dict(
                 name="h0",
+                decided=dict(turn=dict(decisions=4, described=3)),
                 decisions=[
                     dict(
                         task=task,
@@ -1730,6 +1733,10 @@ def test_reach_reads_an_edge_without_direction_stated_either_way_a_reference_tha
     fields = held_whole(gone(APART, NOWHERE, LOAD), NEARBY, HERE, LOAD)
     assert record == crossed_reach(crossed, config, "vector", REFERRED, fields)
     assert json.loads(json.dumps(record)) == record
+    held = describe(crossed)["graphs"][0]["decisions"]["turn"]
+    assert (held["decisions"], [found["key"] for found in held["each"]]) == (4, [10, 20, 30, 40])
+    assert record["graphs"][0]["decided"] == dict(turn=dict(decisions=4, described=3))
+    assert [decision["task"] for decision in record["graphs"][0]["decisions"]] == [10, 20, 30]
     written = reaching.text(record)
     assert written[written.index("kind of task turn") :] == CROSSED_TEXT
     first, second = (option["fields"][FIELDS[2]]["targets"] for option in record["graphs"][0]["decisions"][1]["options"])

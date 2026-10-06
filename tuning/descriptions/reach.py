@@ -9,7 +9,7 @@ import numpy as np
 from graphspec.descriptions import describe as truth
 from graphspec.descriptions import effect
 from graphspec.infra.arrays import RESIDENT
-from graphspec.infra.files import sha256_json
+from graphspec.infra.files import load_arrays, sha256_json
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline as pipelines
@@ -26,6 +26,9 @@ LOG = logging.getLogger(__name__)
 CONNECTED, APART, ABSENT = "connected", "apart", "absent"
 BOUND = 16
 READING = (
+    "described: the decisions of a graph of the view of which an option holds a point there, an outcome a fit reads, "
+    "which are the decisions whose options a realisation puts before a model; a decision holding none is counted "
+    "with its graph and its options are not described; "
     "connected: joined to a reference of the task at its step by present facts, each taken in either direction, at "
     "the least number of hops, by the relations at each hop of every such shortest path; apart: held at the step and "
     "joined to no reference; absent: not held at the step; a node is held where it is observed, an edge where both "
@@ -582,11 +585,27 @@ class Reached:
         for done in (self.graphs, self.besides, self.members):
             done.clear()
 
+    def stating(self, graph, group):
+        started = time.perf_counter()
+        sources = {held["index"]: held["source"] for held in self.deriver.viewed(self.config).graphs}
+        member = np.asarray(graph.step_graph, np.int64)[np.asarray(graph.task_step, np.int64)]
+        kind, key = np.asarray(graph.task_kind, np.int64), np.asarray(graph.task_key, np.int64)
+        result = {}
+        for at, view in enumerate(self.loaded(group)[0]):
+            held = load_arrays(self.deriver.truth(sources[view]), ("option_task", "task_kind", "task_key"))
+            optioned = np.unique(np.asarray(held["option_task"], np.int64))
+            stated = set(zip(np.asarray(held["task_kind"])[optioned].tolist(), np.asarray(held["task_key"])[optioned].tolist()))
+            shown = [code for code, found in zip(kind[member == at].tolist(), key[member == at].tolist()) if (code, found) in stated]
+            result[view] = {task: shown.count(self.registry.tasks.index(task)) for task in self.fields}
+        LOG.debug("reached stating exit group=%d graphs=%d seconds=%.4f", group, len(result), time.perf_counter() - started)
+        return result
+
     def graphed(self):
         started = time.perf_counter()
-        held = {}
+        held, stated = {}, {}
         for group in self.deriver.graphs(self.config):
             trunk = self.derived(None, len(self.steps), group)
+            stated.update(self.stating(trunk, group))
             for decision in self.decided(trunk, group):
                 held.setdefault(decision["view"], []).append(
                     dict(
@@ -599,10 +618,14 @@ class Reached:
                 )
                 self.decision_done()
             self.group_done()
-        result = [
-            dict(name=graph["name"], decisions=held[graph["index"]] if graph["index"] in held else [])
-            for graph in self.deriver.viewed(self.config).graphs
-        ]
+        result = []
+        for graph in self.deriver.viewed(self.config).graphs:
+            decisions = held[graph["index"]] if graph["index"] in held else []
+            described = [decision["kind"] for decision in decisions]
+            decided = {
+                task: dict(decisions=count, described=described.count(task)) for task, count in stated[graph["index"]].items()
+            }
+            result.append(dict(name=graph["name"], decided=decided, decisions=decisions))
         LOG.info("reached graphed exit graphs=%d seconds=%.3f", len(result), time.perf_counter() - started)
         return result
 
@@ -760,7 +783,25 @@ def field_text(name, field):
 
 def graph_text(graph):
     started = time.perf_counter()
-    lines = ["", "graph %s, decisions %d" % (graph["name"], len(graph["decisions"]))]
+    lines = [
+        "",
+        "graph %s, %s"
+        % (
+            graph["name"],
+            "; ".join(
+                "decisions of %s %d, described %d%s"
+                % (
+                    task,
+                    held["decisions"],
+                    held["described"],
+                    ", %d holding no point a fit reads" % (held["decisions"] - held["described"])
+                    if held["decisions"] > held["described"]
+                    else "",
+                )
+                for task, held in graph["decided"].items()
+            ),
+        ),
+    ]
     for decision in graph["decisions"]:
         lines.append(
             "  decision %s of %s at time %d, references %s"
