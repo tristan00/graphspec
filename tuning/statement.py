@@ -213,6 +213,26 @@ def stated(value):
     return value
 
 
+def agreed(config, value):
+    started = time.perf_counter()
+    if type(config) is not dict:
+        raise TypeError("a configuration is a mapping of its fields, found %r" % (config,))
+    if "seed" not in config:
+        raise KeyError("the configuration states no seed")
+    if config["seed"] != value.seed:
+        raise ValueError(
+            "the seed of the configuration is %r and the seed of the statement is %r" % (config["seed"], value.seed)
+        )
+    if "splits" not in config:
+        raise KeyError("the configuration states no splits to train on and to score on")
+    if config["splits"] != value.splits():
+        raise ValueError(
+            "the splits of the configuration are %r and those of the statement are %r"
+            % (config["splits"], value.splits())
+        )
+    LOG.debug("statement agreed exit seconds=%.4f", time.perf_counter() - started)
+
+
 @timed("statement.seen")
 def seen(given):
     started = time.perf_counter()

@@ -1,4 +1,3 @@
-import argparse
 import logging
 import time
 from pathlib import Path
@@ -13,7 +12,7 @@ from graphspec.schema.declaration import Registry
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 1
+VERSION = 2
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
 READING = (
     "at a time: the nodes observed and their observations, and the edges a present fact holds; a run: a stretch of "
@@ -315,30 +314,33 @@ def text(record):
     return "\n".join(lines) + "\n"
 
 
-def describe(path):
+def manifested(path):
     started = time.perf_counter()
-    manifest = admitted(path, read_json(Path(path) / "manifest.json"))
-    held = stem(path, manifest)
+    found = Path(path) / "manifest.json"
+    if not found.is_file():
+        raise FileNotFoundError("%s holds no manifest.json; a description reads the folder of a bank" % path)
+    result = admitted(path, read_json(found))
+    LOG.debug("describe manifested exit path=%s seconds=%.4f", path, time.perf_counter() - started)
+    return result
+
+
+def kept(held, made, written):
+    started = time.perf_counter()
     served = held.with_suffix(".json").exists()
     if served:
         record = read_json(held.with_suffix(".json"))
     else:
-        record = recorded(path, manifest)
+        record = made()
         output_path(held.parent).mkdir(parents=True, exist_ok=True)
-        output_path(held.with_suffix(".txt")).write_text(text(record), encoding="utf-8")
+        output_path(held.with_suffix(".txt")).write_text(written(record), encoding="utf-8")
         write_json(held.with_suffix(".json"), record)
-    LOG.info("describe exit path=%s served=%s seconds=%.3f", path, served, time.perf_counter() - started)
+    LOG.info("describe kept exit key=%s served=%s seconds=%.3f", held.name, served, time.perf_counter() - started)
     return record
 
 
-def main():
+def describe(path):
     started = time.perf_counter()
-    parser = argparse.ArgumentParser()
-    parser.add_argument("path", help="the directory of a bank")
-    args = parser.parse_args()
-    print(text(describe(args.path)), end="")
-    LOG.info("describe command exit seconds=%.3f", time.perf_counter() - started)
-
-
-if __name__ == "__main__":
-    main()
+    manifest = manifested(path)
+    record = kept(stem(path, manifest), lambda: recorded(path, manifest), text)
+    LOG.info("describe exit path=%s seconds=%.3f", path, time.perf_counter() - started)
+    return record

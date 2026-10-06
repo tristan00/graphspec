@@ -39,6 +39,15 @@ def configuration(bank, model=None, training=None, *, pipeline, graph, seed, spl
     return result
 
 
+def describe(bank, config, statement):
+    from .descriptions.variant import describe as described
+
+    started = time.perf_counter()
+    result = described(bank, config, statement)
+    LOG.info("describe exit seconds=%.3f bank=%s", time.perf_counter() - started, bank)
+    return result
+
+
 @exclusive
 def fit(bank, config, output, statement):
     from graphspec.infra import compute
