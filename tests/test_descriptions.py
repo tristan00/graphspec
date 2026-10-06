@@ -1343,6 +1343,8 @@ def test_every_count_and_share_of_a_variant_equals_the_number_written_out_here_a
     tasked_at = dict(turn=[1, 3, 5], visit=[2, 4, 5, 6])
     partly = effect.cuts("relation", "near", [1, 1, 2, 2, 1, 1, 0, 0], [1, 1, 0, 2, 0, 0, 0, 0], tasked_at, list(range(10, 18)))
     assert partly == [dict(sort="relation", name="near", task="visit", times=[12, 14, 15], everywhere=False, without=[])]
+    grown = effect.tallied(dict(nodes=np.array([2, 2])), dict(nodes=np.array([3, 3])), 1, 3, "nodes")
+    assert grown == tally(4, 1, 0.25, 3, 0.75, 6, nodes=[[0, 3]])
     lasting = dict(times=[10, 11, 12], tasks=dict(turn=[11, 12]), held=dict(kinds={}, relations=dict(base=dict(edges=[[0, 1], [2, 0]]))))
     assert effect.left(lasting, "relation", "base", "turn") and not effect.left(lasting, "relation", "near", "turn")
     apart = dict(seed=7, device="cpu", splits=SPLITS, settings={"time/steps": "changes"})
