@@ -14,6 +14,8 @@ from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import pipeline as pipelines
 from graphspec.operations import sets
+from graphspec.operations.operation import OPERATIONS
+from graphspec.representations.registry import REPRESENTATIONS
 from graphspec.views.view import stepped
 from tuning.bank import forks
 from tuning.bank.bank import Deriver
@@ -69,6 +71,15 @@ def lined(error):
 @timed("restated.halted")
 def halted(error):
     return STOPPED, dict(error=type(error).__name__, reason=lined(error))
+
+
+def coded(deriver, config, read):
+    started = time.perf_counter()
+    _, steps, spec, chosen = deriver.stated(config)
+    held = deriver.reads(steps, spec, config)[1] + [(REPRESENTATIONS, chosen), (OPERATIONS, [step.operation.name for step in steps])]
+    result = truth.coded(held + read)
+    LOG.debug("restated coded exit entries=%d seconds=%.4f", len(result["entries"]), time.perf_counter() - started)
+    return result
 
 
 def opened(bank, derivers, config, statement):

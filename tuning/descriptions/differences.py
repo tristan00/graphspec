@@ -8,10 +8,10 @@ from graphspec.descriptions import describe as truth
 from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
 from graphspec.engine.segments import padded
-from graphspec.infra.files import sha256_json
+from graphspec.infra.timing import timed
 
 from . import variant as varying
-from .restated import viewed
+from .restated import coded, viewed
 
 LOG = logging.getLogger(__name__)
 
@@ -152,13 +152,22 @@ def recorded(sides, configs):
     return result
 
 
+@timed("differences.keyed")
+def keyed(sides, configs):
+    return dict(
+        part="differences",
+        first=dict(variant=sides[0][1]),
+        second=dict(variant=sides[1][1]),
+        code=truth.merged([coded(deriver, config, []) for (deriver, _), config in zip(sides, configs)]),
+    )
+
+
 def differences(bank, config, statement, other, other_statement):
     started = time.perf_counter()
     derivers = {}
     sides = [varying.opened(bank, derivers, *held) for held in ((config, statement), (other, other_statement))]
-    key = sha256_json(dict(version=truth.VERSION, first=dict(variant=sides[0][1]), second=dict(variant=sides[1][1])))
-    held = Path(bank) / "descriptions" / "differences" / key
-    result = truth.kept(held, lambda: recorded(sides, (config, other)), text)
+    held = Path(bank) / "descriptions" / "differences"
+    result = truth.kept(held, keyed(sides, (config, other)), lambda: recorded(sides, (config, other)), text)
     LOG.info(
         "differences exit first=%s second=%s seconds=%.3f", sides[0][1][:10], sides[1][1][:10], time.perf_counter() - started
     )

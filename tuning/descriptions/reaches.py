@@ -204,6 +204,32 @@ def rowed(deriver, config, key, name, fields):
     return result
 
 
+@timed("reaches.row_keyed")
+def row_keyed(deriver, config, key, name):
+    return dict(reaching.realised_by(deriver, config, key, name), part="reach_rows")
+
+
+def keyed(manifest, stated):
+    started = time.perf_counter()
+    rows = [None if found is None else row_keyed(found[0], config, found[2], found[1]) for _, config, found, _ in stated]
+    result = dict(
+        part="reaches",
+        stored=manifest["stored_sha256"],
+        trials=[
+            dict(
+                trial=trial,
+                row=None if row is None else sha256_json(row),
+                refused=None if found is None else found[3],
+                reason=reason,
+            )
+            for (trial, _, found, reason), row in zip(stated, rows)
+        ],
+        code=truth.merged([row["code"] for row in rows if row is not None]),
+    )
+    LOG.debug("reaches keyed exit trials=%d seconds=%.4f", len(stated), time.perf_counter() - started)
+    return result
+
+
 def recorded(bank, manifest, fields, stated):
     started = time.perf_counter()
     rows = []
@@ -212,9 +238,9 @@ def recorded(bank, manifest, fields, stated):
         if found is not None:
             deriver, name, key, refused = found
             row.update(variant=key, realisation=name, refused=refused)
-            held = Path(bank) / "descriptions" / "reach_rows" / reaching.stemmed(key, name, None)
+            held, named = Path(bank) / "descriptions" / "reach_rows", row_keyed(deriver, config, key, name)
             try:
-                kept = truth.kept(held, lambda: rowed(deriver, config, key, name, fields), row_text)
+                kept = truth.kept(held, named, lambda: rowed(deriver, config, key, name, fields), row_text)
                 row.update({part: kept[part] for part in ("graphs", "tasks", "cuts")})
             except STOPS as error:
                 row.update(reason=STOPPED % (type(error).__name__, lined(error)))
@@ -238,24 +264,9 @@ def tabled(bank, manifest, trials, folder):
             except Refused as error:
                 reason = lined(error)
         stated.append((trial, config, found, reason))
-    key = sha256_json(
-        dict(
-            stored=manifest["stored_sha256"],
-            version=truth.VERSION,
-            trials=[
-                dict(
-                    trial=trial,
-                    row=None if found is None else reaching.stemmed(found[2], found[1], None),
-                    refused=None if found is None else found[3],
-                    reason=reason,
-                )
-                for trial, _, found, reason in stated
-            ],
-        )
-    )
     fields = {task: [field["name"] for field in fielded(schema, task)] for task in schema.decided()}
-    held = Path(folder) / "descriptions" / "reaches" / key
-    result = truth.kept(held, lambda: recorded(bank, manifest, fields, stated), text)
+    held = Path(folder) / "descriptions" / "reaches"
+    result = truth.kept(held, keyed(manifest, stated), lambda: recorded(bank, manifest, fields, stated), text)
     LOG.info("reaches tabled exit trials=%d seconds=%.3f", len(stated), time.perf_counter() - started)
     return result
 

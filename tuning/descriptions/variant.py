@@ -6,13 +6,14 @@ from pathlib import Path
 from graphspec.descriptions import describe as truth
 from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
-from graphspec.infra.files import read_json, sha256_json
+from graphspec.infra.files import read_json
+from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.views.graph import Graph
 
 from . import reach as reaching
 from . import reaches
-from .restated import Derived, opened, unviewed, viewed
+from .restated import Derived, coded, opened, unviewed, viewed
 
 LOG = logging.getLogger(__name__)
 
@@ -70,11 +71,16 @@ def recorded(deriver, config, key):
     return result
 
 
+@timed("variant.keyed")
+def keyed(deriver, config, key):
+    return dict(part="variants", variant=key, code=coded(deriver, config, []))
+
+
 def describe(bank, config, statement):
     started = time.perf_counter()
     deriver, key = opened(bank, {}, config, statement)
-    held = Path(bank) / "descriptions" / "variants" / sha256_json(dict(variant=key, version=truth.VERSION))
-    result = truth.kept(held, lambda: recorded(deriver, config, key), effect.text)
+    held = Path(bank) / "descriptions" / "variants"
+    result = truth.kept(held, keyed(deriver, config, key), lambda: recorded(deriver, config, key), effect.text)
     LOG.info("variant describe exit variant=%s seconds=%.3f", key[:10], time.perf_counter() - started)
     return result
 

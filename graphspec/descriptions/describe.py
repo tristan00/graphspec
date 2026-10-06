@@ -4,20 +4,26 @@ from pathlib import Path
 
 import numpy as np
 
+from graphspec import registries
+from graphspec.engine import transform
 from graphspec.facts.stored import GROUPS, Facts, admitted
 from graphspec.infra.files import read_json, sha256_json, write_json
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
+from graphspec.operations.operation import OPERATIONS
 from graphspec.operations.rows import counted as offsets
 from graphspec.operations.rows import fact_keys
+from graphspec.representations import groups as representations
 from graphspec.schema.decisions import ROLES, roled
 from graphspec.schema.declaration import Registry
 from graphspec.schema.time import ALWAYS, NEVER, UNITED
+from graphspec.views import view as viewing
 from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 22
+VERSION = 23
+DIFFERENCE = "graphspec.difference"
 UNNAMED = -1
 LAST = NEVER - 1
 MODELS = dict(none="no time", order="order without a clock", clock="one clock", clocks="two clocks")
@@ -69,10 +75,28 @@ WORDED = {
 }
 
 
-@timed("describe.stem")
-def stem(path, manifest):
-    key = sha256_json(dict(stored=manifest["stored_sha256"], version=VERSION))
-    return Path(path) / "descriptions" / "truth" / key
+@timed("describe.coded")
+def coded(read):
+    return dict(
+        description=VERSION,
+        views=viewing.VERSION,
+        derivation=transform.VERSION,
+        representations=representations.VERSION,
+        entries=registries.versions(list(read) + [(OPERATIONS, [DIFFERENCE])]),
+    )
+
+
+@timed("describe.merged")
+def merged(codes):
+    held = coded([])
+    entries = {tuple(entry) for code in [held, *codes] for entry in code["entries"]}
+    return dict(held, entries=[list(entry) for entry in sorted(entries)])
+
+
+@timed("describe.keyed")
+def keyed(manifest):
+    read = Registry.from_declaration(manifest["spec"]).schema.read()
+    return dict(part="truth", stored=manifest["stored_sha256"], code=coded(read))
 
 
 @timed("describe.moments")
@@ -673,16 +697,17 @@ def manifested(path):
     return result
 
 
-def kept(held, made, written):
+def kept(folder, key, made, written):
     started = time.perf_counter()
+    held = Path(folder) / sha256_json(key)
     served = held.with_suffix(".json").exists()
     if served:
-        record = read_json(held.with_suffix(".json"))
+        record = read_json(held.with_suffix(".json"))["record"]
     else:
         record = made()
         output_path(held.parent).mkdir(parents=True, exist_ok=True)
         output_path(held.with_suffix(".txt")).write_text(written(record), encoding="utf-8")
-        write_json(held.with_suffix(".json"), record)
+        write_json(held.with_suffix(".json"), dict(key=key, record=record))
     LOG.info("describe kept exit key=%s served=%s seconds=%.3f", held.name, served, time.perf_counter() - started)
     return record
 
@@ -690,6 +715,6 @@ def kept(held, made, written):
 def describe(path):
     started = time.perf_counter()
     manifest = manifested(path)
-    record = kept(stem(path, manifest), lambda: recorded(path, manifest), text)
+    record = kept(Path(path) / "descriptions" / "truth", keyed(manifest), lambda: recorded(path, manifest), text)
     LOG.info("describe exit path=%s seconds=%.3f", path, time.perf_counter() - started)
     return record

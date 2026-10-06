@@ -119,21 +119,28 @@ VERSIONED = {
     "representations": ("graphspec/representations",),
     "index": ("graphspec/build/staged.py",),
     "description": (
-        "graphspec/descriptions/describe.py",
-        "graphspec/descriptions/differences.py",
-        "graphspec/descriptions/effect.py",
-        "tuning/descriptions/variant.py",
-        "tuning/descriptions/differences.py",
-        "tuning/descriptions/reach.py",
-        "tuning/descriptions/reaches.py",
-        "tuning/descriptions/restated.py",
+        "graphspec/descriptions",
+        "tuning/descriptions",
+        "graphspec/budgets.py",
+        "graphspec/registries.py",
+        "graphspec/infra/arrays.py",
+        "graphspec/infra/files.py",
+        "graphspec/infra/runtime.py",
+        "graphspec/infra/timing.py",
+        "tuning/statement.py",
+        "tuning/bank/forks.py",
+        "tuning/bank/options.py",
+        "tuning/bank/routes.py",
+        "tuning/batches/inputs.py",
+        "tuning/families/heads.py",
+        "tuning/families/model_spec.py",
     ),
 }
+DESCRIBED = ("graphspec/descriptions", "tuning/descriptions")
+KEYED = ("views", "derivation", "representations", "graphspec.difference")
 UNVERSIONED = (
     "graphspec/__init__.py",
     "graphspec/operations/__init__.py",
-    "graphspec/budgets.py",
-    "graphspec/registries.py",
     "graphspec/build/__init__.py",
     "graphspec/build/calls.py",
     "graphspec/build/decisions.py",
@@ -141,19 +148,13 @@ UNVERSIONED = (
     "graphspec/build/generators.py",
     "graphspec/build/output.py",
     "graphspec/build/parse.py",
-    "graphspec/descriptions/__init__.py",
-    "graphspec/descriptions/inspect.py",
     "graphspec/sources",
     "graphspec/infra/__init__.py",
-    "graphspec/infra/arrays.py",
     "graphspec/infra/code.py",
     "graphspec/infra/database.py",
-    "graphspec/infra/files.py",
     "graphspec/infra/log.py",
     "graphspec/infra/processes",
-    "graphspec/infra/runtime.py",
     "graphspec/infra/serve.py",
-    "graphspec/infra/timing.py",
     "graphspec/infra/windows_files.py",
 )
 RECORDED = {
@@ -174,10 +175,10 @@ RECORDED = {
     "graphspec.product": (5, "414e880458bb8727533225adab00a3c93108ef33291a5ce8f93c57d20b57b610"),
     "graphspec.negatives": (10, "b59a00bd88e9ee16c57d8d3b9a9067727aeef3e3e55c731dba7b79d6ba7f9277"),
     "derivation": (59, "8fce9cfb7bcc39e2a572f212b2e607307d9cf16764e63a60952203575f36c593"),
-    "views": (77, "6a88b81208694de51948e0ef100d60a78e93a91e1190f824cda5f8889974c7cb"),
+    "views": (78, "f4143131c14f714b75fe3558c60d752f56975eb85814622cd6c86621ba8576b4"),
     "representations": (18, "3a56b3ed965c44d4b9e9a96da8caa12baf06b8623d418b1d8bdc13037860d3e9"),
     "index": (6, "a6ad6b5034763801ebfb30ec58db4be41f482f0ff61717a64e76250e55ce4ec0"),
-    "description": (22, "693bc2d1f5ca10f1966feaee710e0013b8fbd144610662bac026137f62f1f5df"),
+    "description": (23, "ac8380f2bc522dc1d00f1e303451bdd730ed384487a8a42fcbe920b8f27fc9cc"),
     "sort of reference edge": (1, "a1efbb0642fee3979ed3c7202d5dd2605ba1a0ed3d1d99a1761cb6a64734eb66"),
     "sort of reference graph": (1, "24c024a38804e098c970eb76d2c06bb0529d30901259df6aa5e098c9696ca51e"),
     "sort of reference node": (1, "5130e549da2053ab17d7ad3ddb45baaf74b38153c74af98f470f297b7c42489c"),
@@ -1046,7 +1047,7 @@ def versions():
     from graphspec.descriptions.describe import VERSION as DESCRIPTION
     from graphspec.engine.transform import VERSION as DERIVATION
     from graphspec.representations.groups import VERSION as REPRESENTATIONS
-    from tuning.bank.bank import VIEW
+    from graphspec.views.view import VERSION as VIEW
 
     started = time.perf_counter()
     found = {name: OPERATIONS.named(name).version for name in OPERATIONS.names() if name.startswith("graphspec.")}
@@ -1185,3 +1186,48 @@ def test_the_code_of_an_operation_or_of_a_part_that_writes_a_cache_changes_only_
         assert unrecorded({name: digest(name, entries[name], tmp_path) for name in drawing}, RECORDED, held) == [
             "the code of %s changed and its version %d did not; raise it" % (name, held[name]) for name in drawing
         ]
+
+
+def undigested(root, described, digested):
+    started = time.perf_counter()
+    found = sorted(set(listed(root, described)) - set(listed(root, digested)))
+    LOG.debug("undigested exit found=%d seconds=%.4f", len(found), time.perf_counter() - started)
+    return found
+
+
+def uncovered(root, folders, described, covering):
+    started = time.perf_counter()
+    modules, covered = set(listed(root, described)), set(listed(root, covering))
+    found = sorted(
+        (place, line, target)
+        for place, line, target in imports(sources(root, folders))
+        if place in modules and target not in covered
+    )
+    LOG.debug("uncovered exit modules=%d found=%d seconds=%.4f", len(modules), len(found), time.perf_counter() - started)
+    return found
+
+
+def test_every_description_module_is_digested_and_imports_only_what_the_digest_or_a_unit_every_key_holds_covers(tmp_path):
+    from graphspec.descriptions.describe import coded
+
+    started = time.perf_counter()
+    held = coded([])
+    assert sorted(name for name in held if name != "entries") == sorted(("description",) + KEYED[:3])
+    assert [entry[:2] for entry in held["entries"]] == [["operation", KEYED[3]]]
+    covering = VERSIONED["description"] + tuple(place for unit in KEYED for place in VERSIONED[unit])
+    assert undigested(ROOT, DESCRIBED, VERSIONED["description"]) == []
+    assert uncovered(ROOT, CODE, DESCRIBED, covering) == []
+    for place in ("graphspec", "graphspec/infra", "graphspec/views", "graphspec/build", "graphspec/descriptions", "tuning"):
+        write(tmp_path, place + "/__init__.py", "")
+    for place in ("graphspec/infra/files", "graphspec/views/view", "graphspec/build/staged", "tuning/fits/training", "tuning/descriptions/near"):
+        write(tmp_path, place + ".py", "VALUE = 1\n")
+    write(tmp_path, "graphspec/descriptions/held.py", "import json\n\nfrom graphspec.infra import files\nfrom graphspec.views.view import VALUE\n")
+    write(tmp_path, "graphspec/descriptions/loose.py", "def work():\n    from graphspec.build import staged\n\n    return staged\n")
+    write(tmp_path, "tuning/descriptions/apart.py", "from tuning.fits import training\n\nfrom . import near\n")
+    digest = ("graphspec/descriptions/held.py", "graphspec/descriptions/loose.py", "tuning/descriptions/near.py", "graphspec/infra/files.py")
+    assert undigested(tmp_path, DESCRIBED, digest) == ["graphspec/descriptions/__init__.py", "tuning/descriptions/apart.py"]
+    assert uncovered(tmp_path, CODE, DESCRIBED, digest + ("graphspec/views",)) == [
+        ("graphspec/descriptions/loose.py", 2, "graphspec/build/staged.py"),
+        ("tuning/descriptions/apart.py", 1, "tuning/fits/training.py"),
+    ]
+    LOG.info("description modules covered exit seconds=%.3f", time.perf_counter() - started)

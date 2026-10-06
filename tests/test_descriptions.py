@@ -3,18 +3,20 @@ import logging
 import shutil
 import sys
 import time
+from contextlib import contextmanager
 from unittest.mock import Mock
 
 import numpy as np
 import pytest
 
 from conftest import SPLITS, shared
-from graphspec import OPERATIONS, RULES, Operation, Phase, Registry, describe
+from graphspec import OPERATIONS, RULES, Operation, Phase, Registry, describe, registries
 from graphspec import differences as between
 from graphspec.budgets import GraphCapacityError, Refused
 from graphspec.descriptions import describe as describing
 from graphspec.descriptions import differences as differing
 from graphspec.descriptions import effect
+from graphspec.engine import transform
 from graphspec.facts.stored import Facts
 from graphspec.infra.arrays import RESIDENT
 from graphspec.infra.files import read_json, sha256_json, write_json
@@ -24,10 +26,12 @@ from graphspec.operations import parameters as specs
 from graphspec.operations.operation import Need
 from graphspec.operations.parameters import choice, equals, number
 from graphspec.operations.rows import made_rows
+from graphspec.representations import groups as representing
 from graphspec.schema.schema import VERSION as SCHEMA
 from graphspec.schema.time import ALWAYS as EARLIEST
 from graphspec.schema.time import NEVER as LATEST
 from graphspec.sources import synthetic
+from graphspec.views import view as viewing
 from tuning import REALISATIONS, Edited, configuration, reach, reach_over, reach_search
 from tuning import describe as variant
 from tuning import differences as against
@@ -403,7 +407,8 @@ def expected(stored):
 
 @timed("descriptions.files")
 def files(bank, stored):
-    stem = bank / "descriptions" / "truth" / sha256_json(dict(stored=stored, version=describing.VERSION))
+    key = dict(describing.keyed(read_json(bank / "manifest.json")), stored=stored)
+    stem = bank / "descriptions" / "truth" / sha256_json(key)
     return stem.with_suffix(".json"), stem.with_suffix(".txt")
 
 
@@ -422,7 +427,7 @@ def test_the_text_holds_every_number_of_the_record_and_the_verb_prints_what_the_
     written = TEXT % (stored, describing.VERSION, describing.READING["clock"])
     assert describing.text(record) == written
     found, shown = files(bank, stored)
-    assert read_json(found) == record and shown.read_text(encoding="utf-8") == written
+    assert read_json(found)["record"] == record and shown.read_text(encoding="utf-8") == written
     monkeypatch.setattr(sys, "argv", ["graphspec", "describe", str(bank)])
     main()
     assert capsys.readouterr().out == written
@@ -977,6 +982,25 @@ def keyed(bank, config):
     return specs.digest(Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT).identity(config))
 
 
+def named(bank, config, part, name, refused):
+    started = time.perf_counter()
+    deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
+    key = specs.digest(deriver.identity(config))
+    if part == "variants":
+        held = varying.keyed(deriver, config, key)
+    elif part == "reach":
+        held = reaching.keyed(deriver, config, key, name, refused)
+    else:
+        held = reaches.row_keyed(deriver, config, key, name)
+    LOG.debug("descriptions named exit part=%s seconds=%.4f", part, time.perf_counter() - started)
+    return held
+
+
+@timed("descriptions.stemmed")
+def stemmed(bank, config, part, name, refused):
+    return bank / "descriptions" / part / sha256_json(named(bank, config, part, name, refused))
+
+
 @timed("descriptions.varied")
 def varied(bank, config):
     stored = read_json(bank / "manifest.json")["stored_sha256"]
@@ -1002,7 +1026,7 @@ def varied(bank, config):
         OPERATIONS.named("graphspec.nodes").version,
         OPERATIONS.named("graphspec.relation_forms").version,
     )
-    return record, written, bank / "descriptions" / "variants" / sha256_json(dict(variant=key, version=describing.VERSION))
+    return record, written, stemmed(bank, config, "variants", None, None)
 
 
 def test_every_count_and_share_of_a_variant_equals_the_number_written_out_here_and_names_the_entry_that_cuts(bank, cutting):
@@ -1030,7 +1054,7 @@ def test_the_text_of_a_variant_holds_every_number_of_its_record_and_the_verb_pri
     record = variant(bank, config, STATED)
     expected, written, stem = varied(bank, config)
     assert effect.text(record) == written
-    assert read_json(stem.with_suffix(".json")) == record == expected
+    assert read_json(stem.with_suffix(".json"))["record"] == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
     write_json(tmp_path / "config.json", config)
     write_json(tmp_path / "statement.json", STATED)
@@ -1529,7 +1553,6 @@ def realised(name):
 @timed("descriptions.expected_reach")
 def expected_reach(bank, config, name, fields):
     key = keyed(bank, config)
-    stem = sha256_json(dict(variant=key, realisation=realised(name), refused=None, version=describing.VERSION))
     cutter = config["pipeline"][1]
     record = dict(
         version=describing.VERSION,
@@ -1548,7 +1571,7 @@ def expected_reach(bank, config, name, fields):
         undecided=["visit"],
         graphs=reached(fields),
     )
-    return record, bank / "descriptions" / "reach" / stem
+    return record, stemmed(bank, config, "reach", name, None)
 
 
 @timed("descriptions.spelled")
@@ -1613,7 +1636,7 @@ def test_the_text_of_reach_holds_its_record_and_the_verb_prints_what_the_call_wr
     expected, stem = expected_reach(bank, config, "vector", severed)
     written = spelled(record)
     assert reaching.text(record) == written
-    assert read_json(stem.with_suffix(".json")) == record == expected
+    assert read_json(stem.with_suffix(".json"))["record"] == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
     write_json(tmp_path / "config.json", config)
     write_json(tmp_path / "statement.json", STATED)
@@ -1654,30 +1677,30 @@ def test_an_edit_of_another_mapping_at_the_same_version_is_not_served_the_reach_
     added = dict(WENT_ADDED, gone=WENT_ADDED["went"])
     stated = dict(EDITING, relations=dict(WENT_STATED, gone=WENT_STATED["went"]))
     monkeypatch.setattr(reaching, "recorded", refused)
-    keys, stems, held = [], [], []
+    keys, stems, held, rows = [], [], [], []
     for relation in ("went", "gone"):
         mapping = {role: dict(relation=relation, actor="source") for role in ("to", "along", "made")}
         REALISATIONS.register("moving", Edited(dict(turn=dict(go=mapping)), added, 1))
         try:
             config = realising(bank, CUTTING, "moving")
-            keys.append(keyed(bank, config))
-            stems.append(reaching.stemmed(keys[-1], "moving", None))
+            keys.append(named(bank, config, "reach", "moving", None))
+            rows.append(named(bank, config, "reach_rows", "moving", None))
+            stems.append(stemmed(bank, config, "reach", "moving", None))
             held.append(dict(stated, name="moving", version=1, mapping=dict(turn=dict(go=mapping))))
-            served = (bank / "descriptions" / "reach" / stems[0]).with_suffix(".json")
+            served = stems[0].with_suffix(".json")
             if relation == "went":
                 served.parent.mkdir(parents=True, exist_ok=True)
-                write_json(served, dict(served="the edit that makes facts of went"))
-                assert reach(bank, config, STATED) == read_json(served)
+                write_json(served, dict(key=keys[0], record=dict(served="the edit that makes facts of went")))
+                assert reach(bank, config, STATED) == read_json(served)["record"]
             else:
                 with pytest.raises(AssertionError, match="the description was computed again"):
                     reach(bank, config, STATED)
             assert reaching.stated("moving") == held[-1]
         finally:
             del REALISATIONS.held["moving"]
-    assert keys[0] == keys[1] and stems[0] != stems[1]
-    assert stems == [
-        sha256_json(dict(variant=keys[0], realisation=found, refused=None, version=describing.VERSION)) for found in held
-    ]
+    assert stems[0] != stems[1] and [key["realisation"] for key in keys] == held == [key["realisation"] for key in rows]
+    assert without(keys[0], "realisation") == without(keys[1], "realisation") and keys[0] != keys[1]
+    assert without(rows[0], "realisation") == without(rows[1], "realisation") and rows[0] != rows[1]
     LOG.info("descriptions reach of another mapping exit seconds=%.3f", time.perf_counter() - started)
 
 
@@ -1692,8 +1715,8 @@ def test_under_an_edit_the_reach_of_each_option_is_read_in_its_own_fork_where_it
     deriver = Deriver(bank, STATED["device"], STATED["derivation_seed"], RESIDENT)
     directed = dict(config, graph=dict(config["graph"], **{"relations/direction": "directed"}))
     assert reaching.unrouted(deriver, config) is None and reaching.unrouted(deriver, directed) == DIRECTED
-    key = keyed(bank, directed)
-    assert reaching.stemmed(key, "walked", DIRECTED) != reaching.stemmed(key, "walked", None)
+    refused, routed = (named(bank, directed, "reach", "walked", reason) for reason in (DIRECTED, None))
+    assert refused == dict(routed, refused=DIRECTED) and routed["refused"] is None
     assert reaching.text(dict(record, refused=DIRECTED)).split("\n")[1:3] == [reaching.REFUSAL % DIRECTED, WALKED_TEXT[0]]
     LOG.info("descriptions reach edit exit seconds=%.3f", time.perf_counter() - started)
 
@@ -1787,7 +1810,7 @@ def test_a_value_the_statement_refuses_is_recorded_with_its_refusal_and_the_reac
     record = reach(bank, config, STATED)
     expected, stem = expected_reach(bank, config, "vector", refusing)
     assert record == expected
-    assert read_json(stem.with_suffix(".json")) == record
+    assert read_json(stem.with_suffix(".json"))["record"] == record
     written = stem.with_suffix(".txt").read_text(encoding="utf-8")
     assert written == reaching.text(record) and "\n".join(REFUSED_TEXT) + "\n  decision 10 " in written
     assert written.count("        s0: joined to a reference by no path, features load; cut 1, by test.sever\n") == 3
@@ -2817,18 +2840,18 @@ def over_search(bank, configs, stated):
 
 def tabled(folder, record):
     started = time.perf_counter()
-    trials = [
-        dict(
-            trial=row["trial"],
-            row=None if row["variant"] is None else reaching.stemmed(row["variant"], row["realisation"], None),
-            refused=row["refused"],
-            reason=row["reason"] if row["variant"] is None else None,
-        )
-        for row in record["trials"]
+    kept = sorted((folder / "descriptions" / "reaches").glob("*.json"))
+    (found,) = [path for path in kept if read_json(path)["record"] == record]
+    held = read_json(found)["key"]
+    assert held["part"] == "reaches" and held["stored"] == record["stored_sha256"] and found.stem == sha256_json(held)
+    assert [(trial["trial"], trial["refused"], trial["row"] is None) for trial in held["trials"]] == [
+        (row["trial"], row["refused"], row["variant"] is None) for row in record["trials"]
     ]
-    key = sha256_json(dict(stored=record["stored_sha256"], version=describing.VERSION, trials=trials))
-    LOG.debug("descriptions tabled exit trials=%d seconds=%.4f", len(trials), time.perf_counter() - started)
-    return folder / "descriptions" / "reaches" / key
+    assert [trial["reason"] for trial in held["trials"]] == [
+        row["reason"] if row["variant"] is None else None for row in record["trials"]
+    ]
+    LOG.debug("descriptions tabled exit tables=%d seconds=%.4f", len(kept), time.perf_counter() - started)
+    return found.with_suffix("")
 
 
 def test_reach_over_the_twenty_trials_of_a_search_equals_the_table_written_out_here_and_keeps_the_row_of_each_variant(
@@ -2843,10 +2866,10 @@ def test_reach_over_the_twenty_trials_of_a_search_equals_the_table_written_out_h
     assert rows[3]["variant"] == rows[16]["variant"] and rows[5]["variant"] is not None and rows[15]["variant"] is None
     described = [row for row in rows if row["reason"] is None]
     assert len(described) == 16 and len({(row["variant"], row["realisation"]) for row in described}) == 15
-    key = rows[13]["variant"]
-    stem = bank / "descriptions" / "reach_rows" / reaching.stemmed(key, "vector", None)
+    key, configs = rows[13]["variant"], tried(bank)
+    stem = stemmed(bank, configs[13], "reach_rows", "vector", None)
     kept = {name: value for name, value in rows[13].items() if name not in ("trial", "refused", "reason")}
-    assert read_json(stem.with_suffix(".json")) == dict(
+    assert read_json(stem.with_suffix(".json"))["record"] == dict(
         kept, version=describing.VERSION, stored_sha256=record["stored_sha256"], fields=record["fields"]
     )
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == ROW_TEXT % (
@@ -2857,7 +2880,7 @@ def test_reach_over_the_twenty_trials_of_a_search_equals_the_table_written_out_h
         key[:10],
     )
     assert rows[19]["variant"] is not None and rows[19]["reason"] == STOPPED and "\n" not in rows[19]["reason"]
-    halted = bank / "descriptions" / "reach_rows" / reaching.stemmed(rows[19]["variant"], "vector", None)
+    halted = stemmed(bank, configs[19], "reach_rows", "vector", None)
     assert not halted.with_suffix(".json").exists() and not halted.with_suffix(".txt").exists()
     LOG.info("descriptions reach over a search exit seconds=%.3f", time.perf_counter() - started)
 
@@ -2875,7 +2898,6 @@ def test_the_text_of_the_table_holds_one_line_per_trial_of_its_record_and_the_ve
     )
     assert reaches.text(record) == written and len(written.split("\n")) == 4 + len(record["trials"]) + 1
     stem = tabled(searched, record)
-    assert read_json(stem.with_suffix(".json")) == record
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
     monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--reach", str(bank), str(searched)])
     main()
@@ -2948,8 +2970,7 @@ def test_a_plain_list_of_configurations_is_described_beside_its_bank_and_variant
     written = CROSSED_OVER % (stored, describing.VERSION, reaches.READING, key[:10], key[:10])
     stem = tabled(crossed, record)
     assert reaches.text(record) == written == stem.with_suffix(".txt").read_text(encoding="utf-8")
-    assert read_json(stem.with_suffix(".json")) == record
-    assert (crossed / "descriptions" / "reach_rows" / reaching.stemmed(key, "vector", None)).with_suffix(".json").exists()
+    assert stemmed(crossed, config, "reach_rows", "vector", None).with_suffix(".json").exists()
     monkeypatch.setattr(reaches, "recorded", refused)
     assert reach_over(crossed, [config, wider, dict(config, seed=6)], STATED) == record
     with pytest.raises(AssertionError, match="the description was computed again"):
@@ -3050,6 +3071,126 @@ def test_a_trial_is_not_described_only_for_what_the_checks_of_its_statement_and_
     with pytest.raises(KeyError, match=KEYLESS):
         reach_over(bank, [good], STATED)
     LOG.info("descriptions a trial's own exit seconds=%.3f", time.perf_counter() - started)
+
+
+SCHEMA_READ = [
+    ["column type", "number"],
+    ["encoder", "value"],
+    ["kind of target", "decision"],
+    ["kind of target", "number"],
+    ["operation", "graphspec.difference"],
+    ["rule for ties", "key"],
+    ["sort of reference", "node"],
+    ["sort of reference", "nodes"],
+]
+VARIANT_READ = sorted(
+    SCHEMA_READ
+    + [
+        ["choice among several facts", "last"],
+        ["choice of steps", "changes"],
+        ["operation", "graphspec.nodes"],
+        ["operation", "graphspec.relation_forms"],
+        ["operation", "test.cut"],
+    ]
+)
+REACH_READ = sorted(VARIANT_READ + [["realisation of options", "vector"]])
+ALL = ("truth", "between", "variant", "reach", "row", "table", "against")
+VARIANTS = ALL[2:]
+REACHES = ("reach", "row", "table")
+
+
+def every_key(bank, configs):
+    started = time.perf_counter()
+    manifest = read_json(bank / "manifest.json")
+    (deriver, name, key, unrouted), (other, _, second, _) = (reaching.named(bank, {}, config, STATED) for config in configs)
+    result = dict(
+        truth=describing.keyed(manifest),
+        between=differing.keyed(manifest, "g0", "g1"),
+        variant=varying.keyed(deriver, configs[0], key),
+        reach=reaching.keyed(deriver, configs[0], key, name, unrouted),
+        row=reaches.row_keyed(deriver, configs[0], key, name),
+        table=reaches.keyed(manifest, [("only", configs[0], (deriver, name, key, unrouted), None), ("none", None, None, "absent")]),
+        against=diverging.keyed([(deriver, key), (other, second)], configs),
+    )
+    LOG.debug("descriptions every key exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+@contextmanager
+def raised(held):
+    started = time.perf_counter()
+    name = "VERSION" if hasattr(held, "VERSION") else "version"
+    own, before = name in vars(held), getattr(held, name)
+    setattr(held, name, before + 1)
+    try:
+        yield
+    finally:
+        if own:
+            setattr(held, name, before)
+        else:
+            delattr(held, name)
+        LOG.debug("descriptions raised exit version=%d seconds=%.4f", before, time.perf_counter() - started)
+
+
+def test_the_key_of_every_description_holds_the_version_of_every_unit_and_entry_its_code_runs_and_changes_with_each(
+    bank, cutting
+):
+    started = time.perf_counter()
+    labelled = {registry.label: registry for registry in registries.REGISTRIES}
+    stored = read_json(bank / "manifest.json")["stored_sha256"]
+    configs = (realising(bank, CUTTING, "vector"), realising(bank, SEVERING, "vector"))
+    before = every_key(bank, configs)
+    key, second = keyed(bank, configs[0]), keyed(bank, configs[1])
+
+    @timed("descriptions.every_key.code")
+    def code(read):
+        return dict(
+            description=describing.VERSION,
+            views=viewing.VERSION,
+            derivation=transform.VERSION,
+            representations=representing.VERSION,
+            entries=[[label, name, registries.version(labelled[label].named(name))] for label, name in read],
+        )
+
+    row = dict(part="reach_rows", variant=key, realisation=realised("vector"), code=code(REACH_READ))
+    assert before == dict(
+        truth=dict(part="truth", stored=stored, code=code(SCHEMA_READ)),
+        between=dict(part="differences", stored=stored, first=dict(graph="g0"), second=dict(graph="g1"), code=code(SCHEMA_READ)),
+        variant=dict(part="variants", variant=key, code=code(VARIANT_READ)),
+        reach=dict(part="reach", variant=key, realisation=realised("vector"), refused=None, code=code(REACH_READ)),
+        row=row,
+        table=dict(
+            part="reaches",
+            stored=stored,
+            trials=[
+                dict(trial="only", row=sha256_json(row), refused=None, reason=None),
+                dict(trial="none", row=None, refused=None, reason="absent"),
+            ],
+            code=code(REACH_READ),
+        ),
+        against=dict(part="differences", first=dict(variant=key), second=dict(variant=second), code=code(VARIANT_READ)),
+    )
+    units = [
+        (describing, ALL),
+        (viewing, ALL),
+        (transform, ALL),
+        (representing, ALL),
+        (OPERATIONS.named("graphspec.difference"), ALL),
+        (labelled["encoder"].named("value"), ALL),
+        (labelled["sort of reference"].named("nodes"), ALL),
+        (OPERATIONS.named("graphspec.nodes"), VARIANTS),
+        (CUT, VARIANTS),
+        (REALISATIONS.named("vector"), REACHES),
+        (labelled["encoder"].named("standard"), ()),
+        (OPERATIONS.named("graphspec.window"), ()),
+        (REALISATIONS.named("node"), ()),
+    ]
+    for held, changed in units:
+        with raised(held):
+            after = every_key(bank, configs)
+        assert tuple(kind for kind in ALL if after[kind] != before[kind]) == changed, held
+    assert every_key(bank, configs) == before
+    LOG.info("descriptions keys exit units=%d seconds=%.3f", len(units), time.perf_counter() - started)
 
 
 def test_every_check_of_a_statement_a_configuration_a_pipeline_and_a_realisation_refuses_with_the_one_class(bank, searching):
@@ -3599,14 +3740,17 @@ def diverged(bank, degrees, differs, graphs):
         differing.READING["clock"],
         *[SIDE_TEXT % (versions[0], degree, versions[1]) for degree in degrees],
     )
-    key = dict(version=describing.VERSION, first=dict(variant=sides[0]["variant"]), second=dict(variant=sides[1]["variant"]))
+    configs = [leaned(bank, degree) for degree in degrees]
+    key = diverging.keyed([(deriver, side["variant"]) for side in sides], configs)
+    assert (key["part"], key["first"], key["second"]) == ("differences", *[dict(variant=side["variant"]) for side in sides])
     return record, written, bank / "descriptions" / "differences" / sha256_json(key)
 
 
 @timed("descriptions.truths")
 def truths(bank, first, second, found):
-    stored = read_json(bank / "manifest.json")["stored_sha256"]
-    key = dict(stored=stored, version=describing.VERSION, first=dict(graph=first), second=dict(graph=second))
+    manifest = read_json(bank / "manifest.json")
+    stored, key = manifest["stored_sha256"], differing.keyed(manifest, first, second)
+    assert key == dict(describing.keyed(manifest), part="differences", first=dict(graph=first), second=dict(graph=second))
     return (
         dict(version=describing.VERSION, stored_sha256=stored, time=CLOCKED, **found),
         bank / "descriptions" / "differences" / sha256_json(key),
@@ -3724,7 +3868,7 @@ def test_the_text_of_a_difference_holds_its_record_and_the_verb_prints_what_the_
     record = against(bank, first, STATED, second, STATED)
     expected, head, stem = diverged(bank, (1, 2), True, [LEANER, LEANER_SECOND])
     assert diverging.text(record) == head + DIFFERENCE
-    assert read_json(stem.with_suffix(".json")) == record == expected
+    assert read_json(stem.with_suffix(".json"))["record"] == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == head + DIFFERENCE
     names = ("config.json", "statement.json", "other.json")
     for name, held in zip(names, (first, STATED, second)):
@@ -3737,7 +3881,7 @@ def test_the_text_of_a_difference_holds_its_record_and_the_verb_prints_what_the_
     expected, stem = truths(bank, "g0", "g1", TRUTHS)
     written = TRUTHS_TEXT % (expected["stored_sha256"], describing.VERSION, differing.TRUTH["clock"])
     assert differing.text(record) == written
-    assert read_json(stem.with_suffix(".json")) == record == expected
+    assert read_json(stem.with_suffix(".json"))["record"] == record == expected
     assert stem.with_suffix(".txt").read_text(encoding="utf-8") == written
     monkeypatch.setattr(sys, "argv", ["graphspec", "describe", "--difference", str(bank), "g0", "g1"])
     main()

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import numpy as np
 
-from graphspec.infra.files import sha256_json
 from graphspec.infra.timing import timed
 from graphspec.operations.difference import valued
 from graphspec.operations.rows import fact_keys
@@ -317,6 +316,11 @@ def recorded(path, manifest, first, second):
     return result
 
 
+@timed("differences.keyed")
+def keyed(manifest, first, second):
+    return dict(truth.keyed(manifest), part="differences", first=dict(graph=first), second=dict(graph=second))
+
+
 def differences(path, first, second):
     started = time.perf_counter()
     manifest = truth.manifested(path)
@@ -326,11 +330,8 @@ def differences(path, first, second):
         raise KeyError(
             "the bank %s holds no graph named %s; its graphs are %s" % (path, " or ".join(lacking), ", ".join(named))
         )
-    key = sha256_json(
-        dict(stored=manifest["stored_sha256"], version=truth.VERSION, first=dict(graph=first), second=dict(graph=second))
-    )
-    held = Path(path) / "descriptions" / "differences" / key
-    record = truth.kept(held, lambda: recorded(path, manifest, named[first], named[second]), text)
+    held = Path(path) / "descriptions" / "differences"
+    record = truth.kept(held, keyed(manifest, first, second), lambda: recorded(path, manifest, named[first], named[second]), text)
     LOG.info("differences exit first=%s second=%s seconds=%.3f", first, second, time.perf_counter() - started)
     return record
 

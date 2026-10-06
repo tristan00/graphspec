@@ -39,6 +39,7 @@ from graphspec.schema.decisions import counted
 from graphspec.schema.schema import ENCODERS, WRITTEN, Encoding, fitted
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import SEVERAL
+from graphspec.views import view as viewing
 from graphspec.views.graph import Graph
 from graphspec.views.view import STEPS, beside, finished, sampled, sequences, view
 from graphspec.views.visible import SEES, STATEMENT, Looking
@@ -54,7 +55,6 @@ JOINED_RESIDENT = 4 << 30
 JOINED_BUDGET = 12 << 30
 DTYPES = dict(entity_kind=torch.long)
 STATED = ("model", "pipeline", "graph")
-VIEW = 77
 TOKEN = (1 << 62) - 1
 
 
@@ -202,7 +202,7 @@ def written(folder, build):
 
 @timed("bank.coded")
 def coded():
-    return dict(views=VIEW, derivation=transform.VERSION, representations=representations.VERSION)
+    return dict(views=viewing.VERSION, derivation=transform.VERSION, representations=representations.VERSION)
 
 
 @timed("bank.editing")
@@ -364,7 +364,7 @@ class Bank:
         self.directory = Path(directory)
         self.manifest = admitted(self.directory, read_json(self.directory / "manifest.json"))
         self.source = self.manifest["stored_sha256"]
-        self.cache = cache_path("banks", sha256_json(dict(stored=self.source, version=VIEW)))
+        self.cache = cache_path("banks", sha256_json(dict(stored=self.source, version=viewing.VERSION)))
         self.registry = Registry.from_declaration(self.manifest["spec"])
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")

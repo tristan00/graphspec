@@ -10,7 +10,7 @@ from graphspec.budgets import Refused
 from graphspec.descriptions import describe as truth
 from graphspec.descriptions import effect
 from graphspec.facts.stored import GROUPS, Facts
-from graphspec.infra.files import load_arrays, sha256_json
+from graphspec.infra.files import load_arrays
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import sets
@@ -22,11 +22,24 @@ from tuning.bank.bank import editing
 from tuning.bank.options import offered
 from tuning.bank.routes import routed
 from tuning.batches.inputs import aimed
-from tuning.families.heads import REALISATION, fielded, realisation
+from tuning.families.heads import REALISATION, REALISATIONS, fielded, realisation
 from tuning.families.model_spec import realised
 
 from . import restated
-from .restated import ABSENT, KEPT, REFUSED, STOPPED, STOPS, Derived, halted, lined, masked, opened, values
+from .restated import (
+    ABSENT,
+    KEPT,
+    REFUSED,
+    STOPPED,
+    STOPS,
+    Derived,
+    coded,
+    halted,
+    lined,
+    masked,
+    opened,
+    values,
+)
 
 LOG = logging.getLogger(__name__)
 HELD, PUT, JOINED, UNJOINED, UNHELD, CREATED = "held", "put", "joined", "unjoined", "unheld", "created"
@@ -1014,16 +1027,21 @@ def named(bank, derivers, config, statement):
     return deriver, name, key, refused
 
 
-@timed("reach.stemmed")
-def stemmed(key, name, refused):
-    return sha256_json(dict(variant=key, realisation=stated(name), refused=refused, version=truth.VERSION))
+@timed("reach.realised_by")
+def realised_by(deriver, config, key, name):
+    return dict(variant=key, realisation=stated(name), code=coded(deriver, config, [(REALISATIONS, [name])]))
+
+
+@timed("reach.keyed")
+def keyed(deriver, config, key, name, refused):
+    return dict(realised_by(deriver, config, key, name), part="reach", refused=refused)
 
 
 def reach(bank, config, statement):
     started = time.perf_counter()
     deriver, name, key, refused = named(bank, {}, config, statement)
-    held = Path(bank) / "descriptions" / "reach" / stemmed(key, name, refused)
-    result = truth.kept(held, lambda: recorded(deriver, config, key, name, refused), text)
+    held = Path(bank) / "descriptions" / "reach"
+    result = truth.kept(held, keyed(deriver, config, key, name, refused), lambda: recorded(deriver, config, key, name, refused), text)
     LOG.info("reach exit variant=%s realisation=%s seconds=%.3f", key[:10], name, time.perf_counter() - started)
     return result
 
