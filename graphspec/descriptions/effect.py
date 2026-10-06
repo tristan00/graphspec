@@ -69,7 +69,8 @@ def edges(graph, registry, number):
 def related(found, registry):
     started = time.perf_counter()
     stated = [name for table_name in registry.schema.edges for name in registry.encoding.relations[table_name]]
-    codes = sorted({code for _, _, ends in found for code in np.unique(ends[:, 1]).tolist()})
+    added = {registry.code(name) for _, held in registry.schema.grown for name in held.relations}
+    codes = sorted(added | {code for _, _, ends in found for code in np.unique(ends[:, 1]).tolist()})
     names = list(dict.fromkeys(stated + [registry.by_code[code].name for code in codes]))
     places = np.full(registry.relations, -1, np.int64)
     places[[registry.code(name) for name in names]] = np.arange(len(names))
@@ -215,7 +216,7 @@ def tasked(graph, registry, low, high):
     return result
 
 
-def graphed(name, first, found, steps, registry, low, high, kinds, names, places):
+def graphed(name, first, found, steps, registry, low, high, kinds):
     started = time.perf_counter()
     size = high - low
     times = [None] * size if registry.schema.model == "none" else np.asarray(first.step_time, np.int64)[low:high].tolist()
@@ -224,6 +225,7 @@ def graphed(name, first, found, steps, registry, low, high, kinds, names, places
     for keys, anchored, ends in found:
         inside, chosen = within(keys, low, high)
         own.append((inside, anchored[chosen], within(ends, low, high)[0]))
+    names, places = related(own, registry)
     states = [held(state, size, kinds, names, places) for state in own]
     result = dict(
         name=name,
@@ -245,13 +247,12 @@ def told(graphs, members, registry, steps):
     started = time.perf_counter()
     numbers = numbered(*[np.stack((np.asarray(graph.kinds, np.int64), tokens(graph)), 1) for graph in graphs])
     found = [nodes(graph) + (edges(graph, registry, number),) for graph, number in zip(graphs, numbers)]
-    names, places = related(found, registry)
     kinds, member = list(registry.nodes), np.asarray(graphs[0].step_graph, np.int64)
     result = []
     for at, graph in enumerate(members):
         inside = np.flatnonzero(member == at)
         low, high = int(inside[0]), int(inside[-1]) + 1
-        result.append(graphed(graph.name, graphs[0], found, steps, registry, low, high, kinds, names, places))
+        result.append(graphed(graph.name, graphs[0], found, steps, registry, low, high, kinds))
     LOG.debug("effect told exit graphs=%d states=%d seconds=%.4f", len(result), len(graphs), time.perf_counter() - started)
     return result
 

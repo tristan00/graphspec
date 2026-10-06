@@ -23,6 +23,7 @@ from graphspec.operations import nodes as filtering
 from graphspec.operations import parameters as specs
 from graphspec.operations.operation import Need
 from graphspec.operations.parameters import choice, equals, number
+from graphspec.operations.rows import made_rows
 from graphspec.schema.schema import VERSION as SCHEMA
 from graphspec.schema.time import ALWAYS as EARLIEST
 from graphspec.schema.time import NEVER as LATEST
@@ -636,7 +637,30 @@ GATE = Operation("test", "gate", (Phase("gate", gated, None, None),), gating, ()
 LEANS = Operation(
     "test", "leans", (Phase("leans", passed, None, None),), lonely, ("test.gate",), (), (Need("leans/alone", unleant),), (), None, None, 1, 1
 )
-CUTTERS = (CUT, SEVER, PART, READ, LEAN, GATE, LEANS)
+@timed("descriptions.lifting_kind")
+def lifting_kind(registry):
+    return (choice("lift/kind", registry.tasks, registry.tasks[0]),)
+
+
+def lifted(graph, registry, settings, seed, limits, carry, held):
+    started = time.perf_counter()
+    entity, step = np.asarray(graph.obs_entity, np.int64), np.asarray(graph.obs_step, np.int64)
+    tasked = np.asarray(graph.task_step)[np.asarray(graph.task_kind) == registry.tasks.index(settings["lift/kind"])]
+    chosen = np.flatnonzero((np.asarray(graph.kinds)[entity] == registry.kind("spot")) & np.isin(step, tasked))
+    reference = np.asarray(graph.obs_ref, np.int64)
+    rows = np.array(np.asarray(graph.x_table)[reference[chosen]], np.float32)
+    rows[:, registry.encoding.slots("load")[0][0]] += 1.0
+    graph, made = made_rows(graph, carry, rows.astype(graph.x_table.dtype))
+    reference = reference.copy()
+    reference[chosen] = made
+    LOG.debug("descriptions lifted exit nodes=%d seconds=%.4f", len(chosen), time.perf_counter() - started)
+    return graph.replace(obs_ref=reference.astype(graph.obs_ref.dtype))
+
+
+LIFT = Operation(
+    "test", "lift", (Phase("lift", lifted, None, None),), lifting_kind, (), (), (), ("observations",), None, None, 1, 1
+)
+CUTTERS = (CUT, SEVER, PART, READ, LEAN, GATE, LEANS, LIFT)
 
 
 @pytest.fixture
@@ -1040,6 +1064,37 @@ def test_a_joined_group_is_described_graph_by_graph_as_its_graphs_derived_apart_
     record = variant(bank, config, STATED)
     assert record["settings"]["graphs/join"] == "single" and record["graphs"] == [VARIED, VARIED_SECOND]
     LOG.info("descriptions variant joined exit seconds=%.3f", time.perf_counter() - started)
+
+
+PRODUCED = {"product/path": "near:both:weight", "product/length": 1, "product/aggregate": "product", "product/encoder": "value"}
+MEASURED = {"measures/degree": True, "measures/components": False, "measures/cores": False, "measures/encoder": "value"}
+VALUING = [
+    dict(operation="graphspec.product", parameters=PRODUCED),
+    dict(operation="graphspec.measures", parameters=MEASURED),
+    dict(operation="test.lift", parameters={"lift/kind": "turn"}),
+]
+
+
+def test_a_relation_an_entry_adds_is_listed_in_a_graph_where_it_holds_no_edge_and_a_joined_group_is_described_as_its_graphs_apart(
+    bank, cutting
+):
+    started = time.perf_counter()
+    assert [held["table"] for held in case()["graphs"][1]["edges"]] == ["base"]
+    found = []
+    for graph in (SETTINGS, dict(SETTINGS, **JOINED)):
+        config = configuration(bank, MODEL, None, pipeline=VALUING, graph=graph, seed=STATED["seed"], splits=SPLITS)
+        found.append(variant(bank, config, STATED))
+    apart, joined = found
+    assert (apart["settings"]["graphs/join"], joined["settings"]["graphs/join"]) == ("separate", "single")
+    assert [list(graph["held"]["kinds"]) for graph in apart["graphs"]] == [["agent", "spot"]] * 2
+    assert [list(graph["held"]["relations"]) for graph in apart["graphs"]] == [["near", "base", "product"]] * 2
+    made = [graph["effects"][0]["relations"]["product"] for graph in apart["graphs"]]
+    assert made == [
+        tally(0, 0, None, 8, None, 8, edges=[1, 1, 2, 2, 1, 1, 0, 0]),
+        tally(0, 0, None, 0, None, 0, edges=EMPTY),
+    ]
+    assert joined["graphs"] == apart["graphs"]
+    LOG.info("descriptions variant added relation exit seconds=%.3f", time.perf_counter() - started)
 
 
 GO = ("target to of go", "target along of go", "target made of go", "parameter speed of go")
