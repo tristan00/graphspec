@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -5,6 +6,7 @@ import re
 import shutil
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock
@@ -673,6 +675,63 @@ def test_a_bank_the_library_may_not_write_beside_is_described_under_the_home_and
         with pytest.raises(ValueError, match="^runtime output must use the GRAPHSPEC_HOME volume: "):
             runtime.output_path(bank / "descriptions")
     LOG.info("descriptions kept under the home exit seconds=%.3f", time.perf_counter() - started)
+
+
+BEYOND = dict(g0="图一", near="喜欢", base="repère")
+
+
+@timed("descriptions.renamed")
+def renamed(record):
+    graphs = [
+        dict(
+            graph,
+            name=BEYOND.get(graph["name"], graph["name"]),
+            relations={BEYOND.get(name, name): held for name, held in graph["relations"].items()},
+        )
+        for graph in record["graphs"]
+    ]
+    return dict(record, graphs=graphs)
+
+
+def piped(call, monkeypatch, encoding):
+    started = time.perf_counter()
+    reading, writing = os.pipe()
+    stream = io.TextIOWrapper(os.fdopen(writing, "wb"), encoding=encoding)
+    with ThreadPoolExecutor(1) as pool, os.fdopen(reading, "rb") as source, monkeypatch.context() as patch:
+        found = pool.submit(source.read)
+        patch.setattr(sys, "stdout", stream)
+        try:
+            call()
+        finally:
+            stream.close()
+            result = found.result()
+    LOG.debug("descriptions piped exit bytes=%d seconds=%.4f", len(result), time.perf_counter() - started)
+    return result
+
+
+def test_the_verb_writes_names_beyond_ascii_through_a_pipe_as_utf_8_the_bytes_of_its_file_whatever_the_encoding_of_the_pipe(
+    bank, tmp_path, monkeypatch
+):
+    from tuning.__main__ import main
+
+    started = time.perf_counter()
+    record = renamed(describe(bank))
+    written = describing.text(record)
+    assert all(written.count(name) for name in BEYOND.values())
+    with pytest.raises(UnicodeEncodeError):
+        written.encode("cp1252")
+    (tmp_path / "kept.txt").write_text(written, encoding="utf-8")
+    monkeypatch.setattr(describing, "describe", lambda path: record)
+    for encoding in ("cp1252", "ascii", "utf-8"):
+        monkeypatch.setattr(sys, "argv", ["graphspec", "describe", str(bank)])
+        sent = piped(main, monkeypatch, encoding)
+        assert sent == (tmp_path / "kept.txt").read_bytes()
+        assert sent.decode("utf-8").replace(os.linesep, "\n") == written
+    monkeypatch.setattr(sys, "argv", ["graphspec", "describe", str(bank)])
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    main()
+    assert sys.stdout.getvalue() == written
+    LOG.info("descriptions piped verb exit seconds=%.3f", time.perf_counter() - started)
 
 
 NODES = {

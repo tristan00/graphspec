@@ -1,3 +1,4 @@
+import io
 import logging
 import sys
 import time
@@ -22,6 +23,8 @@ def main():
     import importlib
 
     module, function = commands[sys.argv.pop(1)]
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
     try:
         getattr(importlib.import_module(module), function)()
     finally:
