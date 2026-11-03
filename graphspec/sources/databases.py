@@ -197,6 +197,13 @@ def sqlite_catalogue(place, member=None):
         return sqlite_structure(connection)
 
 
+@timed("databases.sqlite_definitions")
+def sqlite_definitions(text):
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.executescript(text)
+        return sqlite_structure(connection)
+
+
 def sqlite(place, columns, parameters):
     started = time.perf_counter()
     try:
@@ -295,6 +302,7 @@ def postgres(place, columns, parameters):
 
 
 sqlite.catalogue = sqlite_catalogue
+sqlite.definitions = sqlite_definitions
 postgres.catalogue = postgres_catalogue
 postgres.file = False
 READERS.register("sqlite", sqlite)

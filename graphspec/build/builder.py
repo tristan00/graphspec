@@ -323,9 +323,10 @@ class Builder:
 
     @timed("builder.pending")
     def pending(self):
+        from .database import Database
         from .mappings import Mapping
 
-        return not self.mapped and any(isinstance(value, Mapping) for value in self.declarations.values())
+        return not self.mapped and any(isinstance(value, (Mapping, Database)) for value in self.declarations.values())
 
     @timed("builder.task")
     def task(self, kind, key, at=UNSTATED, references=UNSTATED, split=UNSTATED, target=UNSTATED,

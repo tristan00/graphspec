@@ -142,8 +142,9 @@ def canonical(table, columns, context, offset):
 
 class Session:
     @timed("table_session.Session")
-    def __init__(self, declarations, sources, plan, target=None, name=None):
+    def __init__(self, declarations, sources, plan, target=None, name=None, aliases=None):
         self.plan = stated(plan)
+        self.aliases = dict(aliases or {})
         self.names, self.nodes, source_declarations, temporal = collect(declarations, target, name)
         self.readers = SourceSession(source_declarations, sources, self.plan, temporal)
         self.frames, self.pending = {}, set()
@@ -259,6 +260,7 @@ class Session:
 
     @timed("table_session.get")
     def get(self, declaration):
+        declaration = self.aliases.get(id(declaration), declaration)
         identity = id(declaration)
         if identity in self.frames:
             return self.frames[identity]

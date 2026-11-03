@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cached_property, partial
 from types import MappingProxyType
 
 import pyarrow as pa
@@ -71,7 +71,7 @@ class Frame:
         if self.positions is not None and not isinstance(self.positions, (pa.Array, pa.ChunkedArray)):
             object.__setattr__(self, "positions", tuple(self.positions))
 
-    @property
+    @cached_property
     @timed("tables.Frame.nbytes")
     def nbytes(self):
         metadata = len(repr((self.kinds, self.outcomes, self.lineage, self.through)).encode("utf-8"))

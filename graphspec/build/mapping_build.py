@@ -1,5 +1,6 @@
 import logging
 import time
+from collections.abc import Mapping as Held
 
 import pyarrow as pa
 
@@ -8,6 +9,8 @@ from graphspec.schema.fields import named
 from graphspec.schema.schema import DECLARED, VERSION
 from graphspec.schema.time import UNITED
 
+from .database import Part, owner
+from .database_build import expanded
 from .expression_types import UNSTATED
 from .expressions import custom_argument
 from .mapping_rows import Reader, following, joined, when
@@ -40,6 +43,9 @@ def inputs(statement):
     fields = statement.fields
     found += [member["rows"] for member in fields.get("members") or ()]
     found += [fields[name]["rows"] for name in ("options", "actions") if name in fields]
+    target = fields.get("target") or {}
+    found += [stated["rows"] for stated in (fields.get("earlier"), target.get("later"))
+              if isinstance(stated, Held) and "rows" in stated]
     return found
 
 
@@ -166,6 +172,14 @@ class NodeStated(Stated):
             else:
                 self.links[name] = End(reader, link, "links." + name, missing="omit")
         self.owners = tuple(self.made_kinds)
+        self.reader = reader
+        changing = [place for place, row in enumerate(self.rows) if row[2]["form"] == "change"]
+        if changing:
+            groups = [(self.rows[place][2]["graph"], self.rows[place][0], joined(self.rows[place][1]),
+                       repr(self.rows[place][2]["seen"])) for place in changing]
+            ends = following(groups, [self.rows[place][2]["since"] for place in changing], "declaration " + self.label)
+            for place, until in zip(changing, ends):
+                self.rows[place][2]["until"] = until
 
     @timed("mapping_build.NodeStated.kinds")
     def kinds(self, where):
@@ -192,13 +206,6 @@ class NodeStated(Stated):
 
     @timed("mapping_build.NodeStated.resolve")
     def resolve(self, mapped):
-        changing = [place for place, row in enumerate(self.rows) if row[2]["form"] == "change"]
-        if changing:
-            groups = [(self.rows[place][2]["graph"], self.rows[place][0], joined(self.rows[place][1]),
-                       repr(self.rows[place][2]["seen"])) for place in changing]
-            ends = following(groups, [self.rows[place][2]["since"] for place in changing], "declaration " + self.label)
-            for place, until in zip(changing, ends):
-                self.rows[place][2]["until"] = until
         self.linked = []
         for name, link in self.links.items():
             for place, (kind, key, fact, _) in enumerate(self.rows):
@@ -467,8 +474,26 @@ class Mapped:
     @timed("mapping_build.Mapped")
     def __init__(self, builder, plan, name):
         self.builder, self.plan, self.name = builder, plan, name
-        self.statements = [(label, value) for label, value in builder.declarations.items() if isinstance(value, Mapping)]
+        declared = [(label, value) for label, value in builder.declarations.items() if isinstance(value, Mapping)]
+        generated, self.represented, aliases, follows = expanded(builder.declarations, declared, builder.sources)
+        self.statements = []
+        for label, value in builder.declarations.items():
+            if isinstance(value, Mapping):
+                self.statements += [(label, value)] + follows.get(id(value), [])
+            self.statements += generated.get(label, [])
         self.labels = {id(value): label for label, value in builder.declarations.items()}
+        for label, value in self.statements:
+            if id(value) not in self.labels and label in builder.declarations:
+                raise ValueError("a database makes the kind or relation %s, which a declaration of the script also "
+                                 "bears" % label)
+            self.labels[id(value)] = label
+        if len({label for label, _ in self.statements}) != len(self.statements):
+            raise ValueError("the statements and the databases of the script name two declarations alike")
+        for identity, (_, statement) in self.represented.items():
+            if statement is not None:
+                self.labels[identity] = self.labels[id(statement)]
+        self.aliases = {identity: source for identity, (_, source) in aliases.items()}
+        self.aliased = dict(aliases.values())
         self.order = {id(value): place for place, (_, value) in enumerate(self.statements)}
         stated = [statement.fields for _, statement in self.statements if statement.word in FACTS]
         asked = [statement.fields for _, statement in self.statements if statement.word in ("tasks", "decisions")]
@@ -494,9 +519,13 @@ class Mapped:
     @timed("mapping_build.Mapped.tables")
     def tables(self):
         found = {name: value for name, value in self.builder.declarations.items() if isinstance(value, (Source, Table))}
+        found.update(self.aliased)
         held = {id(value) for value in found.values()}
         for label, statement in self.statements:
             for place, value in enumerate(inputs(statement)):
+                value = self.aliases.get(id(value), value)
+                if isinstance(value, Part):
+                    raise ValueError("declaration %s reads a table of a database that is not stated" % label)
                 if id(value) not in held:
                     held.add(id(value))
                     found["%s.rows%d" % (label, place)] = value
@@ -508,7 +537,7 @@ class Mapped:
         tables = self.tables()
         if not tables:
             raise ValueError("the mappings of the builder read no table")
-        with Session(tables, self.builder.sources, self.plan) as session:
+        with Session(tables, self.builder.sources, self.plan, aliases=self.aliases) as session:
             for value in tables.values():
                 session.get(value)
             self.unit = None if session.unit is UNSTATED else session.unit
@@ -572,9 +601,19 @@ class Mapped:
     def kinds(self, target, where):
         if isinstance(target, Linked):
             return [target.name]
+        if isinstance(target, Part):
+            return self.stated[id(self.part(target, where))].kinds(where)
         if id(target) not in self.stated or self.order[id(target)] >= self.order[id(self.current)]:
             raise ValueError("%s names under of a declaration that is not a mapping stated above it" % where)
         return self.stated[id(target)].kinds(where)
+
+    @timed("mapping_build.Mapped.part")
+    def part(self, target, where):
+        table, statement = self.represented.get(id(target), (owner(target)[1], None))
+        if statement is None:
+            raise ValueError("%s names the table %s of a database, which becomes no one mapping; a view, a table "
+                             "without a key and a table several statements map make none" % (where, table))
+        return statement
 
     @timed("mapping_build.Mapped.note")
     def note(self, graph, kind, key):

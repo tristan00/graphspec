@@ -5,6 +5,7 @@ from graphspec.schema.targets import TARGETS
 
 from .mapping_build import EdgeStated, End, SetStated, Stated
 from .mapping_rows import Reader, joined, spelled
+from .mapping_windows import Window, every
 from .mappings import Mapping, tabled
 from .presence import ruled
 
@@ -169,22 +170,23 @@ class Asked(Stated):
     def read(self, mapped, label, statement, session):
         fields = self.fields = statement.fields
         self.label, self.where = label, "declaration " + label
-        if not tabled(statement.table):
-            raise ValueError("%s states its rows by a rule, which mappings do not yet serve" % self.where)
-        for name in ("earlier", "eligible"):
-            if name in fields:
-                raise ValueError("%s states %s, which mappings do not yet serve" % (self.where, name))
-        if fields.get("split") is not None and type(fields["split"]) is not str:
-            raise ValueError("%s states its split by a form, which mappings do not yet serve; an expression serves"
-                             % self.where)
-        reader = self.reader = Reader(session, statement.table, label, mapped.plan).where(fields.get("where"))
+        if tabled(statement.table):
+            reader, moment = Reader(session, statement.table, label, mapped.plan), None
+        else:
+            reader, moment = every(mapped, label, statement.table, session)
+        reader = reader.where(fields.get("where"))
+        if "earlier" in fields or "eligible" in fields:
+            reader = self.eligible(mapped, reader, session)
+        self.reader = reader
         count = reader.count
         self.rows = [reader.row(place) for place in range(count)]
+        self.named = [str(row) for row in self.rows] if moment is None else [
+            "%s|%s" % pair for pair in zip(self.rows, reader.moments(moment, moment))]
         self.graphs = reader.texts(fields["graph"], "graph") if "graph" in fields else [None] * count
         if mapped.timed and "at" not in fields:
             raise ValueError("%s lacks at, which every kind of task states where the graphs have time" % self.where)
         self.at = reader.moments(fields["at"], "at") if mapped.timed else [None] * count
-        self.split = reader.texts(fields["split"], "split") if fields.get("split") else [None] * count
+        self.split = reader.texts(fields["split"], "split") if type(fields.get("split")) is str else [None] * count
         self.observer = reader.texts(fields["observer"], "observer", "omit") if "observer" in fields else [None] * count
         self.grouping = reader.moments(fields["grouping"], "grouping") if "grouping" in fields else [None] * count
         self.weight = [None] * count
@@ -202,6 +204,23 @@ class Asked(Stated):
             self.signal = [[None] * kind.width if value is None else list(value) for value in values]
         self.columns, self.values = reader.features(fields.get("features"))
         self.references = {name: Reference(reader, name, stated) for name, stated in fields["references"].items()}
+
+    @timed("mapping_tasks.Asked.eligible")
+    def eligible(self, mapped, reader, session):
+        fields = self.fields
+        if "eligible" not in fields:
+            raise ValueError("%s states earlier, which only eligible reads" % self.where)
+        windows = {}
+        if "earlier" in fields:
+            if not mapped.timed or "at" not in fields:
+                raise ValueError("%s states earlier, which reads rows by the time of its tasks, and states no at"
+                                 % self.where)
+            windows["earlier"] = Window(reader, session, fields["earlier"], "earlier",
+                                        reader.moments(fields["at"], "at"), False)
+        values, kind = reader.windowed(windows).values(fields["eligible"], "eligible")
+        if kind.name not in ("flag", "missing"):
+            raise ValueError("%s field eligible gives a flag" % self.where)
+        return reader.taken([place for place, value in enumerate(values) if value is True])
 
     @timed("mapping_tasks.Asked.placed")
     def placed(self, mapped, place):
@@ -223,6 +242,9 @@ class Asked(Stated):
 
     @timed("mapping_tasks.Asked.declared")
     def declared(self, mapped, target):
+        if self.fields.get("split") is not None and type(self.fields["split"]) is not str:
+            raise ValueError("%s states its split by a form, which mappings do not yet serve; an expression serves"
+                             % self.where)
         for name, reference in self.references.items():
             entry = mapped.references.setdefault(name, dict(sort=reference.sort, kinds=[]))
             if entry["sort"] != reference.sort:
@@ -265,19 +287,23 @@ class TaskStated(Asked):
     def __init__(self, mapped, label, statement, session):
         self.read(mapped, label, statement, session)
         reader, target = self.reader, self.fields.get("target")
-        self.keys = reader.texts(self.fields["key"], "key") if "key" in self.fields else [str(row) for row in self.rows]
+        self.keys = reader.texts(self.fields["key"], "key") if "key" in self.fields else self.named
         self.target = None if target is None else plain({name: value for name, value in target.items()
-                                                         if not isinstance(value, Mapping)})
+                                                         if not isinstance(value, Mapping) and name != "later"})
         self.aims = [None] * reader.count
         self.known = [None] * reader.count
         if target is None:
             return
+        window = None
         if "later" in target:
-            raise ValueError("%s field target states later, which mappings do not yet serve" % self.where)
+            window = Window(reader, session, target["later"], "target.later", self.at, True)
+            reader = reader.windowed(dict(later=window))
         self.kind = target["kind"]
         self.target.update({name: mapped.label(value) for name, value in target.items() if isinstance(value, Mapping)})
         self.sets = target.get("sets")
         self.aims = self.aimed(reader, target)
+        if window is not None:
+            self.aims = [None if open else aim for aim, open in zip(self.aims, window.open)]
         if target["known"] != "never" and mapped.model != "none":
             self.known = reader.moments(target["known"], "target.known", outcome=True)
 

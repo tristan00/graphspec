@@ -5,6 +5,7 @@ from importlib import import_module
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
+from .database import Part
 from .readers import Source
 from .table_types import frozen
 from .tables import Table
@@ -64,7 +65,7 @@ class Mapping:
 
 @timed("mappings.tabled")
 def tabled(value):
-    return isinstance(value, (Source, Table))
+    return isinstance(value, (Source, Table, Part))
 
 
 @timed("mappings.expression")
@@ -101,7 +102,7 @@ def ended(value, where):
     if unknown:
         raise ValueError("%s holds fields it does not know: %s" % (where, ", ".join(unknown)))
     targets = value["of"] if isinstance(value["of"], (list, tuple)) else [value["of"]]
-    if not targets or any(not isinstance(target, (Mapping, Linked)) for target in targets):
+    if not targets or any(not isinstance(target, (Mapping, Linked, Part)) for target in targets):
         raise ValueError("%s names under of a mapping stated above, or a list of them" % where)
     if isinstance(value["of"], (list, tuple)) and "kind" not in value:
         raise ValueError("%s names a list under of and states kind" % where)

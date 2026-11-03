@@ -2,9 +2,9 @@ from collections.abc import Mapping as Held
 
 from graphspec.infra.timing import timed
 
-from .expression_types import EXTENDED_TIME
+from .expression_types import EXTENDED_TIME, Kind
 from .mappings import TIMES
-from .table_types import Context, broadcast, dependencies, take
+from .table_types import Context, broadcast, dependencies, references, take
 
 NUMBERS = ("number", "ordered", "duration")
 TYPED = dict(number="number", ordered="number", duration="number", flag="flag", category="category")
@@ -12,11 +12,47 @@ FORMED = ("always", "state", "event", "change", "signal")
 
 
 class Reader:
+    windows = {}
+
     @timed("mapping_rows.Reader")
     def __init__(self, session, table, name, plan):
         self.frame = session.get(table)
         self.session, self.name, self.plan = session, name, plan
         self.context = Context(name, plan, session.unit, session.retained())
+
+    @timed("mapping_rows.Reader.framed")
+    def framed(self, frame):
+        result = object.__new__(Reader)
+        result.session, result.name, result.plan, result.context = self.session, self.name, self.plan, self.context
+        result.frame = frame
+        return result
+
+    @timed("mapping_rows.Reader.windowed")
+    def windowed(self, windows):
+        result = self.framed(self.frame)
+        result.windows = dict(windows)
+        return result
+
+    @timed("mapping_rows.Reader.scoped")
+    def scoped(self, text, field, outcome, scopes):
+        unknown = sorted(scopes - set(self.windows))
+        if unknown:
+            raise ValueError("declaration %s field %s reads %s rows, which it may not read there; later rows are read "
+                             "by the value and known of a target, earlier rows by eligible"
+                             % (self.name, field, ", ".join(unknown)))
+        frames = {name: self.windows[name].frame for name in scopes}
+        if not outcome:
+            marks = dependencies(self.frame, text, frames)[1]
+            if marks:
+                raise ValueError("declaration %s field %s reads an outcome, known from %s"
+                                 % (self.name, field, ", ".join(mark[1] for mark in marks)))
+        values, kind = [], Kind("missing")
+        for place in range(self.count):
+            namespace = {name: take(frames[name], self.windows[name].places[place]) for name in scopes}
+            value = self.context.evaluate(take(self.frame, [place]), text, field, namespace=namespace)
+            values.append(broadcast(value, 1).to_pylist()[0])
+            kind = value.kind if kind.name == "missing" else kind
+        return values, kind
 
     @property
     @timed("mapping_rows.Reader.count")
@@ -38,13 +74,13 @@ class Reader:
 
     @timed("mapping_rows.Reader.taken")
     def taken(self, places):
-        result = object.__new__(Reader)
-        result.session, result.name, result.plan, result.context = self.session, self.name, self.plan, self.context
-        result.frame = take(self.frame, places)
-        return result
+        return self.framed(take(self.frame, places))
 
     @timed("mapping_rows.Reader.values")
     def values(self, text, field, outcome=False):
+        scopes = {scope for scope, _ in references(text)} - {None}
+        if scopes:
+            return self.scoped(text, field, outcome, scopes)
         if not outcome:
             marks = dependencies(self.frame, text)[1]
             if marks:
