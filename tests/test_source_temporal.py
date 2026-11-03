@@ -7,7 +7,7 @@ import pytest
 
 from graphspec.schema.temporal import Duration, Interval, Time, context, days, unit
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 
 
 @pytest.mark.parametrize("own,target,value,start,end", [

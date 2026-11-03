@@ -19,7 +19,7 @@ from graphspec.build.readers import batches
 from graphspec.infra.timing import timed
 from graphspec.sources import arrays
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(16 << 20, 1)
 
 

@@ -14,7 +14,7 @@ from graphspec.build.readers import READERS, batches
 from graphspec.sources.databases import postgres_catalogue, sqlite_catalogue
 from graphspec.sources.layout import catalogue, mapping
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(1 << 20, 1)
 EXPECTED = [dict(id=1, label="alpha", amount=1.5), dict(id=2, label=None, amount=None),
             dict(id=3, label="gamma", amount=3.5)]

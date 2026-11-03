@@ -8,7 +8,7 @@ from graphspec.build.aggregates import POINTS
 from graphspec.build.expression_types import EXTENDED_TIME, NEVER_TIME, Kind
 from graphspec.build.table_types import Context, Frame, working
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(1 << 20, 1)
 
 

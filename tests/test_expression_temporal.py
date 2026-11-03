@@ -18,7 +18,7 @@ from graphspec.build.expression_types import (
 )
 from graphspec.build.streams import reading
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(2 << 20, 1)
 
 

@@ -10,7 +10,7 @@ from graphspec.build.expression_types import EXTENDED_TIME, NEVER_TIME, Kind
 from graphspec.build.streams import capacity
 from graphspec.build.table_types import ACTIVE
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(4 << 20, 1)
 
 

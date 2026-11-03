@@ -10,7 +10,7 @@ from graphspec.build.expressions import evaluate
 from graphspec.build.table_relations import Closure, Join, Order
 from graphspec.build.table_types import Context, Frame
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(4 << 20, 1)
 
 

@@ -8,7 +8,7 @@ from graphspec import TYPES, Builder, BuildPlan, inspect, source
 from graphspec.schema.columns import convert
 from graphspec.schema.schema import Category, Flag, Number
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(2 << 20, 1)
 
 

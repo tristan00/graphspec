@@ -7,7 +7,7 @@ from graphspec.schema.columns import convert
 from graphspec.schema.missing import apply, normalize, validate
 from graphspec.schema.temporal import context
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(1 << 20, 1)
 
 

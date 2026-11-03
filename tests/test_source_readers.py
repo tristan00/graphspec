@@ -18,7 +18,7 @@ from graphspec.build.command import script
 from graphspec.build.readers import batches
 from graphspec.build.streams import capacity
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(8 << 20, 1)
 ROWS = [{"key": 4, "value": 1.5, "label": "first"}, {"key": 7, "value": 2.0, "label": None}]
 COMPRESSORS = {"": bytes, ".gz": gzip.compress, ".zst": zstd.compress, ".bz2": bz2.compress, ".xz": lzma.compress}

@@ -5,7 +5,7 @@ import pytest
 from graphspec import FUNCTIONS, Builder, BuildPlan, evaluate, source
 from graphspec.build.expression_types import EXTENDED_TIME, NEVER_TIME, Function, Kind
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(1 << 20, 1)
 TABLE = pa.table(dict(x=pa.array([-5, 5, None], pa.float64()), flag=[False, True, None]))
 COLUMNS = dict(x="number", flag="flag")

@@ -4,7 +4,7 @@ import pytest
 from graphspec import BuildPlan
 from graphspec.build.expressions import evaluate
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 PLAN = BuildPlan(1 << 20, 1)
 TABLE = pa.table(dict(
     x=pa.array([-1.5, 0, 2, None], type=pa.float64()),
