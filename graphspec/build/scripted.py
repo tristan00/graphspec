@@ -8,11 +8,12 @@ from graphspec.schema.decisions import GENERATORS
 from .expression_types import FUNCTIONS, Function
 from .generators import Scripted
 from .mapping_windows import EVERY
+from .splits import SPLITS, Divided
 
 LOG = logging.getLogger(__name__)
 SCRIPTED = Names("function of a script", False)
-ASKED = dict(function=("reads", "gives", "aggregate"), every=(), generator=("reads", "probable"))
-JOINED = dict(function=FUNCTIONS, every=EVERY, generator=GENERATORS)
+ASKED = dict(function=("reads", "gives", "aggregate"), every=(), split=(), generator=("reads", "probable"))
+JOINED = dict(function=FUNCTIONS, every=EVERY, split=SPLITS, generator=GENERATORS)
 
 
 class Ruled:
@@ -31,6 +32,8 @@ def entry(registry, function, version, asked):
         return Function(function, asked["reads"], asked["gives"], asked["aggregate"], version)
     if registry == "every":
         return Ruled(function, version)
+    if registry == "split":
+        return Divided(function, version)
     return Scripted(function, asked["reads"], asked["probable"], version)
 
 

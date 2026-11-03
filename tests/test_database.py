@@ -341,7 +341,7 @@ def test_the_rule_named_states_one_form_for_every_table_that_holds_its_columns(t
     assert {entry[3:5] for entry in found if not entry[0].startswith("orders")} == {(None, None)}
 
 
-def test_the_described_database_script_constructs_and_maps_up_to_its_split_by_time(tmp_path):
+def test_the_described_database_script_maps_its_tasks_split_by_time_and_stages(tmp_path):
     script = Path(__file__).parent / "described" / "19_database.py"
     shop(tmp_path, """
         CREATE TABLE customer (id INTEGER PRIMARY KEY, joined DATE NOT NULL, vip BOOLEAN NOT NULL);
@@ -354,17 +354,27 @@ def test_the_described_database_script_constructs_and_maps_up_to_its_split_by_ti
         CREATE TABLE orders (id INTEGER PRIMARY KEY, customer INTEGER NOT NULL REFERENCES customer(id),
                              placed DATE NOT NULL);
     """, """
-        INSERT INTO customer VALUES (1, '2023-12-01', 1);
+        INSERT INTO customer VALUES (1, '2023-12-01', 1), (2, '2024-02-01', 0);
         INSERT INTO item VALUES (1, 2.0, 'tool');
         INSERT INTO review VALUES (1, 1, 1, '2024-01-05', 5);
         INSERT INTO purchases VALUES (1, 1, 1, '2024-01-02', 3);
-        INSERT INTO orders VALUES (1, 1, '2024-01-02');
+        INSERT INTO orders VALUES (1, 1, '2024-01-02'), (2, 2, '2024-06-01'), (3, 2, '2024-08-01');
     """)
     builder = Builder(script, tmp_path)
     assert isinstance(builder.declarations["shop"], Database)
     assert sorted(builder.declarations) == ["bought", "leaves", "review", "shop"]
-    with pytest.raises(ValueError, match="leaves states its split by a form"):
-        builder.map(PLAN, "one")
+    records = builder.map(PLAN, "one").records()
+    tasks = records["graphs"][0]["tasks"]
+    assert list(zip([iso(day) for day in tasks["time"]], tasks["references"]["buyer"], tasks["split"],
+                    tasks["target"])) == [
+        ("2024-01-31", "1", "train", "leaves"), ("2024-03-01", "1", "train", "leaves"),
+        ("2024-03-31", "1", "train", "leaves"), ("2024-06-01", "2", "train", "stays"),
+        ("2024-07-01", "2", "train", "stays"), ("2024-07-31", "2", "train", "stays"),
+        ("2024-08-30", "2", "train", "leaves"), ("2024-09-29", "2", "validation", "leaves"),
+        ("2024-10-29", "2", "test", "leaves")]
+    built = json.loads((builder.stage(tmp_path, "one", PLAN).parent / "one.staging" / "build.json").read_text())
+    assert built["graphs"][0]["counts"]["tasks"] == dict(
+        leaves=dict(splits=dict(train=7, validation=1, test=1), without_split=0))
 
 
 def failing(folder, declarations, message):

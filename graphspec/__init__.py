@@ -18,6 +18,7 @@ from .build.planning import BuildPlan
 from .build.presence import BETWEEN, PRESENCE
 from .build.readers import READERS, Source, source
 from .build.scripted import SCRIPTED, scripted
+from .build.splits import SPLITS
 from .build.table_types import TABLES, Frame
 from .build.tables import (
     Table,
@@ -82,6 +83,7 @@ __all__ = [
     "SEES",
     "SEVERAL",
     "SORTS",
+    "SPLITS",
     "STEPS",
     "STORAGE",
     "TARGETS",

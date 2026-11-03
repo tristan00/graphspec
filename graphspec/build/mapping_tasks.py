@@ -9,6 +9,7 @@ from .mapping_rows import Reader, joined, spelled
 from .mapping_windows import Window, every
 from .mappings import Mapping, tabled
 from .presence import PRESENCE
+from .splits import Splitting
 from .table_types import ruled
 
 SKIP = object()
@@ -197,7 +198,7 @@ class Asked(Stated):
             self.at = reader.moments(fields["at"], "at", outcome=True)
             reader.knowing.timely(reader, fields["at"], "at", self.at, "the time of its task",
                                   "a task is dated only by what is known at its time")
-        self.split = reader.texts(fields["split"], "split") if type(fields.get("split")) is str else [None] * count
+        self.splitting = Splitting(reader, fields.get("split"))
         self.observer = reader.texts(fields["observer"], "observer", "omit") if "observer" in fields else [None] * count
         self.grouping = reader.moments(fields["grouping"], "grouping") if "grouping" in fields else [None] * count
         self.weight = [None] * count
@@ -261,9 +262,6 @@ class Asked(Stated):
 
     @timed("mapping_tasks.Asked.declared")
     def declared(self, mapped, target):
-        if self.fields.get("split") is not None and type(self.fields["split"]) is not str:
-            raise ValueError("%s states its split by a form, which mappings do not yet serve; an expression serves"
-                             % self.where)
         for name, reference in self.references.items():
             entry = mapped.references.setdefault(name, dict(sort=reference.sort, kinds=[]))
             if entry["sort"] != reference.sort:
@@ -287,7 +285,7 @@ class Asked(Stated):
             absent="keep" if kept else "stop", event=plain(self.fields.get("event")), matures=plain(self.fields.get("matures")))
 
     @timed("mapping_tasks.Asked.task")
-    def task(self, mapped, graph, key, place, references, target, known):
+    def task(self, mapped, graph, key, place, references, target, known, split):
         builder, extra = mapped.builder, {}
         if mapped.model != "none":
             extra["at"] = self.at[place]
@@ -299,7 +297,7 @@ class Asked(Stated):
             signal = self.signal[place] if self.width else [None] * mapped.signals
             extra.update(signal=[0.0 if value is None else float(value) for value in signal],
                          signal_observed=[value is not None for value in signal])
-        builder.task(self.label, key, references=references, split=self.split[place], target=target, known=known,
+        builder.task(self.label, key, references=references, split=split, target=target, known=known,
                      graph=graph, weight=self.weight[place], values=self.values[place], **extra)
 
 
@@ -412,6 +410,8 @@ class TaskStated(Asked):
                 key = mapped.numbered(graph, self.label, joined(self.keys[place]), self.where)
                 self.tasks.append((graph, key, place, references,
                                    self.adapted(mapped, graph, self.aims[place], references)))
+        self.splits = self.splitting.members([task[2] for task in self.tasks],
+                                             [self.at[task[2]] for task in self.tasks], [task[0] for task in self.tasks])
 
     @timed("mapping_tasks.TaskStated.schema")
     def schema(self, mapped):
@@ -437,9 +437,9 @@ class TaskStated(Asked):
     @timed("mapping_tasks.TaskStated.issue")
     def issue(self, mapped, phase):
         if phase == "tasks":
-            for graph, key, place, references, aim in self.tasks:
+            for (graph, key, place, references, aim), split in zip(self.tasks, self.splits):
                 known = self.known[place] if aim is not None else None
-                self.task(mapped, graph, key, place, references, aim, known)
+                self.task(mapped, graph, key, place, references, aim, known, split)
 
 
 class DecisionStated(Asked):
@@ -455,7 +455,7 @@ class DecisionStated(Asked):
         self.groups = reader.grouped([joined(key) for key in keys])
         for key, places in self.groups.items():
             where = "%s decision %s" % (self.where, key)
-            for name, values in (("at", self.at), ("graph", self.graphs), ("split", self.split),
+            for name, values in (("at", self.at), ("graph", self.graphs), ("split", self.splitting.named),
                                  ("observer", self.observer), ("grouping", self.grouping), ("weight", self.weight),
                                  ("signals", self.signal), ("features", self.values), ("discount", self.discount),
                                  ("ended", self.ended or [None] * reader.count),
@@ -463,6 +463,10 @@ class DecisionStated(Asked):
                 agreed([values[place] for place in places], "%s field %s" % (where, name))
             for name, reference in self.references.items():
                 agreed([reference.raw[place] for place in places], "%s field references.%s" % (where, name))
+        if self.splitting.form is not None:
+            named = self.splitting.members(list(range(reader.count)), self.at, self.graphs)
+            for key, places in self.groups.items():
+                agreed([named[place] for place in places], "%s decision %s field split" % (self.where, key))
         self.options = self.optioned(session, mapped)
         self.nothing = self.nothinged(mapped)
         self.actions = self.acted(session, mapped)
@@ -606,6 +610,9 @@ class DecisionStated(Asked):
                 self.decided.append(dict(graph=graph, key=number, place=place, references=references, actors=actors,
                                          options=options))
         self.sequenced()
+        self.splits = self.splitting.members([decision["place"] for decision in self.decided],
+                                             [self.at[decision["place"]] for decision in self.decided],
+                                             [decision["graph"] for decision in self.decided])
 
     @timed("mapping_tasks.DecisionStated.completed")
     def completed(self, mapped, graph, held, listed, actors):
@@ -674,7 +681,7 @@ class DecisionStated(Asked):
     def issue(self, mapped, phase):
         if phase != "tasks":
             return
-        for decision in self.decided:
+        for decision, split in zip(self.decided, self.splits):
             place = decision["place"]
             known = [option.pop("known") for option in decision["options"]]
             known = [moment for moment, option in zip(known, decision["options"])
@@ -683,4 +690,4 @@ class DecisionStated(Asked):
                           ended=None if self.ended is None else self.ended[place],
                           discount=None if self.discount[place] is None else float(self.discount[place]))
             self.task(mapped, decision["graph"], decision["key"], place, decision["references"], target,
-                      max(known) if known and mapped.model != "none" else None)
+                      max(known) if known and mapped.model != "none" else None, split)
