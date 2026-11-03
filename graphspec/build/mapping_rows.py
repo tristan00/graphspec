@@ -3,30 +3,49 @@ from collections.abc import Mapping as Held
 from graphspec.infra.timing import timed
 
 from .expression_types import EXTENDED_TIME, Kind
+from .mapping_known import BEFORE, NEVER
 from .mappings import TIMES
 from .presence import BETWEEN
-from .table_types import Context, broadcast, dependencies, references, ruled, take
+from .table_types import Context, broadcast, references, ruled, take
 
 NUMBERS = ("number", "ordered", "duration")
 TYPED = dict(number="number", ordered="number", duration="number", flag="flag", category="category")
 FORMED = ("always", "state", "event", "change", "signal")
+EARLY = "a fact chooses, dates and carries nothing by what is known after it"
 
 
 class Reader:
     windows = {}
+    asking = False
 
     @timed("mapping_rows.Reader")
     def __init__(self, session, table, name, plan):
         self.frame = session.get(table)
-        self.session, self.name, self.plan = session, name, plan
+        self.session, self.name, self.plan, self.knowing = session, name, plan, session.knowing
         self.context = Context(name, plan, session.unit, session.retained())
 
     @timed("mapping_rows.Reader.framed")
     def framed(self, frame):
         result = object.__new__(Reader)
         result.session, result.name, result.plan, result.context = self.session, self.name, self.plan, self.context
-        result.frame = frame
+        result.knowing, result.asking, result.windows, result.frame = self.knowing, self.asking, self.windows, frame
         return result
+
+    @timed("mapping_rows.Reader.asked")
+    def asked(self):
+        result = self.framed(self.frame)
+        result.asking = True
+        return result
+
+    @timed("mapping_rows.Reader.refused")
+    def refused(self, text, field):
+        if self.asking and field != "at":
+            self.knowing.ended(self, text, field)
+        found = self.knowing.outcomes(self, text)
+        if found:
+            raise ValueError("declaration %s field %s reads the outcome column %s; a mapping reads an outcome only in "
+                             "a target, the outcome of a decision, and the where, times and features of a fact known "
+                             "no earlier than it" % (self.name, field, ", ".join(found)))
 
     @timed("mapping_rows.Reader.windowed")
     def windowed(self, windows):
@@ -43,10 +62,9 @@ class Reader:
                              % (self.name, field, ", ".join(unknown)))
         frames = {name: self.windows[name].frame for name in scopes}
         if not outcome:
-            marks = dependencies(self.frame, text, frames)[1]
-            if marks:
-                raise ValueError("declaration %s field %s reads an outcome, known from %s"
-                                 % (self.name, field, ", ".join(mark[1] for mark in marks)))
+            self.refused(text, field)
+        elif self.asking:
+            self.knowing.ended(self, text, field)
         values, kind = [], Kind("missing")
         for place in range(self.count):
             namespace = {name: take(frames[name], self.windows[name].places[place]) for name in scopes}
@@ -65,10 +83,10 @@ class Reader:
         return self.frame.positions[place].as_py() if self.frame.positions is not None else place
 
     @timed("mapping_rows.Reader.where")
-    def where(self, text, field="where"):
+    def where(self, text, field="where", outcome=False):
         if text is None:
             return self
-        values, kind = self.values(text, field)
+        values, kind = self.values(text, field, outcome)
         if kind.name not in ("flag", "missing"):
             raise ValueError("declaration %s field %s gives a flag" % (self.name, field))
         return self.taken([place for place, value in enumerate(values) if value is True])
@@ -83,11 +101,9 @@ class Reader:
         if scopes:
             return self.scoped(text, field, outcome, scopes)
         if not outcome:
-            marks = dependencies(self.frame, text)[1]
-            if marks:
-                raise ValueError("declaration %s field %s reads an outcome, known from %s; a mapping reads outcomes "
-                                 "only in a target and in the outcome of a decision"
-                                 % (self.name, field, ", ".join(mark[1] for mark in marks)))
+            self.refused(text, field)
+        elif self.asking:
+            self.knowing.ended(self, text, field)
         value = self.context.evaluate(self.frame, text, field)
         if value.kind.arrow == EXTENDED_TIME:
             raise ValueError("declaration %s field %s gives the time never" % (self.name, field))
@@ -136,8 +152,13 @@ class Reader:
     def features(self, stated, field="features", outcome=False):
         columns, values = {}, {}
         for column, encoder in (stated or {}).items():
-            found, kind = self.values(column if column.isidentifier() else "column(%r)" % column,
-                                      "%s.%s" % (field, column), outcome)
+            text = column if column.isidentifier() else "column(%r)" % column
+            self.knowing.ended(self, text, "%s.%s" % (field, column))
+            if outcome and column in self.frame.kinds and self.knowing.never(self.frame, column):
+                raise ValueError("declaration %s field %s.%s reads the outcome column %s, which is never known and so "
+                                 "never a feature" % (self.name, field, column,
+                                                      ", ".join(self.knowing.named(self.frame, column))))
+            found, kind = self.values(text, "%s.%s" % (field, column), outcome)
             if kind.name in ("vector", "point"):
                 for place in range(kind.width):
                     name = "%s.%d" % (column, place)
@@ -151,6 +172,19 @@ class Reader:
                 raise ValueError("declaration %s field %s.%s is of the type %s, which is never a feature"
                                  % (self.name, field, column, kind.name))
         return columns, [{name: values[name][place] for name in values} for place in range(self.count)]
+
+    @timed("mapping_rows.Reader.lately")
+    def lately(self, stated, columns):
+        found = {}
+        for column in stated or {}:
+            known = self.knowing.column(self.frame, column) if column in self.frame.kinds else None
+            if known is not None:
+                origins = self.knowing.named(self.frame, column)
+                for name in columns:
+                    head, _, tail = name.rpartition(".")
+                    if name == column or head == column and tail.isdigit():
+                        found[name] = (column, known, origins)
+        return found
 
     @timed("mapping_rows.Reader.grouped")
     def grouped(self, keys):
@@ -232,6 +266,7 @@ def when(reader, fields, timed_model, clocks, sightings):
         if name not in fields:
             raise ValueError("declaration %s lacks %s, which every mapping of facts states where the graphs "
                              "have time" % (reader.name, name))
+    stated = dict(known=fields["known"], replaced=fields.get("replaced"))
     if sightings is not None:
         result.update(sightings)
     elif holds != "always":
@@ -241,10 +276,11 @@ def when(reader, fields, timed_model, clocks, sightings):
             raise ValueError("declaration %s field holds names the form %s, which mappings do not state"
                              % (reader.name, form))
         result.update(times(reader, form, holds))
+        stated.update({"holds." + name: text for name, text in holds.items() if name != "until"})
     if fields["known"] is not None:
-        result["known"] = reader.moments(fields["known"], "known")
+        result["known"] = reader.moments(fields["known"], "known", outcome=True)
     if fields.get("replaced") is not None:
-        result["replaced"] = reader.moments(fields["replaced"], "replaced", missing="omit")
+        result["replaced"] = reader.moments(fields["replaced"], "replaced", missing="omit", outcome=True)
     if (fields["known"] is not None or fields.get("replaced") is not None) and not clocks:
         raise ValueError("declaration %s states known or replaced, which needs the model clocks" % reader.name)
     ties = fields.get("ties")
@@ -252,7 +288,37 @@ def when(reader, fields, timed_model, clocks, sightings):
         if "seq" not in ties:
             raise ValueError("declaration %s field ties states the rule sequence and lacks seq" % reader.name)
         result["seq"] = reader.moments(ties["seq"], "ties.seq")
+    known = learned(result)
+    for field, text in stated.items():
+        if text is not None:
+            reader.knowing.timely(reader, str(text), field, known, "its fact is known", EARLY)
     return result
+
+
+@timed("mapping_rows.learned")
+def learned(stated):
+    return [(BEFORE if since is None else since) if known is None else known
+            for since, known in zip(stated["since"], stated["known"])]
+
+
+@timed("mapping_rows.knowable")
+def knowable(reader, fields, timed_model):
+    count = reader.count
+    holds = fields.get("holds")
+    if not timed_model or holds is None:
+        return [BEFORE] * count
+    since = [BEFORE] * count
+    if isinstance(holds, Held):
+        form = holds.get("name")
+        text = holds.get("since") if form == "state" else holds.get("at") if form in ("event", "change", "snapshot") \
+            else "(%s) + (%s) * (%s)" % (holds.get("start"), holds.get("index"), holds.get("stride")) \
+            if form == "signal" else None
+        if text is not None:
+            since = [NEVER if moment is None else moment
+                     for moment in reader.moments(str(text), "holds", "omit", True)]
+    if fields.get("known") is None:
+        return since
+    return [NEVER if moment is None else moment for moment in reader.moments(fields["known"], "known", "omit", True)]
 
 
 
@@ -264,15 +330,17 @@ def times(reader, form, holds):
         raise ValueError("declaration %s field holds of the form %s states exactly %s"
                          % (reader.name, form, ", ".join(stated)))
     if form == "state":
-        since = [None] * count if holds["since"] is None else reader.moments(holds["since"], "holds.since")
-        until = [None] * count if holds["until"] is None else reader.moments(holds["until"], "holds.until", "omit")
+        since = [None] * count if holds["since"] is None else reader.moments(holds["since"], "holds.since",
+                                                                             outcome=True)
+        until = [None] * count if holds["until"] is None else reader.moments(holds["until"], "holds.until", "omit",
+                                                                             True)
         return dict(since=since, until=until)
     if form == "signal":
         start, index, stride = holds["start"], holds["index"], holds["stride"]
-        since = reader.moments("(%s) + (%s) * (%s)" % (start, index, stride), "holds")
-        until = reader.moments("(%s) + ((%s) + 1) * (%s)" % (start, index, stride), "holds")
+        since = reader.moments("(%s) + (%s) * (%s)" % (start, index, stride), "holds", outcome=True)
+        until = reader.moments("(%s) + ((%s) + 1) * (%s)" % (start, index, stride), "holds", outcome=True)
         return dict(since=since, until=until)
-    at = reader.moments(holds["at"], "holds.at")
+    at = reader.moments(holds["at"], "holds.at", outcome=True)
     return dict(form=[form] * count, since=at, until=[moment + 1 for moment in at] if form == "event" else [None] * count)
 
 

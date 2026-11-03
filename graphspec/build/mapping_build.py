@@ -13,7 +13,8 @@ from .database import Part, owner
 from .database_build import expanded
 from .expression_types import UNSTATED
 from .expressions import custom_argument
-from .mapping_rows import Reader, aged, following, joined, sighted, when
+from .mapping_known import NEVER, Knowing, read, shown
+from .mapping_rows import EARLY, Reader, aged, following, joined, knowable, learned, sighted, when
 from .mappings import MAPPINGS, Linked, Mapping, tabled
 from .presence import PRESENCE
 from .readers import Source
@@ -28,6 +29,12 @@ FACTS = ("nodes", "edges", "sets")
 
 @timed("mapping_build.facts")
 def facts(reader, fields, mapped):
+    where = fields.get("where")
+    if where is not None:
+        if reader.knowing.outcomes(reader, where):
+            reader.knowing.timely(reader, where, "where", knowable(reader, fields, mapped.timed), "its fact is known",
+                                  EARLY)
+        reader = reader.where(where, outcome=True)
     graphs = reader.texts(fields["graph"], "graph") if "graph" in fields else [None] * reader.count
     for graph in graphs:
         if graph is not None:
@@ -36,6 +43,52 @@ def facts(reader, fields, mapped):
     stated = when(reader, fields, mapped.timed, mapped.clocks, sightings)
     return reader, [dict({name: stated[name][place] for name in stated}, graph=graphs[place], row=reader.row(place))
                     for place in range(reader.count)], ages
+
+
+@timed("mapping_build.revealed")
+def revealed(rows, late, fields, clocks, label):
+    result, places = [], []
+    form = fields["holds"].get("name") if isinstance(fields.get("holds"), Held) else None
+    for place, (kind, key, fact, values) in enumerate(rows):
+        held = learned(dict(since=[fact["since"]], known=[fact["known"]]))[0]
+        ending = NEVER if fact["replaced"] is None else fact["replaced"]
+        values, reveals = dict(values), {}
+        for name, (column, known, origins) in late.items():
+            if values.get(name) is None or known[place] <= held:
+                continue
+            if not clocks or form in ("change", "snapshot"):
+                raise ValueError("declaration %s field features.%s reads the outcome column %s, known from %s in row "
+                                 "%s, later than its fact is known; %s" % (
+                                     label, column, ", ".join(origins), shown(known[place]), fact["row"],
+                                     "only graphs counted on a clock state a fact twice" if not clocks else
+                                     "a fact of the form %s is never stated twice, so state it in the form state" % form))
+            if known[place] >= ending:
+                values[name] = None
+            else:
+                reveals.setdefault(known[place], []).append(name)
+        times = sorted(reveals)
+        hidden = {name: None for moment in times for name in reveals[moment]}
+        result.append((kind, key, dict(fact, replaced=times[0]) if times else fact, dict(values, **hidden)))
+        for at, moment in enumerate(times):
+            for name in reveals[moment]:
+                hidden.pop(name)
+            following = times[at + 1] if at + 1 < len(times) else fact["replaced"]
+            result.append((kind, key, dict(fact, known=moment, replaced=following), dict(values, **hidden)))
+        places += [place] * (len(times) + 1)
+    return result, places
+
+
+@timed("mapping_build.edged")
+def edged(late, facts, values, label):
+    for name, (column, known, origins) in late.items():
+        for place, fact in enumerate(facts):
+            held = learned(dict(since=[fact["since"]], known=[fact["known"]]))[0]
+            if values[place].get(name) is not None and known[place] > held:
+                raise ValueError("declaration %s field features.%s reads the outcome column %s, known from %s in row "
+                                 "%s, later than its edge is known, from %s; a present edge carries a value in each of "
+                                 "its features from when it is known"
+                                 % (label, column, ", ".join(origins), shown(known[place]), fact["row"],
+                                    shown(held)))
 
 
 @timed("mapping_build.inputs")
@@ -135,9 +188,9 @@ class NodeStated(Stated):
         for name in ("held", "inside"):
             if name in fields:
                 raise ValueError("declaration %s states %s; the base layer states no held graphs" % (label, name))
-        reader = Reader(session, statement.table, label, mapped.plan).where(fields.get("where"))
-        reader, stated, ages = facts(reader, fields, mapped)
-        self.columns, values = reader.features(fields.get("features"))
+        reader, stated, ages = facts(Reader(session, statement.table, label, mapped.plan), fields, mapped)
+        self.columns, values = reader.features(fields.get("features"), outcome=True)
+        late = reader.lately(fields.get("features"), self.columns)
         if ages is not None and "distinct" in fields:
             raise ValueError("declaration %s states distinct, which takes no features, and the rule carried adds one"
                              % label)
@@ -152,7 +205,7 @@ class NodeStated(Stated):
                     if key is not None and identity not in found:
                         found.add(identity)
                         rows.append((label, key, held, {}))
-            self.rows = rows
+            self.rows, self.places = rows, None
         else:
             keys = reader.texts(fields["key"], "key")
             if "of" in fields:
@@ -164,7 +217,9 @@ class NodeStated(Stated):
                 kinds = reader.texts(fields["kind"], "kind")
             else:
                 kinds = [label] * reader.count
-            self.rows = [(kinds[place], keys[place], stated[place], values[place]) for place in range(reader.count)]
+            self.rows, self.places = revealed(
+                [(kinds[place], keys[place], stated[place], values[place]) for place in range(reader.count)], late,
+                fields, mapped.clocks, label)
         self.made_kinds = list(dict.fromkeys(row[0] for row in self.rows)) if "kind" in fields else [
             mapped.label(fields["of"]) if "of" in fields else label]
         self.links = {}
@@ -202,20 +257,23 @@ class NodeStated(Stated):
                 if name in mapped.names():
                     raise ValueError("declaration %s makes under links the kind %s, which a declaration of the script "
                                      "also bears" % (self.label, name))
-                for (_, _, fact, _), key in zip(self.rows, link):
-                    if key is not None:
-                        mapped.make(fact["graph"], name, key, where, (None, None))
+                for (_, _, fact, _), place in zip(self.rows, self.places):
+                    if link[place] is not None:
+                        mapped.make(fact["graph"], name, link[place], where, (None, None))
 
     @timed("mapping_build.NodeStated.resolve")
     def resolve(self, mapped):
         self.linked = []
         for name, link in self.links.items():
-            for place, (kind, key, fact, _) in enumerate(self.rows):
+            held = {}
+            for (kind, key, fact, _), place in zip(self.rows, self.places):
                 for graph in mapped.graphed(fact["graph"]):
                     if type(link) is list:
                         found = None if link[place] is None else (name, joined(link[place]))
                     else:
-                        found = link.resolve(mapped, place, graph, fact)
+                        if (place, graph) not in held:
+                            held[(place, graph)] = link.resolve(mapped, place, graph, fact)
+                        found = held[(place, graph)]
                     if found is not None:
                         self.linked.append(("%s.%s" % (kind, name), (kind, joined(key)), found, dict(fact, graph=graph)))
 
@@ -236,10 +294,10 @@ class NodeStated(Stated):
                 mapped.node(kind, joined(key), fact, values)
             for name, link in self.links.items():
                 if type(link) is list:
-                    for row, key in zip(self.rows, link):
-                        if key is not None:
+                    for row, place in zip(self.rows, self.places):
+                        if link[place] is not None:
                             for graph in mapped.graphed(row[2]["graph"]):
-                                mapped.always(name, joined(key), graph)
+                                mapped.always(name, joined(link[place]), graph)
         elif phase == "edges":
             for relation, source, target, fact in self.linked:
                 mapped.edge(relation, source, target, fact, True, {})
@@ -252,11 +310,12 @@ class EdgeStated(Stated):
         self.label, self.named, self.index = label, [], {}
         if "inside" in fields:
             raise ValueError("declaration %s states inside; the base layer states no held graphs" % label)
-        reader = Reader(session, statement.table, label, mapped.plan).where(fields.get("where"))
-        reader, self.facts, ages = facts(reader, fields, mapped)
-        self.columns, self.values = reader.features(fields.get("features"))
+        reader, self.facts, ages = facts(Reader(session, statement.table, label, mapped.plan), fields, mapped)
+        self.columns, self.values = reader.features(fields.get("features"), outcome=True)
+        edged(reader.lately(fields.get("features"), self.columns), self.facts, self.values, label)
         aged(ages, self.columns, self.values, "declaration %s field features" % label)
         self.graphs = [fact["graph"] for fact in self.facts]
+        self.reader = reader
         self.source = End(mapped, reader, fields["source"], "source", "ends")
         self.target = End(mapped, reader, fields["target"], "target", "ends")
         self.relations = reader.texts(fields["relation"], "relation") if "relation" in fields else None
@@ -362,12 +421,16 @@ class SetStated(Stated):
     def __init__(self, mapped, label, statement, session):
         fields = self.fields = statement.fields
         self.label = label
-        reader = Reader(session, statement.table, label, mapped.plan).where(fields.get("where"))
-        reader, self.facts, ages = facts(reader, fields, mapped)
-        self.columns, self.values = reader.features(fields.get("features"))
-        aged(ages, self.columns, self.values, "declaration %s field features" % label)
-        self.keys = reader.texts(fields["key"], "key")
+        reader, stated, ages = facts(Reader(session, statement.table, label, mapped.plan), fields, mapped)
+        self.columns, values = reader.features(fields.get("features"), outcome=True)
+        late = reader.lately(fields.get("features"), self.columns)
+        aged(ages, self.columns, values, "declaration %s field features" % label)
+        keys = reader.texts(fields["key"], "key")
+        rows, self.places = revealed([(label, keys[place], stated[place], values[place])
+                                      for place in range(reader.count)], late, fields, mapped.clocks, label)
+        self.keys, self.facts, self.values = [row[1] for row in rows], [row[2] for row in rows], [row[3] for row in rows]
         self.graphs = [fact["graph"] for fact in self.facts]
+        self.reader = reader
         self.members, self.member_columns = [], {}
         for place, member in enumerate(fields["members"]):
             rows = Reader(session, member["rows"], label, mapped.plan)
@@ -545,6 +608,8 @@ class Mapped:
         with Session(tables, self.builder.sources, self.plan, aliases=self.aliases) as session:
             for value in tables.values():
                 session.get(value)
+            session.knowing = Knowing(session, self.plan)
+            self.carried(session)
             self.unit = None if session.unit is UNSTATED else session.unit
             if self.timed:
                 self.model = "order" if self.unit is None else "clocks" if self.clocks else "clock"
@@ -575,6 +640,20 @@ class Mapped:
                 self.stated[id(statement)].issue(self, phase)
         LOG.info("mapped exit statements=%d graphs=%d seconds=%.3f", len(self.statements), len(self.graphs),
                  time.perf_counter() - started)
+
+    @timed("mapping_build.Mapped.carried")
+    def carried(self, session):
+        ending = set()
+        for _, statement in self.statements:
+            if statement.word not in FACTS:
+                continue
+            fields, frame = statement.fields, session.get(statement.table)
+            holds = fields.get("holds")
+            if isinstance(holds, Held) and holds.get("name") == "state" and type(holds.get("until")) is str:
+                ending.update(origin for column in read(holds["until"])[0] for origin in frame.lineage.get(column, ()))
+            if statement.word != "edges" and any(column in frame.outcomes for column in fields.get("features") or {}):
+                self.clocks = self.clocks or self.timed and session.unit not in (None, UNSTATED)
+        session.knowing.ending = frozenset(ending)
 
     @timed("mapping_build.Mapped.declared_graphs")
     def declared_graphs(self):

@@ -4,6 +4,7 @@ from graphspec.infra.timing import timed
 from graphspec.schema.targets import TARGETS
 
 from .mapping_build import EdgeStated, End, SetStated, Stated
+from .mapping_known import BEFORE, latest, shown
 from .mapping_rows import Reader, joined, spelled
 from .mapping_windows import Window, every
 from .mappings import Mapping, tabled
@@ -174,9 +175,12 @@ class Asked(Stated):
         fields = self.fields = statement.fields
         self.label, self.where = label, "declaration " + label
         if tabled(statement.table):
-            reader, moment = Reader(session, statement.table, label, mapped.plan), None
+            reader, moment = Reader(session, statement.table, label, mapped.plan).asked(), None
         else:
-            reader, moment = every(mapped, label, statement.table, session)
+            reader, moment, known = every(mapped, label, statement.table, session)
+            reader = reader.asked()
+            if mapped.timed and "at" in fields:
+                self.learned(reader, known)
         reader = reader.where(fields.get("where"))
         if "earlier" in fields or "eligible" in fields:
             reader = self.eligible(mapped, reader, session)
@@ -188,7 +192,11 @@ class Asked(Stated):
         self.graphs = reader.texts(fields["graph"], "graph") if "graph" in fields else [None] * count
         if mapped.timed and "at" not in fields:
             raise ValueError("%s lacks at, which every kind of task states where the graphs have time" % self.where)
-        self.at = reader.moments(fields["at"], "at") if mapped.timed else [None] * count
+        self.at = [None] * count
+        if mapped.timed:
+            self.at = reader.moments(fields["at"], "at", outcome=True)
+            reader.knowing.timely(reader, fields["at"], "at", self.at, "the time of its task",
+                                  "a task is dated only by what is known at its time")
         self.split = reader.texts(fields["split"], "split") if type(fields.get("split")) is str else [None] * count
         self.observer = reader.texts(fields["observer"], "observer", "omit") if "observer" in fields else [None] * count
         self.grouping = reader.moments(fields["grouping"], "grouping") if "grouping" in fields else [None] * count
@@ -209,6 +217,13 @@ class Asked(Stated):
         self.references = {name: Reference(mapped, reader, name, stated)
                            for name, stated in fields["references"].items()}
 
+    @timed("mapping_tasks.Asked.learned")
+    def learned(self, reader, known):
+        for place, (moment, fact) in enumerate(zip(reader.moments(self.fields["at"], "at", outcome=True), known)):
+            if fact > moment:
+                raise ValueError("%s field at row %d dates a task at %s, which reads the row of a fact known later, "
+                                 "from %s" % (self.where, reader.row(place), moment, shown(fact)))
+
     @timed("mapping_tasks.Asked.eligible")
     def eligible(self, mapped, reader, session):
         fields = self.fields
@@ -220,7 +235,7 @@ class Asked(Stated):
                 raise ValueError("%s states earlier, which reads rows by the time of its tasks, and states no at"
                                  % self.where)
             windows["earlier"] = Window(reader, session, fields["earlier"], "earlier",
-                                        reader.moments(fields["at"], "at"), False)
+                                        reader.moments(fields["at"], "at", outcome=True), False)
         values, kind = reader.windowed(windows).values(fields["eligible"], "eligible")
         if kind.name not in ("flag", "missing"):
             raise ValueError("%s field eligible gives a flag" % self.where)
@@ -312,6 +327,29 @@ class TaskStated(Asked):
             self.aims = [None if open else aim for aim, open in zip(self.aims, window.open)]
         if target["known"] != "never" and mapped.model != "none":
             self.known = reader.moments(target["known"], "target.known", outcome=True)
+            self.timely(reader, window)
+
+    @timed("mapping_tasks.TaskStated.timely")
+    def timely(self, reader, window):
+        value = self.fields["target"]["value"]
+        texts = [str(text) for text in (value.values() if isinstance(value, Held) else [value])]
+        found = latest([reader.knowing.expression(reader, text, "target.value") for text in texts], reader.count)
+        for place, (aim, known, at) in enumerate(zip(self.aims, self.known, self.at)):
+            if aim is None:
+                continue
+            where = "%s field target.known row %d gives %s" % (self.where, reader.row(place), known)
+            if known <= at:
+                raise ValueError("%s, not later than the task's time %s: a target never enters the view of its own "
+                                 "task" % (where, at))
+            if found is not None and found[place] > known:
+                raise ValueError("%s, earlier than the outcome column %s that target.value reads is known, from %s"
+                                 % (where, ", ".join(reader.knowing.outcomes(reader, " + ".join(texts))),
+                                    shown(found[place])))
+            if window is not None:
+                end = at + window.within if window.within is not None else max(
+                    (window.at[row] for row in window.places[place]), default=BEFORE)
+                if end > known:
+                    raise ValueError("%s, earlier than its later rows end, at %s" % (where, shown(end)))
 
     @timed("mapping_tasks.TaskStated.aimed")
     def aimed(self, reader, target):

@@ -17,6 +17,7 @@ from .build.output import Stage
 from .build.planning import BuildPlan
 from .build.presence import BETWEEN, PRESENCE
 from .build.readers import READERS, Source, source
+from .build.scripted import SCRIPTED, scripted
 from .build.table_types import TABLES, Frame
 from .build.tables import (
     Table,
@@ -77,6 +78,7 @@ __all__ = [
     "READERS",
     "REPRESENTATIONS",
     "RULES",
+    "SCRIPTED",
     "SEES",
     "SEVERAL",
     "SORTS",
@@ -117,6 +119,7 @@ __all__ = [
     "differences",
     "inspect",
     "evaluate",
+    "scripted",
     "source",
     "align",
     "closure",

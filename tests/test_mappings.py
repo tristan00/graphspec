@@ -534,9 +534,10 @@ def test_a_statement_or_a_build_stops_naming_the_declaration_and_the_field(tmp_p
             (decisions, dict(key="id", references={}), "lacks the required field actors")):
         with pytest.raises(ValueError, match=message):
             word(rows, **fields)
-    thing = nodes(rows, key="id", where="id == 'a'", features=dict(late="value"), holds="always", known=None)
-    with pytest.raises(ValueError, match="thing field features.late reads an outcome"):
-        mapped(tmp_path, dict(rows=rows, thing=thing, ask=looking(rows, thing, at="day")))
+    thing = nodes(rows, key="id", where="id == 'a'", holds="always", known=None)
+    with pytest.raises(ValueError, match="ask field features.late reads the outcome column rows.late"):
+        mapped(tmp_path, dict(rows=rows, thing=thing, ask=looking(rows, thing, at="day", where="id == 'a'",
+                                                                  features=dict(late="value"))))
     for stated, message in ((dict(holds="always", known=None), "thing field key row 1 reads a missing value"),
                             (dict(), "ask states at, and no mapping|thing lacks holds"),
                             (dict(holds=dict(name="snapshot", at="day"), known=None),

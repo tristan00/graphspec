@@ -212,7 +212,8 @@ class Expansion:
     def features(self, table, taken):
         encoders, result = self.fields["encoders"], {}
         for column, given in self.columns[table].items():
-            if column in taken or given["type"] not in FEATURED or "outcome" in given or column == self.fields.get("graph"):
+            if column in taken or given["type"] not in FEATURED or given.get("outcome") == "never" \
+                    or column == self.fields.get("graph"):
                 continue
             if given["type"] not in encoders:
                 raise ValueError("%s field encoders states no encoder of the type %s, which the column %s.%s has"
