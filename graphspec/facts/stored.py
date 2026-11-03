@@ -373,7 +373,7 @@ class Facts:
         result = dict(
             graph=dict(
                 unit=self.unit,
-                **{
+                values={
                     name: found[0]
                     for name, found in stated(
                         registry, schema.graph, np.asarray(self.graph_values)[None, :]

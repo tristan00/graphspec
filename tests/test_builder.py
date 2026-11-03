@@ -122,3 +122,81 @@ def test_timeless_calls_take_no_times_and_invalid_local_fields_stop_before_stagi
     with pytest.raises(ValueError, match="distinct integer key"):
         builder.task("level", 1, references=dict(at="n"), split="train", target=3, known=None)
     assert len(builder.records()["graphs"][0]["tasks"]["key"]) == 2
+
+
+def test_explicit_feature_values_preserve_method_and_record_metadata_names(tmp_path):
+    mapping = schema()
+    node_columns = ["graph", "key", "known", "since", "values", "plain"]
+    edge_columns = ["graph", "source", "target", "key", "values"]
+    task_columns = ["at", "target", "key", "known", "values"]
+    mapping["columns"] = {name: dict(type="number", encoder="value")
+                          for name in sorted(set(node_columns + edge_columns + task_columns))}
+    mapping["nodes"]["node"]["columns"] = node_columns
+    mapping["edges"]["link"]["columns"] = edge_columns
+    mapping["tasks"]["kinds"]["level"]["columns"] = task_columns
+    builder = Builder({}, tmp_path).schema(mapping).graph("one", "tick")
+    node_values = {name: float(at + 10) for at, name in enumerate(node_columns)}
+    edge_values = {name: float(at + 20) for at, name in enumerate(edge_columns)}
+    task_values = {name: float(at + 30) for at, name in enumerate(task_columns)}
+    builder.node("node", "n", 0, known=None, values=node_values)
+    builder.change("node", "n", 3, known=None, values=dict(graph=99.0))
+    builder.edge("link", ("node", "n"), ("node", "n"), 0, 2, known=None, values=edge_values)
+    builder.event("link", ("node", "n"), ("node", "n"), 2, known=None, values=edge_values)
+    for at in range(1, 5):
+        builder.task("level", at, at, dict(at="n"), "train" if at < 3 else "validation",
+                     float(at), None, values=task_values)
+    build_bank(builder, tmp_path / "reserved", 1, ("train",))
+    bank = Bank(tmp_path / "reserved")
+    truth = Facts.load(bank.truth(0))
+    found = truth.stated(bank.registry, bank.splits, bank.manifest["observers"])
+    assert truth.keys == ["n"] and truth.task_key.tolist() == [1, 2, 3, 4]
+    assert truth.task_time.tolist() == [1, 2, 3, 4] and truth.target_y.tolist() == [1, 2, 3, 4]
+    assert found["observations"]["node"]["since"] == [0, 3]
+    for name, value in node_values.items():
+        assert found["observations"]["node"][VALUE + name][0] == value
+    for name, value in edge_values.items():
+        assert found["edges"]["link"][VALUE + name] == [value, value]
+    for name, value in task_values.items():
+        assert found["tasks"][VALUE + name] == [value] * 4
+    with pytest.raises(ValueError, match="columns twice: plain"):
+        builder.node("node", "n", 4, known=None, values=dict(plain=1), plain=2)
+
+
+def test_timeless_graph_attributes_can_use_the_unit_parameter_name(tmp_path):
+    mapping = schema(True)
+    mapping["columns"]["unit"] = dict(type="number", encoder="value")
+    mapping["graph"]["columns"] = ["unit"]
+    builder = Builder({}, tmp_path).schema(mapping).graph("one", None, values=dict(unit=7))
+    builder.node("node", "n", a=1, b=2)
+    for key in (1, 2):
+        builder.task("level", key, references=dict(at="n"), split="train", target=float(key), known=None)
+    build_bank(builder, tmp_path / "timeless-unit", 1, ("train",))
+    bank = Bank(tmp_path / "timeless-unit")
+    truth = Facts.load(bank.truth(0))
+    assert truth.unit is None
+    assert truth.stated(bank.registry, bank.splits, bank.manifest["observers"])["graph"] == dict(unit=None, values=dict(unit=7))
+
+
+def test_changes_keep_independent_observer_histories_and_canonicalize_scopes(tmp_path):
+    mapping = schema()
+    mapping["observers"] = True
+    mapping["time"]["ties"] = "sequence"
+    builder = Builder({}, tmp_path).schema(mapping).graph("one", "tick")
+    builder.change("node", "n", 0, known=None, seen=["alice"], seq=0, a=1)
+    builder.change("node", "n", 0, known=None, seen=["bob"], seq=1, a=2)
+    builder.change("node", "n", 2, known=None, seen=["bob"], seq=1, a=3)
+    builder.change("node", "n", 0, known=None, seen=["bob", "alice"], seq=2, b=4)
+    builder.change("node", "n", 3, known=None, seen=["alice", "bob"], seq=2, b=5)
+    for key in (1, 2):
+        builder.task("level", key, key, dict(at="n"), "train", float(key), None, observer="alice")
+    assert len(builder.records()["graphs"][0]["values"]) == 3
+    build_bank(builder, tmp_path / "observers", 1, ("train",))
+    bank = Bank(tmp_path / "observers")
+    truth = Facts.load(bank.truth(0))
+    found = truth.stated(bank.registry, bank.splits, bank.manifest["observers"])["observations"]["node"]
+    rows = list(zip(found["observers"], found["since"], found["until"], found[VALUE + "a"], found[VALUE + "b"]))
+    assert sorted(rows) == sorted([(["alice"], 0, None, 1, None), (["bob"], 0, 2, 2, None),
+                                  (["alice", "bob"], 0, 3, None, 4), (["bob"], 2, None, 3, None),
+                                  (["alice", "bob"], 3, None, None, 5)])
+    with pytest.raises(ValueError, match="observer names"):
+        builder.change("node", "n", 4, known=None, seen=["alice", "alice"], a=6)

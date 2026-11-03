@@ -27,6 +27,7 @@ from graphspec.schema.schema import (
     TARGET,
     TASK,
     TOGETHER,
+    VALUE,
     WITHIN,
     WRITTEN,
     Schema,
@@ -95,7 +96,9 @@ def table(schema, columns, where):
     started = time.perf_counter()
     held = {}
     for name, values in columns.items():
-        if name in GIVEN:
+        if name.startswith(VALUE) and name[len(VALUE):] in schema.columns:
+            kind = schema.kind(name[len(VALUE):]).written
+        elif name in GIVEN:
             kind = GIVEN[name]
         elif name in schema.columns:
             kind = schema.kind(name).written
@@ -107,12 +110,37 @@ def table(schema, columns, where):
     return result
 
 
+@timed("records.feature_names")
+def feature_names(rows, columns, metadata, where, partial):
+    found = {}
+    for name in columns:
+        prefixed = VALUE + name
+        if prefixed in rows:
+            if name in rows and name not in metadata:
+                raise ValueError("%s states the feature column %s twice" % (where, name))
+            found[name] = prefixed
+        elif name in rows and name not in metadata:
+            found[name] = name
+        elif not partial:
+            raise ValueError("%s lacks feature column %s; use values for a name shared with metadata" % (where, name))
+    return found
+
+
+@timed("records.feature_table")
+def feature_table(schema, columns):
+    return pa.table({name: pa.array(values, schema.kind(name).written) for name, values in columns.items()})
+
+
 def facts(schema, statement, given, values, where):
     started = time.perf_counter()
     parted(
         statement, STATEMENT + tuple(name for name in ("kind", "table", "ends") if name in statement), where
     )
-    stated_rows = table(schema, statement["rows"], where)
+    rows = dict(statement["rows"])
+    feature = feature_names(rows, values, set(given) | set(schema.stamps()) | {"at", "index"}, where, False)
+    for name, field in feature.items():
+        rows[VALUE + name] = rows.pop(field)
+    stated_rows = table(schema, rows, where)
     if schema.model == "none":
         if statement["form"] is not None:
             raise ValueError("%s names a form, and the graphs of its schema have no time" % where)
@@ -125,7 +153,7 @@ def facts(schema, statement, given, values, where):
             if name not in OPTIONAL:
                 raise ValueError("%s states no column %s" % (where, name))
             result = result.append_column(name, pa.nulls(result.num_rows, WRITTEN[kind]))
-    wanted = list(given) + list(stamps) + list(values)
+    wanted = list(given) + list(stamps) + [VALUE + name for name in values]
     if sorted(result.column_names) != sorted(wanted):
         raise ValueError(
             "%s states the columns %s and is to state %s"
@@ -137,8 +165,8 @@ def facts(schema, statement, given, values, where):
 
 @timed("records.none")
 def none(schema, given, values):
-    names = list(given) + list(schema.stamps()) + list(values)
-    kinds = dict(GIVEN, **{name: schema.kind(name).written for name in values})
+    names = list(given) + list(schema.stamps()) + [VALUE + name for name in values]
+    kinds = dict(GIVEN, **{VALUE + name: schema.kind(name).written for name in values})
     kinds.update({name: WRITTEN[kind] for name, kind in schema.stamps().items()})
     return pa.table({name: pa.array([], kinds[name]) for name in names})
 
@@ -154,9 +182,9 @@ def observations(schema, statements, columns, where):
     found = []
     for statement in statements:
         rows = statement["rows"]
-        names = [name for name in columns if name in rows]
+        names = list(feature_names(rows, columns, {"key", "at", "index"} | set(schema.stamps()), where, True))
         count = len(rows["key"])
-        supplied = dict(rows, **{name: [None] * count for name in columns if name not in rows})
+        supplied = dict(rows, **{VALUE + name: [None] * count for name in columns if name not in names})
         part = facts(schema, dict(statement, rows=supplied), ("key",), columns, where)
         found.append(part.append_column(FACT_COLUMNS, pa.array([names] * part.num_rows, pa.list_(pa.string()))))
     if found:
@@ -179,7 +207,7 @@ def case_rows(schema, index, graph, counter):
     if united:
         described["unit"] = pa.array([graph["unit"]])
     described.update(
-        table(schema, {name: [graph["columns"][name]] for name in schema.graph}, where).to_pydict()
+        feature_table(schema, {name: [graph["columns"][name]] for name in schema.graph}).to_pydict()
     )
     tables = {("graph", None, None): table_of(schema, described)}
     lookup, entity, stamps = {}, 0, list(schema.stamps())
@@ -220,7 +248,7 @@ def case_rows(schema, index, graph, counter):
             {
                 "from": found(kind, held_rows.column("key").to_pylist()),
                 "to": pa.array(ids),
-                **{name: held_rows.column(name) for name in columns},
+                **{name: held_rows.column(VALUE + name) for name in columns},
                 FACT_COLUMNS: held_rows.column(FACT_COLUMNS),
             }
         )
@@ -247,7 +275,7 @@ def case_rows(schema, index, graph, counter):
             columns.update({stamp: held_rows.column(stamp) for stamp in stamps})
             if entry["column"] is not None:
                 columns[entry["column"]] = held_rows.column("relation")
-            columns.update({column: held_rows.column(column) for column in entry["columns"]})
+            columns.update({column: held_rows.column(VALUE + column) for column in entry["columns"]})
             tables[(EDGE + name,) + ends] = pa.table(columns)
     for kind, entry in schema.sets.items():
         tables.update(case_members(schema, kind, graph["sets"][kind], lookup, found, where))
@@ -376,7 +404,8 @@ def members(sort, stated):
 def case_tasks(schema, index, tasks, counter, lookup, where):
     started = time.perf_counter()
     asked = schema.tasks
-    names = list(ASKED) + list(schema.asked_columns())
+    feature = feature_names(tasks, schema.asked_columns(), set(ASKED) | {"time", "observer", "grouping", "signal", "signal_observed"}, where, False)
+    names = list(ASKED) + list(feature.values())
     names += ["time"] if schema.model != "none" else []
     names += ["observer"] if schema.observers else []
     names += ["grouping"] if asked["grouping"] is not None else []
@@ -399,7 +428,7 @@ def case_tasks(schema, index, tasks, counter, lookup, where):
         held[asked["grouping"]] = pa.array(tasks["grouping"], pa.int32())
     held[asked["key"]] = pa.array(tasks["key"], pa.int64())
     held.update(
-        table(schema, {name: tasks[name] for name in schema.asked_columns()}, where + ", tasks").to_pydict()
+        feature_table(schema, {name: tasks[field] for name, field in feature.items()}).to_pydict()
     )
     if asked["signals"]:
         held.update(signal=fixed(tasks["signal"]), signal_observed=fixed(tasks["signal_observed"]))
@@ -619,7 +648,9 @@ def restated(schema, statement, given, values, times, where):
         rows += [row] * len(chosen)
         moments += chosen
     taken = found.take(pa.array(rows, pa.int64())).drop_columns(["since", "until"])
-    columns = dict(taken.to_pydict(), at=moments)
+    feature = feature_names(statement["rows"], values, set(given) | set(schema.stamps()) | {"at", "index"}, where, False)
+    renamed = {VALUE + name: field for name, field in feature.items()}
+    columns = dict({renamed.get(name, name): held for name, held in taken.to_pydict().items()}, at=moments)
     result = dict(
         {name: statement[name] for name in statement if name not in STATEMENT},
         form="snapshot",

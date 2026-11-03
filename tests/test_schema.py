@@ -388,7 +388,7 @@ def test_a_graph_of_the_varied_schema_reads_back_from_the_bank_equal_to_what_was
     assert list(back) == list(wanted) == ["g0", "g1"]
     for name, found in back.items():
         assert support.differing(found, wanted[name], schema) == [], name
-        assert None in found["observations"]["person"][VALUE + "colour"] and found["graph"]["season"] in ("dry", "wet")
+        assert None in found["observations"]["person"][VALUE + "colour"] and found["graph"]["values"]["season"] in ("dry", "wet")
         assert sorted(found["edges"]["visits"][VALUE + "mode"]) == ["foot", "road"]
         assert sorted(found["edges"]["links"]["relation"]) == ["likes", "sells"]
         assert sorted(zip(found["edges"]["near"]["source"], found["edges"]["near"]["target"])) == [("q0", "q1"), ("q1", "q2")]

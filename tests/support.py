@@ -417,7 +417,7 @@ def meant(case):
         result[graph["name"]] = dict(
             graph=dict(
                 unit=graph["unit"],
-                **{name: stored_as(schema, name, [graph["columns"][name]])[0] for name in schema.graph},
+                values={name: stored_as(schema, name, [graph["columns"][name]])[0] for name in schema.graph},
             ),
             nodes={kind: list(graph["nodes"][kind]) + created[kind] for kind in schema.entities()},
             observations=observed(schema, graph),

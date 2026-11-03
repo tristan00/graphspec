@@ -9,7 +9,7 @@ import pyarrow as pa
 from graphspec.infra.timing import timed
 from graphspec.schema.fields import fields, named
 from graphspec.schema.references import SORTS
-from graphspec.schema.schema import Schema
+from graphspec.schema.schema import VALUE, Schema
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER, UNITED
 
@@ -24,6 +24,18 @@ def keyed(value, where):
     if type(value) is not str or not value:
         raise ValueError("%s needs a nonempty string key, found %r" % (where, value))
     return value
+
+
+@timed("builder.supplied")
+def supplied(values, columns, where):
+    if values is None:
+        return columns
+    if not isinstance(values, Mapping):
+        raise ValueError("%s states values as a mapping from column name to value" % where)
+    repeated = sorted(set(values) & set(columns))
+    if repeated:
+        raise ValueError("%s states the columns twice: %s" % (where, ", ".join(repeated)))
+    return dict(values, **columns)
 
 
 class Builder:
@@ -63,17 +75,17 @@ class Builder:
         return result
 
     @timed("builder.graph")
-    def graph(self, name, unit, **values):
+    def graph(self, name, unit, *, values=None, **columns):
         schema = self.required()
         named(name, "a graph")
         if name in self.graphs:
             raise ValueError("the graph %s is already declared" % name)
         if (unit is not None) != (schema.model in UNITED) or (unit is not None and unit not in schema.units):
             raise ValueError("the graph %s states one of its schema's units, or None without a clock" % name)
-        columns = self.values(values, schema.graph, "the graph " + name, False)
+        columns = self.values(supplied(values, columns, "the graph " + name), schema.graph, "the graph " + name, False)
         tasks = {field: [] for field in records.ASKED if field != "references"}
         tasks["references"] = {reference: [] for reference in schema.tasks["references"]}
-        tasks.update({column: [] for column in schema.asked_columns()})
+        tasks.update({VALUE + column: [] for column in schema.asked_columns()})
         if schema.model != "none":
             tasks["time"] = []
         if schema.observers:
@@ -133,9 +145,10 @@ class Builder:
             elif known is not None or replaced is not None:
                 raise ValueError("%s needs the clocks time model to state known or replaced" % where)
         if schema.observers:
-            if seen is not None and (not isinstance(seen, (list, tuple)) or any(type(name) is not str or not name for name in seen)):
+            if seen is not None and (not isinstance(seen, (list, tuple)) or any(type(name) is not str or not name for name in seen)
+                                     or len(set(seen)) != len(seen)):
                 raise ValueError("%s states seen as a list of observer names or None" % where)
-            result["observers"] = None if seen is None else list(seen)
+            result["observers"] = None if seen is None else sorted(seen)
         elif seen is not None:
             raise ValueError("%s names observers its schema does not declare" % where)
         if "seq" in schema.stamps():
@@ -148,17 +161,17 @@ class Builder:
 
     @timed("builder.node")
     def node(self, kind, key, since=UNSTATED, until=None, *, graph=None, known=UNSTATED,
-             replaced=None, seen=None, seq=UNSTATED, **values):
+             replaced=None, seen=None, seq=UNSTATED, values=None, **columns):
         schema, held = self.required(), self.chosen(graph)
         if kind not in schema.nodes:
             raise ValueError("node names an undeclared kind of node %r" % kind)
         keyed(key, "node")
         where = "node %s:%s of graph %s" % (kind, key, held["name"])
-        values = self.values(values, schema.nodes[kind], where, True)
+        values = self.values(supplied(values, columns, where), schema.nodes[kind], where, True)
         when = self.when("state", since, until, known, replaced, seen, seq, where)
         if key not in held["nodes"][kind]:
             held["nodes"][kind].append(key)
-        rows = {name: [value] for name, value in dict(key=key, **when, **values).items()}
+        rows = {name: [value] for name, value in dict(key=key, **when, **{VALUE + name: value for name, value in values.items()}).items()}
         held["values"].append(dict(kind=kind, form=None if schema.model == "none" else "state", parameters={}, rows=rows))
         return self
 
@@ -189,7 +202,8 @@ class Builder:
             raise ValueError("%s names (table, relation) exactly when the table takes relations from a column" % where)
         values = self.values(values, entry["columns"], where, False)
         when = self.when(form, since, until, known, replaced, seen, seq, where)
-        rows = dict(source=left[1], target=right[1], present=present, **when, **values)
+        rows = dict(source=left[1], target=right[1], present=present, **when,
+                    **{VALUE + name: value for name, value in values.items()})
         if label is not None:
             rows["relation"] = keyed(label, where)
         held["edges"].append(dict(table=table, ends=(left[0], right[0]),
@@ -199,34 +213,38 @@ class Builder:
 
     @timed("builder.edge")
     def edge(self, relation, source, target, since=UNSTATED, until=None, *, graph=None, known=UNSTATED,
-             replaced=None, seen=None, seq=UNSTATED, present=True, **values):
-        return self.edge_fact(relation, source, target, "state", since, until, graph, known, replaced, seen, seq, present, values)
+             replaced=None, seen=None, seq=UNSTATED, present=True, values=None, **columns):
+        return self.edge_fact(relation, source, target, "state", since, until, graph, known, replaced, seen, seq,
+                              present, supplied(values, columns, "edge %r" % (relation,)))
 
     @timed("builder.event")
     def event(self, relation, source, target, at, *, graph=None, known=UNSTATED,
-              replaced=None, seen=None, seq=UNSTATED, present=True, **values):
-        return self.edge_fact(relation, source, target, "event", at, None, graph, known, replaced, seen, seq, present, values)
+              replaced=None, seen=None, seq=UNSTATED, present=True, values=None, **columns):
+        return self.edge_fact(relation, source, target, "event", at, None, graph, known, replaced, seen, seq,
+                              present, supplied(values, columns, "event %r" % (relation,)))
 
     @timed("builder.change")
-    def change(self, kind, key, at, *, graph=None, known=UNSTATED, replaced=None, seen=None, seq=UNSTATED, **values):
+    def change(self, kind, key, at, *, graph=None, known=UNSTATED, replaced=None, seen=None, seq=UNSTATED,
+               values=None, **columns):
         schema, held = self.required(), self.chosen(graph)
         if kind not in schema.nodes:
             raise ValueError("change names an undeclared kind of node %r" % kind)
         keyed(key, "change")
         where = "change of %s:%s in graph %s" % (kind, key, held["name"])
-        values = self.values(values, schema.nodes[kind], where, True)
+        values = self.values(supplied(values, columns, where), schema.nodes[kind], where, True)
         when = self.when("change", at, None, known, replaced, seen, seq, where)
         if key not in held["nodes"][kind]:
             held["nodes"][kind].append(key)
         for column in values or (None,):
-            group = self.changes.setdefault((held["name"], kind, column), [])
-            group.append(dict(key=key, **when, **({column: values[column]} if column is not None else {})))
+            observer_scope = None if seen is None else tuple(sorted(seen))
+            group = self.changes.setdefault((held["name"], kind, column, observer_scope), [])
+            group.append(dict(key=key, **when, **({VALUE + column: values[column]} if column is not None else {})))
         return self
 
     @timed("builder.task")
     def task(self, kind, key, at=UNSTATED, references=UNSTATED, split=UNSTATED, target=UNSTATED,
              known=UNSTATED, *, graph=None, weight=None, observer=None, grouping=UNSTATED,
-             signal=UNSTATED, signal_observed=UNSTATED, **values):
+             signal=UNSTATED, signal_observed=UNSTATED, values=None, **columns):
         schema, held = self.required(), self.chosen(graph)
         if kind not in schema.tasks["kinds"]:
             raise ValueError("task names an undeclared kind %r" % kind)
@@ -253,9 +271,9 @@ class Builder:
             raise ValueError("%s states weight exactly when its kind requires it" % where)
         if not schema.observers and observer is not None:
             raise ValueError("%s names an observer its schema does not declare" % where)
-        values = self.values(values, entry["columns"], where, False)
+        values = self.values(supplied(values, columns, where), entry["columns"], where, False)
         row = dict(key=key, kind=kind, split=split, target=copy.deepcopy(target), known=known, weight=weight)
-        row.update({column: values[column] if column in values else None for column in schema.asked_columns()})
+        row.update({VALUE + column: values[column] if column in values else None for column in schema.asked_columns()})
         if schema.model != "none":
             row["time"] = at
         if schema.observers:
@@ -293,7 +311,7 @@ class Builder:
         if self.declarations:
             raise ValueError("the declarations need handlers before they can be built: %s" % ", ".join(self.declarations))
         graphs = copy.deepcopy(self.graphs)
-        for (graph, kind, column), rows in self.changes.items():
+        for (graph, kind, column, observer_scope), rows in self.changes.items():
             graphs[graph]["values"].append(dict(kind=kind, form="change", parameters=dict(keys=["key"]),
                                                  rows={name: [row[name] for row in rows] for name in rows[0]}))
         for graph in graphs.values():
