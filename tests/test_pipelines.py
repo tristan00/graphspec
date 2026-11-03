@@ -44,7 +44,7 @@ from tuning.searches.selector import random_suggest
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("fixture")
+pytestmark = [pytest.mark.xdist_group("fixture"), pytest.mark.extended]
 GONE = dict(
     first="c390954",
     second="c390954",
@@ -596,7 +596,7 @@ def test_every_entry_a_variant_reads_states_a_version_and_the_keys_of_the_varian
             ("rule of negative sampling", "test.parity", version),
             ("rule of what a split may see", "test.sees", version),
             ("choice of steps", "tasks", 1),
-            ("column type", "number", 2),
+            ("column type", "number", 3),
             ("kind of target", "number", 1),
         } <= entries
     assert found[1][1] != found[2][1] and found[1][2] != found[2][2]

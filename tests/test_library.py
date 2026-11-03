@@ -16,6 +16,8 @@ from graphspec.infra.runtime import output_path
 from tuning.bank.bank import Bank
 from tuning.bank.build import build, open_source, stored
 
+pytestmark = pytest.mark.extended
+
 
 def test_output_cannot_be_inside_source_tree():
     with pytest.raises(ValueError, match="outside the code"):

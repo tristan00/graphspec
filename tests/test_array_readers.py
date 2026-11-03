@@ -15,6 +15,7 @@ import pytest
 from compression import zstd
 
 from graphspec import Builder, BuildPlan, source
+from graphspec.build.readers import batches
 from graphspec.infra.timing import timed
 from graphspec.sources import arrays
 
@@ -25,8 +26,7 @@ PLAN = BuildPlan(16 << 20, 1)
 @timed("array_test.read")
 def read(path, reader, columns, plan=PLAN, **parameters):
     statement = source(path.name, reader=reader, columns={name: "native" for name in columns}, **parameters)
-    builder = Builder({"records": statement}, path.parent)
-    return pa.concat_tables(list(builder.read("records", plan)))
+    return pa.concat_tables(list(batches(statement, path.parent, plan, "records")))
 
 
 @timed("array_test.archived")

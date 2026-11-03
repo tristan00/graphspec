@@ -90,12 +90,19 @@ def typename(kind):
 
 
 class Number:
-    version = 2
+    version = 3
     accepts = ("FLOAT",)
     written = pa.float32()
     symbols = False
     ordered = True
     numeric = True
+    fields = frozenset()
+
+    @timed("schema.Number.convert")
+    def convert(self, column, parameters):
+        from .columns import number
+
+        return number(column, parameters)
 
     @timed("schema.Number.read")
     def read(self, column):
@@ -115,12 +122,25 @@ class Number:
 
 
 class Flag:
-    version = 2
+    version = 3
     accepts = ("BOOL", "BOOLEAN")
     written = pa.bool_()
     symbols = False
     ordered = False
     numeric = False
+    fields = frozenset(("true", "false"))
+
+    @timed("schema.Flag.validate")
+    def validate(self, parameters):
+        from .columns import flag_values
+
+        flag_values(parameters)
+
+    @timed("schema.Flag.convert")
+    def convert(self, column, parameters):
+        from .columns import flag
+
+        return flag(column, parameters)
 
     @timed("schema.Flag.read")
     def read(self, column):
@@ -142,12 +162,25 @@ class Flag:
 
 
 class Category:
-    version = 2
+    version = 3
     accepts = ("STRING",)
     written = pa.string()
     symbols = True
     ordered = False
     numeric = False
+    fields = frozenset(("values",))
+
+    @timed("schema.Category.validate")
+    def validate(self, parameters):
+        from .columns import vocabulary
+
+        vocabulary(parameters)
+
+    @timed("schema.Category.convert")
+    def convert(self, column, parameters):
+        from .columns import category
+
+        return category(column, parameters)
 
     @timed("schema.Category.read")
     def read(self, column):

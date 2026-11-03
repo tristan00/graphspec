@@ -14,7 +14,7 @@ from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER, UNITED
 
 from . import records
-from .readers import Source, batches, declarations, namespace
+from .readers import Source, SourceSession, declarations, namespace, typed
 
 LOG = logging.getLogger(__name__)
 UNSTATED = object()
@@ -59,7 +59,10 @@ class Builder:
             declaration = self.declarations[name]
         if not isinstance(declaration, Source):
             raise ValueError("read names a source declaration")
-        return batches(declaration, self.sources, plan, name)
+        held = dict(self.declarations)
+        if not any(value is declaration for value in held.values()):
+            held[str(declaration.place)] = declaration
+        return typed(declaration, self.sources, plan, name, held)
 
     @timed("builder.schema")
     def schema(self, mapping):
@@ -363,6 +366,7 @@ class Builder:
         from .writing import stage
 
         started = time.perf_counter()
+        self.check_sources(plan)
         result = stage(self.records(snapshot=False), output, name, plan, reuse=reuse)
         LOG.info("builder staged graphs=%d seconds=%.4f", len(self.graphs), time.perf_counter() - started)
         return result
@@ -371,4 +375,15 @@ class Builder:
     def append(self, task_path, plan):
         from .appending import append_stage
 
+        self.check_sources(plan)
         return append_stage(self, task_path, plan)
+
+    @timed("builder.check_sources")
+    def check_sources(self, plan):
+        sources = {name: declaration for name, declaration in self.declarations.items() if isinstance(declaration, Source)}
+        if not sources:
+            return
+        with SourceSession(sources, self.sources, plan) as session:
+            for name, declaration in sources.items():
+                for _ in typed(declaration, self.sources, plan, name, sources, session):
+                    pass

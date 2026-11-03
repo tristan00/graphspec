@@ -14,12 +14,23 @@ LOG = logging.getLogger(__name__)
 
 
 @timed("inspect.builder")
-def builder_text(builder):
+def builder_text(builder, plan=None):
+    from graphspec.build.planning import stated
+    from graphspec.build.readers import Source, proposals
     from graphspec.build.writing import canonical_records
 
+    sources = [(name, declaration) for name, declaration in builder.declarations.items() if isinstance(declaration, Source)]
+    if sources and plan is None:
+        raise ValueError("inspect of source declarations requires an explicit BuildPlan")
+    if sources:
+        plan = stated(plan)
+    result = ["source %s: %s" % (name, json.dumps(proposals(declaration, builder.sources, plan, name), sort_keys=True))
+              for name, declaration in sources]
+    if builder.stated is None and sources:
+        return "\n".join(result)
     case = canonical_records(builder.records(snapshot=False))
     schema = Schema(case["schema"])
-    result = [schema.text(None)]
+    result.append(schema.text(None))
     for graph in case["graphs"]:
         counts = dict(nodes={kind: len(keys) for kind, keys in graph["nodes"].items()},
                       observations={kind: 0 for kind in schema.entities()},
@@ -41,12 +52,12 @@ def builder_text(builder):
     return "\n".join(result)
 
 
-def inspect(path):
+def inspect(path, *, plan=None):
     from graphspec.build.builder import Builder
 
     started = time.perf_counter()
     if isinstance(path, Builder):
-        result = builder_text(path)
+        result = builder_text(path, plan)
         LOG.info("inspect builder exit seconds=%.3f", time.perf_counter() - started)
         return result
     path = Path(path)
@@ -78,6 +89,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("path", help="a task file or the directory of a bank")
     parser.add_argument("--sources", help="source folder for a Python file exporting builder")
+    parser.add_argument("--memory-bytes", type=int, help="explicit memory budget for source inspection")
+    parser.add_argument("--workers", type=int, default=1, help="workers sharing the source inspection budget")
     args = parser.parse_args()
     if args.sources is not None:
         from graphspec.build.command import script
@@ -85,7 +98,10 @@ def main():
         given = script(args.path, args.sources)
     else:
         given = args.path
-    print(inspect(given))
+    from graphspec.build.planning import BuildPlan
+
+    plan = None if args.memory_bytes is None else BuildPlan(args.memory_bytes, args.workers)
+    print(inspect(given, plan=plan))
     LOG.info("inspect command exit seconds=%.3f", time.perf_counter() - started)
 
 

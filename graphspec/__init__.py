@@ -21,6 +21,7 @@ from .registries import REGISTRIES, ship
 from .representations.registry import REPRESENTATIONS, Representation
 from .schema.decisions import GENERATORS, RULES
 from .schema.declaration import EdgeType, Registry
+from .schema.missing import MISSING
 from .schema.references import SORTS
 from .schema.schema import ENCODERS, HELD, TYPES, Schema
 from .schema.targets import TARGETS, UTILITIES
@@ -41,6 +42,7 @@ __all__ = [
     "FORMS",
     "GENERATORS",
     "HELD",
+    "MISSING",
     "NEGATIVES",
     "OPERATIONS",
     "READERS",

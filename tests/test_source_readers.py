@@ -15,6 +15,7 @@ from compression import zstd
 
 from graphspec import READERS, Builder, BuildPlan, source
 from graphspec.build.command import script
+from graphspec.build.readers import batches
 from graphspec.build.streams import capacity
 
 pytestmark = pytest.mark.extended
@@ -36,7 +37,7 @@ def content(reader):
 
 
 def read(declaration, root, plan=PLAN):
-    return list(Builder(dict(records=declaration), root).read("records", plan))
+    return list(batches(declaration, root, plan, "records"))
 
 
 def expected(reader):
@@ -200,11 +201,11 @@ def test_registered_reader_used_by_script(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     builder = script(path, tmp_path)
-    assert pa.concat_tables(builder.read("records", PLAN)).to_pylist() == [dict(key=4)]
+    assert pa.concat_tables(builder.read("records", PLAN)).to_pylist() == [dict(key="4")]
     assert called == [(tmp_path / "input.test", ("key",), dict(start=4))]
     direct = Builder(path, tmp_path)
     assert not direct.graphs
-    assert pa.concat_tables(direct.read("records", PLAN)).to_pylist() == [dict(key=4)]
+    assert pa.concat_tables(direct.read("records", PLAN)).to_pylist() == [dict(key="4")]
 
 
 @pytest.mark.parametrize("kind", ["schema", "missing", "empty", "not_table"])

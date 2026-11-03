@@ -16,7 +16,7 @@ Source data → loader script → public Stage Parquet tables → bank → trans
 
 There is no required database round trip. LadybugDB remains an optional way to query and inspect the same graph; it is not required to create Parquet files. `Stage` writes files and manifests, and `GraphTables` manages contract tables and identifiers. [The loader walkthrough](docs/loader.md) shows a complete custom graph in Python.
 
-Sources can also be read as batches through the public builder. Relative paths resolve against `sources`; declared columns are projected before delivery, and batches retain their native Arrow types and one schema, including an empty source. Every read states a `BuildPlan` with a memory budget and worker count.
+Sources can also be read as batches through the public builder. Relative paths resolve against `sources`; declared columns are projected and converted to their stated types before delivery. Batches keep one Arrow schema, including an empty source. Every read states a `BuildPlan` with a memory budget and worker count.
 
 ```python
 from graphspec import BuildPlan, Builder, source
@@ -27,6 +27,12 @@ batches = builder.read("records", BuildPlan(memory_bytes=64 << 20, workers=1))
 ```
 
 `Builder("sources.py", sources="data")` executes a script once and collects its source declarations by variable name. `READERS.register(name, function)` adds a reader whose function receives `(place, columns, parameters)` and yields `pyarrow.Table` batches; `columns` is the tuple of declared names, including `"*"` when all columns are requested. Reader errors name the source declaration.
+
+Column types are registered in `TYPES`: number, ordered category, category, flag, time, duration, interval, list, vector, point, identifier, nested record and text. A column without a type stops a typed read. Native nulls, numeric NaNs and the column's `nulls` tokens require an explicit `missing` rule: `"omit"`, `"stop"`, or `dict(name="value", value=...)`; custom rules register in `MISSING`. Both errors name the source and column, and missing values name their row. `"*"` applies only to columns not named individually.
+
+To inspect source declarations before choosing their types, use `inspect(builder, plan=BuildPlan(memory_bytes=..., workers=...))`, or `graphspec inspect sources.py --sources data --memory-bytes BYTES --workers 1`. A column may temporarily state `None`; `columns={}` requests proposals for every source column. Inspection reports counts and proposed types without applying them. Custom types register a versioned callback in `TYPES`, with `gives` naming a shipped type; the callback takes `(values, parameters)` and returns Arrow values in that type's representation.
+
+Type conversions preserve input nulls; the declared missing rule supplies replacements. Converted NaNs remain missing and require a rule. A custom missing rule must preserve present values and the column's constraints, including category names and ordered positions. Custom types that give times or intervals state their unit and participate in the same unit negotiation, including inside lists. Temporal wildcards share one reader session per read or build: each needed reader is invoked once, retained first batches count against the plan, and insufficient lookahead capacity stops with a budget error.
 
 | Reader | Parameters and native data |
 |---|---|
@@ -41,6 +47,8 @@ batches = builder.read("records", BuildPlan(memory_bytes=64 << 20, workers=1))
 | `layout` | A directory containing `nodes/<kind>`, `edges/<relation>` and `tasks` as Parquet files or folders; required `table` selects one, such as `"nodes/person"`. The reader's `catalogue` and `mapping` describe the stored structure. |
 
 File readers accept `.gz`, `.zst`, `.bz2` and `.xz`, and a `.zip` or `.tar` member named by `member`, without extracting files. Source operations that require whole-file decoding check their working size against the supplied budget.
+
+Typed CSV and delimited reads interpret a time without `format` as an exact whole numeric count in its stated unit. Text dates still require `format`. A flag without explicit token mappings accepts `true`/`false`, `True`/`False`, `TRUE`/`FALSE`, and `1`/`0`. The same rules apply to declared list members. Identifier and text spellings remain unchanged. Numeric `nulls` also match after number or duration conversion, so a CSV field `0` matches `nulls=[0]`; custom transformations keep their raw marker semantics.
 
 ```powershell
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12 --degree 2.0 --max-degree 6 --alive 0.8 --lifetime 4.0 --period 3 --level task --seed 1

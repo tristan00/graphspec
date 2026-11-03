@@ -1,3 +1,14 @@
+from graphspec.infra.timing import timed
+
+
+class ColumnValueError(ValueError):
+    @timed("fields.ColumnValueError")
+    def __init__(self, row, message):
+        self.row = row
+        self.detail = message
+        super().__init__("row %d: %s" % (row, message))
+
+
 def fields(mapping, names, where):
     if not isinstance(mapping, dict):
         raise ValueError("%s is stated as a mapping, found %r" % (where, mapping))
