@@ -23,7 +23,7 @@ from tuning.families.models import build
 from tuning.families.periods import blocks as period_blocks
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("model_config")
+pytestmark = [pytest.mark.xdist_group("model_config"), pytest.mark.extended]
 
 
 class Stated:

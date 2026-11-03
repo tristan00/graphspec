@@ -6,6 +6,8 @@ compiled()
 
 from .build.builder import Builder
 from .build.calls import GraphTables, write_task
+from .build.expression_types import FUNCTIONS
+from .build.expressions import evaluate
 from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
 from .build.output import Stage
@@ -40,6 +42,7 @@ __all__ = [
     "DISTANCES",
     "ENCODERS",
     "FORMS",
+    "FUNCTIONS",
     "GENERATORS",
     "HELD",
     "MISSING",
@@ -73,6 +76,7 @@ __all__ = [
     "describe",
     "differences",
     "inspect",
+    "evaluate",
     "source",
     "write_task",
 ]

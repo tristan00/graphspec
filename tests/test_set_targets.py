@@ -23,7 +23,7 @@ from tuning.fits.losses import LOSSES, outcomes
 from tuning.fits.training import fit
 from tuning.statement import state
 
-pytestmark = pytest.mark.xdist_group("set_targets")
+pytestmark = [pytest.mark.xdist_group("set_targets"), pytest.mark.extended]
 
 
 @timed("set_targets.case")

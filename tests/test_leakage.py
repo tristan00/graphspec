@@ -17,7 +17,7 @@ from tuning.bank.build import build
 
 LOG = logging.getLogger(__name__)
 configuration = support.configuration
-pytestmark = pytest.mark.xdist_group("leakage")
+pytestmark = [pytest.mark.xdist_group("leakage"), pytest.mark.extended]
 MAKERS, SITES = tuple("m%d" % number for number in range(6)), tuple("s%d" % number for number in range(6))
 SPLITS = dict(
     trained=["alpha"], scored=["omega"], sees=dict(alpha=["without_scored", "without_targets"], omega=[])

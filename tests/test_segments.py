@@ -31,6 +31,7 @@ from tuning.bank.bank import Deriver
 from tuning.searches.selector import random_suggest
 
 LOG = logging.getLogger(__name__)
+pytestmark = pytest.mark.extended
 GROUP = pytest.mark.xdist_group("segments")
 LIMITS = GraphLimits("cpu")
 VALUES = {

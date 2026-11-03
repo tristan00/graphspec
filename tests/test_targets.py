@@ -19,7 +19,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("targets")
+pytestmark = [pytest.mark.xdist_group("targets"), pytest.mark.extended]
 SITES = ("s0", "s1", "s2", "s3", "s4", "s5")
 VALUE = dict(type="number", encoder="value")
 TIMES = (1, 2, 3, 4, 5, 6, 7, 8)

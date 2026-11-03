@@ -20,7 +20,7 @@ from tuning.searches.selector import graph_space
 
 LOG = logging.getLogger(__name__)
 TINY = {"hidden": 4, "time/history": 2}
-pytestmark = pytest.mark.xdist_group("offered")
+pytestmark = [pytest.mark.xdist_group("offered"), pytest.mark.extended]
 ADDING = [
     dict(
         operation="graphspec.relation_forms",

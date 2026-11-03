@@ -30,7 +30,7 @@ from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
 configuration = support.configuration
-pytestmark = pytest.mark.xdist_group("tasks")
+pytestmark = [pytest.mark.xdist_group("tasks"), pytest.mark.extended]
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
 SERVES = (("m0", "s0"), ("m1", "s1"), ("m2", "s2"), ("m3", "s3"), ("m0", "s1"))
 BESIDE = (("s0", "s1"), ("s2", "s3"))

@@ -27,7 +27,7 @@ from tuning.bank.bank import Deriver, grouped
 from tuning.batches import inputs
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("draws")
+pytestmark = [pytest.mark.xdist_group("draws"), pytest.mark.extended]
 GROUPS = ("coupling", "events", "mixed", "neighbors", "walks")
 SAMPLED, PAIRED = 2, 8
 LIMITS = GraphLimits("cpu")

@@ -33,7 +33,7 @@ from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
 configuration = support.configuration
-pytestmark = pytest.mark.xdist_group("sets")
+pytestmark = [pytest.mark.xdist_group("sets"), pytest.mark.extended]
 POINTS = tuple("p%d" % number for number in range(16))
 PLACES = tuple("q%d" % number for number in range(8))
 SIZES = (2, 3, 5, 8, 12, 20)

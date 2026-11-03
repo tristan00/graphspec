@@ -42,7 +42,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("workers")
+pytestmark = [pytest.mark.xdist_group("workers"), pytest.mark.extended]
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3", "s4", "s5")
 TIMES = (1, 2, 3, 4, 5, 6, 7, 8)
 SPLITS = dict(trained=["alpha"], scored=["omega"], sees=dict(alpha=["everything"], omega=[]))

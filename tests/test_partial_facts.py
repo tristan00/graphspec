@@ -13,7 +13,7 @@ from graphspec.views.visible import unstated
 from tuning.bank.bank import Deriver
 from tuning.bank.build import build
 
-pytestmark = pytest.mark.xdist_group("partial_facts")
+pytestmark = [pytest.mark.xdist_group("partial_facts"), pytest.mark.extended]
 
 
 @timed("partial_facts.fact")

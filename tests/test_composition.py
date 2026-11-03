@@ -19,7 +19,7 @@ from tuning.families.models import build as network
 from tuning.families.periods import blocks as period_blocks
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("composition")
+pytestmark = [pytest.mark.xdist_group("composition"), pytest.mark.extended]
 USERS, ITEMS = ("u0", "u1", "u2", "u3"), ("i0", "i1", "i2", "i3", "i4")
 TIMES, CHANGED, SCORED = (1, 2, 3, 4, 5, 6), 3, (2, 3, 5)
 BANKS = dict(stated="clock", changed="clock", late="clocks")

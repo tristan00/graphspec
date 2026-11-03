@@ -21,7 +21,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("small")
+pytestmark = [pytest.mark.xdist_group("small"), pytest.mark.extended]
 MAKERS, SITES = ("m0", "m1", "m2", "m3"), ("s0", "s1", "s2", "s3")
 TIMES = (1, 1, 1, 1, 2, 3, 3, 4)
 SPLIT = ("train", "train", "train", "train", "train", "validation", "validation", "validation")
