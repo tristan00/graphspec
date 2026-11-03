@@ -277,6 +277,8 @@ def arithmetic(op, left, right, unit):
         if op not in ("-", *COMPARISONS):
             raise ValueError("two times support subtraction and comparison, found %s" % op)
         kind = Kind("flag") if op in COMPARISONS else Kind("duration", unit=unit)
+    elif {a.name, b.name} == {"time", "number"} and op in COMPARISONS:
+        kind = Kind("flag")
     elif a.name == "time" and b.name in ("number", "duration") and op in ("+", "-"):
         kind = Kind("time", unit=unit, arrow=a.arrow)
     elif b.name == "time" and a.name in ("number", "duration") and op == "+":
@@ -303,6 +305,9 @@ def arithmetic(op, left, right, unit):
                 if op not in COMPARISONS and NEVER_TIME in (one, other):
                     raise ValueError("a difference involving never has no finite duration")
                 value = COMPARISONS[op](one, other) if op in COMPARISONS else float(one - other)
+            elif op in COMPARISONS and "number" in (a.name, b.name) and "time" in (a.name, b.name):
+                value = COMPARISONS[op](time_count(one) if a.name == "time" else one,
+                                        time_count(other) if b.name == "time" else other)
             elif a.name == "time":
                 value = shift(one, other if op == "+" else -other, b.unit if b.name == "duration" else unit, unit)
             elif b.name == "duration":

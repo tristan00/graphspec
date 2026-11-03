@@ -394,7 +394,8 @@ def members(sort, stated):
     if sort.nodes and not sort.edges:
         held = [(key, None, None) for key in (stated if isinstance(stated, list) else [stated])]
     elif sort.edges and not sort.nodes:
-        held = [tuple(member) for member in (stated if isinstance(stated, list) else [stated])]
+        single = isinstance(stated, tuple) or bool(stated) and not isinstance(stated[0], (list, tuple))
+        held = [tuple(member) for member in ([stated] if single else stated)]
     else:
         held = [(key, None, None) for key in stated["nodes"]] + [tuple(member) for member in stated["edges"]]
     LOG.debug("members exit members=%d seconds=%.4f", len(held), time.perf_counter() - started)

@@ -24,7 +24,7 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 43
+VERSION = 44
 DIFFERENCE = "graphspec.difference"
 CODED = 16
 UNWRITTEN = "no file is written for the key"

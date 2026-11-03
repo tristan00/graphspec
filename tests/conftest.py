@@ -273,6 +273,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "extended: run this regression group separately with -m 'extended and not slow'")
     config.addinivalue_line("markers", "builder: run the builder's sources, expressions, tables and mappings with -m 'builder and not slow'")
     config.addinivalue_line("markers", "decisions: run the decisions, realisations and descriptions with -m 'decisions and not slow'")
+    config.addinivalue_line("markers", "described: build, validate and fit the described scripts with -m 'described and not slow'")
     config.option.loadscopereorder = False
     LOG.debug("configure exit seconds=%.4f", time.perf_counter() - started)
 

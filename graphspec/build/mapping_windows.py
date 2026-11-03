@@ -10,6 +10,7 @@ from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
 from .database import Part
+from .expression_temporal import fixed
 from .expression_types import Kind
 from .mapping_rows import Reader, joined, learned
 from .mappings import Mapping
@@ -25,8 +26,14 @@ CANDIDATE = 256
 def length(context, stated, where):
     value = context.constant(stated, where)
     found = value.values.as_py() if hasattr(value.values, "as_py") else value.values
-    if value.type != "number" or found is None or not float(found).is_integer() or found < 1:
-        raise ValueError("%s states a whole number of units of the graph from 1, found %r" % (where, stated))
+    if value.type == "duration" and found is not None:
+        try:
+            found = fixed(found, value.kind.unit, context.unit)
+        except ValueError as error:
+            raise ValueError("%s: %s" % (where, error)) from error
+    if value.type not in ("number", "duration") or found is None or found != int(found) or found < 1:
+        raise ValueError("%s states a length of time of a whole number of units of the graph from 1, found %r"
+                         % (where, stated))
     return int(found)
 
 

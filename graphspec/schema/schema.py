@@ -1522,7 +1522,8 @@ class Encoding:
 
     def placed(self, codes, graph):
         started = time.perf_counter()
-        codes = np.asarray(codes, np.float32).reshape(-1, len(self.layout))
+        codes = np.asarray(codes, np.float32)
+        codes = codes if codes.ndim == 2 else codes.reshape(-1, len(self.layout))
         result = np.full((len(codes), len(self.table)), np.nan, np.float32)
         result[:, : len(self.layout)] = codes
         if graph is not None:
@@ -1541,7 +1542,8 @@ class Encoding:
     def inputs(self, codes, held, graph):
         started = time.perf_counter()
         held = np.asarray(held, np.float32)
-        codes = np.asarray(codes, np.float32).reshape(-1, len(self.layout))
+        codes = np.asarray(codes, np.float32)
+        codes = codes if codes.ndim == 2 else codes.reshape(-1, len(self.layout))
         if held.shape != (len(codes), self.inner):
             raise ValueError(
                 "the encoded held graphs of %d rows are of the shape %s, and the schema states a width of %d"

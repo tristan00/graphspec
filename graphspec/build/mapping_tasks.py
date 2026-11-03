@@ -4,7 +4,7 @@ from graphspec.infra.timing import timed
 from graphspec.schema.targets import TARGETS
 
 from .mapping_build import EdgeStated, End, SetStated, Stated
-from .mapping_known import BEFORE, latest, shown
+from .mapping_known import latest, shown
 from .mapping_rows import Reader, joined, spelled
 from .mapping_windows import Window, every
 from .mappings import Mapping, tabled
@@ -324,7 +324,7 @@ class TaskStated(Asked):
         if window is not None:
             self.aims = [None if open else aim for aim, open in zip(self.aims, window.open)]
         if target["known"] != "never" and mapped.model != "none":
-            self.known = reader.moments(target["known"], "target.known", outcome=True)
+            self.known = reader.moments(target["known"], "target.known", "omit", True)
             self.timely(reader, window)
 
     @timed("mapping_tasks.TaskStated.timely")
@@ -335,6 +335,9 @@ class TaskStated(Asked):
         for place, (aim, known, at) in enumerate(zip(self.aims, self.known, self.at)):
             if aim is None:
                 continue
+            if known is None:
+                raise ValueError("%s field target.known row %d reads a missing value as a time"
+                                 % (self.where, reader.row(place)))
             where = "%s field target.known row %d gives %s" % (self.where, reader.row(place), known)
             if known <= at:
                 raise ValueError("%s, not later than the task's time %s: a target never enters the view of its own "
@@ -343,17 +346,14 @@ class TaskStated(Asked):
                 raise ValueError("%s, earlier than the outcome column %s that target.value reads is known, from %s"
                                  % (where, ", ".join(reader.knowing.outcomes(reader, " + ".join(texts))),
                                     shown(found[place])))
-            if window is not None:
-                end = at + window.within if window.within is not None else max(
-                    (window.at[row] for row in window.places[place]), default=BEFORE)
-                if end > known:
-                    raise ValueError("%s, earlier than its later rows end, at %s" % (where, shown(end)))
+            if window is not None and window.within is not None and at + window.within > known:
+                raise ValueError("%s, earlier than its later rows end, at %s" % (where, shown(at + window.within)))
 
     @timed("mapping_tasks.TaskStated.aimed")
     def aimed(self, reader, target):
         value, field, kind = target["value"], "target.value", self.kind
         if kind == "survival":
-            lasted = reader.moments(value["duration"], field + ".duration", "omit", True)
+            lasted = reader.lengths(value["duration"], field + ".duration", True)
             happened, _ = reader.values(value["happened"], field + ".happened", True)
             return [None if None in pair else dict(duration=pair[0], happened=pair[1]) for pair in zip(lasted, happened)]
         if kind == "set":

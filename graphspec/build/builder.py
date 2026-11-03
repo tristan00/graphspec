@@ -45,6 +45,16 @@ def supplied(values, columns, where):
     return dict(values, **columns)
 
 
+@timed("builder.appended")
+def appended(statements, fields, row):
+    last = statements[-1] if statements else None
+    if last is None or any(last[name] != value for name, value in fields.items()) or list(last["rows"]) != list(row):
+        last = dict(fields, rows={name: [] for name in row})
+        statements.append(last)
+    for name, value in row.items():
+        last["rows"][name].append(value)
+
+
 class Builder:
     @timed("builder.init")
     def __init__(self, script, sources):
@@ -210,8 +220,8 @@ class Builder:
         when = self.when("state", since, until, known, replaced, seen, seq, where)
         if key not in held["nodes"][kind]:
             held["nodes"][kind].append(key)
-        rows = {name: [value] for name, value in dict(key=key, **when, **{VALUE + name: value for name, value in values.items()}).items()}
-        held["values"].append(dict(kind=kind, form=None if schema.model == "none" else "state", parameters={}, rows=rows))
+        rows = dict(key=key, **when, **{VALUE + name: value for name, value in values.items()})
+        appended(held["values"], dict(kind=kind, form=None if schema.model == "none" else "state", parameters={}), rows)
         return self
 
     @timed("builder.end")
@@ -245,9 +255,8 @@ class Builder:
                     **{VALUE + name: value for name, value in values.items()})
         if label is not None:
             rows["relation"] = keyed(label, where)
-        held["edges"].append(dict(table=table, ends=(left[0], right[0]),
-                                  form=None if schema.model == "none" else form, parameters={},
-                                  rows={name: [value] for name, value in rows.items()}))
+        appended(held["edges"], dict(table=table, ends=(left[0], right[0]),
+                                     form=None if schema.model == "none" else form, parameters={}), rows)
         return self
 
     @timed("builder.edge")

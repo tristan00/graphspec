@@ -1,7 +1,9 @@
 from collections.abc import Mapping as Held
+from fractions import Fraction
 
 from graphspec.infra.timing import timed
 
+from .expression_temporal import fixed
 from .expression_types import EXTENDED_TIME, Kind
 from .mapping_known import BEFORE, NEVER
 from .mappings import TIMES
@@ -146,6 +148,21 @@ class Reader:
             else:
                 raise ValueError("declaration %s field %s row %d gives %r, not a whole time"
                                  % (self.name, field, self.row(place), value))
+        return result
+
+    @timed("mapping_rows.Reader.lengths")
+    def lengths(self, text, field, outcome=False):
+        values, kind = self.values(text, field, outcome)
+        if kind.name not in ("duration", "number"):
+            raise ValueError("declaration %s field %s gives a %s, not a length of time" % (self.name, field, kind.name))
+        result = []
+        for place, value in enumerate(values):
+            amount = None if value is None else fixed(value, kind.unit, self.context.unit) \
+                if kind.name == "duration" else Fraction(str(value))
+            if amount is not None and amount.denominator != 1:
+                raise ValueError("declaration %s field %s row %d gives %r, not a whole length of time"
+                                 % (self.name, field, self.row(place), value))
+            result.append(None if amount is None else int(amount))
         return result
 
     @timed("mapping_rows.Reader.features")

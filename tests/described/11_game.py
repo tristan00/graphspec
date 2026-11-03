@@ -41,7 +41,7 @@ unit = nodes(
 )
 turn = decisions(
     orders,
-    key=["turn", "player"],
+    key=["game", "turn", "player"],
     graph="game",
     at="turn",
     observer="player",
@@ -55,7 +55,7 @@ turn = decisions(
     generators=[dict(name="others", seed=7, repeats=False, parameters=dict(count=3))],
     options=dict(
         rows=orders,
-        decision=["turn", "player"],
+        decision=["game", "turn", "player"],
         key="'played'",
         chosen="True",
         available="True",
@@ -64,7 +64,7 @@ turn = decisions(
     ),
     actions=dict(
         rows=orders,
-        decision=["turn", "player"],
+        decision=["game", "turn", "player"],
         option="'played'",
         kind="move",
         actor="player",
