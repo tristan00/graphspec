@@ -29,7 +29,7 @@ from graphspec.schema import declaration
 from graphspec.schema.decisions import counted, generating
 from graphspec.schema.references import SORTS
 from graphspec.schema.schema import VALUE, Encoding, Schema
-from graphspec.schema.targets import TARGETS
+from graphspec.schema.targets import TARGETS, content
 from graphspec.schema.targets import pointed as aimed
 from graphspec.schema.time import ALWAYS, NEVER
 from graphspec.sources import ladybug
@@ -241,7 +241,7 @@ def pointed(stated, found, owner, kinds, graphs, rows):
         points = target.points(
             dict(task=owner[chosen], graph=graphs[chosen], y=numbers[chosen], **given), entry["target"], where
         )
-        given = ("series",) + tuple(target.inputs) + tuple(target.outcomes) + (() if target.names is None else ("node",))
+        given = ("series",) + tuple(target.inputs) + tuple(target.outcomes) + content(target)
         if sorted(points) != sorted(given):
             raise ValueError(
                 "the kind of target %s gives for its points %s, and states the inputs %s and the outcomes %s beside "

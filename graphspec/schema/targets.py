@@ -785,6 +785,92 @@ class Link(Pointed):
         return normalised(values, task)
 
 
+class Set(Pointed):
+    version = 1
+    names = "sets"
+    parameters = ("sets",)
+    columns = dict(set_role="STRING[]", set_kind="STRING[]", set_key="STRING[]")
+
+    @timed("targets.set.checked")
+    def checked(self, stated, schema, references, where):
+        kind = stated["sets"]
+        if type(kind) is not str or kind not in schema.sets:
+            raise ValueError("the target of %s names a declared kind of set edge, found %r" % (where, kind))
+        return dict(sets=kind)
+
+    @timed("targets.set.members")
+    def members(self, stated, where):
+        if not isinstance(stated, dict) or not stated:
+            raise ValueError("%s states a nonempty mapping from roles to lists of (kind, key) members" % where)
+        found = []
+        for role, members in stated.items():
+            if type(role) is not str or not role or not isinstance(members, (list, tuple)) or not members:
+                raise ValueError("%s states a named role with a nonempty list of members" % where)
+            for member in members:
+                if (
+                    not isinstance(member, (list, tuple))
+                    or len(member) != 2
+                    or any(type(value) is not str or not value for value in member)
+                ):
+                    raise ValueError("%s states each member as (kind, key), found %r" % (where, member))
+                found.append((role, *member))
+        if len(set(found)) != len(found):
+            raise ValueError("%s names a member twice in the same role" % where)
+        return sorted(found)
+
+    @timed("targets.set.staged")
+    def staged(self, stated, target, where):
+        members = self.members(stated, where)
+        return [dict(y=1.0, **{name: [row[at] for row in members] for at, name in enumerate(self.columns)})]
+
+    @timed("targets.set.points")
+    def points(self, rows, target, where):
+        owner = np.asarray(rows["task"], np.int64)
+        if len(np.unique(owner)) != len(owner) or np.any(np.asarray(rows["y"]) != 1):
+            raise ValueError("%s states one whole set per task, with y 1" % where)
+        result = dict(series=[target["series"][0]] * len(owner), **{name: [] for name in self.columns})
+        for at in range(len(owner)):
+            columns = [rows[name][at] for name in self.columns]
+            if any(not isinstance(values, (list, tuple)) for values in columns) or len({len(values) for values in columns}) != 1:
+                raise ValueError("%s states equally sized lists of roles, kinds and keys" % where)
+            found = {}
+            for role, kind, key in zip(*columns):
+                found.setdefault(role, []).append((kind, key))
+            members = self.members(found, where)
+            for place, name in enumerate(self.columns):
+                result[name].append([row[place] for row in members])
+        return result
+
+    @timed("targets.set.read")
+    def read(self, rows):
+        (row,) = rows
+        result = {}
+        for role, kind, key in zip(*(row[name] for name in self.columns)):
+            result.setdefault(role, []).append((kind, key))
+        return result
+
+    @timed("targets.set.predicted")
+    def predicted(self, values, task, fields):
+        return normalised(values, task)
+
+
+@timed("targets.content")
+def content(target):
+    return tuple(target.columns) if target.names == "sets" else () if target.names is None else ("node",)
+
+
+@timed("targets.set_roles")
+def set_roles(schema):
+    if not any(TARGETS.named(kind).names == "sets" for kind in schema.targets()):
+        return ()
+    kinds = {
+        entry["target"]["sets"]
+        for entry in schema.tasks["kinds"].values()
+        if entry["target"] is not None and TARGETS.named(entry["target"]["kind"]).names == "sets"
+    }
+    return tuple((kind, role) for kind in sorted(kinds) for role in sorted(schema.sets[kind]["roles"]))
+
+
 class Weighted:
     reads = (
         "number",
@@ -797,6 +883,7 @@ class Weighted:
         "ranking",
         "nodes",
         "link",
+        "set",
         "decision",
     )
     parameters = ("weights",)
@@ -838,6 +925,9 @@ def pointed(schema):
         names = None if target is None else TARGETS.named(target["kind"]).names
         if names is None:
             continue
+        if names == "sets":
+            result[kind] = tuple(sorted(schema.sets[target["sets"]]["kinds"]))
+            continue
         starts = set(schema.tasks["references"][target["about"]]["kinds"])
         if names == "members":
             result[kind] = tuple(sorted(starts))
@@ -861,4 +951,5 @@ TARGETS.register("survival", Survival())
 TARGETS.register("ranking", Ranking())
 TARGETS.register("nodes", Nodes())
 TARGETS.register("link", Link())
+TARGETS.register("set", Set())
 UTILITIES.register("weighted", Weighted())

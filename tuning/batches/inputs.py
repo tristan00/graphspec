@@ -9,13 +9,14 @@ from graphspec import Registry
 from graphspec.budgets import GraphBudget
 from graphspec.infra import workspace
 from graphspec.infra.arrays import Resident, between
-from graphspec.infra.hashing import hashed, salted
+from graphspec.infra.hashing import hashed, salted, token
 from graphspec.infra.timing import timed
 from graphspec.operations.negatives import needed
 from graphspec.operations.rows import counted, keyed_relations
 from graphspec.representations.groups import PERIOD_LOOKBACK, walk_arrays
 from graphspec.schema.decisions import ROLES
 from graphspec.schema.references import SORTS
+from graphspec.schema.targets import TARGETS, set_roles
 from tuning.bank.forks import Part, carried
 from tuning.bank.options import offered
 from tuning.families.heads import FIELD, realisation
@@ -367,9 +368,9 @@ def drawing(schema, pipeline):
         ]
         if len(found) != 1:
             raise ValueError(
-                "the kind of task %s states a link among sampled negatives, and the pipeline draws them in %d entries "
+                "the kind of task %s states a %s among sampled negatives, and the pipeline draws them in %d entries "
                 "of %s with %s; it draws them in one"
-                % (kind, len(found), operation, ", ".join("%s %s" % pair for pair in values.items()))
+                % (kind, schema.tasks["kinds"][kind]["target"]["kind"], len(found), operation, ", ".join("%s %s" % pair for pair in values.items()))
             )
         result[kinds.index(kind)] = found[0]
     LOG.debug("drawing exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
@@ -387,6 +388,8 @@ def negatives(window, b, owner):
         left, right = between(held.numpy("candidate_step"), start, window.stop)
         candidates = {name: held.numpy("candidate_" + name)[left:right].astype(np.int64) for name in CANDIDATES}
     for code, entry in entries.items():
+        if TARGETS.named(stated[code]["target"]["kind"]).names == "sets":
+            continue
         chosen = np.flatnonzero(kinds == code)
         referred = np.flatnonzero(b["member_name"] == names.index(stated[code]["target"]["about"]))
         anchor = np.full(len(b["row_kind"]), -1, np.int64)
@@ -405,6 +408,78 @@ def negatives(window, b, owner):
         "negatives exit graph=%s drawn=%d seconds=%.4f", window.graph, len(result[0]), time.perf_counter() - started
     )
     return result
+
+
+@timed("inputs.set_inputs")
+def set_inputs(bank, window, b, rows, owner):
+    held, registry = window.held, window.registry
+    roles = set_roles(registry.schema)
+    entries = drawing(registry.schema, window.cfg["pipeline"])
+    stated = list(registry.schema.tasks["kinds"].values())
+    marks = held.numpy("entity_token")
+    step, code, source, target = (held.numpy("candidate_" + name) for name in ("step", "code", "source", "target"))
+    candidates, extra, points, observations, named_roles, owners = {}, [], [], [], [], []
+    for kind, entry in entries.items():
+        aim = stated[kind]["target"]
+        if TARGETS.named(aim["kind"]).names != "sets":
+            continue
+        for role in registry.schema.sets[aim["sets"]]["roles"]:
+            selected = np.flatnonzero(code == registry.by_candidate[entry + "." + role].code)
+            for at in selected:
+                candidates.setdefault((kind, int(step[at])), {}).setdefault(int(source[at]), []).append(
+                    (roles.index((aim["sets"], role)), int(marks[target[at]]))
+                )
+    left = np.asarray(b["left"].value, bool).copy()
+    for original, row in enumerate(rows):
+        kind = int(b["row_kind"][owner[original]])
+        aim = stated[kind]["target"]
+        if aim is None or TARGETS.named(aim["kind"]).names != "sets":
+            continue
+        stored = bank.rows[row]
+        positive = tuple(sorted(
+            (roles.index((aim["sets"], role)), token(node_kind + ":" + key) & ((1 << 62) - 1))
+            for role, node_kind, key in zip(stored["set_role"], stored["set_kind"], stored["set_key"])
+        ))
+        moment = int(b["row_steps"][owner[original]]) + window.start
+        negatives = sorted({tuple(sorted(members)) for members in candidates.get((kind, moment), {}).values()} - {positive})
+        positive_point = int(np.flatnonzero(b["placed"].value == original)[0])
+        for index, members in enumerate([positive] + negatives):
+            observed = observing(held, np.full(len(members), moment), np.asarray([key for _, key in members]), marks)
+            if np.any(observed < 0):
+                if index == 0:
+                    left[original] = True
+                    break
+                raise ValueError("a sampled set of graph %s holds a member not observed at its task" % window.graph)
+            point = positive_point if index == 0 else len(b["point_row"]) + len(extra)
+            if index:
+                extra.append(positive_point)
+            points.extend([point] * len(members))
+            observations.extend(observed.tolist())
+            named_roles.extend(role for role, _ in members)
+            owners.extend([int(owner[original])] * len(members))
+    extra, observations, owners = (np.asarray(values, np.int64) for values in (extra, observations, owners))
+    mapped = np.r_[rows, b["drawn"].value][b["placed"].value]
+    drawn_count = len(b["drawn"].value)
+    b["drawn"] = Host(np.r_[b["drawn"].value, mapped[extra]])
+    b["placed"] = Host(np.r_[b["placed"].value, len(rows) + drawn_count + np.arange(len(extra))])
+    for key in ("weight", "series", "aim", "point_row") + tuple(key for key in b if key.startswith(FIELD)):
+        b[key] = np.r_[b[key], b[key][extra]]
+    b["point_node"] = np.r_[b["point_node"], np.full(len(extra), -1, np.int64)]
+    count = len(observations)
+    b["set_member"] = len(b["member_row"]) + np.arange(count)
+    b["set_point"], b["set_role"] = np.asarray(points, np.int64), np.asarray(named_roles, np.int64)
+    b["left"] = Host(left)
+    for key, values in dict(
+        member_row=owners,
+        member_name=np.full(count, len(registry.references)),
+        member_entity=held.numpy("entity")[observations],
+        member_index=observations - window.lo,
+        member_place=np.zeros(count, np.int64),
+        member_stored=np.full(count, -1, np.int64),
+        partner=np.full(count, -1, np.int64),
+    ).items():
+        b[key] = np.r_[b[key], values]
+    b["member_x"] = joined([b["member_x"], features(window.graph, (count,), ("x", observations, 1.0))])
 
 
 def pointed(bank, window, b, rows, owner):
@@ -936,6 +1011,8 @@ def base_inputs(bank, block, window):
     b["pair"] = paired(window.registry, kinds, b["member_row"], b["member_name"])
     b["partner"] = partnered(b["pair"], len(b["member_row"]))
     pointed(bank, window, b, rows, np.flatnonzero(selected)[point_row])
+    if set_roles(window.registry.schema):
+        set_inputs(bank, window, b, rows, np.flatnonzero(selected)[point_row])
     name = realised(window.cfg["model"], window.registry.schema)
     if name is not None and not realisation(name).back:
         optioned(bank, window, b, rows, np.flatnonzero(selected)[point_row], point_row)

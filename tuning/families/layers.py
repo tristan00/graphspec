@@ -273,6 +273,22 @@ class PathHead(nn.Module):
         return self.output(torch.cat((h, self.time(b[FIELD + "tau"][points]), series), -1)).squeeze(-1)
 
 
+class SetEncoding(nn.Module):
+    @timed("layers.setencoding")
+    def __init__(self, hidden, roles):
+        super().__init__()
+        self.role = nn.Embedding(roles, hidden)
+        self.member = nn.Sequential(nn.Linear(hidden * 2, hidden), nn.SiLU())
+        self.output = nn.Sequential(nn.Linear(hidden, hidden), nn.SiLU())
+
+    @timed("layers.setencoding.forward")
+    def forward(self, members, batch, points):
+        role = self.role(batch["set_role"])
+        values = self.member(torch.cat((members[batch["set_member"]], role), -1))
+        pooled = values.new_zeros((points, values.shape[-1])).index_add_(0, batch["set_point"], values)
+        return self.output(pooled)
+
+
 class Head(nn.Module):
     @timed("layers.head")
     def __init__(self, width, spec, registry, nodes):
@@ -289,6 +305,11 @@ class Head(nn.Module):
         self.kinds = nn.ModuleList(HEADS.named(kind).module(hidden, spec, registry) for kind in self.targets)
         self.named = [TARGETS.named(kind).names is not None for kind in self.targets]
         self.node = nn.Sequential(nn.Linear(nodes, hidden), nn.SiLU()) if any(self.named) else None
+        from graphspec.schema.targets import set_roles
+
+        roles = set_roles(registry.schema)
+        self.sets = SetEncoding(hidden, len(roles)) if roles else None
+        self.set_kinds = [TARGETS.named(kind).names == "sets" for kind in self.targets]
         name = realised(spec, registry.schema)
         reading = name is not None and not realisation(name).back
         self.options = Options(name, registry, hidden, nodes, spec) if reading else None
@@ -296,7 +317,12 @@ class Head(nn.Module):
 
     def forward(self, features, b, members):
         h, series = self.task(features)[b["point_row"]], self.series(b["series"])
-        node = None if self.node is None else padded(self.node(members), b["point_node"])
+        embedded = None if self.node is None else self.node(members)
+        node = None if embedded is None else padded(embedded, b["point_node"])
+        if self.sets is not None:
+            sets = self.sets(embedded, b, len(h))
+            mask = torch.as_tensor(self.set_kinds, device=h.device)[b["aim"]]
+            node = torch.where(mask[:, None], sets, node)
         content = None if self.options is None else self.options(b, members)
         if len(self.kinds) == 1:
             held = [part for part in (node, content) if part is not None]

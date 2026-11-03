@@ -137,7 +137,7 @@ class Accuracy:
 
 
 class Entropy:
-    reads = ("class", "proportions", "link")
+    reads = ("class", "proportions", "link", "set")
     better = "lower"
     label, short = "Validation log loss", "Log loss"
     refusal = staticmethod(needless)
@@ -228,7 +228,7 @@ class Gain:
 
 
 class Reciprocal:
-    reads = ("ranking", "link")
+    reads = ("ranking", "link", "set")
     better = "higher"
     label, short = "Validation reciprocal rank", "MRR"
     refusal = staticmethod(needless)
@@ -240,7 +240,7 @@ class Reciprocal:
 
 
 class Hits:
-    reads = ("ranking", "link")
+    reads = ("ranking", "link", "set")
     better = "higher"
     refusal = staticmethod(needless)
 

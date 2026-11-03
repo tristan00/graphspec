@@ -17,7 +17,7 @@ from .graph import Graph, Shown, verify
 from .visible import permitted
 
 LOG = logging.getLogger(__name__)
-VERSION = 81
+VERSION = 82
 STEPS = Names("choice of steps", True)
 
 

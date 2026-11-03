@@ -389,6 +389,11 @@ def combined(bank, blocks, cfg):
     b["point_node"] = np.concatenate(
         [np.where(p["point_node"] >= 0, p["point_node"] + int(shift), -1) for p, shift in zip(parts, member_offsets)]
     )
+    if "set_point" in parts[0]:
+        points = np.r_[0, np.cumsum([len(p["point_row"]) for p in parts])]
+        b["set_point"] = np.concatenate([p["set_point"] + shift for p, shift in zip(parts, points)])
+        b["set_member"] = np.concatenate([p["set_member"] + shift for p, shift in zip(parts, member_offsets)])
+        b["set_role"] = np.concatenate([p["set_role"] for p in parts])
     b["drawn"] = Host(np.concatenate([p["drawn"].value for p in parts]))
     b["placed"] = Host(
         np.concatenate(

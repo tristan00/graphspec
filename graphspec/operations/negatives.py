@@ -434,6 +434,8 @@ def needed(schema):
         target = entry["target"]
         if target is not None and TARGETS.named(target["kind"]).names == "linked":
             result[kind] = (NEGATIVE.name, {"negatives/of": "%s:%s:%s" % (LINK, target["relation"], target["about"])})
+        elif target is not None and TARGETS.named(target["kind"]).names == "sets":
+            result[kind] = (NEGATIVE.name, {"negatives/of": "%s:%s" % (SET, target["sets"])})
     LOG.debug("negatives needed exit kinds=%d seconds=%.4f", len(result), time.perf_counter() - started)
     return result
 
@@ -461,7 +463,7 @@ NEGATIVE = OPERATIONS.register(
         changes=(),
         adds=adds,
         kinds=named,
-        version=10,
+        version=11,
         graphs=1,
     ),
 )

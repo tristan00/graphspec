@@ -327,6 +327,8 @@ def aimed(registry, tables, tasks, place, rows, series, referred, keys, kinds, n
     if np.any(tasks["task_split"][owner] < 0):
         raise ValueError("a task of graph %s holds a target and states no split" % name)
     nodes = found.column("node").to_pylist() if "node" in found.column_names else [None] * len(owner)
+    if any(TARGETS.named(kind).names == "sets" for kind in registry.schema.targets()):
+        set_points(registry, found, tasks, owner, keys, kinds, name)
     node = noded(registry, tasks, referred, keys, kinds, owner, nodes, name)
     order = np.lexsort((rows, owner))
     result = dict(
@@ -348,6 +350,24 @@ def aimed(registry, tables, tasks, place, rows, series, referred, keys, kinds, n
     return result, aims
 
 
+@timed("parse.set_points")
+def set_points(registry, found, tasks, owner, keys, kinds, name):
+    existing = {(registry.nodes[int(kind)], key) for kind, key in zip(kinds, keys)}
+    for number, (kind, entry) in enumerate(registry.schema.tasks["kinds"].items()):
+        target = entry["target"]
+        if target is None or TARGETS.named(target["kind"]).names != "sets":
+            continue
+        held = registry.schema.sets[target["sets"]]
+        columns = {field: found.column(field).to_pylist() for field in TARGETS.named(target["kind"]).columns}
+        for at in np.flatnonzero(tasks["task_kind"][owner] == number):
+            for role, node_kind, key in zip(*(columns[field][at] for field in columns)):
+                where = "the set target of task %s of kind %s of graph %s" % (tasks["task_key"][owner[at]], kind, name)
+                if role not in held["roles"] or node_kind not in held["kinds"]:
+                    raise ValueError("%s names an undeclared role or member kind: %s, %s" % (where, role, node_kind))
+                if (node_kind, key) not in existing:
+                    raise ValueError("%s names the missing member %s:%s" % (where, node_kind, key))
+
+
 def noded(registry, tasks, members, keys, kinds, owner, nodes, name):
     started = time.perf_counter()
     schema, result = registry.schema, np.full(len(owner), -1, np.int64)
@@ -357,7 +377,7 @@ def noded(registry, tasks, members, keys, kinds, owner, nodes, name):
     for number, (kind, entry) in enumerate(schema.tasks["kinds"].items()):
         target = entry["target"]
         chosen = np.flatnonzero(tasks["task_kind"][owner] == number)
-        if target is None or TARGETS.named(target["kind"]).names is None or not len(chosen):
+        if target is None or TARGETS.named(target["kind"]).names in (None, "sets") or not len(chosen):
             continue
         where = "the target of the kind of task %s of graph %s" % (kind, name)
         stated = np.asarray([nodes[at] for at in chosen.tolist()], str)
