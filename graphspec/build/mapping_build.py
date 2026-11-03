@@ -204,9 +204,6 @@ class NodeStated(Stated):
     def __init__(self, mapped, label, statement, session):
         fields = self.fields = statement.fields
         self.label = label
-        for name in ("held", "inside"):
-            if name in fields:
-                raise ValueError("declaration %s states %s; the base layer states no held graphs" % (label, name))
         reader, stated, ages = facts(Reader(session, statement.table, label, mapped.plan), fields, mapped)
         self.columns, values = reader.features(fields.get("features"), outcome=True)
         late = reader.lately(fields.get("features"), self.columns)
@@ -305,6 +302,8 @@ class NodeStated(Stated):
     def schema(self, mapped):
         for kind in self.made_kinds:
             mapped.kind(kind, self.columns, self.label)
+            if "held" in self.fields:
+                mapped.holdings[kind] = dict(nodes={}, edges={}, encoder=self.fields["held"])
         for name, link in self.links.items():
             if type(link) is list:
                 mapped.kind(name, {}, self.label)
@@ -332,8 +331,6 @@ class EdgeStated(Stated):
     def __init__(self, mapped, label, statement, session):
         fields = self.fields = statement.fields
         self.label, self.named, self.index = label, [], {}
-        if "inside" in fields:
-            raise ValueError("declaration %s states inside; the base layer states no held graphs" % label)
         reader, self.facts, ages = facts(Reader(session, statement.table, label, mapped.plan), fields, mapped)
         self.columns, self.values = reader.features(fields.get("features"), outcome=True)
         edged(reader.lately(fields.get("features"), self.columns), self.facts, self.values, label)
@@ -614,6 +611,7 @@ class Mapped:
         self.references, self.tasks, self.grouping, self.signals = {}, {}, None, 0
         self.graphs, self.unit, self.model, self.ties, self.current = [], None, "none", None, None
         self.made, self.keyed, self.numbers, self.spans = set(), {}, {}, {}
+        self.holdings, self.inner = {}, {}
 
     @timed("mapping_build.Mapped.names")
     def names(self):
@@ -940,7 +938,7 @@ class Mapped:
             observers=self.observers,
             columns={name: dict(spec) for name, (spec, _) in self.columns.items()},
             graph=dict(columns=list(self.graph_columns)),
-            nodes={kind: dict(columns=list(columns), holds=None) for kind, columns in self.kinded.items()},
+            nodes={kind: dict(columns=list(columns), holds=self.holdings.get(kind)) for kind, columns in self.kinded.items()},
             sets={kind: dict(entry) for kind, entry in self.sets.items()},
             edges={table: dict(entry) for table, entry in self.edges.items()},
             tasks=dict(key="key", grouping=self.grouping, signals=self.signals, references=self.references,

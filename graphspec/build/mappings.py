@@ -133,14 +133,40 @@ class Entry:
         return getattr(import_module("graphspec.build." + module), name)(mapped, label, statement, session)
 
 
+@timed("mappings.inside")
+def inside(entry, mapped, label, statement, session):
+    if "inside" not in statement.fields:
+        return Entry.evaluate(entry, mapped, label, statement, session)
+    return getattr(import_module("graphspec.build.mapping_held"), entry.inner)(mapped, label, statement, session)
+
+
+@timed("mappings.held")
+def held(fields, where, refused):
+    if "inside" not in fields:
+        return
+    ended(fields["inside"], where + " inside")
+    for name in refused + TIMES:
+        if name in fields:
+            raise ValueError("%s states inside and takes no %s; what a holder holds is stated once, without time"
+                             % (where, name))
+
+
 class Nodes(Entry):
-    version = 1
+    version = 2
     ruled = False
     stated = ("mapping_build", "NodeStated")
+    inner = "HeldNodes"
     fields = frozenset(("key", "distinct", "of", "kind", "links", "held", "inside") + FACT)
+
+    @timed("mappings.Nodes.evaluate")
+    def evaluate(self, mapped, label, statement, session):
+        return inside(self, mapped, label, statement, session)
 
     @timed("mappings.Nodes.validate")
     def validate(self, fields, where):
+        held(fields, where, ("distinct", "links", "held"))
+        if "held" in fields and (type(fields["held"]) is not str or not fields["held"]):
+            raise ValueError("%s states held as the name of an encoder of held graphs" % where)
         if ("key" in fields) == ("distinct" in fields):
             raise ValueError("%s states one of key and distinct" % where)
         if "key" in fields:
@@ -165,13 +191,19 @@ class Nodes(Entry):
 
 
 class Edges(Entry):
-    version = 1
+    version = 2
     ruled = False
     stated = ("mapping_build", "EdgeStated")
+    inner = "HeldEdges"
     fields = frozenset(("source", "target", "directed", "relation", "key", "present", "about", "inside") + FACT)
+
+    @timed("mappings.Edges.evaluate")
+    def evaluate(self, mapped, label, statement, session):
+        return inside(self, mapped, label, statement, session)
 
     @timed("mappings.Edges.validate")
     def validate(self, fields, where):
+        held(fields, where, ("relation", "key", "present", "about"))
         stated(fields, ("source", "target", "directed"), where)
         ended(fields["source"], where + " source")
         ended(fields["target"], where + " target")

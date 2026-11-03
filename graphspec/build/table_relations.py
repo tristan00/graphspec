@@ -1,3 +1,4 @@
+import ast
 import math
 from collections import deque
 from collections.abc import Mapping
@@ -58,6 +59,42 @@ def key(value):
 @timed("table_relations.marks")
 def marks(*values):
     return tuple(dict.fromkeys(item for group in values for item in group))
+
+
+@timed("table_relations.read_through")
+def read_through(node, path):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if node.func.id == "column" and len(node.args) == 1 and isinstance(node.args[0], ast.Constant):
+            return [(node.args[0].value, path)]
+        inner = path + (node.func.id,) if node.func.id in ("previous", "following") else path
+        return [item for part in [*node.args, *(keyword.value for keyword in node.keywords)]
+                for item in read_through(part, inner)]
+    if isinstance(node, ast.Name):
+        return [] if node.id in ("missing", "never") else [(node.id, path)]
+    return [item for child in ast.iter_child_nodes(node) for item in read_through(child, path)]
+
+
+@timed("table_relations.neighbor_marks")
+def neighbor_marks(frame, text, neighbors, name):
+    found, provenance = [], {}
+    for read, path in read_through(ast.parse(text, mode="eval").body, ()):
+        for mark in frame.outcomes.get(read, ()):
+            if not path:
+                found.append(mark)
+                continue
+            base = mark[2] if len(mark) > 2 else mark[0]
+            if base not in frame.provenance:
+                raise ValueError("the outcome of %s is read through a table that keeps none of its rows" % mark[0])
+            via = "%s %s %s" % (base, name, " ".join(path))
+            if via not in provenance:
+                parents, groups = frame.provenance[base].to_pylist(), []
+                for row in range(frame.table.num_rows):
+                    for direction in path:
+                        row = None if row is None else neighbors[direction][row]
+                    groups.append([] if row is None else parents[row])
+                provenance[via] = pa.array(groups, pa.list_(pa.int64()))
+            found.append((mark[0], mark[1], via))
+    return tuple(dict.fromkeys(found)), provenance
 
 
 @timed("table_relations.length_values")
@@ -367,7 +404,7 @@ class Closure:
 
 
 class Order:
-    version = 1
+    version = 2
     fields = frozenset(("within", "by", "gap", "columns", "names"))
     required = ("within", "by", "gap")
     input_count = (1, 1)
@@ -437,7 +474,7 @@ class Order:
             table = frame.table.append_column(names["run"], pa.array(runs, pa.float64()))
             table = table.append_column(names["place"], pa.array(places, pa.float64()))
             kinds = dict(frame.kinds, **{name: Kind("number") for name in names.values()})
-            lineage, outcomes = dict(frame.lineage), dict(frame.outcomes)
+            lineage, outcomes, provenance = dict(frame.lineage), dict(frame.outcomes), dict(frame.provenance)
             for field, name in names.items():
                 lineage[name] = ((context.name, field),)
             original = carry(frame, table, kinds, lineage=lineage, outcomes=outcomes)
@@ -446,12 +483,15 @@ class Order:
                 values = broadcast(result, count).cast(datatype(result.kind), safe=True)
                 table = table.append_column(name, values)
                 kinds[name] = result.kind
-                inherited, known = dependencies(original, text)
+                inherited = dependencies(original, text)[0]
+                known, shifted = neighbor_marks(original, text, neighbors, "%s.%s" % (context.name, name))
                 lineage[name] = marks(inherited, ((context.name, text),))
+                provenance.update(shifted)
                 if known:
                     outcomes[name] = known
-                context.check(table.nbytes * 4 + frame.nbytes * 4 + count * 64, "order output columns")
-            return carry(frame, table, kinds, outcomes=outcomes, lineage=lineage)
+                context.check(table.nbytes * 4 + frame.nbytes * 4 + count * 64
+                              + sum(held.nbytes for held in shifted.values()) * 4, "order output columns")
+            return carry(frame, table, kinds, outcomes=outcomes, lineage=lineage, provenance=provenance)
 
 
 TABLES.register("join", Join())

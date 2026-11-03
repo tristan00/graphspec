@@ -15,6 +15,7 @@ from graphspec import (
     edges,
     join,
     nodes,
+    order,
     scripted,
     sets,
     source,
@@ -193,6 +194,31 @@ def refused(folder, declared, message, **stated):
 def asked(table_, declared, **fields):
     return tasks(table_, at="day", references=dict(at=dict(sort="node", of=declared["thing"], key="id",
                                                            absent="stop")), **fields)
+
+
+def stepped(folder, known):
+    rows = table(folder, "steps", [dict(id="a", step=step, start=1, answered=answered)
+                                   for step, answered in enumerate((2, 4, 6))],
+                 dict(id="identifier", step="number", start=DAY, answered=dict(DAY, outcome=known)))
+    timed = order(rows, within=["id"], by=["step"], gap=None,
+                  columns=dict(shown="coalesce(previous(answered), start)", next="coalesce(following(answered), start)"))
+    return dict(steps=rows, timed=timed, thing=nodes(rows, distinct=["id"], holds="always", known=None))
+
+
+def test_an_outcome_read_from_the_row_before_or_after_is_known_when_that_row_knows_it(tmp_path):
+    declared = stepped(tmp_path, "answered")
+    for at, times in (("shown", [1, 2, 4]), ("next", [1, 4, 6])):
+        ask = tasks(declared["timed"], at=at, references=dict(at=dict(sort="node", of=declared["thing"], key="id",
+                                                                      absent="stop")))
+        found = mapped(tmp_path, dict(declared, ask=ask))
+        assert sorted(found["graphs"][0]["tasks"]["time"]) == times
+    late = stepped(tmp_path, "answered + 1")
+    for at, moment, fact in (("shown", 3, 2), ("next", 5, 4)):
+        ask = tasks(late["timed"], at=at, references=dict(at=dict(sort="node", of=late["thing"], key="id",
+                                                                  absent="stop")))
+        refused(tmp_path, late, "ask field at reads the outcome column steps.answered, known from %d in row %d, later "
+                                "than the time of its task, from %d" % (moment, 1 if at == "shown" else 0, fact),
+                ask=ask)
 
 
 def test_an_outcome_is_refused_as_a_feature_of_a_task_in_a_filter_and_in_a_split_directly_and_through_operations(

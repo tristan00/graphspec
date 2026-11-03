@@ -9,7 +9,7 @@ from support import pipelined
 from test_described import ROWS, read
 
 from conftest import Inline
-from graphspec import GENERATORS, SCRIPTED, Builder, BuildPlan, Invalid, validate
+from graphspec import GENERATORS, SCRIPTED, Builder, BuildPlan, validate
 from graphspec.infra.files import read_json
 from graphspec.operations import parameters
 from tuning import build_bank, configuration, fit, open_bank
@@ -23,12 +23,6 @@ PLAN = BuildPlan(64 << 20, 1)
 BUDGET = 0.5
 STATED = {"time/steps": "tasks", "time/scheme": "state", "time/several": "last", "graphs/join": "separate",
           "time/history": 1, "time/context": 0}
-DEFECTS = {
-    "15_drugs.py": (Invalid, "held graphs: nodes(held=) and inside= are refused by graphspec/build/mapping_build.py, "
-                             "and builder.py and writing.py state no held graphs, though the contract holds them"),
-    "24_tutoring.py": (Invalid, "previous(answered) is marked known from the answer of its own row, not of the row "
-                                "before, so at=\"shown\" is refused as dated by what is known later"),
-}
 MEASURED = {"number": ("squared", "mse"), "path": ("squared", "mse"), "decision": ("squared", "mse"),
             "class": ("entropy", "accuracy"), "link": ("entropy", "reciprocal"), "set": ("entropy", "reciprocal"),
             "classes": ("binary", "binary"), "sequence": ("tokens", "tokens"), "survival": ("hazard", "brier")}
@@ -100,9 +94,7 @@ def warmed(tmp_path_factory):
         return run("02_interactions.py", folder)
 
 
-@pytest.mark.parametrize("name", [
-    pytest.param(name, marks=pytest.mark.xfail(strict=True, raises=DEFECTS[name][0], reason=DEFECTS[name][1]))
-    if name in DEFECTS else name for name in sorted(WRITERS)])
+@pytest.mark.parametrize("name", sorted(WRITERS))
 def test_a_described_script_validates_builds_and_fits_from_synthetic_sources_within_its_budget(
     name, tmp_path, monkeypatch, warmed
 ):

@@ -93,6 +93,10 @@ def preflight(case, plan):
         for rows in graph.get("sets", {}).values():
             for at in range(len(rows["set"])):
                 capacity(row_at(rows, at), limit, "set members of " + graph["name"])
+        for kind, held in graph.get("held", {}).items():
+            for part, rows in held.items():
+                for at in range(len(rows["owner"])):
+                    capacity(row_at(rows, at), limit, "held %s of %s in %s" % (part, kind, graph["name"]))
         for at in range(len(graph["tasks"]["key"])):
             capacity(row_at(graph["tasks"], at), limit, "tasks of " + graph["name"])
 
@@ -275,6 +279,17 @@ def written(stage, tables, limit, keys):
     stage.write(normalized)
 
 
+@timed("writing.owned")
+def owned(held):
+    groups = {}
+    for part, rows in held.items():
+        for at, owner in enumerate(rows["owner"]):
+            group = groups.setdefault(owner, {name: {column: [] for column in found} for name, found in held.items()})
+            for column, values in rows.items():
+                group[part][column].append(values[at])
+    return list(groups.values())
+
+
 @timed("writing.statement_rows")
 def statement_rows(statement, keys):
     rows = statement["rows"]
@@ -382,8 +397,12 @@ def write_graph(schema_mapping, graph, index, directory, plan_mapping, counters=
                 member_rows = graph["sets"][kind]
                 for batch in batches((row_at(member_rows, at) for at in range(len(member_rows["set"]))), plan.worker_bytes // 8, "members of " + kind):
                     written(stage, records.case_members(schema, kind, columned(batch), lookup, lookup.found, graph["name"]), plan.worker_bytes // 4, lookup)
-            if schema.holds:
-                raise ValueError("held graph output requires an owner-batched mapping")
+            for kind in schema.holds:
+                for batch in batches(owned(graph["held"][kind]), plan.worker_bytes // 8, "graphs held by " + kind):
+                    merged = {part: {name: [value for group in batch for value in group[part][name]]
+                                     for name in batch[0][part]} for part in ("nodes", "edges")}
+                    written(stage, records.case_held(schema, index, kind, merged, counter, lookup, graph["name"]),
+                            plan.worker_bytes // 4, lookup)
             tasks = graph["tasks"]
             lookup.connection.execute("CREATE TEMP TABLE fresh_tasks(id INTEGER PRIMARY KEY)")
             for key in tasks["key"]:

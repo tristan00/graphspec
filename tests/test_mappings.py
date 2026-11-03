@@ -17,7 +17,7 @@ from graphspec import (
     source,
     tasks,
 )
-from graphspec.schema.schema import VERSION
+from graphspec.schema.schema import VALUE, VERSION
 
 pytestmark = pytest.mark.builder
 PLAN = BuildPlan(16 << 20, 1)
@@ -389,6 +389,63 @@ def test_rows_to_graphs_state_their_attributes_and_a_graph_no_row_states_stops(t
     with pytest.raises(ValueError, match="names the graph z, which no row of graphs states"):
         mapped(tmp_path, dict(labels=labels, stray=stray, molecule=molecule, atom=nodes(stray, key="id",
                                                                                         graph="molecule"), ask=ask))
+
+
+def holding(tmp_path, bonded):
+    atoms = table(tmp_path, "atoms", [dict(drug="d0", atom="a", element="C"), dict(drug="d0", atom="b", element="O"),
+                                      dict(drug="d1", atom="a", element="N")],
+                  dict(drug="identifier", atom="identifier", element="category"))
+    bonds = table(tmp_path, "bonds", bonded, dict(drug="identifier", one="identifier", other="identifier", order="number"))
+    drugs = table(tmp_path, "drugs", [dict(drug="d0", mass=1.0), dict(drug="d1", mass=2.0)],
+                  dict(drug="identifier", mass="number"))
+    drug = nodes(atoms, distinct=["drug"], held="propagated")
+    inside = dict(of=drug, key="drug", absent="stop")
+    atom = nodes(atoms, key="atom", inside=inside, features=dict(element="onehot"))
+    bond = edges(bonds, inside=inside, source=dict(of=atom, key="one", absent="stop"),
+                 target=dict(of=atom, key="other", absent="skip"), directed=False, features=dict(order="value"))
+    ask = looking(drugs, drug, key="drug", split="'train'",
+                  target=dict(kind="number", series="mass", value="mass", known="never", about=None, utility=UTILITY))
+    return dict(atoms=atoms, bonds=bonds, drugs=drugs, drug=drug, atom=atom, bond=bond, ask=ask)
+
+
+def test_rows_inside_a_holder_state_its_graph_as_the_calls_do_and_the_bank_holds_it(tmp_path):
+    from graphspec.facts.stored import Facts
+    from tuning import build_bank
+    from tuning.bank.bank import Bank
+
+    declared = holding(tmp_path, [dict(drug="d0", one="a", other="b", order=2), dict(drug="d1", one="a", other="z",
+                                                                                     order=1)])
+    found = mapped(tmp_path, declared)
+    stated = schema(dict(drug=[]), columns=dict(element=dict(type="category", encoder="onehot"),
+                                                order=dict(type="number", encoder="value")),
+                    kinds=dict(ask=kind(["at"], number("mass"))), references=dict(at=dict(sort="node", kinds=["drug"])))
+    stated["nodes"]["drug"]["holds"] = dict(nodes=dict(atom=dict(columns=["element"])), encoder="propagated", edges=dict(
+        bond=dict(endpoints=[["atom", "atom"]], directed=False, columns=["order"])))
+    builder = called(tmp_path, stated).node("drug", "d0").node("drug", "d1")
+    for owner, key, element in (("d0", "a", "C"), ("d0", "b", "O"), ("d1", "a", "N")):
+        builder.held("drug", owner, "atom", key, element=element)
+    builder.held_edge("drug", "d0", "bond", "a", "b", order=2.0)
+    for key, mass in enumerate((1.0, 2.0)):
+        builder.task("ask", key, references=dict(at="d%d" % key), split="train", target=mass, known=None)
+    assert found == builder.records()
+    for call, message in ((lambda: builder.held("drug", "d0", "atom", "a", element="C"), "is stated twice"),
+                          (lambda: builder.held_edge("drug", "d1", "bond", "a", "b", order=1.0), "no held node"),
+                          (lambda: builder.held("drug", "d9", "atom", "c", element="C"), "which no fact of graph")):
+        with pytest.raises(ValueError, match=message):
+            call()
+    build_bank(Builder(declared, tmp_path), tmp_path / "bank", 1, ("train",), plan=PLAN)
+    bank = Bank(tmp_path / "bank")
+    assert Facts.load(bank.truth(0)).held(bank.registry) == dict(drug=dict(
+        nodes={"owner": ["d0", "d0", "d1"], "kind": ["atom"] * 3, "key": ["a", "b", "a"], VALUE + "element": ["C", "O", "N"]},
+        edges={"owner": ["d0"], "source": ["a"], "target": ["b"], "relation": ["bond"], VALUE + "order": [2.0]}))
+    twice = holding(tmp_path, [])
+    twice["atom"] = nodes(twice["atoms"], key="'a'", inside=twice["atom"].fields["inside"],
+                          features=dict(element="onehot"))
+    with pytest.raises(ValueError, match="declaration atom row 1 states the held node a inside drug d0 twice"):
+        mapped(tmp_path, twice)
+    with pytest.raises(ValueError, match="field inside names under of a nodes statement that states held"):
+        mapped(tmp_path, dict(declared, atom=nodes(declared["atoms"], key="atom", inside=dict(
+            of=declared["ask"], key="drug", absent="stop"))))
 
 
 def test_rows_to_tasks_name_references_of_every_sort_and_a_class_target(tmp_path):

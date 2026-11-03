@@ -10,7 +10,7 @@ import pyarrow as pa
 from graphspec.infra.timing import timed
 from graphspec.schema.fields import fields, named
 from graphspec.schema.references import SORTS
-from graphspec.schema.schema import VALUE, Schema
+from graphspec.schema.schema import VALUE, Schema, inward, outward
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER, UNITED
 
@@ -65,7 +65,7 @@ class Builder:
         self.declarations = dict(script)
         self.sources = Path(sources).resolve()
         self.stated, self.graphs, self.changes, self.mapped, self.counts = None, {}, {}, False, {}
-        self.memberships = {}
+        self.memberships, self.inner = {}, {}
 
     @timed("builder.read")
     def read(self, declaration, plan):
@@ -149,7 +149,10 @@ class Builder:
             graph["sets"] = {kind: dict(set=[], member=[], role=[], **{column: [] for column in entry["members"]})
                              for kind, entry in schema.sets.items()}
         if schema.holds:
-            raise ValueError("the base graph declaration needs held graph contents for %s" % ", ".join(schema.holds))
+            graph["held"] = {kind: dict(nodes=dict(owner=[], kind=[], key=[], **{column: [] for column in inward(entry)}),
+                                        edges=dict(owner=[], source=[], target=[], relation=[],
+                                                   **{column: [] for column in outward(entry)}))
+                             for kind, entry in schema.holds.items()}
         self.graphs[name] = graph
         return self
 
@@ -318,6 +321,57 @@ class Builder:
         rows["role"].append(role)
         for column, value in values.items():
             rows[column].append(value)
+        return self
+
+    @timed("builder.holder")
+    def holder(self, kind, owner, graph, where):
+        schema, held = self.required(), self.chosen(graph)
+        if kind not in schema.holds:
+            raise ValueError("%s names %r, which is no kind of node that holds graphs" % (where, kind))
+        keyed(owner, where)
+        if owner not in held["nodes"][kind]:
+            raise ValueError("%s names the node %s:%s, which no fact of graph %s states" % (where, kind, owner, held["name"]))
+        return schema.holds[kind], held, self.inner.setdefault((held["name"], kind), {})
+
+    @timed("builder.held")
+    def held(self, holder, owner, kind, key, *, graph=None, values=None, **columns):
+        where = "held node %s inside %s:%s" % (key, holder, owner)
+        entry, held, inner = self.holder(holder, owner, graph, where)
+        if kind not in entry["nodes"]:
+            raise ValueError("%s names %r, which is no held kind of %s" % (where, kind, holder))
+        keyed(key, where)
+        if (owner, key) in inner:
+            raise ValueError("%s is stated twice; a held node's key is unique within its holder" % where)
+        values = self.values(supplied(values, columns, where), entry["nodes"][kind], where, False)
+        inner[(owner, key)] = kind
+        rows = held["held"][holder]["nodes"]
+        for name, value in dict(owner=owner, kind=kind, key=key).items():
+            rows[name].append(value)
+        for column in inward(entry):
+            rows[column].append(values.get(column))
+        return self
+
+    @timed("builder.held_edge")
+    def held_edge(self, holder, owner, relation, source, target, *, graph=None, values=None, **columns):
+        where = "held edge %s from %s to %s inside %s:%s" % (relation, source, target, holder, owner)
+        entry, held, inner = self.holder(holder, owner, graph, where)
+        if relation not in entry["edges"]:
+            raise ValueError("%s names %r, which is no held relation of %s" % (where, relation, holder))
+        ends = []
+        for key in (source, target):
+            if (owner, key) not in inner:
+                raise ValueError("%s names %r, which is no held node of %s:%s" % (where, key, holder, owner))
+            ends.append(inner[(owner, key)])
+        relating = entry["edges"][relation]
+        if tuple(ends) not in relating["endpoints"] and (
+                relating["directed"] or tuple(reversed(ends)) not in relating["endpoints"]):
+            raise ValueError("%s joins %s to %s, which its relation does not join" % (where, ends[0], ends[1]))
+        values = self.values(supplied(values, columns, where), relating["columns"], where, False)
+        rows = held["held"][holder]["edges"]
+        for name, value in dict(owner=owner, source=source, target=target, relation=relation).items():
+            rows[name].append(value)
+        for column in outward(entry):
+            rows[column].append(values.get(column))
         return self
 
     @timed("builder.map")

@@ -63,6 +63,7 @@ class Knowing:
 
     @timed("mapping_known.Knowing.marked")
     def marked(self, mark):
+        mark = mark[:2]
         if mark in self.held:
             return self.held[mark]
         name, text = mark
@@ -89,7 +90,7 @@ class Knowing:
     @timed("mapping_known.Knowing.rows")
     def rows(self, frame, mark):
         values = self.marked(mark)
-        parents = frame.provenance.get(mark[0])
+        parents = frame.provenance.get(mark[2] if len(mark) > 2 else mark[0])
         if parents is None:
             raise ValueError("the outcome of %s is read through a table that keeps none of its rows" % mark[0])
         return [max((values[place] for place in group), default=BEFORE) for group in parents.to_pylist()]
@@ -105,7 +106,7 @@ class Knowing:
     def named(self, frame, name):
         frames, found = self.frames(), []
         for mark in frame.outcomes.get(name, ()):
-            carriers = [column for column, marks in frames[mark[0]].outcomes.items() if mark in marks]
+            carriers = [column for column, marks in frames[mark[0]].outcomes.items() if mark[:2] in marks]
             origins = [column for column in carriers if (mark[0], column) in frame.lineage.get(name, ())]
             found += ["%s.%s" % (mark[0], column) for column in origins or carriers]
         return list(dict.fromkeys(found))

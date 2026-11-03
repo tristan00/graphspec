@@ -363,8 +363,8 @@ def grid(folder):
 def tutoring(folder):
     form = "%Y-%m-%dT%H:%M:%S"
     sessions = []
-    for at in range(24):
-        start = at * 2 * 1440 + 600
+    for at in range(6):
+        start = at * 8 * 1440 + 600
         steps = []
         for place in range(3):
             given = ("short", "long", "none")[(at + place) % 3]
