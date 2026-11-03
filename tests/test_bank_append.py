@@ -18,7 +18,7 @@ from tuning.bank.build import build
 
 append_module = importlib.import_module("tuning.bank.append")
 PLAN = BuildPlan(64 * 1024 * 1024, 1)
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 
 
 @timed("bank_append_test.schema")

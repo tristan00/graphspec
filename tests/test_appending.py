@@ -11,7 +11,7 @@ from graphspec.schema.schema import VERSION, Schema
 from graphspec.schema.time import ALWAYS
 from graphspec.sources import synthetic
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 
 
 @timed("append_test.schema")

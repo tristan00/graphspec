@@ -18,7 +18,7 @@ from graphspec.sources import synthetic
 from tuning import build_bank
 from tuning.bank.bank import Bank
 
-pytestmark = pytest.mark.extended
+pytestmark = pytest.mark.builder
 
 
 @timed("output_test.source")

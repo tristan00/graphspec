@@ -13,7 +13,7 @@ from tuning import build_bank
 from tuning.bank.bank import Bank
 from tuning.bank.build import build
 
-pytestmark = [pytest.mark.xdist_group("fixture"), pytest.mark.extended]
+pytestmark = [pytest.mark.xdist_group("fixture"), pytest.mark.builder]
 PLAN = BuildPlan(64 * 1024 * 1024, 1)
 
 
