@@ -52,7 +52,8 @@ class Builder:
             raise ValueError("a builder takes a script path or a mapping from names to declarations")
         self.declarations = dict(script)
         self.sources = Path(sources).resolve()
-        self.stated, self.graphs, self.changes = None, {}, {}
+        self.stated, self.graphs, self.changes, self.mapped, self.counts = None, {}, {}, False, {}
+        self.memberships = {}
 
     @timed("builder.read")
     def read(self, declaration, plan):
@@ -199,11 +200,11 @@ class Builder:
     def node(self, kind, key, since=UNSTATED, until=None, *, graph=None, known=UNSTATED,
              replaced=None, seen=None, seq=UNSTATED, values=None, **columns):
         schema, held = self.required(), self.chosen(graph)
-        if kind not in schema.nodes:
-            raise ValueError("node names an undeclared kind of node %r" % kind)
+        if kind not in schema.declared():
+            raise ValueError("node names an undeclared kind of node or of set edge %r" % kind)
         keyed(key, "node")
         where = "node %s:%s of graph %s" % (kind, key, held["name"])
-        values = self.values(supplied(values, columns, where), schema.nodes[kind], where, True)
+        values = self.values(supplied(values, columns, where), schema.declared()[kind], where, True)
         when = self.when("state", since, until, known, replaced, seen, seq, where)
         if key not in held["nodes"][kind]:
             held["nodes"][kind].append(key)
@@ -263,11 +264,11 @@ class Builder:
     def change(self, kind, key, at, *, graph=None, known=UNSTATED, replaced=None, seen=None, seq=UNSTATED,
                values=None, **columns):
         schema, held = self.required(), self.chosen(graph)
-        if kind not in schema.nodes:
-            raise ValueError("change names an undeclared kind of node %r" % kind)
+        if kind not in schema.declared():
+            raise ValueError("change names an undeclared kind of node or of set edge %r" % kind)
         keyed(key, "change")
         where = "change of %s:%s in graph %s" % (kind, key, held["name"])
-        values = self.values(supplied(values, columns, where), schema.nodes[kind], where, True)
+        values = self.values(supplied(values, columns, where), schema.declared()[kind], where, True)
         when = self.when("change", at, None, known, replaced, seen, seq, where)
         if key not in held["nodes"][kind]:
             held["nodes"][kind].append(key)
@@ -282,6 +283,49 @@ class Builder:
             for name, value in row.items():
                 self.changes[identity]["rows"][name].append(value)
         return self
+
+    @timed("builder.member")
+    def member(self, kind, key, node, role, *, graph=None, values=None, **columns):
+        schema, held = self.required(), self.chosen(graph)
+        if kind not in schema.sets:
+            raise ValueError("member names an undeclared kind of set edge %r" % kind)
+        where = "member of %s:%s in graph %s" % (kind, key, held["name"])
+        if key not in held["nodes"][kind]:
+            raise ValueError("%s names a set edge no fact states" % where)
+        member_kind, member_key = self.end(node, held, where)
+        if member_kind not in schema.sets[kind]["kinds"]:
+            raise ValueError("%s names a node of the kind %s, which its kind does not join" % (where, member_kind))
+        named(role, where + " role")
+        rows = held["sets"][kind]
+        seen = self.memberships.setdefault((held["name"], kind), set())
+        if (key, member_key, role) in seen:
+            raise ValueError("%s names the node %s twice in the role %s" % (where, member_key, role))
+        values = self.values(supplied(values, columns, where), schema.sets[kind]["members"], where, False)
+        seen.add((key, member_key, role))
+        rows["set"].append(key)
+        rows["member"].append(member_key)
+        rows["role"].append(role)
+        for column, value in values.items():
+            rows[column].append(value)
+        return self
+
+    @timed("builder.map")
+    def map(self, plan, name):
+        from .mapping_build import Mapped
+
+        if self.mapped:
+            raise ValueError("the builder has already mapped its declarations")
+        if self.stated is not None:
+            raise ValueError("a builder whose declarations hold mappings states its schema through them")
+        Mapped(self, plan, name).run()
+        self.mapped = True
+        return self
+
+    @timed("builder.pending")
+    def pending(self):
+        from .mappings import Mapping
+
+        return not self.mapped and any(isinstance(value, Mapping) for value in self.declarations.values())
 
     @timed("builder.task")
     def task(self, kind, key, at=UNSTATED, references=UNSTATED, split=UNSTATED, target=UNSTATED,
@@ -362,12 +406,11 @@ class Builder:
 
     @timed("builder.records")
     def records(self, *, snapshot=True):
+        if self.pending():
+            raise ValueError("the builder maps its declarations first, by map(plan, name) or stage")
         schema = self.required()
         if not self.graphs:
             raise ValueError("the builder holds no declared graph")
-        pending = [name for name, declaration in self.declarations.items() if not isinstance(declaration, (Source, Table))]
-        if pending:
-            raise ValueError("the declarations need handlers before they can be built: %s" % ", ".join(pending))
         if not snapshot:
             return dict(schema=schema.mapping(), graphs=list(self.graphs.values()))
         graphs = copy.deepcopy(self.graphs)
@@ -385,7 +428,10 @@ class Builder:
         from .writing import stage
 
         started = time.perf_counter()
-        self.check_sources(plan)
+        if self.pending():
+            self.map(plan, name)
+        else:
+            self.check_sources(plan)
         result = stage(self.records(snapshot=False), output, name, plan, reuse=reuse)
         LOG.info("builder staged graphs=%d seconds=%.4f", len(self.graphs), time.perf_counter() - started)
         return result

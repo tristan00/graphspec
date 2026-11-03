@@ -39,11 +39,12 @@ def namespace(path, sources):
 
 @timed("readers.declarations")
 def declarations(namespace):
+    from .mappings import Mapping
     from .tables import Table
 
-    result = {name: value for name, value in namespace.items() if isinstance(value, (Source, Table))}
+    result = {name: value for name, value in namespace.items() if isinstance(value, (Source, Table, Mapping))}
     if not result:
-        raise ValueError("a declaration script exports source declarations or table declarations")
+        raise ValueError("a declaration script exports source, table or mapping declarations")
     return result
 
 

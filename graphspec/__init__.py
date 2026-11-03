@@ -10,8 +10,10 @@ from .build.expression_types import FUNCTIONS
 from .build.expressions import evaluate
 from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
+from .build.mappings import MAPPINGS, Mapping, decisions, edges, graphs, mapping, nodes, sets, tasks
 from .build.output import Stage
 from .build.planning import BuildPlan
+from .build.presence import PRESENCE
 from .build.readers import READERS, Source, source
 from .build.table_types import TABLES, Frame
 from .build.tables import (
@@ -63,7 +65,9 @@ __all__ = [
     "FUNCTIONS",
     "GENERATORS",
     "HELD",
+    "MAPPINGS",
     "MISSING",
+    "PRESENCE",
     "NEGATIVES",
     "OPERATIONS",
     "READERS",
@@ -93,6 +97,14 @@ __all__ = [
     "Source",
     "Table",
     "Frame",
+    "Mapping",
+    "decisions",
+    "edges",
+    "graphs",
+    "mapping",
+    "nodes",
+    "sets",
+    "tasks",
     "counts",
     "describe",
     "differences",
