@@ -16,6 +16,32 @@ Source data → loader script → public Stage Parquet tables → bank → trans
 
 There is no required database round trip. LadybugDB remains an optional way to query and inspect the same graph; it is not required to create Parquet files. `Stage` writes files and manifests, and `GraphTables` manages contract tables and identifiers. [The loader walkthrough](docs/loader.md) shows a complete custom graph in Python.
 
+Sources can also be read as batches through the public builder. Relative paths resolve against `sources`; declared columns are projected before delivery, and batches retain their native Arrow types and one schema, including an empty source. Every read states a `BuildPlan` with a memory budget and worker count.
+
+```python
+from graphspec import BuildPlan, Builder, source
+
+records = source("records.csv", reader="csv", columns=dict(key="identifier", value="number"))
+builder = Builder(dict(records=records), sources="data")
+batches = builder.read("records", BuildPlan(memory_bytes=64 << 20, workers=1))
+```
+
+`Builder("sources.py", sources="data")` executes a script once and collects its source declarations by variable name. `READERS.register(name, function)` adds a reader whose function receives `(place, columns, parameters)` and yields `pyarrow.Table` batches; `columns` is the tuple of declared names, including `"*"` when all columns are requested. Reader errors name the source declaration.
+
+| Reader | Parameters and native data |
+|---|---|
+| `parquet` | A file or a directory of Parquet files. |
+| `csv` | Comma-separated text with a header; columns are read as text and an empty field is null. |
+| `delimited` | Required `delimiter` and `names`; use `names=None` for a header, otherwise give names in file order. |
+| `json` | A list of records or one record per line. Optional `records="payload.rows"` selects a nested list; nested records and lists stay nested. |
+| `hdf5` | Required `dataset`. Structured datasets expose their named fields. A labelled matrix uses HDF5 dimension scales on its first two dimensions; required `axis` names its row-label column. Pandas fixed/table dataframes use their native column labels and `axis` for their index. |
+| `numpy` | A NumPy archive; required `arrays` maps output column names to archive member names. Selected arrays have equal row counts; additional dimensions become fixed-size lists. |
+| `pickle` | Required `arrays` selects named arrays or structured-array fields from the stored object. |
+| `sqlite`, `postgres` | Exactly one of `table` or `query`. Tables retain primary-key and foreign-key metadata; views and queries are also sources. Install `.[databases]` for PostgreSQL. |
+| `layout` | A directory containing `nodes/<kind>`, `edges/<relation>` and `tasks` as Parquet files or folders; required `table` selects one, such as `"nodes/person"`. The reader's `catalogue` and `mapping` describe the stored structure. |
+
+File readers accept `.gz`, `.zst`, `.bz2` and `.xz`, and a `.zip` or `.tar` member named by `member`, without extracting files. Source operations that require whole-file decoding check their working size against the supplied budget.
+
 ```powershell
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12 --degree 2.0 --max-degree 6 --alive 0.8 --lifetime 4.0 --period 3 --level task --seed 1
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime inspect D:/graphspec-runtime/datasets/demo/demo.task.json

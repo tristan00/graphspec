@@ -10,6 +10,7 @@ from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
 from .build.output import Stage
 from .build.planning import BuildPlan
+from .build.readers import READERS, Source, source
 from .descriptions.describe import counts, describe
 from .descriptions.differences import differences
 from .descriptions.inspect import inspect
@@ -24,6 +25,10 @@ from .schema.references import SORTS
 from .schema.schema import ENCODERS, HELD, TYPES, Schema
 from .schema.targets import TARGETS, UTILITIES
 from .schema.time import ABOUT, SEVERAL, TIES
+from .sources import arrays as arrays
+from .sources import databases as databases
+from .sources import layout as layout
+from .sources import tabular as tabular
 from .views.view import STEPS
 from .views.visible import SEES
 
@@ -38,6 +43,7 @@ __all__ = [
     "HELD",
     "NEGATIVES",
     "OPERATIONS",
+    "READERS",
     "REPRESENTATIONS",
     "RULES",
     "SEES",
@@ -60,9 +66,11 @@ __all__ = [
     "Schema",
     "Scripted",
     "Stage",
+    "Source",
     "counts",
     "describe",
     "differences",
     "inspect",
+    "source",
     "write_task",
 ]

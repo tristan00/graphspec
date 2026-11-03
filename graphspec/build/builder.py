@@ -14,6 +14,7 @@ from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER, UNITED
 
 from . import records
+from .readers import Source, batches, declarations, namespace
 
 LOG = logging.getLogger(__name__)
 UNSTATED = object()
@@ -41,11 +42,24 @@ def supplied(values, columns, where):
 class Builder:
     @timed("builder.init")
     def __init__(self, script, sources):
+        if isinstance(script, (str, Path)):
+            script = declarations(namespace(script, sources))
         if not isinstance(script, Mapping):
-            raise ValueError("a builder takes a mapping from names to declarations")
+            raise ValueError("a builder takes a script path or a mapping from names to declarations")
         self.declarations = dict(script)
         self.sources = Path(sources).resolve()
         self.stated, self.graphs, self.changes = None, {}, {}
+
+    @timed("builder.read")
+    def read(self, declaration, plan):
+        name = declaration if isinstance(declaration, str) else None
+        if name is not None:
+            if name not in self.declarations:
+                raise ValueError("the builder has no source named %s" % name)
+            declaration = self.declarations[name]
+        if not isinstance(declaration, Source):
+            raise ValueError("read names a source declaration")
+        return batches(declaration, self.sources, plan, name)
 
     @timed("builder.schema")
     def schema(self, mapping):
@@ -329,8 +343,9 @@ class Builder:
         schema = self.required()
         if not self.graphs:
             raise ValueError("the builder holds no declared graph")
-        if self.declarations:
-            raise ValueError("the declarations need handlers before they can be built: %s" % ", ".join(self.declarations))
+        pending = [name for name, declaration in self.declarations.items() if not isinstance(declaration, Source)]
+        if pending:
+            raise ValueError("the declarations need handlers before they can be built: %s" % ", ".join(pending))
         if not snapshot:
             return dict(schema=schema.mapping(), graphs=list(self.graphs.values()))
         graphs = copy.deepcopy(self.graphs)
