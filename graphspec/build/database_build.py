@@ -8,9 +8,10 @@ from pathlib import Path
 
 from graphspec.infra.timing import timed
 
-from .database import TIMES, Database, Part, owner, part, ruled, stated
+from .database import TIMES, Database, Part, owner, part, stated
 from .mappings import Mapping, edges, nodes
 from .readers import READERS, Source
+from .table_types import ruled
 
 LOG = logging.getLogger(__name__)
 FEATURED = ("number", "flag", "category")

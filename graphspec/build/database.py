@@ -6,7 +6,7 @@ from graphspec.infra.timing import timed
 from graphspec.registries import Names
 from graphspec.schema.columns import statement
 
-from .table_types import frozen, references
+from .table_types import frozen, references, ruled
 
 TIMES = Names("rule of the columns of time", True)
 FIELDS = ("place", "reader", "tables", "unit", "times", "through", "encoders", "missing", "absent", "graph", "leave",
@@ -93,15 +93,6 @@ def stated(database):
 @timed("database.owner")
 def owner(held):
     return STATED[held]
-
-
-@timed("database.ruled")
-def ruled(stated, where):
-    if type(stated) is str and stated:
-        return stated, {}
-    if isinstance(stated, Held) and type(stated.get("name")) is str:
-        return stated["name"], {name: value for name, value in stated.items() if name != "name"}
-    raise ValueError("%s states a rule by name, or as a mapping of name and its fields" % where)
 
 
 class Typed:

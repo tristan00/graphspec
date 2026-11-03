@@ -323,10 +323,10 @@ def test_nodes_are_created_on_first_reference_only_where_the_end_states_it(tmp_p
     builder.edge("requires", ("topic", "t1"), ("topic", "t2")).edge("requires", ("topic", "t3"), ("topic", "t1"))
     builder.task("ask", 0, references=dict(at="e1"), split=None, target=None, known=None)
     assert made.records() == builder.records()
-    assert made.counts == {"declaration requires field source": dict(create=1),
-                           "declaration requires field target": dict(create=1)}
+    assert made.counts == dict(requires=dict(source=dict(create=1), target=dict(create=1)),
+                               ask={"references.at": dict(stop=0)})
     skipped = requiring(tmp_path, "skip")
-    assert skipped.counts["declaration requires field source"] == dict(skip=1)
+    assert skipped.counts["requires"]["source"] == dict(skip=1)
     assert len(skipped.records()["graphs"][0]["edges"]) == 2
     with pytest.raises(ValueError, match="requires field source row 1 key t3: the rule stop"):
         requiring(tmp_path, "stop")
@@ -493,6 +493,7 @@ def test_a_registered_mapping_and_rule_of_presence_state_their_facts_by_the_call
     class Stand:
         version = 1
         creates = False
+        keeps = False
 
         def __call__(self, keys, times, parameters):
             return [parameters["key"]] * len(keys)
@@ -538,8 +539,8 @@ def test_a_statement_or_a_build_stops_naming_the_declaration_and_the_field(tmp_p
         mapped(tmp_path, dict(rows=rows, thing=thing, ask=looking(rows, thing, at="day")))
     for stated, message in ((dict(holds="always", known=None), "thing field key row 1 reads a missing value"),
                             (dict(), "ask states at, and no mapping|thing lacks holds"),
-                            (dict(holds=dict(name="snapshot", at="day", between="absent"), known=None),
-                             "names the form snapshot")):
+                            (dict(holds=dict(name="snapshot", at="day"), known=None),
+                             "thing field holds.between: the form snapshot states the rule")):
         thing = nodes(rows, key="id", **stated)
         with pytest.raises(ValueError, match=message):
             mapped(tmp_path, dict(rows=rows, thing=thing, ask=looking(rows, thing, where="id == 'a'", at="day")))

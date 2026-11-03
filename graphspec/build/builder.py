@@ -433,7 +433,7 @@ class Builder:
             self.map(plan, name)
         else:
             self.check_sources(plan)
-        result = stage(self.records(snapshot=False), output, name, plan, reuse=reuse)
+        result = stage(self.records(snapshot=False), output, name, plan, self.counts, reuse=reuse)
         LOG.info("builder staged graphs=%d seconds=%.4f", len(self.graphs), time.perf_counter() - started)
         return result
 

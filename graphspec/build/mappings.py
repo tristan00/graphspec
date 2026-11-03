@@ -238,6 +238,8 @@ def asked(fields, where):
     for name, reference in references.items():
         if not isinstance(reference, Held) or type(reference.get("sort")) is not str:
             raise ValueError("%s references %s states its sort" % (where, name))
+        if reference["sort"] != "graph":
+            stated(reference, ("absent",), "%s references %s" % (where, name))
     if "at" in fields:
         expression(fields["at"], where + " at")
     if "key" in fields:

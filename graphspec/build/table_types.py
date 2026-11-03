@@ -37,6 +37,15 @@ def frozen(value):
     return value
 
 
+@timed("tables.ruled")
+def ruled(stated, where):
+    if type(stated) is str and stated:
+        return stated, {}
+    if isinstance(stated, Mapping) and type(stated.get("name")) is str and stated["name"]:
+        return stated["name"], {name: value for name, value in stated.items() if name != "name"}
+    raise ValueError("%s states a rule by name, or as a mapping of name and its fields, found %r" % (where, stated))
+
+
 @dataclass(frozen=True)
 class Frame:
     table: pa.Table

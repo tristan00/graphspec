@@ -4,7 +4,8 @@ from graphspec.infra.timing import timed
 
 from .expression_types import EXTENDED_TIME, Kind
 from .mappings import TIMES
-from .table_types import Context, broadcast, dependencies, references, take
+from .presence import BETWEEN
+from .table_types import Context, broadcast, dependencies, references, ruled, take
 
 NUMBERS = ("number", "ordered", "duration")
 TYPED = dict(number="number", ordered="number", duration="number", flag="flag", category="category")
@@ -176,8 +177,43 @@ def joined(key):
     return "|".join(key) if isinstance(key, tuple) else key
 
 
+@timed("mapping_rows.sighted")
+def sighted(reader, fields, graphs, timed_model):
+    holds = fields.get("holds")
+    if not timed_model or not isinstance(holds, Held) or holds.get("name") != "snapshot":
+        return reader, graphs, None, None
+    where = "declaration %s field holds" % reader.name
+    if "between" not in holds:
+        raise ValueError("%s.between: the form snapshot states the rule for the times between two sightings, "
+                         "registered in graphspec.BETWEEN" % where)
+    if sorted(holds) != ["at", "between", "name"]:
+        raise ValueError("%s of the form snapshot states exactly at and between" % where)
+    name, parameters = ruled(holds["between"], where + ".between")
+    try:
+        pieces, aged = BETWEEN.named(name)(reader.moments(holds["at"], "holds.at"), graphs, parameters, reader.name)
+    except (KeyError, ValueError) as error:
+        raise ValueError("%s.between: %s" % (where, error.args[0])) from error
+    places = [piece[0] for piece in pieces]
+    taken = reader.taken(places)
+    times = dict(since=[piece[1] for piece in pieces], until=[piece[2] for piece in pieces])
+    ages = None if aged is None else (aged[0], aged[1], [piece[3] for piece in pieces])
+    return taken, [graphs[place] for place in places], times, ages
+
+
+@timed("mapping_rows.aged")
+def aged(ages, columns, values, where):
+    if ages is None:
+        return
+    name, encoder, found = ages
+    if name in columns:
+        raise ValueError("%s states the feature %s, which the rule carried also names" % (where, name))
+    columns[name] = dict(type="number", encoder=encoder)
+    for held, age in zip(values, found):
+        held[name] = float(age)
+
+
 @timed("mapping_rows.when")
-def when(reader, fields, timed_model, clocks):
+def when(reader, fields, timed_model, clocks, sightings):
     count = reader.count
     holds = fields.get("holds")
     result = dict(form=["state"] * count, since=[None] * count, until=[None] * count, known=[None] * count,
@@ -196,12 +232,14 @@ def when(reader, fields, timed_model, clocks):
         if name not in fields:
             raise ValueError("declaration %s lacks %s, which every mapping of facts states where the graphs "
                              "have time" % (reader.name, name))
-    if holds != "always":
+    if sightings is not None:
+        result.update(sightings)
+    elif holds != "always":
         holds = dict(holds)
         form = holds.pop("name")
         if form not in FORMED:
-            raise ValueError("declaration %s field holds names the form %s, which mappings do not state; snapshot "
-                             "needs a rule of graphspec.BETWEEN" % (reader.name, form))
+            raise ValueError("declaration %s field holds names the form %s, which mappings do not state"
+                             % (reader.name, form))
         result.update(times(reader, form, holds))
     if fields["known"] is not None:
         result["known"] = reader.moments(fields["known"], "known")

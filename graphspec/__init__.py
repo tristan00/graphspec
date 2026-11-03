@@ -15,7 +15,7 @@ from .build.mapping_windows import EVERY
 from .build.mappings import MAPPINGS, Mapping, decisions, edges, graphs, mapping, nodes, sets, tasks
 from .build.output import Stage
 from .build.planning import BuildPlan
-from .build.presence import PRESENCE
+from .build.presence import BETWEEN, PRESENCE
 from .build.readers import READERS, Source, source
 from .build.table_types import TABLES, Frame
 from .build.tables import (
@@ -61,6 +61,7 @@ ship(REGISTRIES)
 
 __all__ = [
     "ABOUT",
+    "BETWEEN",
     "DISTANCES",
     "ENCODERS",
     "EVERY",

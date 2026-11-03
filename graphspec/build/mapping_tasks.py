@@ -7,7 +7,8 @@ from .mapping_build import EdgeStated, End, SetStated, Stated
 from .mapping_rows import Reader, joined, spelled
 from .mapping_windows import Window, every
 from .mappings import Mapping, tabled
-from .presence import ruled
+from .presence import PRESENCE
+from .table_types import ruled
 
 SKIP = object()
 POINTS = ("tau", "series", "y")
@@ -47,8 +48,9 @@ def one(reader, text, field, outcome=False):
 
 class Reference:
     @timed("mapping_tasks.Reference")
-    def __init__(self, reader, name, stated):
+    def __init__(self, mapped, reader, name, stated):
         self.name, self.sort, self.stated = name, stated["sort"], stated
+        self.label, self.field, self.serves = reader.name, "references." + name, "references"
         self.where = "declaration %s field references.%s" % (reader.name, name)
         self.rows = [reader.row(place) for place in range(reader.count)]
         self.raw = [()] * reader.count
@@ -56,8 +58,10 @@ class Reference:
             return
         field = "references.%s." % name
         self.rule, self.parameters = ruled(stated["absent"], self.where + ".absent")
+        if self.sort != "node":
+            mapped.rule(self)
         if self.sort == "node":
-            self.end = End(reader, stated, "references." + name)
+            self.end = End(mapped, reader, stated, self.field, "references")
             self.raw = self.end.keys
         elif self.sort in ("nodes", "subgraph"):
             self.keys = reader.listed(stated["keys"], field + "keys")
@@ -96,12 +100,12 @@ class Reference:
     @timed("mapping_tasks.Reference.found")
     def found(self, mapped, place, graph, kinds, key, since):
         held = mapped.find(graph, kinds, key)
-        if len(held) == 1:
+        if len(held) > 1:
+            raise ValueError("%s row %d names the key %s, which several kinds hold" % (self.where, self.rows[place], key))
+        if held and mapped.present(graph, held[0], key, since):
             mapped.note(graph, held[0], key)
             return key
-        if held:
-            raise ValueError("%s row %d names the key %s, which several kinds hold" % (self.where, self.rows[place], key))
-        stand = mapped.absent(self.where, self.rule, self.parameters, key, since, self.rows[place])
+        stand = mapped.absent(self, key, since, self.rows[place])
         if stand is not None and len(mapped.find(graph, kinds, stand)) != 1:
             raise ValueError("%s row %d: the rule %s gives %s, which names no one node"
                              % (self.where, self.rows[place], self.rule, stand))
@@ -115,8 +119,7 @@ class Reference:
                              % (self.where, self.rows[place], source, target))
         if relations:
             return [source, relations[0], target]
-        stand = mapped.absent(self.where, self.rule, self.parameters, "%s-%s" % (source, target), since,
-                              self.rows[place])
+        stand = mapped.absent(self, "%s-%s" % (source, target), since, self.rows[place])
         if stand is not None:
             raise ValueError("%s: the rule %s stands no other edge for an edge" % (self.where, self.rule))
         return None
@@ -125,7 +128,7 @@ class Reference:
     def keyed(self, mapped, place, graph, edges, key, since):
         entries = edges.index.get((graph, key))
         if entries is None:
-            if mapped.absent(self.where, self.rule, self.parameters, key, since, self.rows[place]) is not None:
+            if mapped.absent(self, key, since, self.rows[place]) is not None:
                 raise ValueError("%s: the rule %s stands no other edge for an edge" % (self.where, self.rule))
             return None
         _, source, target, relation = entries[0]
@@ -203,7 +206,8 @@ class Asked(Stated):
             self.width = kind.width
             self.signal = [[None] * kind.width if value is None else list(value) for value in values]
         self.columns, self.values = reader.features(fields.get("features"))
-        self.references = {name: Reference(reader, name, stated) for name, stated in fields["references"].items()}
+        self.references = {name: Reference(mapped, reader, name, stated)
+                           for name, stated in fields["references"].items()}
 
     @timed("mapping_tasks.Asked.eligible")
     def eligible(self, mapped, reader, session):
@@ -261,9 +265,11 @@ class Asked(Stated):
         if mapped.signals and self.width and mapped.signals != self.width:
             raise ValueError("%s states signals of a width other kinds of task do not" % self.where)
         mapped.signals = mapped.signals or self.width
+        kept = any(PRESENCE.named(reference.rule).keeps for reference in self.references.values()
+                   if reference.sort != "graph")
         mapped.tasks[self.label] = dict(
             references=list(self.references), columns=list(self.columns), target=target, weight="weight" in self.fields,
-            absent="stop", event=plain(self.fields.get("event")), matures=plain(self.fields.get("matures")))
+            absent="keep" if kept else "stop", event=plain(self.fields.get("event")), matures=plain(self.fields.get("matures")))
 
     @timed("mapping_tasks.Asked.task")
     def task(self, mapped, graph, key, place, references, target, known):

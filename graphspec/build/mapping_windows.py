@@ -9,11 +9,11 @@ import pyarrow.compute as pc
 from graphspec.infra.timing import timed
 from graphspec.registries import Names
 
-from .database import Part, ruled
+from .database import Part
 from .expression_types import Kind
 from .mapping_rows import Reader, joined
 from .mappings import Mapping
-from .table_types import Frame, generated, take
+from .table_types import Frame, generated, ruled, take
 
 LOG = logging.getLogger(__name__)
 EVERY = Names("rule of the rows of tasks", True)

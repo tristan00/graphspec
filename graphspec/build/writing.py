@@ -451,7 +451,7 @@ def verified(directory, expected):
 
 @exclusive
 @timed("writing.stage")
-def stage(case, output, name, plan, reuse=False):
+def stage(case, output, name, plan, presence, reuse=False):
     started = time.perf_counter()
     plan = stated(plan)
     if size(case["schema"]) * 4 > plan.worker_bytes // 4:
@@ -495,7 +495,9 @@ def stage(case, output, name, plan, reuse=False):
                     stage_sha256=sha256_file(directory / "stage.json"),
                     declarations=case["schema"], schema=case["schema"], plan=plan.mapping(), graphs=graphs,
                     vocabularies={name: sorted(values) for name, values in sorted(vocabularies.items())},
-                    skipped_references=0)
+                    skipped_references=0,
+                    presence={label: {field: dict(sorted(rules.items())) for field, rules in sorted(fields.items())}
+                              for label, fields in sorted(presence.items())})
     write_json(directory / "build.json", manifest)
     write_json(task, task_record)
     LOG.info("stage exit graphs=%d workers=%d seconds=%.4f", len(graphs), plan.workers, time.perf_counter() - started)

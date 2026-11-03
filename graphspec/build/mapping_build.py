@@ -13,12 +13,12 @@ from .database import Part, owner
 from .database_build import expanded
 from .expression_types import UNSTATED
 from .expressions import custom_argument
-from .mapping_rows import Reader, following, joined, when
+from .mapping_rows import Reader, aged, following, joined, sighted, when
 from .mappings import MAPPINGS, Linked, Mapping, tabled
-from .presence import PRESENCE, ruled
+from .presence import PRESENCE
 from .readers import Source
 from .table_session import Session
-from .table_types import Context, working
+from .table_types import Context, ruled, working
 from .tables import Table
 
 LOG = logging.getLogger(__name__)
@@ -28,13 +28,14 @@ FACTS = ("nodes", "edges", "sets")
 
 @timed("mapping_build.facts")
 def facts(reader, fields, mapped):
-    stated = when(reader, fields, mapped.timed, mapped.clocks)
     graphs = reader.texts(fields["graph"], "graph") if "graph" in fields else [None] * reader.count
     for graph in graphs:
         if graph is not None:
             named(graph, "declaration %s field graph" % reader.name)
-    return [dict({name: stated[name][place] for name in stated}, graph=graphs[place], row=reader.row(place))
-            for place in range(reader.count)]
+    reader, graphs, sightings, ages = sighted(reader, fields, graphs, mapped.timed)
+    stated = when(reader, fields, mapped.timed, mapped.clocks, sightings)
+    return reader, [dict({name: stated[name][place] for name in stated}, graph=graphs[place], row=reader.row(place))
+                    for place in range(reader.count)], ages
 
 
 @timed("mapping_build.inputs")
@@ -51,12 +52,14 @@ def inputs(statement):
 
 class End:
     @timed("mapping_build.End")
-    def __init__(self, reader, stated, where, missing="stop", creatable=False):
-        self.where, self.creatable = "declaration %s field %s" % (reader.name, where), creatable
+    def __init__(self, mapped, reader, stated, field, serves, missing="stop"):
+        self.label, self.field, self.serves = reader.name, field, serves
+        self.where = "declaration %s field %s" % (reader.name, field)
         self.targets = list(stated["of"]) if isinstance(stated["of"], (list, tuple)) else [stated["of"]]
-        self.keys = reader.texts(stated["key"], where + ".key", missing=missing)
-        self.chosen = reader.texts(stated["kind"], where + ".kind") if "kind" in stated else None
+        self.keys = reader.texts(stated["key"], field + ".key", missing=missing)
+        self.chosen = reader.texts(stated["kind"], field + ".kind") if "kind" in stated else None
         self.rule, self.parameters = ruled(stated["absent"], self.where + ".absent")
+        mapped.rule(self)
         self.rows = [reader.row(place) for place in range(reader.count)]
 
     @timed("mapping_build.End.kinds")
@@ -79,19 +82,14 @@ class End:
         if len(found) > 1:
             raise ValueError("%s row %d names the key %s, which the kinds %s all hold"
                              % (self.where, self.rows[place], joined(key), ", ".join(found)))
-        if found:
+        if found and mapped.present(graph, found[0], joined(key), fact["since"]):
             mapped.note(graph, found[0], joined(key))
             return found[0], joined(key)
-        entry = PRESENCE.named(self.rule)
-        try:
-            (stand,) = entry([joined(key)], [fact["since"]], self.parameters)
-        except ValueError as error:
-            raise ValueError("%s row %d key %s: %s" % (self.where, self.rows[place], joined(key), error)) from error
-        mapped.count(self.where, self.rule)
+        stand = mapped.absent(self, joined(key), fact["since"], self.rows[place])
         if stand is None:
             return None
-        if entry.creates:
-            if not self.creatable or len(kinds) != 1 or graph is None:
+        if PRESENCE.named(self.rule).creates:
+            if len(kinds) != 1 or graph is None:
                 raise ValueError("%s states the rule %s, which makes a node only for an end of edges or a member of "
                                  "sets naming one kind in one graph" % (self.where, self.rule))
             mapped.create(graph, kinds[0], stand, fact, self.targets[0])
@@ -138,8 +136,12 @@ class NodeStated(Stated):
             if name in fields:
                 raise ValueError("declaration %s states %s; the base layer states no held graphs" % (label, name))
         reader = Reader(session, statement.table, label, mapped.plan).where(fields.get("where"))
-        stated = facts(reader, fields, mapped)
+        reader, stated, ages = facts(reader, fields, mapped)
         self.columns, values = reader.features(fields.get("features"))
+        if ages is not None and "distinct" in fields:
+            raise ValueError("declaration %s states distinct, which takes no features, and the rule carried adds one"
+                             % label)
+        aged(ages, self.columns, values, "declaration %s field features" % label)
         self.graphs = [fact["graph"] for fact in stated]
         if "distinct" in fields:
             found, rows = set(), []
@@ -170,7 +172,7 @@ class NodeStated(Stated):
             if type(link) is str:
                 self.links[name] = reader.texts(link, "links." + name, missing="omit")
             else:
-                self.links[name] = End(reader, link, "links." + name, missing="omit")
+                self.links[name] = End(mapped, reader, link, "links." + name, "links", missing="omit")
         self.owners = tuple(self.made_kinds)
         self.reader = reader
         changing = [place for place, row in enumerate(self.rows) if row[2]["form"] == "change"]
@@ -191,7 +193,7 @@ class NodeStated(Stated):
     def made(self, mapped):
         where, held = "declaration %s" % self.label, {}
         for kind, key, fact, _ in self.rows:
-            mapped.make(fact["graph"], kind, key, where)
+            mapped.make(fact["graph"], kind, key, where, (fact["since"], fact["until"]))
             if held.setdefault((fact["graph"], joined(key)), kind) != kind:
                 raise ValueError("%s states the key %s under the kinds %s and %s; its keys are unique across them"
                                  % (where, joined(key), held[(fact["graph"], joined(key))], kind))
@@ -202,7 +204,7 @@ class NodeStated(Stated):
                                      "also bears" % (self.label, name))
                 for (_, _, fact, _), key in zip(self.rows, link):
                     if key is not None:
-                        mapped.make(fact["graph"], name, key, where)
+                        mapped.make(fact["graph"], name, key, where, (None, None))
 
     @timed("mapping_build.NodeStated.resolve")
     def resolve(self, mapped):
@@ -251,11 +253,12 @@ class EdgeStated(Stated):
         if "inside" in fields:
             raise ValueError("declaration %s states inside; the base layer states no held graphs" % label)
         reader = Reader(session, statement.table, label, mapped.plan).where(fields.get("where"))
-        self.facts = facts(reader, fields, mapped)
+        reader, self.facts, ages = facts(reader, fields, mapped)
         self.columns, self.values = reader.features(fields.get("features"))
+        aged(ages, self.columns, self.values, "declaration %s field features" % label)
         self.graphs = [fact["graph"] for fact in self.facts]
-        self.source = End(reader, fields["source"], "source", creatable=True)
-        self.target = End(reader, fields["target"], "target", creatable=True)
+        self.source = End(mapped, reader, fields["source"], "source", "ends")
+        self.target = End(mapped, reader, fields["target"], "target", "ends")
         self.relations = reader.texts(fields["relation"], "relation") if "relation" in fields else None
         self.present = [True] * reader.count
         if "present" in fields:
@@ -309,7 +312,8 @@ class EdgeStated(Stated):
                 if entries and entries[0][1:4] != (source, target, self.named_relation(place)):
                     raise ValueError("declaration %s states the key %s of two different edges" % (self.label, key))
                 entries.append((fact, source, target, self.named_relation(place)))
-                mapped.make(fact["graph"], self.label + ".edge", key, "declaration " + self.label)
+                mapped.make(fact["graph"], self.label + ".edge", key, "declaration " + self.label,
+                            (fact["since"], fact["until"]))
 
     @timed("mapping_build.EdgeStated.relation")
     def relation(self, place):
@@ -359,8 +363,9 @@ class SetStated(Stated):
         fields = self.fields = statement.fields
         self.label = label
         reader = Reader(session, statement.table, label, mapped.plan).where(fields.get("where"))
-        self.facts = facts(reader, fields, mapped)
+        reader, self.facts, ages = facts(reader, fields, mapped)
         self.columns, self.values = reader.features(fields.get("features"))
+        aged(ages, self.columns, self.values, "declaration %s field features" % label)
         self.keys = reader.texts(fields["key"], "key")
         self.graphs = [fact["graph"] for fact in self.facts]
         self.members, self.member_columns = [], {}
@@ -369,7 +374,7 @@ class SetStated(Stated):
             columns, values = rows.features(member.get("features"), "members.%d.features" % place)
             self.member_columns.update(columns)
             self.members.append((rows.texts(member["set"], "members.%d.set" % place),
-                                 End(rows, member["node"], "members.%d.node" % place, creatable=True),
+                                 End(mapped, rows, member["node"], "members.%d.node" % place, "ends"),
                                  rows.texts(member["role"], "members.%d.role" % place), values))
         self.owners = (label,)
 
@@ -381,7 +386,7 @@ class SetStated(Stated):
     def made(self, mapped):
         mapped.setkinds.add(self.label)
         for fact, key in zip(self.facts, self.keys):
-            mapped.make(fact["graph"], self.label, key, "declaration " + self.label)
+            mapped.make(fact["graph"], self.label, key, "declaration " + self.label, (fact["since"], fact["until"]))
 
     @timed("mapping_build.SetStated.resolve")
     def resolve(self, mapped):
@@ -504,7 +509,7 @@ class Mapped:
         self.columns, self.kinded, self.sets, self.edges, self.graph_columns = {}, {}, {}, {}, []
         self.references, self.tasks, self.grouping, self.signals = {}, {}, None, 0
         self.graphs, self.unit, self.model, self.ties, self.current = [], None, "none", None, None
-        self.made, self.keyed, self.numbers = set(), {}, {}
+        self.made, self.keyed, self.numbers, self.spans = set(), {}, {}, {}
 
     @timed("mapping_build.Mapped.names")
     def names(self):
@@ -583,7 +588,7 @@ class Mapped:
         return list(self.graphs) if graph is None else [graph]
 
     @timed("mapping_build.Mapped.make")
-    def make(self, graph, kind, key, where):
+    def make(self, graph, kind, key, where, span):
         for held in self.graphed(graph):
             found = self.keys.setdefault((held, kind), {})
             text = joined(key)
@@ -591,11 +596,19 @@ class Mapped:
                 raise ValueError("%s states two keys of the kind %s, %r and %r, that the bank cannot tell apart"
                                  % (where, kind, found[text], key))
             found[text] = key
+            self.spans.setdefault((held, kind, text), []).append(span)
 
     @timed("mapping_build.Mapped.find")
     def find(self, graph, kinds, key):
         text = joined(key)
         return [kind for kind in kinds if text in self.keys.get((graph, kind), {})]
+
+    @timed("mapping_build.Mapped.present")
+    def present(self, graph, kind, key, moment):
+        if self.model == "none" or moment is None:
+            return True
+        return any((since is None or since <= moment) and (until is None or moment < until)
+                   for since, until in self.spans[(graph, kind, key)])
 
     @timed("mapping_build.Mapped.kinds")
     def kinds(self, target, where):
@@ -622,25 +635,39 @@ class Mapped:
 
     @timed("mapping_build.Mapped.create")
     def create(self, graph, kind, key, fact, target):
-        self.make(graph, kind, key, "a node made by create")
         always = isinstance(target, Linked)
         held = dict(fact, form="state", seq=0, until=None if always else fact["until"],
                     since=None if always else fact["since"])
         if always:
             held.update(known=None, replaced=None, seen=None)
+        if (graph, kind, key) not in self.created:
+            self.make(graph, kind, key, "a node made by create", (held["since"], held["until"]))
         self.created.setdefault((graph, kind, key), held)
 
-    @timed("mapping_build.Mapped.absent")
-    def absent(self, where, rule, parameters, key, since, row):
-        entry = PRESENCE.named(rule)
-        if entry.creates:
-            raise ValueError("%s states the rule %s, which makes a node only for an end of edges or a member of sets"
-                             % (where, rule))
+    @timed("mapping_build.Mapped.rule")
+    def rule(self, stated):
+        where = "declaration %s field %s.absent" % (stated.label, stated.field)
         try:
-            (stand,) = entry([key], [since], parameters)
+            entry = PRESENCE.named(stated.rule)
+        except KeyError as error:
+            raise ValueError("%s: %s" % (where, error.args[0])) from error
+        if entry.creates and stated.serves != "ends":
+            raise ValueError("%s states the rule %s, which makes a node only for an end of edges or a member of sets"
+                             % (where, stated.rule))
+        if entry.keeps and stated.serves != "references":
+            raise ValueError("%s states the rule %s, which keeps a reference only for a reference of tasks or "
+                             "decisions" % (where, stated.rule))
+        held = self.builder.counts.setdefault(stated.label, {}).setdefault(stated.field, {})
+        held.setdefault(stated.rule, 0)
+
+    @timed("mapping_build.Mapped.absent")
+    def absent(self, stated, key, since, row):
+        try:
+            (stand,) = PRESENCE.named(stated.rule)([key], [since], stated.parameters)
         except ValueError as error:
-            raise ValueError("%s row %d key %s: %s" % (where, row, key, error)) from error
-        self.count(where, rule)
+            raise ValueError("declaration %s field %s row %d key %s: %s"
+                             % (stated.label, stated.field, row, key, error)) from error
+        self.builder.counts[stated.label][stated.field][stated.rule] += 1
         return stand
 
     @timed("mapping_build.Mapped.numbered")
@@ -650,11 +677,6 @@ class Mapped:
             raise ValueError("%s names two tasks of the graph %s by the key %s" % (where, graph, key))
         held[(kind, key)] = len(held)
         return held[(kind, key)]
-
-    @timed("mapping_build.Mapped.count")
-    def count(self, where, rule):
-        held = self.builder.counts.setdefault(where, {})
-        held[rule] = held.get(rule, 0) + 1
 
     @timed("mapping_build.Mapped.column")
     def column(self, name, spec, label):
