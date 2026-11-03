@@ -13,6 +13,7 @@ from .database import Part, owner
 from .database_build import expanded
 from .expression_types import UNSTATED
 from .expressions import custom_argument
+from .invalid import placed
 from .mapping_known import NEVER, Knowing, read, shown
 from .mapping_rows import EARLY, Reader, aged, following, joined, knowable, learned, sighted, when
 from .mappings import MAPPINGS, Linked, Mapping, tabled
@@ -93,14 +94,28 @@ def edged(late, facts, values, label):
 
 @timed("mapping_build.inputs")
 def inputs(statement):
-    found = [statement.table] if tabled(statement.table) else []
+    found = [(None, statement.table)] if tabled(statement.table) else []
     fields = statement.fields
-    found += [member["rows"] for member in fields.get("members") or ()]
-    found += [fields[name]["rows"] for name in ("options", "actions") if name in fields]
+    found += [("members.%d.rows" % place, member["rows"]) for place, member in enumerate(fields.get("members") or ())]
+    found += [(name + ".rows", fields[name]["rows"]) for name in ("options", "actions") if name in fields]
     target = fields.get("target") or {}
-    found += [stated["rows"] for stated in (fields.get("earlier"), target.get("later"))
+    found += [(name + ".rows", stated["rows"]) for name, stated in (("earlier", fields.get("earlier")),
+                                                                    ("target.later", target.get("later")))
               if isinstance(stated, Held) and "rows" in stated]
     return found
+
+
+@timed("mapping_build.needs")
+def needs(value):
+    if isinstance(value, Linked):
+        return [value.mapping]
+    if isinstance(value, (Mapping, Source, Table, Part)):
+        return [value]
+    if isinstance(value, Held):
+        return [found for item in value.values() for found in needs(item)]
+    if isinstance(value, (list, tuple)):
+        return [found for item in value for found in needs(item)]
+    return []
 
 
 class End:
@@ -179,6 +194,10 @@ class Stated:
     def kinds(self, where):
         raise ValueError("%s names under of a mapping that makes no node" % where)
 
+    @timed("mapping_build.Stated.held")
+    def held(self, mapped):
+        return []
+
 
 class NodeStated(Stated):
     @timed("mapping_build.NodeStated")
@@ -243,6 +262,11 @@ class NodeStated(Stated):
         if "of" in self.fields:
             raise ValueError("%s names under of the nodes %s, which states of" % (where, self.label))
         return self.made_kinds
+
+    @timed("mapping_build.NodeStated.held")
+    def held(self, mapped):
+        return [((graph, kind, joined(key)), "the node %s of the kind %s" % (joined(key), kind), frozenset(values), fact)
+                for kind, key, fact, values in self.rows for graph in mapped.graphed(fact["graph"])]
 
     @timed("mapping_build.NodeStated.made")
     def made(self, mapped):
@@ -374,6 +398,13 @@ class EdgeStated(Stated):
                 mapped.make(fact["graph"], self.label + ".edge", key, "declaration " + self.label,
                             (fact["since"], fact["until"]))
 
+    @timed("mapping_build.EdgeStated.held")
+    def held(self, mapped):
+        return [((fact["graph"], self.relation(place), source, target, self.present[place]),
+                 "the edge of %s from %s to %s" % (self.named_relation(place), source[1], target[1]), frozenset(),
+                 fact)
+                for place, fact, source, target in self.rows]
+
     @timed("mapping_build.EdgeStated.relation")
     def relation(self, place):
         return self.label if self.relations is None else (self.label, self.relations[place])
@@ -444,6 +475,13 @@ class SetStated(Stated):
     @timed("mapping_build.SetStated.kinds")
     def kinds(self, where):
         return [self.label]
+
+    @timed("mapping_build.SetStated.held")
+    def held(self, mapped):
+        return [((graph, self.label, joined(key)), "the set edge %s of the kind %s" % (joined(key), self.label),
+                 frozenset(values), fact)
+                for fact, key, values in zip(self.facts, self.keys, self.values)
+                for graph in mapped.graphed(fact["graph"])]
 
     @timed("mapping_build.SetStated.made")
     def made(self, mapped):
@@ -540,15 +578,18 @@ class CustomStated(Stated):
 
 class Mapped:
     @timed("mapping_build.Mapped")
-    def __init__(self, builder, plan, name):
-        self.builder, self.plan, self.name = builder, plan, name
+    def __init__(self, builder, plan, name, errors):
+        self.builder, self.plan, self.name, self.errors = builder, plan, name, errors
         declared = [(label, value) for label, value in builder.declarations.items() if isinstance(value, Mapping)]
-        generated, self.represented, aliases, follows = expanded(builder.declarations, declared, builder.sources)
-        self.statements = []
+        generated, self.represented, aliases, follows = expanded(builder.declarations, declared, builder.sources,
+                                                                 errors)
+        self.statements, errors.order = [], []
         for label, value in builder.declarations.items():
+            errors.order.append(label)
             if isinstance(value, Mapping):
                 self.statements += [(label, value)] + follows.get(id(value), [])
             self.statements += generated.get(label, [])
+            errors.order += [held for held, _ in self.statements if held not in errors.order]
         self.labels = {id(value): label for label, value in builder.declarations.items()}
         for label, value in self.statements:
             if id(value) not in self.labels and label in builder.declarations:
@@ -586,18 +627,103 @@ class Mapped:
 
     @timed("mapping_build.Mapped.tables")
     def tables(self):
-        found = {name: value for name, value in self.builder.declarations.items() if isinstance(value, (Source, Table))}
-        found.update(self.aliased)
-        held = {id(value) for value in found.values()}
+        found = [(label, value, label) for label, value in self.builder.declarations.items()
+                 if isinstance(value, (Source, Table))]
+        found += [(name, value, name.split(".")[0]) for name, value in self.aliased.items()]
+        held = {id(value) for _, value, _ in found}
         for label, statement in self.statements:
-            for place, value in enumerate(inputs(statement)):
+            if self.blocked(statement):
+                self.errors.skip(label, statement)
+                continue
+            for field, value in inputs(statement):
                 value = self.aliases.get(id(value), value)
                 if isinstance(value, Part):
-                    raise ValueError("declaration %s reads a table of a database that is not stated" % label)
+                    self.errors.add(label, statement, (), ValueError(
+                        "declaration %s reads a table of a database that is not stated" % label))
+                    break
                 if id(value) not in held:
                     held.add(id(value))
-                    found["%s.rows%d" % (label, place)] = value
+                    found.append((label if field is None else "%s.%s" % (label, field), value, label))
         return found
+
+    @timed("mapping_build.Mapped.depends")
+    def depends(self, value):
+        if isinstance(value, Mapping):
+            return [found for held in needs(value.table) + needs(value.fields)
+                    for found in (self.depends(held) if isinstance(held, Part) else [held])]
+        if isinstance(value, Part):
+            held = [owner(value)[0], self.aliases.get(id(value)), self.represented.get(id(value), (None, None))[1]]
+            return [found for found in held if found is not None]
+        return []
+
+    @timed("mapping_build.Mapped.blocked")
+    def blocked(self, value):
+        return any(id(found) in self.errors.failed for found in self.depends(value))
+
+    @timed("mapping_build.Mapped.placed")
+    def placed(self, statement):
+        return [place for _, table in inputs(statement) for place in placed(self.aliases.get(id(table), table))]
+
+    @timed("mapping_build.Mapped.checked")
+    def checked(self, label, statement, work, *arguments):
+        self.errors.checked(label, statement, self.depends(statement), list(dict.fromkeys(self.placed(statement))),
+                            work, *arguments)
+
+    @timed("mapping_build.Mapped.collided")
+    def collided(self):
+        if any(statement.fields.get("ties") is not None for _, statement in self.statements):
+            return
+        groups, pairs = {}, {}
+        for label, statement in self.statements:
+            if id(statement) in self.errors.failed or id(statement) not in self.stated:
+                continue
+            for identity, text, scope, fact in self.stated[id(statement)].held(self):
+                if fact["row"] is not None:
+                    text += " of graph %s" % identity[0] if len(self.graphs) > 1 else ""
+                    groups.setdefault((identity, fact["since"]), []).append((label, statement, text, scope, fact))
+        for held in groups.values():
+            if len(held) < 2:
+                continue
+            for column in set().union(*(entry[3] for entry in held)) | {None}:
+                ordered = sorted((entry for entry in held if column in entry[3] or column is None and not entry[3]),
+                                 key=self.known)
+                for first, second in zip(ordered, ordered[1:]):
+                    ending = NEVER if first[4]["replaced"] is None else first[4]["replaced"]
+                    if self.known(second) < ending:
+                        found = pairs.setdefault((first[0], second[0]), (first, second, set()))
+                        found[2].add((id(first[4]), id(second[4])))
+        for first, second, found in pairs.values():
+            rows = (first[4]["row"], second[4]["row"])
+            where = "declaration %s field ties %s" % (first[0], "rows %d and %d" % rows if first[0] == second[0] else
+                                                      "row %d and declaration %s row %d" % (rows[0], second[0], rows[1]))
+            since = first[4]["since"]
+            self.errors.add(first[0], first[1], list(dict.fromkeys(self.placed(first[1]) + self.placed(second[1]))),
+                            ValueError("%s: two facts about %s hold from %s and are known together from %s; the "
+                                       "mappings state no rule for ties%s" % (
+                                           where, first[2], "before every time" if since is None else "the time %d" % since,
+                                           shown(self.known(second)),
+                                           "" if len(found) == 1 else ", nor for %d other such pairs" % (len(found) - 1))))
+
+    @timed("mapping_build.Mapped.known")
+    def known(self, entry):
+        return learned(dict(since=[entry[4]["since"]], known=[entry[4]["known"]]))[0]
+
+    @timed("mapping_build.Mapped.evaluate")
+    def evaluate(self, label, statement, session):
+        entry = MAPPINGS.named(statement.word)
+        with working(Context(label, self.plan, session.unit, session.retained())):
+            self.stated[id(statement)] = entry.evaluate(self, label, statement, session) \
+                if hasattr(entry, "evaluate") else CustomStated(self, label, statement, session)
+
+    @timed("mapping_build.Mapped.step")
+    def step(self, statement, name, *arguments):
+        self.current = statement
+        getattr(self.stated[id(statement)], name)(self, *arguments)
+
+    @timed("mapping_build.Mapped.steps")
+    def steps(self, name, *arguments):
+        for label, statement in self.statements:
+            self.checked(label, statement, self.step, statement, name, *arguments)
 
     @timed("mapping_build.Mapped.run")
     def run(self):
@@ -605,9 +731,10 @@ class Mapped:
         tables = self.tables()
         if not tables:
             raise ValueError("the mappings of the builder read no table")
-        with Session(tables, self.builder.sources, self.plan, aliases=self.aliases) as session:
-            for value in tables.values():
-                session.get(value)
+        with Session({name: value for name, value, _ in tables}, self.builder.sources, self.plan,
+                     aliases=self.aliases) as session:
+            for _, value, label in tables:
+                self.errors.read(session, value, label, self.labels)
             session.knowing = Knowing(session, self.plan)
             self.carried(session)
             self.unit = None if session.unit is UNSTATED else session.unit
@@ -616,16 +743,13 @@ class Mapped:
             if self.clocks and self.model != "clocks":
                 raise ValueError("the mappings state known or replaced, which needs graphs counted on a clock")
             for label, statement in self.statements:
-                entry = MAPPINGS.named(statement.word)
-                with working(Context(label, self.plan, session.unit, session.retained())):
-                    self.stated[id(statement)] = entry.evaluate(self, label, statement, session) \
-                        if hasattr(entry, "evaluate") else CustomStated(self, label, statement, session)
+                self.checked(label, statement, self.evaluate, label, statement, session)
         self.declared_graphs()
-        for stated in self.stated.values():
-            stated.made(self)
-        for _, statement in self.statements:
-            self.current = statement
-            self.stated[id(statement)].resolve(self)
+        self.steps("made")
+        self.steps("resolve")
+        self.steps("schema")
+        self.collided()
+        self.errors.raised()
         self.builder.schema(self.schema())
         for graph in self.graphs:
             columns = self.attributes.get(graph, {}) if self.graph_columns else {}
@@ -636,8 +760,8 @@ class Mapped:
             if phase == "created":
                 for (graph, kind, key), fact in self.created.items():
                     self.node(kind, key, fact, {})
-            for _, statement in self.statements:
-                self.stated[id(statement)].issue(self, phase)
+            self.steps("issue", phase)
+        self.errors.raised()
         LOG.info("mapped exit statements=%d graphs=%d seconds=%.3f", len(self.statements), len(self.graphs),
                  time.perf_counter() - started)
 
@@ -645,7 +769,7 @@ class Mapped:
     def carried(self, session):
         ending = set()
         for _, statement in self.statements:
-            if statement.word not in FACTS:
+            if statement.word not in FACTS or id(statement) in self.errors.failed or self.blocked(statement):
                 continue
             fields, frame = statement.fields, session.get(statement.table)
             holds = fields.get("holds")
@@ -809,9 +933,6 @@ class Mapped:
 
     @timed("mapping_build.Mapped.schema")
     def schema(self):
-        for _, statement in self.statements:
-            self.current = statement
-            self.stated[id(statement)].schema(self)
         self.ties = self.tied()
         result = dict(
             version=VERSION,

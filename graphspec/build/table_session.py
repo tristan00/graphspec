@@ -26,6 +26,10 @@ from .tables import Table
 LOG = logging.getLogger(__name__)
 
 
+class Unread(ValueError):
+    pass
+
+
 @timed("table_session.collect")
 def collect(declarations, target=None, name=None):
     names, nodes, active = {}, {}, set()
@@ -54,7 +58,7 @@ def collect(declarations, target=None, name=None):
         active.add(identity)
         pending.append((declaration, names[identity], True))
         if isinstance(declaration, Table):
-            pending.extend((value, "%s.input%d" % (names[identity], index), False)
+            pending.extend((value, "%s.inputs.%d" % (names[identity], index), False)
                            for index, value in reversed(tuple(enumerate(declaration.inputs))))
     if len(set(names.values())) != len(names):
         raise ValueError("table declaration names collide with an implicit input declaration")
@@ -292,8 +296,12 @@ class Session:
             context.check(result.nbytes * 4, "retaining complete table")
             self.frames[identity] = result
             return result
+        except Unread:
+            raise
         except Exception as error:
-            raise ValueError("table %s: %s" % (name, error)) from error
+            where = "table %s" % name if isinstance(declaration, Table) else "source %s (%s)" % (name, declaration.place)
+            text = str(error)
+            raise Unread(text if text.startswith(where) else "%s: %s" % (where, text)) from error
         finally:
             self.pending.remove(identity)
 

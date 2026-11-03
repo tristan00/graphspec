@@ -1,6 +1,7 @@
 import copy
 import logging
 import time
+from collections import deque
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER, UNITED
 
 from . import records
+from .invalid import Errors, Invalid, placed
 from .readers import Source, SourceSession, declarations, namespace, typed
 from .table_session import Session as TableSession
 from .table_session import batches as table_batches
@@ -317,7 +319,14 @@ class Builder:
             raise ValueError("the builder has already mapped its declarations")
         if self.stated is not None:
             raise ValueError("a builder whose declarations hold mappings states its schema through them")
-        Mapped(self, plan, name).run()
+        errors = Errors(self.declarations)
+        try:
+            Mapped(self, plan, name, errors).run()
+        except Invalid:
+            raise
+        except ValueError as error:
+            errors.add(None, self, (), error)
+            errors.raised()
         self.mapped = True
         return self
 
@@ -446,16 +455,33 @@ class Builder:
 
     @timed("builder.check_sources")
     def check_sources(self, plan):
+        errors = Errors(self.declarations)
         if any(isinstance(declaration, Table) for declaration in self.declarations.values()):
+            labels = {id(declaration): name for name, declaration in self.declarations.items()}
             with TableSession(self.declarations, self.sources, plan) as session:
-                for declaration in self.declarations.values():
+                for name, declaration in self.declarations.items():
                     if isinstance(declaration, (Source, Table)):
-                        session.get(declaration)
+                        errors.read(session, declaration, name, labels)
+            errors.raised()
             return
         sources = {name: declaration for name, declaration in self.declarations.items() if isinstance(declaration, Source)}
         if not sources:
             return
         with SourceSession(sources, self.sources, plan) as session:
             for name, declaration in sources.items():
-                for _ in typed(declaration, self.sources, plan, name, sources, session):
-                    pass
+                errors.checked(name, declaration, (), placed(declaration), deque,
+                               typed(declaration, self.sources, plan, name, sources, session), 0)
+        errors.raised()
+
+
+@timed("builder.validate")
+def validate(builder, plan):
+    from .planning import stated
+
+    started = time.perf_counter()
+    plan = stated(plan)
+    if builder.pending():
+        Builder(builder.declarations, builder.sources).map(plan, "validated")
+    else:
+        builder.check_sources(plan)
+    LOG.info("validate exit declarations=%d seconds=%.4f", len(builder.declarations), time.perf_counter() - started)

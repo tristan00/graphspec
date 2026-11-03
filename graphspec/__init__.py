@@ -4,13 +4,14 @@ initialize_storage()
 identities()
 compiled()
 
-from .build.builder import Builder
+from .build.builder import Builder, validate
 from .build.calls import GraphTables, write_task
 from .build.database import TIMES, Database, database
 from .build.expression_types import FUNCTIONS
 from .build.expressions import evaluate
 from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
+from .build.invalid import Invalid
 from .build.mapping_windows import EVERY
 from .build.mappings import MAPPINGS, Mapping, decisions, edges, graphs, mapping, nodes, sets, tasks
 from .build.output import Stage
@@ -106,6 +107,7 @@ __all__ = [
     "Source",
     "Table",
     "Frame",
+    "Invalid",
     "Mapping",
     "Database",
     "database",
@@ -137,5 +139,6 @@ __all__ = [
     "table",
     "union",
     "unpivot",
+    "validate",
     "write_task",
 ]

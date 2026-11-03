@@ -303,13 +303,17 @@ class Expansion:
 
 
 @timed("database_build.expanded")
-def expanded(declarations, statements, sources):
+def expanded(declarations, statements, sources, errors):
     started = time.perf_counter()
     result, represented, aliases, follows = [], {}, {}, {}
     for label, value in declarations.items():
         if isinstance(value, Database):
-            expansion = Expansion(value, label, statements, sources)
-            generated, made, after = expansion.expand()
+            try:
+                expansion = Expansion(value, label, statements, sources)
+                generated, made, after = expansion.expand()
+            except ValueError as error:
+                errors.add(label, value, (str(stated(value)["place"]),), error)
+                continue
             result.append((label, generated))
             follows.update(after)
             for table, statement in made.items():
