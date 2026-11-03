@@ -21,6 +21,7 @@ LOG = logging.getLogger(__name__)
 DISTANCES = Names("distance between states", True)
 DRAWN = ("actions", "together", "drawn")
 ACTED = ("kind", "actor", "targets", "parameters")
+WORD = 1 << 64
 
 
 @timed("generators.plain")
@@ -34,6 +35,8 @@ def keyed(column):
         return column
     if column and all(type(value) is str for value in column):
         return np.asarray([token(value) for value in column], np.uint64)
+    if column and all(type(value) is int and -WORD // 2 <= value < WORD for value in column):
+        return np.asarray([value % WORD for value in column], np.uint64)
     return np.asarray(column, np.int64)
 
 
@@ -719,7 +722,7 @@ class Scripted:
 
 
 class Others(Pooled):
-    version = 10
+    version = 11
     reads = ("decisions",)
 
     @timed("generators.Others.checked")
@@ -742,7 +745,7 @@ class Euclidean:
 
 
 class Nearest(Pooled):
-    version = 10
+    version = 11
     reads = ("state", "decisions")
 
     def checked(self, parameters, schema, target, references, where):
@@ -808,7 +811,7 @@ class Nearest(Pooled):
 
 
 class Changed:
-    version = 10
+    version = 11
     reads = ("chosen",)
     probable = False
 
@@ -871,7 +874,7 @@ class Changed:
 
 
 class Ruled(Pooled):
-    version = 10
+    version = 11
     reads = ("rule", "state")
 
     @timed("generators.Ruled.checked")

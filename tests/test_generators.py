@@ -233,12 +233,12 @@ def test_each_shipped_generator_draws_options_whose_targets_resolve_and_are_obse
     assert min(counts.values()) > 5, counts
     assert held.manifest["generators"] == dict(
         around=dict(version=1, probabilities=True),
-        changed=dict(version=10, probabilities=False),
+        changed=dict(version=11, probabilities=False),
         crossings=dict(version=1, probabilities=True),
         idle=dict(version=1, probabilities=False),
-        nearest=dict(version=10, probabilities=True),
-        others=dict(version=10, probabilities=True),
-        ruled=dict(version=10, probabilities=True),
+        nearest=dict(version=11, probabilities=True),
+        others=dict(version=11, probabilities=True),
+        ruled=dict(version=11, probabilities=True),
     )
     for index in range(len(held.manifest["graphs"])):
         validate(Facts.load(held.truth(index)), held.registry, held.splits)

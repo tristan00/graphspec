@@ -266,7 +266,7 @@ class Tasks(Entry):
 
 
 class Decisions(Entry):
-    version = 1
+    version = 2
     ruled = True
     stated = ("mapping_tasks", "DecisionStated")
     fields = frozenset(ASKED + ("actors", "series", "about", "utility", "nothing", "rule", "generators", "ended",
@@ -284,6 +284,12 @@ class Decisions(Entry):
             stated(fields[name], required, "%s %s" % (where, name))
             if not tabled(fields[name]["rows"]):
                 raise ValueError("%s %s rows names a source or table declaration" % (where, name))
+        if "generators" in fields:
+            generators = fields["generators"]
+            if not isinstance(generators, (list, tuple)) or not all(isinstance(entry, Held) for entry in generators):
+                raise ValueError("%s states generators as a list of mappings" % where)
+            for place, entry in enumerate(generators):
+                stated(entry, ("name",), "%s generators.%d" % (where, place))
         nothing = fields.get("nothing")
         if nothing is not None and type(nothing) is not str:
             if not isinstance(nothing, Held):

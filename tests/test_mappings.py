@@ -461,6 +461,10 @@ def test_rows_to_decisions_state_their_options_actions_and_the_option_that_does_
         actions=dict(rows=offers, decision=["student", "step"], option="type", kind="'hint'", actor="'tutor'",
                      kinds=dict(hint=dict(roles=dict(to=dict(sort="node", of=student, keys="student", count=[1, 1])),
                                           parameters=dict(words="standard")))))
+    for generators, message in ((None, "states generators as a list of mappings"),
+                                ([dict(seed=1)], "generators.0 lacks the required field name")):
+        with pytest.raises(ValueError, match=message):
+            decisions(sessions, **dict(hinting.fields, generators=generators))
     found = mapped(tmp_path, dict(sessions=sessions, offers=offers, student=student, tutor=tutor, hinting=hinting))
     actions = dict(hint=dict(roles=dict(to=dict(sort="node", kinds=["student"], count=[1, 1])), parameters=["words"]))
     target = dict(kind="decision", series=["correct"], about="student", utility=weighted("correct"), actors="tutor",

@@ -674,7 +674,7 @@ class DecisionStated(Asked):
         target = dict(kind="decision", series=self.series, about=fields["about"],
                       utility=weighed(fields["utility"], self.series),
                       actors=fields["actors"], actions=actions, nothing=self.nothing[0],
-                      rule=plain(fields.get("rule")), generators=plain(fields.get("generators") or []))
+                      rule=plain(fields.get("rule")), generators=plain(fields.get("generators", [])))
         self.declared(mapped, target)
 
     @timed("mapping_tasks.DecisionStated.issue")
