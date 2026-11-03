@@ -38,6 +38,7 @@ from .build.tables import (
     union,
     unpivot,
 )
+from .build.verify import verify
 from .descriptions.describe import counts, describe
 from .descriptions.differences import differences
 from .descriptions.inspect import inspect
@@ -140,5 +141,6 @@ __all__ = [
     "union",
     "unpivot",
     "validate",
+    "verify",
     "write_task",
 ]

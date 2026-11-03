@@ -313,6 +313,11 @@ class Builder:
 
     @timed("builder.map")
     def map(self, plan, name):
+        self.mapping(plan, name)
+        return self
+
+    @timed("builder.mapping")
+    def mapping(self, plan, name):
         from .mapping_build import Mapped
 
         if self.mapped:
@@ -321,14 +326,15 @@ class Builder:
             raise ValueError("a builder whose declarations hold mappings states its schema through them")
         errors = Errors(self.declarations)
         try:
-            Mapped(self, plan, name, errors).run()
+            mapped = Mapped(self, plan, name, errors)
+            mapped.run()
         except Invalid:
             raise
         except ValueError as error:
             errors.add(None, self, (), error)
             errors.raised()
         self.mapped = True
-        return self
+        return mapped
 
     @timed("builder.pending")
     def pending(self):
