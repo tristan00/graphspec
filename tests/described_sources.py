@@ -400,7 +400,7 @@ WRITERS = {
     "19_database.py": (database, SPLITS),
     "20_warehouse.py": (warehouse, ("train", "score")),
     "21_league.py": (league, ("2023", "2024")),
-    "22_dispatch.py": (dispatch, ("train",)),
+    "22_dispatch.py": (dispatch, ("train", "score")),
     "23_grid.py": (grid, ("train", "score")),
     "24_tutoring.py": (tutoring, ("train", "score")),
 }

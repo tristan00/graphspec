@@ -72,7 +72,7 @@ dispatch = decisions(
     series=["minutes"],
     about=None,
     utility=dict(name="weighted", better="lower", weights=1.0),
-    split="'train'",
+    split=dict(name="time", parts=dict(train=0.7, score=0.3)),
     concurrent="True",
     options=dict(
         rows=answered,

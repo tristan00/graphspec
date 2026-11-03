@@ -10,7 +10,6 @@ from test_described import ROWS, read
 
 from conftest import Inline
 from graphspec import GENERATORS, SCRIPTED, Builder, BuildPlan, Invalid, validate
-from graphspec.budgets import Refused
 from graphspec.infra.files import read_json
 from graphspec.operations import parameters
 from tuning import build_bank, configuration, fit, open_bank
@@ -27,8 +26,6 @@ STATED = {"time/steps": "tasks", "time/scheme": "state", "time/several": "last",
 DEFECTS = {
     "15_drugs.py": (Invalid, "held graphs: nodes(held=) and inside= are refused by graphspec/build/mapping_build.py, "
                              "and builder.py and writing.py state no held graphs, though the contract holds them"),
-    "22_dispatch.py": (Refused, "the script states split=\"'train'\", one split, so no fit can name a split to score; "
-                                "the owner decides between a split to score in the script and building alone"),
     "24_tutoring.py": (Invalid, "previous(answered) is marked known from the answer of its own row, not of the row "
                                 "before, so at=\"shown\" is refused as dated by what is known later"),
 }
