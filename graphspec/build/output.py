@@ -2,7 +2,7 @@ import logging
 import re
 import time
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -47,6 +47,24 @@ def manifest(directory):
                 f"the staging {directory} records no sha256 of each file of {key}; a staging records the digest "
                 "of every file it writes, and one written before it did is written again"
             )
+        patches = entry.get("patches", [])
+        if not isinstance(patches, list):
+            raise ValueError("stage patches are a list")
+        seen_patches = set()
+        for patch in patches:
+            if not isinstance(patch, dict) or set(patch) != {"file", "row", "column", "value"}:
+                raise ValueError("stage patches state file, row, column and value")
+            identity = (patch["file"], patch["row"], patch["column"])
+            if (
+                patch["file"] not in names
+                or type(patch["row"]) is not int
+                or patch["row"] < 0
+                or patch["column"] not in ("until", "replaced")
+                or (patch["value"] is not None and type(patch["value"]) is not int)
+                or identity in seen_patches
+            ):
+                raise ValueError("invalid or repeated stage patch: %r" % (patch,))
+            seen_patches.add(identity)
     return entries
 
 
@@ -56,6 +74,7 @@ class StageFiles:
     files: dict
     rows: dict
     digests: dict
+    patches: dict = field(default_factory=dict)
 
     @timed("output.StageFiles.record")
     def record(self):
@@ -67,6 +86,7 @@ class StageFiles:
                 files=[path.relative_to(self.directory).as_posix() for path in paths],
                 sha256=list(self.digests[key]),
                 rows=self.rows[key],
+                **({"patches": self.patches[key]} if key in self.patches and self.patches[key] else {}),
             )
             for key, paths in self.files.items()
         ]
@@ -134,32 +154,52 @@ class Stage:
     @timed("output.Stage.open")
     def open(directory):
         directory = Path(directory).resolve()
-        files, rows, digests = {}, {}, {}
+        files, rows, digests, patches = {}, {}, {}, {}
         for entry in manifest(directory):
             key = (entry["table"], entry["source"], entry["target"])
             files[key] = tuple(directory / name for name in entry["files"])
             rows[key], digests[key] = entry["rows"], tuple(entry["sha256"])
-        return StageFiles(directory, files, rows, digests)
+            if "patches" in entry:
+                patches[key] = entry["patches"]
+        return StageFiles(directory, files, rows, digests, patches)
 
     @classmethod
     def merge(cls, directory, shards):
         started = time.perf_counter()
         directory = output_path(directory)
         directory.mkdir(parents=True, exist_ok=True)
-        files, rows, digests = {}, {}, {}
+        files, rows, digests, patches = {}, {}, {}, {}
+        seen_shards, seen_files, schemas = set(), set(), {}
         for shard in shards:
             stage = cls.open(shard)
+            if stage.directory in seen_shards:
+                raise ValueError("stage merge names a shard twice: " + str(stage.directory))
+            seen_shards.add(stage.directory)
             if not stage.directory.is_relative_to(directory):
                 raise ValueError(f"shard must be inside merged stage: {stage.directory}")
             for key, paths in stage.files.items():
+                for path in paths:
+                    resolved = path.resolve()
+                    if resolved in seen_files:
+                        raise ValueError("stage merge names a file twice: " + str(path))
+                    seen_files.add(resolved)
+                    schema = pq.read_schema(path)
+                    if key in schemas and schemas[key] != schema:
+                        raise ValueError("stage merge has incompatible schemas for %r" % (key,))
+                    schemas[key] = schema
                 files.setdefault(key, []).extend(paths)
                 digests.setdefault(key, []).extend(stage.digests[key])
                 rows[key] = rows.get(key, 0) + stage.rows[key]
+                for patch in stage.patches.get(key, ()):
+                    patches.setdefault(key, []).append(dict(
+                        patch, file=(stage.directory / patch["file"]).relative_to(directory).as_posix()
+                    ))
         result = StageFiles(
             directory,
             {key: tuple(paths) for key, paths in files.items()},
             rows,
             {key: tuple(found) for key, found in digests.items()},
+            patches,
         )
         result.record()
         LOG.info("stage merge tables=%d seconds=%.4f", len(files), time.perf_counter() - started)

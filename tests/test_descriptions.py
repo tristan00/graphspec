@@ -4817,7 +4817,7 @@ def test_under_order_a_description_states_positions_and_no_length_and_the_orders
     started = time.perf_counter()
     manifest = restated(read_json(bank / "manifest.json"), ORDERED, "key")
     held = [unclocked(describing.stored(bank, graph)) for graph in manifest["graphs"]]
-    monkeypatch.setattr(describing, "stored", lambda path, graph: held[graph["index"]])
+    monkeypatch.setattr(describing, "stored", lambda path, graph, truth_root=None: held[graph["index"]])
     record = describing.recorded(bank, manifest)
     first, second = record["graphs"]
     unmeasured = {name: dict(found, **NONE) for name, found in FIRST["relations"].items()}
@@ -4865,7 +4865,7 @@ def test_without_time_a_description_states_no_time_and_counts_once_what_holds_al
     manifest = restated(read_json(bank / "manifest.json"), STILL, None)
     undated = [unclocked(timeless(describing.stored(bank, graph))) for graph in manifest["graphs"]]
     held = [facts.replace(task_time=np.zeros(len(facts.task_time), np.int64)) for facts in undated]
-    monkeypatch.setattr(describing, "stored", lambda path, graph: held[graph["index"]])
+    monkeypatch.setattr(describing, "stored", lambda path, graph, truth_root=None: held[graph["index"]])
     record = describing.recorded(bank, manifest)
     second, turn = record["graphs"][1], SECOND["decisions"]["turn"]
     assert record["time"] == STILL and second == dict(

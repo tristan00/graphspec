@@ -12,7 +12,7 @@ def main():
         "inspect": ("graphspec.descriptions.inspect", "main"),
         "describe": ("tuning.descriptions.variant", "main"),
         "synthetic": ("graphspec.sources.synthetic", "main"),
-        "build": ("tuning.bank.build", "main"),
+        "build": ("tuning.api", "build_main"),
         "search": ("tuning.searches.run", "main"),
         "check": ("tuning.fits.check", "main"),
         "database": ("graphspec.sources.ladybug", "main"),

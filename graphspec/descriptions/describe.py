@@ -24,7 +24,7 @@ from graphspec.views import visible
 from graphspec.views.view import about
 
 LOG = logging.getLogger(__name__)
-VERSION = 30
+VERSION = 31
 DIFFERENCE = "graphspec.difference"
 CODED = 16
 UNWRITTEN = "no file is written for the key"
@@ -543,8 +543,14 @@ def clocked(registry, facts):
 
 
 @timed("describe.stored")
-def stored(path, graph):
-    return Facts.load(Path(path) / "truth" / ("graph_%04d" % graph["index"]))
+def stored(path, graph, truth_root=None):
+    root = Path(path).resolve()
+    if truth_root is None:
+        truth_root = manifested(root)["truth_root"]
+    directory = (root / truth_root / ("graph_%04d" % graph["index"])).resolve()
+    if not directory.is_relative_to(root):
+        raise ValueError("the described truth leaves its bank directory")
+    return Facts.load(directory)
 
 
 def graphed(registry, facts, splits):
@@ -579,7 +585,7 @@ def recorded(path, manifest):
         stored_sha256=manifest["stored_sha256"],
         time=modelled(registry),
         splits=list(manifest["splits"]),
-        graphs=[graphed(registry, stored(path, graph), manifest["splits"]) for graph in manifest["graphs"]],
+        graphs=[graphed(registry, stored(path, graph, manifest["truth_root"]), manifest["splits"]) for graph in manifest["graphs"]],
     )
     LOG.info("describe recorded exit graphs=%d seconds=%.3f", len(result["graphs"]), time.perf_counter() - started)
     return result

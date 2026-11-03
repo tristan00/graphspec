@@ -15,7 +15,7 @@ from graphspec.schema.schema import FACT_COLUMNS, VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 20
+VERSION = 21
 MANIFEST = (
     "version",
     "trained",
@@ -27,6 +27,10 @@ MANIFEST = (
     "graphs",
     "supervision_sha256",
     "stored_sha256",
+    "truth_root",
+    "source_target_ids",
+    "supervision",
+    "skipped_references",
 )
 PACKED = "arrays.pack"
 JOINED = ("set_edge", "set_member", "set_role", "set_values")
@@ -98,6 +102,8 @@ def admitted(directory, manifest):
             "the manifest.json of the bank %s lacks %s; a bank holds the manifest its build wrote"
             % (directory, ", ".join(lacking))
         )
+    if any("inspection" not in graph for graph in manifest["graphs"]):
+        raise ValueError("the bank manifest requires inspection counts for every graph")
     return manifest
 
 
@@ -213,10 +219,26 @@ class Facts:
         LOG.debug("facts save exit graph=%s seconds=%.4f", self.name, time.perf_counter() - started)
 
     @classmethod
-    def load(cls, directory):
+    def load(cls, directory, *, lineage_seen=()):
         started = time.perf_counter()
-        directory = Path(directory)
+        directory = Path(directory).resolve()
+        if directory in lineage_seen:
+            raise ValueError("appended truth layers contain a cycle")
+        lineage_seen = lineage_seen + (directory,)
         meta = read_json(directory / "graph.json")
+        if "append" in meta:
+            from .appending import combined, lineage
+
+            layer = meta["append"]
+            plan = dict(layer["plan"])
+            if isinstance(plan["rows"], dict):
+                if set(plan["rows"]) != {"file"}:
+                    raise ValueError("a stored target row map names exactly one file")
+                plan["rows"] = np.load(lineage(directory, plan["rows"]["file"]), mmap_mode="r", allow_pickle=False)
+            result = combined(cls.load(lineage(directory, layer["base"]), lineage_seen=lineage_seen),
+                              cls.load(lineage(directory, layer["delta"]), lineage_seen=lineage_seen), plan)
+            LOG.debug("facts layer load exit graph=%s seconds=%.4f", result.name, time.perf_counter() - started)
+            return result
         result = cls(
             meta["name"],
             meta["keys"],
@@ -229,6 +251,15 @@ class Facts:
         )
         LOG.debug("facts load exit graph=%s seconds=%.4f", result.name, time.perf_counter() - started)
         return result
+
+    @classmethod
+    @timed("truth.facts.read")
+    def read(cls, directory, names):
+        meta = read_json(Path(directory) / "graph.json")
+        if "append" in meta:
+            result = cls.load(directory)
+            return {name: result.arrays[name] for name in names}
+        return load_arrays(directory, names)
 
     def stamps(self, group):
         started = time.perf_counter()

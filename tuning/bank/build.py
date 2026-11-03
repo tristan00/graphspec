@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import math
+import re
 import time
 from collections import Counter
 from contextlib import closing
@@ -10,15 +11,20 @@ from multiprocessing.util import Finalize
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from graphspec import Registry
+from graphspec.budgets import GraphCapacityError
 from graphspec.build import staged
 from graphspec.build.generators import appended, looking, recorded, regenerated
 from graphspec.build.parse import distinct, parse, parsed, scope
+from graphspec.build.planning import stated as build_plan
 from graphspec.engine.transform import shown as viewed
 from graphspec.engine.transform import validate
-from graphspec.facts.stored import VERSION
-from graphspec.infra.files import read_json, sha256_file, sha256_json, write_json
+from graphspec.facts.appending import lineage
+from graphspec.facts.stored import VERSION, Facts
+from graphspec.infra.files import read_json, save_array, sha256_file, sha256_json, write_json
 from graphspec.infra.log import configure
 from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.processes.processes import pooled
@@ -38,6 +44,71 @@ LOG = logging.getLogger(__name__)
 WORKER = {}
 UNSTORED = ("database", "graphs")
 FLOAT32 = float(np.finfo(np.float32).max)
+
+
+@timed("build.truth_bytes")
+def truth_bytes(directory, visited=None):
+    directory = Path(directory).resolve()
+    visited = set() if visited is None else visited
+    if directory in visited:
+        raise ValueError("a bank truth lineage repeats a layer")
+    visited.add(directory)
+    meta = read_json(directory / "graph.json")
+    total = sum(path.stat().st_size for path in directory.iterdir() if path.is_file())
+    if "append" in meta:
+        total += sum(truth_bytes(lineage(directory, meta["append"][name]), visited) for name in ("base", "delta"))
+    return total
+
+
+@timed("build.budget")
+def budget(task_path, task, plan, bank=None):
+    if plan is None:
+        return None
+    plan = build_plan(plan)
+    if "staging" not in task:
+        raise ValueError("a bounded bank build requires staged output")
+    directory = (Path(task_path).parent / task["staging"]).resolve()
+    entries = read_json(directory / "stage.json")
+    groups, rows, seen = {}, 0, set()
+    for entry in entries:
+        rows += entry["rows"]
+        for name in entry["files"]:
+            if name in seen:
+                continue
+            seen.add(name)
+            found = re.findall(r"graph_(\d+)", name)
+            key = found[-1] if found else "all"
+            with pq.ParquetFile(directory / name) as file:
+                groups[key] = groups.get(key, 0) + sum(file.metadata.row_group(at).total_byte_size for at in range(file.num_row_groups))
+    reserve = rows * 128 + max(groups.values(), default=0) * 8
+    if bank is not None:
+        root, manifest = bank
+        root = Path(root).resolve()
+        truth = (root / manifest["truth_root"]).resolve()
+        supervision_path = (root / manifest["supervision"]).resolve()
+        if not truth.is_relative_to(root) or not supervision_path.is_relative_to(root):
+            raise ValueError("the bank truth or supervision path leaves its bank")
+        reserve += max((truth_bytes(truth / ("graph_%04d" % entry["index"]))
+                        for entry in manifest["graphs"]), default=0) * 8
+        reserve += supervision_path.stat().st_size * 16
+    if reserve > plan.worker_bytes:
+        raise GraphCapacityError("bank staging indexes and graph materialization need at least %d conservative working bytes per worker; the build plan permits %d"
+                                 % (reserve, plan.worker_bytes))
+    return plan.worker_bytes
+
+
+@timed("build.table_bytes")
+def table_bytes(value):
+    if isinstance(value, pa.Table):
+        return value.nbytes
+    return sum(table_bytes(part) for part in value.values())
+
+
+@timed("build.within_budget")
+def within_budget(tables, limit):
+    if limit is not None and table_bytes(tables) * 8 > limit:
+        raise GraphCapacityError("graph Arrow tables require %d conservative working bytes; the build plan permits %d"
+                                 % (table_bytes(tables) * 8, limit))
 
 
 def open_source(task_path, task):
@@ -178,6 +249,7 @@ def scanned(trained, index):
     started = time.perf_counter()
     stated = WORKER["reader"].source.stated
     tables = WORKER["reader"].graph(index)
+    within_budget(tables, WORKER["budget"])
     result = (
         distinct(stated, tables),
         {
@@ -274,7 +346,7 @@ def pointed(stated, found, owner, kinds, graphs, rows):
     return result
 
 
-def supervision(source, trained, names):
+def supervision(source, trained, names, previous=None):
     started = time.perf_counter()
     stated = source.stated
     tasks, found = source.asked(), source.aims()
@@ -328,10 +400,23 @@ def supervision(source, trained, names):
             entry["known"] = int(known[place])
         rows.append(entry)
     rows = pointed(stated, found, owner, np.asarray(kinds, object)[owner], [row["graph"] for row in rows], rows)
-    series = [row["series"] for row in rows]
     rows = [dict(entry, y=value) for entry, value in zip(rows, y.tolist())]
     held = np.asarray([splits[task] for task in owner.tolist()], object)
-    found_splits = sorted({name for name in splits if name is not None})
+    ids = found.column("id").to_numpy().astype(np.int64)
+    if previous is not None:
+        prior, prior_ids = previous
+        prior_splits = np.empty(len(prior["rows"]), object)
+        for split, members in prior["split"]["indices"].items():
+            prior_splits[members] = split
+        named = {name: index for index, name in names.items()}
+        rows = prior["rows"] + rows
+        held = np.r_[prior_splits, held]
+        ids = np.r_[prior_ids, ids]
+        graphs = np.r_[[named[row["graph"]] for row in prior["rows"]], graphs].astype(np.int64)
+        times = np.r_[[row["time"] if timed else 0 for row in prior["rows"]], times].astype(np.int64)
+        y = np.asarray([row["y"] for row in rows], np.float64)
+    series = [row["series"] for row in rows]
+    found_splits = sorted({name for name in splits if name is not None} | {name for name in held.tolist() if name is not None})
     strangers = [name for name in trained if name not in found_splits]
     if strangers:
         raise ValueError(
@@ -357,7 +442,6 @@ def supervision(source, trained, names):
             series=statistics,
         ),
     )
-    ids = found.column("id").to_numpy().astype(np.int64)
     order = np.argsort(graphs, kind="stable")
     boundaries = np.r_[0, np.flatnonzero(np.diff(graphs[order])) + 1, len(order)][: len(order) + 1]
     groups = {
@@ -382,7 +466,7 @@ def supervision(source, trained, names):
 
 
 @timed("build.attach")
-def attach(task_path, output, level):
+def attach(task_path, output, level, limit=None):
     configure(level)
     release()
     source = open_source(task_path, read_json(task_path))
@@ -390,6 +474,7 @@ def attach(task_path, output, level):
         WORKER.update(
             reader=source.reader(),
             output=Path(output),
+            budget=limit,
             finalizer=Finalize(None, source.close, exitpriority=10),
         )
     except BaseException:
@@ -414,6 +499,7 @@ def graph(context, job):
         WORKER.update(declared=declared, registry=Registry.from_declaration(declared))
     registry = WORKER["registry"]
     tables = WORKER["reader"].graph(index)
+    within_budget(tables, WORKER["budget"])
     found = tables["targets"].column("id").to_numpy().astype(np.int64)
     position = np.searchsorted(ids, found)
     if len(found) != len(ids) or np.any(position >= len(ids)) or not np.array_equal(ids[position], found):
@@ -429,6 +515,7 @@ def graph(context, job):
         index=index,
         name=name,
         **counts(truth),
+        inspection=inspection(truth, registry, splits),
         acted=largest(truth.action_option),
         seconds=time.perf_counter() - started,
     )
@@ -450,13 +537,28 @@ def counts(truth):
     )
 
 
+@timed("build.inspection")
+def inspection(truth, registry, splits):
+    kinds, tasks, partitions = np.asarray(truth.kinds), np.asarray(truth.task_kind), np.asarray(truth.task_split)
+    return dict(nodes={name: int(np.count_nonzero(kinds == code)) for code, name in enumerate(registry.nodes)},
+                observations={name: int(np.count_nonzero(kinds[np.asarray(truth.obs_entity)] == code))
+                              for code, name in enumerate(registry.nodes)},
+                edges={name: int(np.count_nonzero(np.isin(truth.fact_code, registry.codes(registry.encoding.relations[name]))))
+                       for name in registry.schema.edges},
+                tasks={name: dict(splits={split: int(np.count_nonzero((tasks == code) & (partitions == position)))
+                                         for position, split in enumerate(splits)},
+                                  without_split=int(np.count_nonzero((tasks == code) & (partitions < 0))))
+                       for code, name in enumerate(registry.schema.tasks["kinds"])})
+
+
 def catalogue(output, graphs):
     started = time.perf_counter()
     kinds, tokens, keys = [], [], []
     for graph in graphs:
         folder = output / "truth" / ("graph_%04d" % graph["index"])
-        kinds.append(np.load(folder / "kinds.npy").astype(np.int64))
-        tokens.append(np.load(folder / "entity_token.npy"))
+        arrays = Facts.read(folder, ("kinds", "entity_token"))
+        kinds.append(arrays["kinds"].astype(np.int64))
+        tokens.append(arrays["entity_token"])
         keys.extend(read_json(folder / "graph.json")["keys"])
     kinds, tokens = (
         np.concatenate(kinds + [np.zeros(0, np.int64)]),
@@ -479,14 +581,14 @@ def catalogue(output, graphs):
 def stored(output):
     started = time.perf_counter()
     output = Path(output)
-    files = [output / "supervision.json"] + [path for path in (output / "truth").rglob("*") if path.is_file()]
+    files = [output / "supervision.json", output / "source-target-ids.npy"] + [path for path in (output / "truth").rglob("*") if path.is_file()]
     result = sha256_json(sorted([path.relative_to(output).as_posix(), sha256_file(path)] for path in files))
     LOG.debug("stored exit files=%d seconds=%.4f", len(files), time.perf_counter() - started)
     return result
 
 
 @exclusive
-def build(task_path, output, workers, trained):
+def build(task_path, output, workers, trained, plan=None):
     started = time.perf_counter()
     if type(workers) is not int or workers < 1:
         raise ValueError("build workers must be a positive integer")
@@ -496,6 +598,16 @@ def build(task_path, output, workers, trained):
             "the splits trained on are stated as distinct names, found %s" % ", ".join(map(str, trained))
         )
     task, output = read_json(task_path), output_path(output)
+    source_manifest = None
+    if "staging" in task:
+        source_manifest_path = Path(task_path).parent / task["staging"] / "build.json"
+        if source_manifest_path.is_file():
+            source_manifest = read_json(source_manifest_path)
+            if plan is None:
+                plan = source_manifest["plan"]
+    if plan is not None and build_plan(plan).workers != workers:
+        raise ValueError("bank workers must equal the build plan workers")
+    limit = budget(task_path, task, plan)
     if output.exists():
         raise FileExistsError("bank exists; choose a new output")
     with closing(open_source(task_path, task)) as source:
@@ -505,7 +617,7 @@ def build(task_path, output, workers, trained):
             raise ValueError("graph names must be unique")
         rows, groups, splits, bare = supervision(source, trained, names)
         location = source.location
-    attached = (str(task_path), str(output), LOG.getEffectiveLevel())
+    attached = (str(task_path), str(output), LOG.getEffectiveLevel(), limit)
     try:
         with pooled(workers, len(groups), attach, attached, carried, restored) as mapped:
             found = mapped(partial(scanned, trained), [index for index, _, _, _ in groups])
@@ -528,8 +640,14 @@ def build(task_path, output, workers, trained):
             registry = declaration.registry(*given, max(entry["acted"] for entry in metrics))
     finally:
         release()
+    save_array(output / "source-target-ids.npy", target_ids(groups, len(rows["rows"])))
     manifest = dict(
         version=VERSION,
+        truth_root="truth",
+        source_target_ids="source-target-ids.npy",
+        supervision="supervision.json",
+        skipped_references=0,
+        source_fingerprint=None if source_manifest is None else source_manifest["source_fingerprint"],
         database=location,
         task=task,
         trained=list(trained),
@@ -562,6 +680,14 @@ def build(task_path, output, workers, trained):
         ",".join(registry.schema.targets()),
     )
     return manifest
+
+
+@timed("build.target_ids")
+def target_ids(groups, count):
+    result = np.empty(count, np.int64)
+    for _, ids, members, _ in groups:
+        result[members] = ids
+    return result
 
 
 def main():

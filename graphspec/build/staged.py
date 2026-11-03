@@ -36,7 +36,7 @@ from graphspec.schema.schema import (
 from .output import manifest
 
 LOG = logging.getLogger(__name__)
-INDEX = 7
+INDEX = 8
 IDS = 32
 DECIDING = (OPTIONS, ACTIONS, ROLED)
 
@@ -64,6 +64,15 @@ class Unit:
         )
         self.name = "%s|%s|%s" % (self.table, self.source, self.target)
         self.files = [pq.ParquetFile(directory / name) for name in entry["files"]]
+        self.file_groups = [np.r_[0, np.cumsum([file.metadata.row_group(group).num_rows
+                                               for group in range(file.num_row_groups)])]
+                            for file in self.files]
+        self.patches = {index: [] for index in range(len(self.files))}
+        for patch in entry.get("patches", ()):
+            index = entry["files"].index(patch["file"])
+            if patch["row"] >= self.files[index].metadata.num_rows or patch["column"] not in self.files[index].schema_arrow.names:
+                raise ValueError("stage patch leaves its file or names an absent column in " + self.name)
+            self.patches[index].append(patch)
         self.members = [
             (index, group) for index, file in enumerate(self.files) for group in range(file.num_row_groups)
         ]
@@ -86,7 +95,21 @@ class Unit:
 
     @timed("staged.Unit.read")
     def read(self, columns=None):
-        return pa.concat_tables([file.read(columns=columns) for file in self.files])
+        return pa.concat_tables([self.patched(file.read(columns=columns), index, 0)
+                                 for index, file in enumerate(self.files)])
+
+    @timed("staged.Unit.patched")
+    def patched(self, table, index, offset):
+        changes = {}
+        for patch in self.patches[index]:
+            if patch["column"] in table.column_names and offset <= patch["row"] < offset + table.num_rows:
+                changes.setdefault(patch["column"], []).append(patch)
+        for name, patches in changes.items():
+            values = table.column(name).to_pylist()
+            for patch in patches:
+                values[patch["row"] - offset] = patch["value"]
+            table = table.set_column(table.schema.get_field_index(name), name, pa.array(values, table.schema.field(name).type))
+        return table
 
     @timed("staged.Unit.column")
     def column(self, name):
@@ -104,7 +127,8 @@ class Unit:
         for index, group in self.members[first:last]:
             chosen.setdefault(index, []).append(group)
         table = pa.concat_tables(
-            [self.files[index].read_row_groups(groups, columns=columns) for index, groups in chosen.items()]
+            [self.patched(self.files[index].read_row_groups(groups, columns=columns), index,
+                          int(self.file_groups[index][groups[0]])) for index, groups in chosen.items()]
         )
         return table.slice(start - int(self.groups[first]), stop - start)
 

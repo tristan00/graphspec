@@ -20,7 +20,7 @@ def probability(value):
 
 
 class Decided:
-    def __init__(self, registry, tasks, members, keys, kinds, seen, name):
+    def __init__(self, registry, tasks, members, keys, kinds, seen, name, first_seen=None):
         started = time.perf_counter()
         schema = registry.schema
         self.registry, self.schema, self.name, self.tasks = registry, schema, name, tasks
@@ -31,6 +31,10 @@ class Decided:
         self.deciding = np.asarray([deciding(target) for target in self.aims] + [False], bool)[owner]
         self.lookup = {(kind, key): entity for entity, (kind, key) in enumerate(zip(self.kinds, self.keys))}
         self.first = np.full(len(self.keys), NEVER, np.int64)
+        if first_seen is not None:
+            for identity, moment in first_seen.items():
+                if identity in self.lookup:
+                    self.first[self.lookup[identity]] = moment
         np.minimum.at(self.first, np.asarray(seen["entity"], np.int64), np.asarray(seen["since"], np.int64))
         self.actors = self.acting(members)
         LOG.debug("decided exit graph=%s tasks=%d seconds=%.4f", name, len(owner), time.perf_counter() - started)
@@ -448,9 +452,9 @@ class Decided:
         return dict(target_option=result.astype(np.int32), target_part=np.where(result >= 0, part, -1).astype(np.int32))
 
 
-def decided(registry, found, tasks, place, members, keys, kinds, seen, aims, name):
+def decided(registry, found, tasks, place, members, keys, kinds, seen, aims, name, first_seen=None, links=True):
     started = time.perf_counter()
-    held = Decided(registry, tasks, members, keys, kinds, seen, name)
+    held = Decided(registry, tasks, members, keys, kinds, seen, name, first_seen)
     options, keyed, generators, order = held.options(found["option"], place)
     options["keys"] = keyed
     inverse = np.empty(len(order), np.int64)
@@ -465,8 +469,8 @@ def decided(registry, found, tasks, place, members, keys, kinds, seen, aims, nam
         **{name: values for name, values in options.items() if name != "keys"},
         **actions,
         **roles,
-        **held.followed(found["next"], options, place),
-        **held.together(found["concurrent"], options, place),
+        **(held.followed(found["next"], options, place) if links else {"next_" + name: np.zeros(0, np.int32) for name in ("task", "actor", "other")}),
+        **(held.together(found["concurrent"], options, place) if links else {"concurrent_" + name: np.zeros(0, np.int32) for name in ("task", "other")}),
         **held.aimed(aims, options, actions),
     )
     LOG.info(

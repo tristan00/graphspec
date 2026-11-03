@@ -7,18 +7,62 @@ from graphspec.infra.runtime import output_path
 LOG = logging.getLogger(__name__)
 
 
-def build_bank(task, output, workers, trained):
+def build_main():
+    import argparse
+    import json
+
+    from graphspec.build.command import script
+    from graphspec.build.planning import BuildPlan
+    from graphspec.infra.log import configure
+
+    started = time.perf_counter()
+    parser = argparse.ArgumentParser()
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--task")
+    source.add_argument("--script")
+    parser.add_argument("--sources")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--trained", nargs="+", required=True)
+    parser.add_argument("--workers", type=int, required=True)
+    parser.add_argument("--memory-bytes", type=int)
+    parser.add_argument("--shards", type=int, default=1)
+    parser.add_argument("--reuse", action="store_true")
+    args = parser.parse_args()
+    if args.script is not None and (args.sources is None or args.memory_bytes is None):
+        parser.error("--script requires --sources and --memory-bytes")
+    configure()
+    given = script(args.script, args.sources) if args.script is not None else args.task
+    plan = None if args.memory_bytes is None else BuildPlan(args.memory_bytes, args.workers, args.shards)
+    result = build_bank(given, args.output, args.workers, args.trained, plan=plan, reuse=args.reuse)
+    print(json.dumps({key: value for key, value in result.items() if key not in ("graphs", "spec")}, indent=2))
+    LOG.info("build_main exit seconds=%.3f", time.perf_counter() - started)
+
+
+def append_bank(task, output, workers):
+    from .bank.append import append
+
+    started = time.perf_counter()
+    result = append(task, output, workers)
+    LOG.info("append_bank exit seconds=%.3f output=%s", time.perf_counter() - started, output)
+    return result
+
+
+def build_bank(task, output, workers, trained, *, plan=None, reuse=False):
     from graphspec.build.builder import Builder
+    from graphspec.build.planning import stated
 
     from .bank.build import build
 
     started = time.perf_counter()
     if isinstance(task, Builder):
+        plan = stated(plan)
+        if workers != plan.workers:
+            raise ValueError("bank workers must match the build plan")
         output = output_path(output)
         if output.exists():
             raise FileExistsError("bank output already exists: " + str(output))
-        task = task.stage(output.parent, output.name + "-source")
-    result = build(task, output, workers, trained)
+        task = task.stage(output.parent, output.name + "-source", plan, reuse=reuse)
+    result = build(task, output, workers, trained, plan=plan) if plan is not None else build(task, output, workers, trained)
     LOG.info("build_bank exit seconds=%.3f output=%s", time.perf_counter() - started, output)
     return result
 

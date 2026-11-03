@@ -401,7 +401,7 @@ def members(sort, stated):
     return held
 
 
-def case_tasks(schema, index, tasks, counter, lookup, where):
+def case_tasks(schema, index, tasks, counter, lookup, where, ids=None, task_ids=None):
     started = time.perf_counter()
     asked = schema.tasks
     feature = feature_names(tasks, schema.asked_columns(), set(ASKED) | {"time", "observer", "grouping", "signal", "signal_observed"}, where, False)
@@ -412,7 +412,9 @@ def case_tasks(schema, index, tasks, counter, lookup, where):
     names += ["signal", "signal_observed"] if asked["signals"] else []
     parted(tasks, names, where + ", tasks")
     count = len(tasks["key"])
-    ids = counter.take("task", count)
+    ids = counter.take("task", count) if ids is None else np.asarray(ids, np.int64)
+    if len(ids) != count:
+        raise ValueError("task IDs and task records have different lengths")
     held = dict(
         id=pa.array(ids),
         graph=pa.array(np.full(count, index), pa.int32()),
@@ -496,7 +498,7 @@ def case_tasks(schema, index, tasks, counter, lookup, where):
         {"from": pa.array(numbers), "to": pa.array(aimed["task"], pa.int64())}
     )
     if deciding:
-        tables.update(case_decisions(schema, index, tasks, ids, counter, where))
+        tables.update(case_decisions(schema, index, tasks, ids, counter, where, task_ids))
     LOG.debug("case tasks exit tasks=%d seconds=%.4f", count, time.perf_counter() - started)
     return tables
 
@@ -506,10 +508,26 @@ def linked(source, target):
     return pa.table({"from": pa.array(source, pa.int64()), "to": pa.array(target, pa.int64())})
 
 
-def case_decisions(schema, index, tasks, ids, counter, where):
+@timed("records.fresh_decisions")
+def fresh_decisions(tables, task_ids):
+    if (OPTIONS, None, None) not in tables:
+        return tables
+    result, owners = dict(tables), set(task_ids)
+    for table, parent in ((OPTIONS, "task"), (ACTIONS, OPTIONS), (ROLED, ACTIONS)):
+        identity = table + OF, table, parent
+        links = result[identity]
+        mask = pa.array([owner in owners for owner in links.column("to").to_pylist()], pa.bool_())
+        result[identity] = links.filter(mask)
+        owners = set(result[identity].column("from").to_pylist())
+        identity = table, None, None
+        result[identity] = result[identity].filter(pa.array([value in owners for value in result[identity].column("id").to_pylist()], pa.bool_()))
+    return result
+
+
+def case_decisions(schema, index, tasks, ids, counter, where, task_ids=None):
     started = time.perf_counter()
     deciding, columns = schema.decided(), schema.parameters()
-    keyed = {key: int(ids[at]) for at, key in enumerate(tasks["key"])}
+    keyed = {key: int(ids[at]) for at, key in enumerate(tasks["key"])} if task_ids is None else task_ids
     found = dict(
         next=dict(task=[], other=[], actor=[]),
         concurrent=dict(task=[], other=[]),

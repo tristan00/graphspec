@@ -581,13 +581,14 @@ def parsed(registry, splits, observers, tables, rows, series, name):
     return result
 
 
-def parse(registry, tables, parts):
+def parse(registry, tables, parts, first_seen=None, decision_links=True):
     started = time.perf_counter()
     name, keys, kinds, tasks, seen, facts = (parts[part] for part in ("name", "keys", "kinds", "tasks", "seen", "facts"))
     choices, options, generators = undecided(tasks, parts["aims"]), [], []
     if registry.schema.decided():
         choices, keys, kinds, options, generators = decided(
-            registry, tables["decisions"], tasks, parts["place"], parts["members"], keys, kinds, seen, parts["aims"], name
+            registry, tables["decisions"], tasks, parts["place"], parts["members"], keys, kinds, seen, parts["aims"], name,
+            first_seen, decision_links
         )
     graph = Facts(
         name,

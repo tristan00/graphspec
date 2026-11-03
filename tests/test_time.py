@@ -29,7 +29,7 @@ from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
 configuration = support.configuration
-pytestmark = pytest.mark.xdist_group("time")
+pytestmark = [pytest.mark.xdist_group("time"), pytest.mark.extended]
 MAKERS, SITES = ("m0", "m1", "m2"), ("s0", "s1", "s2", "s3")
 MOMENTS = (0, 2, 4, 6, 8, 10)
 STRIDE = 2
@@ -453,7 +453,7 @@ def serving(held, graph, step):
 def test_a_case_of_time_reads_back_from_the_bank_equal_to_what_was_stated(banks, cases, name):
     held, _ = opened(banks, name)
     schema = held.registry.schema
-    assert held.manifest["version"] == 20 and schema.tasks["grouping"] is None
+    assert held.manifest["version"] == 21 and schema.tasks["grouping"] is None
     found, wanted = support.read_back(held), support.meant(cases[name])
     assert list(found) == list(wanted)
     for graph, read in found.items():

@@ -9,6 +9,7 @@ from .build.calls import GraphTables, write_task
 from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
 from .build.output import Stage
+from .build.planning import BuildPlan
 from .descriptions.describe import counts, describe
 from .descriptions.differences import differences
 from .descriptions.inspect import inspect
@@ -50,6 +51,7 @@ __all__ = [
     "UTILITIES",
     "EdgeType",
     "Builder",
+    "BuildPlan",
     "Registry",
     "GraphTables",
     "Operation",

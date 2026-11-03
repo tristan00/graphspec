@@ -108,7 +108,7 @@ class TrainingSession:
             compute.reserve(self.device)
         with measure("bank_load_and_verify"):
             self.bank: Deriver = bank
-            self.supervision_digest = sha256_file(Path(bank_directory) / "supervision.json")
+            self.supervision_digest = sha256_file(Path(bank_directory) / self.bank.manifest["supervision"])
             if self.supervision_digest != self.bank.manifest["supervision_sha256"]:
                 raise ValueError("frozen supervision changed")
         self.realisation = realised(config["model"], self.bank.registry.schema)

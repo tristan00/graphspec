@@ -20,7 +20,6 @@ from graphspec.facts.stored import PACKED, Facts, admitted, inputs
 from graphspec.infra.arrays import Residents, between
 from graphspec.infra.files import (
     ArrayStore,
-    load_arrays,
     read_json,
     read_pack,
     sha256_json,
@@ -369,7 +368,10 @@ class Bank:
         if self.registry.fingerprint() != self.manifest["spec_sha256"]:
             raise ValueError("bank declaration does not reproduce its pinned fingerprint")
         self.splits = self.manifest["splits"]
-        supervision = read_json(self.directory / "supervision.json")
+        supervision_path = (self.directory / self.manifest["supervision"]).resolve()
+        if not supervision_path.is_relative_to(self.directory.resolve()):
+            raise ValueError("the supervision path leaves its bank")
+        supervision = read_json(supervision_path)
         self.rows, self.split = supervision["rows"], supervision["split"]
         self.targets = np.asarray([row["y"] for row in self.rows], np.float64)
         self.weights = np.asarray(
@@ -421,7 +423,7 @@ class Bank:
         result = np.full(len(self.rows), -1, np.int64)
         if any(TARGETS.named(kind).names is not None for kind in self.registry.schema.targets()):
             for graph in self.manifest["graphs"]:
-                held = load_arrays(self.truth(graph["index"]), ("target_row", "target_node", "entity_token"))
+                held = Facts.read(self.truth(graph["index"]), ("target_row", "target_node", "entity_token"))
                 chosen = held["target_node"] >= 0
                 tokens = held["entity_token"][held["target_node"][chosen]] & np.uint64(TOKEN)
                 result[held["target_row"][chosen]] = tokens.astype(np.int64)
@@ -470,7 +472,10 @@ class Bank:
 
     @timed("bank.Bank.truth")
     def truth(self, index):
-        return self.directory / "truth" / ("graph_%04d" % index)
+        path = (self.directory / self.manifest["truth_root"] / ("graph_%04d" % index)).resolve()
+        if not path.is_relative_to(self.directory.resolve()):
+            raise ValueError("the bank's truth root leaves its directory")
+        return path
 
     def viewed(self, cfg):
         spec = self.stated(cfg)[2]
@@ -502,7 +507,7 @@ class Bank:
             started = time.perf_counter()
             kinds, tokens, owners = [], [], []
             for graph in self.manifest["graphs"]:
-                loaded = load_arrays(self.truth(graph["index"]), ("kinds", "entity_token"))
+                loaded = Facts.read(self.truth(graph["index"]), ("kinds", "entity_token"))
                 kinds.append(loaded["kinds"].astype(np.int64))
                 tokens.append(loaded["entity_token"])
                 owners.append(np.full(len(loaded["kinds"]), graph["index"], np.int64))

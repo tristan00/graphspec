@@ -4,7 +4,8 @@ from weakref import WeakKeyDictionary
 
 import numpy as np
 
-from graphspec.infra.files import load_arrays, read_json
+from graphspec.facts.stored import Facts
+from graphspec.infra.files import read_json
 from graphspec.infra.hashing import hashed, token, unit
 from graphspec.infra.timing import timed
 from graphspec.schema.decisions import ROLES
@@ -82,7 +83,7 @@ class Offered:
         unique = np.unique(np.asarray([(owners[row["graph"]], row[asked]) for row in bank.rows], np.int64), axis=0)
         found, options, acted, keys = dict(option=[], action=[], role=[]), 0, 0, []
         for graph in bank.manifest["graphs"]:
-            held = load_arrays(bank.truth(graph["index"]), READ)
+            held = Facts.read(bank.truth(graph["index"]), READ)
             task = np.asarray(held["option_task"], np.int64)
             if not len(task):
                 continue

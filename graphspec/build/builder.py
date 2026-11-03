@@ -237,8 +237,14 @@ class Builder:
             held["nodes"][kind].append(key)
         for column in values or (None,):
             observer_scope = None if seen is None else tuple(sorted(seen))
-            group = self.changes.setdefault((held["name"], kind, column, observer_scope), [])
-            group.append(dict(key=key, **when, **({VALUE + column: values[column]} if column is not None else {})))
+            identity = (held["name"], kind, column, observer_scope)
+            row = dict(key=key, **when, **({VALUE + column: values[column]} if column is not None else {}))
+            if identity not in self.changes:
+                statement = dict(kind=kind, form="change", parameters=dict(keys=["key"]), rows={name: [] for name in row})
+                self.changes[identity] = statement
+                held["values"].append(statement)
+            for name, value in row.items():
+                self.changes[identity]["rows"][name].append(value)
         return self
 
     @timed("builder.task")
@@ -249,7 +255,7 @@ class Builder:
         if kind not in schema.tasks["kinds"]:
             raise ValueError("task names an undeclared kind %r" % kind)
         where, entry = "task %s of kind %s in graph %s" % (key, kind, held["name"]), schema.tasks["kinds"][kind]
-        if type(key) is not int or key in held["tasks"]["key"]:
+        if type(key) is not int:
             raise ValueError("%s needs a distinct integer key" % where)
         if any(value is UNSTATED for value in (references, split, target, known)):
             raise ValueError("%s states references, split, target and known" % where)
@@ -297,6 +303,21 @@ class Builder:
                     raise ValueError("%s names the whole graph without a node under %s" % (where, reference))
             elif stated is None:
                 raise ValueError("%s lacks its reference %s" % (where, reference))
+        if key in held["tasks"]["key"]:
+            position = held["tasks"]["key"].index(key)
+            previous = held["tasks"]
+            if (previous["target"][position] is not None and kind not in schema.decided()) or target is None:
+                raise ValueError("%s needs a distinct integer key unless completing a missing target" % where)
+            if any(previous[name][position] != value for name, value in row.items() if name not in ("target", "known")) or any(
+                previous["references"][name][position] != references.get(name) for name in previous["references"]
+            ):
+                raise ValueError("%s cannot change an existing task while completing its target" % where)
+            if schema.model != "none":
+                from .appending import target_delta
+
+                target_delta(schema, dict(target=previous["target"][position], known=previous["known"][position]), row, at)
+            previous["target"][position], previous["known"][position] = row["target"], known
+            return self
         for name, value in row.items():
             held["tasks"][name].append(value)
         for reference in held["tasks"]["references"]:
@@ -304,16 +325,15 @@ class Builder:
         return self
 
     @timed("builder.records")
-    def records(self):
+    def records(self, *, snapshot=True):
         schema = self.required()
         if not self.graphs:
             raise ValueError("the builder holds no declared graph")
         if self.declarations:
             raise ValueError("the declarations need handlers before they can be built: %s" % ", ".join(self.declarations))
+        if not snapshot:
+            return dict(schema=schema.mapping(), graphs=list(self.graphs.values()))
         graphs = copy.deepcopy(self.graphs)
-        for (graph, kind, column, observer_scope), rows in self.changes.items():
-            graphs[graph]["values"].append(dict(kind=kind, form="change", parameters=dict(keys=["key"]),
-                                                 rows={name: [row[name] for row in rows] for name in rows[0]}))
         for graph in graphs.values():
             tasks = graph["tasks"]
             order = sorted(range(len(tasks["key"])), key=lambda at: (tasks["time"][at], tasks["key"][at])) if schema.model != "none" else list(range(len(tasks["key"])))
@@ -324,8 +344,16 @@ class Builder:
         return dict(schema=schema.mapping(), graphs=list(graphs.values()))
 
     @timed("builder.stage")
-    def stage(self, output, name):
+    def stage(self, output, name, plan, *, reuse=False):
+        from .writing import stage
+
         started = time.perf_counter()
-        result = records.stage(output, name, self.records())
+        result = stage(self.records(snapshot=False), output, name, plan, reuse=reuse)
         LOG.info("builder staged graphs=%d seconds=%.4f", len(self.graphs), time.perf_counter() - started)
         return result
+
+    @timed("builder.append")
+    def append(self, task_path, plan):
+        from .appending import append_stage
+
+        return append_stage(self, task_path, plan)

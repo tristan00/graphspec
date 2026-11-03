@@ -10,7 +10,6 @@ from graphspec.budgets import Refused
 from graphspec.descriptions import describe as truth
 from graphspec.descriptions import effect
 from graphspec.facts.stored import GROUPS, Facts
-from graphspec.infra.files import load_arrays
 from graphspec.infra.timing import timed
 from graphspec.operations import parameters as specs
 from graphspec.operations import sets
@@ -897,7 +896,7 @@ class Reached(Derived):
         kind, key = np.asarray(graph.task_kind, np.int64), np.asarray(graph.task_key, np.int64)
         result = {}
         for at, view in enumerate(self.loaded(group)[0]):
-            held = load_arrays(self.deriver.truth(sources[view]), ("option_task", "task_kind", "task_key"))
+            held = Facts.read(self.deriver.truth(sources[view]), ("option_task", "task_kind", "task_key"))
             optioned = np.unique(np.asarray(held["option_task"], np.int64))
             stated = set(zip(np.asarray(held["task_kind"])[optioned].tolist(), np.asarray(held["task_key"])[optioned].tolist()))
             shown = [code for code, found in zip(kind[member == at].tolist(), key[member == at].tolist()) if (code, found) in stated]

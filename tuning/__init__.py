@@ -1,4 +1,5 @@
 from .api import (
+    append_bank,
     build_bank,
     configuration,
     describe,
@@ -14,6 +15,7 @@ from .fits.losses import LOSSES
 from .measures.measures import MEASURES
 
 __all__ = [
+    "append_bank",
     "HEADS",
     "LOSSES",
     "MEASURES",
