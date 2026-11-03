@@ -32,7 +32,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = [pytest.mark.xdist_group("decisions"), pytest.mark.extended]
+pytestmark = [pytest.mark.xdist_group("decisions"), pytest.mark.decisions]
 GENERATOR = "nearby"
 UNREALISED = {REALISATION: NONE}
 DECIDING = ("turn", "show")

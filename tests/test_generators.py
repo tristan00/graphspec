@@ -23,7 +23,7 @@ from graphspec.views.view import TASKS, sequences
 from tuning.bank.bank import Deriver
 
 LOG = logging.getLogger(__name__)
-pytestmark = [pytest.mark.xdist_group("generators"), pytest.mark.extended]
+pytestmark = [pytest.mark.xdist_group("generators"), pytest.mark.decisions]
 OPENED = {}
 NAMES = [held["name"] for held in generated.STATED]
 

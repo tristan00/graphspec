@@ -22,7 +22,7 @@ from tuning.families.periods import blocks as windows
 from tuning.fits.guards import captured
 
 LOG = logging.getLogger(__name__)
-pytestmark = [pytest.mark.xdist_group("scoring"), pytest.mark.extended]
+pytestmark = [pytest.mark.xdist_group("scoring"), pytest.mark.decisions]
 COUNTS = (1, 2, 8, 50)
 CHECKED = COUNTS[1:]
 SHIPPED = ("node", "vector", "action_nodes", "actor_edge", "set_edge")

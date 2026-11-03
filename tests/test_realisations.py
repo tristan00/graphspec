@@ -35,7 +35,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = [pytest.mark.xdist_group("decisions"), pytest.mark.extended]
+pytestmark = [pytest.mark.xdist_group("decisions"), pytest.mark.decisions]
 KEYED = {"keys/embedding": True, "hidden": 8}
 PLAIN = {"time/history": 2}
 SAMPLED = dict(PLAIN, **{"nodes/spot/filter": "sample", "nodes/spot/sample": 0.5})

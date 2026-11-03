@@ -36,7 +36,7 @@ from tuning.fits.training import fit
 from tuning.statement import state
 
 LOG = logging.getLogger(__name__)
-pytestmark = [pytest.mark.xdist_group("decisions"), pytest.mark.extended]
+pytestmark = [pytest.mark.xdist_group("decisions"), pytest.mark.decisions]
 SHARED = (banks, registered)
 RELATIONS = dict(
     went=dict(pairs=(("agent", "spot"),), directed=True, columns=("speed",)),
