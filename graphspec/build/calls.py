@@ -298,6 +298,8 @@ class GraphTables:
                         (held, WRITTEN[kind]) for held, kind in required.items()
                     ]
                     fields += [(held, schema.kind(held).written) for held in entry["columns"]]
+                    if name.startswith(OBSERVED):
+                        fields.append((FACT_COLUMNS, pa.list_(pa.string())))
                     self.tables[(name, source, target)] = pa.table(
                         {held: pa.array([], kind) for held, kind in fields}
                     )

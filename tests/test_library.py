@@ -30,6 +30,22 @@ def test_missing_staging_does_not_read_database(tmp_path):
         open_source(tmp_path / "task.json", dict(staging="missing"))
 
 
+@pytest.mark.parametrize("observed", (0, 1))
+def test_public_writer_keeps_empty_and_populated_observation_schemas_equal(tmp_path, observed):
+    schema = stated(dict(node=["value"]), {}, VALUES, asked(["node"]))
+    graphs = [GraphTables(index, str(index), "step", schema) for index in range(2)]
+    for index, graph in enumerate(graphs):
+        graph.nodes("node", ["n"])
+        if index == observed:
+            graph.observe("node", ["n"], dict(since=0, until=None, seq=0), value=[1.0])
+    with Stage(tmp_path / "source") as stage:
+        for graph in graphs:
+            graph.write(stage)
+    files = Stage.open(tmp_path / "source").files[("observed_node", "node", "observation")]
+    table = pq.read_table(files[0])
+    assert table.num_rows == 1 and table.column("fact:columns").to_pylist() == [["value"]]
+
+
 def test_public_graph_writer_builds_without_database_and_preserves_source(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "ladybug", None)
     schema = stated(
