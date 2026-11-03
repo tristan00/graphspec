@@ -65,6 +65,7 @@ OWNED_TARGET = ("id", "y", "known", "task", "owner")
 MATURED = ("reference", "column")
 GIVEN = ("id", "graph", "time", "observer", "kind", "split", "weight", "signal", "signal_observed", "ended", "discount")
 VALUE = "column:"
+FACT_COLUMNS = "fact:columns"
 ENDS = ("from", "to")
 FITTED = ("sizes", "values", "held", "inner", "features")
 
@@ -1187,6 +1188,8 @@ class Schema:
                 )
             found = source.columns(table)
             wanted = dict(entry["required"])
+            if table.startswith(OBSERVED) and FACT_COLUMNS in found:
+                wanted[FACT_COLUMNS] = "STRING[]"
             for name in entry["columns"]:
                 if name in wanted or name in ENDS:
                     raise ValueError(

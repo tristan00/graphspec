@@ -32,6 +32,7 @@ def check(graph, registry, splits, observers):
     )
     dimensions = dict(
         obs_values=2,
+        obs_scope=2,
         fact_values=2,
         task_values=2,
         task_signals=3,
@@ -66,6 +67,10 @@ def check(graph, registry, splits, observers):
     layout = registry.encoding.layout
     if graph.obs_values.shape[1] != len(layout) or graph.task_values.shape[1] != len(layout):
         raise ValueError("graph %s holds values of a width its schema does not state" % name)
+    if graph.obs_scope.shape != graph.obs_values.shape or graph.obs_scope.dtype != np.bool_:
+        raise ValueError("graph %s states a boolean scope for every column of every node fact" % name)
+    if np.any(~graph.obs_scope & ~np.isnan(graph.obs_values)):
+        raise ValueError("graph %s gives a value to a column outside its node fact's scope" % name)
     if graph.task_signals.shape[1:] != (registry.extras["signals"], 2):
         raise ValueError("graph %s signal shape does not match its registry" % name)
     for label, values in (("a node", graph.obs_values), ("a task", graph.task_values)):
@@ -194,5 +199,33 @@ def check(graph, registry, splits, observers):
                     graph.keys[int(graph.fact_target[row])],
                 )
 
-        clock.untied(name, named, schema.ties, owner, stamps, facts)
+        if group == "obs":
+            observation_ties(graph, registry, named, owner, stamps, facts)
+        else:
+            clock.untied(name, named, schema.ties, owner, stamps, facts)
     LOG.debug("check exit graph=%s seconds=%.4f", name, time.perf_counter() - started)
+
+
+@timed("check.observation_ties")
+def observation_ties(graph, registry, named, owner, stamps, facts):
+    scope = np.asarray(graph.obs_scope)
+    full = np.zeros((len(registry.nodes), scope.shape[1]), bool)
+    for kind, columns in registry.schema.entities().items():
+        full[registry.kind(kind), registry.encoding.positions(columns)] = True
+    if np.array_equal(scope, full[np.asarray(graph.kinds)[owner]]):
+        clock.untied(graph.name, named, registry.schema.ties, owner, stamps, facts)
+        return
+    scope = np.column_stack((scope, ~scope.any(1)))
+    labels = list(registry.encoding.layout) + ["presence"]
+    for column in range(scope.shape[1]):
+        rows = np.flatnonzero(scope[:, column])
+
+        @timed("check.observation_ties.named")
+        def field(row):
+            return "%s, column %s" % (named(rows[row]), labels[column])
+
+        clock.untied(
+            graph.name, field, registry.schema.ties, owner[rows],
+            {key: value[rows] for key, value in stamps.items()},
+            {key: np.asarray(value)[rows] for key, value in facts.items()},
+        )

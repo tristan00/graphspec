@@ -13,6 +13,7 @@ from graphspec.schema.references import SORTS
 from graphspec.schema.schema import (
     ACTIONS,
     EDGE,
+    FACT_COLUMNS,
     FACTS,
     FOLLOWS,
     INNER,
@@ -35,7 +36,7 @@ from graphspec.schema.schema import (
 from .output import manifest
 
 LOG = logging.getLogger(__name__)
-INDEX = 6
+INDEX = 7
 IDS = 32
 DECIDING = (OPTIONS, ACTIONS, ROLED)
 
@@ -388,6 +389,7 @@ class Reader:
                     ),
                     **{name: held.column(name).take(take) for name in stamps},
                     **valued(rows, entities[kind]),
+                    **({FACT_COLUMNS: rows.column(FACT_COLUMNS)} if FACT_COLUMNS in rows.column_names else {}),
                 )
             )
         if np.any(seen != 1):

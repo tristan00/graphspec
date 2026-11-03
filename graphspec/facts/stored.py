@@ -11,11 +11,11 @@ from graphspec.infra.timing import timed
 from graphspec.schema import time as clock
 from graphspec.schema.decisions import RECORDED
 from graphspec.schema.references import MEMBERS
-from graphspec.schema.schema import VALUE, inward, outward
+from graphspec.schema.schema import FACT_COLUMNS, VALUE, inward, outward
 from graphspec.schema.time import ALWAYS, NEVER
 
 LOG = logging.getLogger(__name__)
-VERSION = 19
+VERSION = 20
 MANIFEST = (
     "version",
     "trained",
@@ -64,7 +64,7 @@ DECIDED = dict(
 )
 STORED = (
     ("kinds", "entity_token")
-    + ("obs_entity", "obs_since", "obs_until", "obs_seq", "obs_values")
+    + ("obs_entity", "obs_since", "obs_until", "obs_seq", "obs_values", "obs_scope")
     + ("fact_source", "fact_target", "fact_code", "fact_present")
     + ("fact_since", "fact_until", "fact_seq", "fact_values")
     + tuple(group + "_" + name for group in GROUPS for name in SPARSE)
@@ -328,6 +328,11 @@ class Facts:
                 **self.timed("obs", rows, observers, sequenced),
                 **prefixed(stated(registry, columns, values[rows][:, encoding.positions(columns)])),
             )
+            scope = np.asarray(self.obs_scope)[rows][:, encoding.positions(columns)]
+            if not scope.all():
+                observations[kind][FACT_COLUMNS] = [
+                    [column for column, held in zip(columns, mask) if held] for mask in scope
+                ]
         names = np.asarray([edge.name for edge in registry.edges], object)
         code, held = np.asarray(self.fact_code).astype(np.int64), np.asarray(self.fact_values)
         edges = {}

@@ -62,7 +62,7 @@ from tuning.statement import VERSION as STATEMENT
 from tuning.statement import agreed, state
 
 LOG = logging.getLogger(__name__)
-pytestmark = pytest.mark.xdist_group("descriptions")
+pytestmark = [pytest.mark.xdist_group("descriptions"), pytest.mark.extended]
 NUMBER = dict(type="number", encoder="value")
 CHANGED = dict(name="changed", seed=13, repeats=False, parameters=dict(count=1, ranges=dict(speed=[0.25, 0.5])))
 HELD = dict(

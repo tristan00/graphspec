@@ -1,5 +1,7 @@
 **Graph spec core**
 
+Node facts may state different columns of the same node. `GraphTables.observe` and synthetic statements record the columns supplied, including columns explicitly set to null. Staged observation relations can carry `fact:columns`, a list of declared columns for each row; a relation without it states every column of its kind. The bank stores this scope as `obs_scope`. At each step, visible facts combine by column, and `time/several` selects among facts that state the same column. A null in a selected fact stays missing. Knowledge times, corrections and observer visibility are applied before combination. Bank version 20 records the scope; earlier banks must be rebuilt from their sources.
+
 | Where | What is there |
 |---|---|
 | `schema/` | What a graph is stated to hold: the schema, types and encoders of columns (`schema.py`), time and its rules (`time.py`), references (`references.py`), kinds of target and utilities (`targets.py`), decisions, their options and actions, the kind of target `decision` and the registries of generators and rules of options (`decisions.py`), a bank's declaration of relations (`declaration.py`), what an operation adds to it (`added.py`), the checks of fields and names every statement of a schema shares (`fields.py`) |

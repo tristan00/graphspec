@@ -17,7 +17,7 @@ from .graph import Graph, Shown, verify
 from .visible import permitted
 
 LOG = logging.getLogger(__name__)
-VERSION = 82
+VERSION = 83
 STEPS = Names("choice of steps", True)
 
 
@@ -540,6 +540,39 @@ def beside(facts, registry, held, several):
     return result
 
 
+@timed("view.combined_values")
+def combined_values(facts, registry, held, several, row, step, entity, order, starts, stops):
+    values = np.asarray(facts.obs_values)[row[order]]
+    scope = np.asarray(facts.obs_scope)[row[order]]
+    groups = np.repeat(np.arange(len(starts)), stops - starts)
+    if len(starts) and np.array_equal(scope, scope[starts][groups]):
+        if several is None and np.any(stops - starts > 1):
+            at = order[starts[np.argmax(stops - starts > 1)]]
+            raise ValueError(
+                "the view of graph %s shows at %s several facts about the node %s, and no time/several is stated"
+                % (facts.name, clock.shown(held["moments"][step[at]]), facts.keys[int(entity[at])])
+            )
+        chosen = starts if several is None else SEVERAL.named(several)(starts, stops)
+        return np.array(values[chosen])
+    result = np.full((len(starts), values.shape[1]), np.nan, values.dtype)
+    for column in range(values.shape[1]):
+        candidates = np.flatnonzero(scope[:, column])
+        owned = groups[candidates]
+        low = np.r_[0, np.flatnonzero(owned[1:] != owned[:-1]) + 1][:len(candidates)]
+        high = np.r_[low[1:], len(candidates)][:len(low)]
+        if several is None and np.any(high - low > 1):
+            at = order[candidates[low[np.argmax(high - low > 1)]]]
+            raise ValueError(
+                "the view of graph %s shows at %s several facts about the node %s, column %s, "
+                "and no time/several is stated"
+                % (facts.name, clock.shown(held["moments"][step[at]]), facts.keys[int(entity[at])],
+                   registry.encoding.layout[column])
+            )
+        chosen = candidates[low if several is None else SEVERAL.named(several)(low, high)]
+        result[groups[chosen], column] = values[chosen, column]
+    return result
+
+
 def showing(facts, registry, held, several, period):
     started = time.perf_counter()
     schema, observer, steps = registry.schema, held["observer"], len(held["moments"])
@@ -569,17 +602,8 @@ def showing(facts, registry, held, several, period):
     first = np.r_[True, (step[order][1:] != step[order][:-1]) | (entity[order][1:] != entity[order][:-1])]
     starts = np.flatnonzero(first[: len(order)])
     stops = np.r_[starts[1:], len(order)][: len(starts)]
-    if several is None:
-        crowded = np.flatnonzero(stops - starts > 1)
-        if len(crowded):
-            named = order[starts[crowded[0]]]
-            raise ValueError(
-                "the view of graph %s shows at %s several facts about the node %s, and no time/several is stated"
-                % (facts.name, clock.shown(held["moments"][step[named]]), facts.keys[int(entity[named])])
-            )
-        chosen = order[starts]
-    else:
-        chosen = order[SEVERAL.named(several)(starts, stops)]
+    combined = combined_values(facts, registry, held, several, row, step, entity, order, starts, stops)
+    chosen = order[starts]
     observed = spans.observation_spans(
         entity[chosen].astype(np.int32),
         step[chosen].astype(np.int32),
@@ -589,7 +613,7 @@ def showing(facts, registry, held, several, period):
             held,
             entity[chosen],
             step[chosen],
-            np.array(np.asarray(facts.obs_values)[row[chosen]]),
+            combined,
         ),
     )
     observed["obs_values"] = observed.pop("obs_x")

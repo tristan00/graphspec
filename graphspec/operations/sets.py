@@ -99,6 +99,7 @@ def dropped(facts, keep):
         obs_until=stamps["until"],
         obs_seq=np.asarray(facts.obs_seq)[rows],
         obs_values=np.asarray(facts.obs_values)[rows],
+        obs_scope=np.asarray(facts.obs_scope)[rows],
         **sparse("obs", stamps, place[watched[chosen]], np.asarray(facts.obs_seen_observer)[chosen]),
     )
     LOG.debug(

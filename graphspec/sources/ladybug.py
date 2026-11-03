@@ -12,7 +12,7 @@ from graphspec.infra.processes.locks import exclusive
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
-from graphspec.schema.schema import EDGE, LINK, OBSERVED, TARGET, TASK, VALUE
+from graphspec.schema.schema import EDGE, FACT_COLUMNS, LINK, OBSERVED, TARGET, TASK, VALUE
 from graphspec.schema.time import UNITED
 
 LOG = logging.getLogger(__name__)
@@ -170,6 +170,8 @@ class Reader:
                 "RETURN e.entity AS entity%s%s"
                 % (kind, OBSERVED, kind, stamped("o", stated.stamps()), valued("r", held))
             )
+            if FACT_COLUMNS in source.columns(OBSERVED + kind):
+                self.statements["observed:" + kind] += ", r.`%s` AS `%s`" % (FACT_COLUMNS, FACT_COLUMNS)
         for table, entry in stated.edges.items():
             self.statements["edge:" + table] = (
                 "MATCH (a)-[r:`%s%s`]->(b) WHERE a.graph = $graph RETURN a.entity AS source, b.entity AS target, "

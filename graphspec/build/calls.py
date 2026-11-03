@@ -10,7 +10,7 @@ from graphspec.infra.files import write_json
 from graphspec.infra.runtime import output_path
 from graphspec.infra.timing import timed
 from graphspec.schema.references import SORTS
-from graphspec.schema.schema import EDGE, LINK, OBSERVED, TARGET, TASK, WRITTEN
+from graphspec.schema.schema import EDGE, FACT_COLUMNS, LINK, OBSERVED, TARGET, TASK, WRITTEN
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import UNITED
 
@@ -128,7 +128,10 @@ class GraphTables:
     @timed("calls.GraphTables.observe")
     def observe(self, kind, keys, when, **columns):
         owners = self.resolve(kind, keys)
-        values = self.stated("the kind of node " + kind, self.schema.nodes[kind], columns, len(owners))
+        names = self.schema.nodes[kind]
+        supplied = dict(columns, **{name: [None] * len(owners) for name in names if name not in columns})
+        values = self.stated("the kind of node " + kind, names, supplied, len(owners))
+        values[FACT_COLUMNS] = pa.array([list(columns)] * len(owners), pa.list_(pa.string()))
         ids = self.ids("observation", len(owners))
         self.put(
             ("observation", None, None),

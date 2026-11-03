@@ -14,7 +14,7 @@ import numpy as np
 from graphspec import Registry
 from graphspec.build import staged
 from graphspec.build.generators import appended, looking, recorded, regenerated
-from graphspec.build.parse import distinct, parse, parsed
+from graphspec.build.parse import distinct, parse, parsed, scope
 from graphspec.engine.transform import shown as viewed
 from graphspec.engine.transform import validate
 from graphspec.facts.stored import VERSION
@@ -93,8 +93,15 @@ def crowded(entity, since, until, once, sittings):
 def several(stated, tables, trained):
     started = time.perf_counter()
     parts = []
-    for kind in stated.entities():
+    masks, partial = [], False
+    layout = tuple(stated.columns)
+    for kind, columns in stated.entities().items():
         table = tables["observations"][kind]
+        mask = scope(table, columns, layout, "the observations of " + kind)
+        full = np.zeros(len(layout), bool)
+        full[[layout.index(name) for name in columns]] = True
+        partial |= not np.array_equal(mask, np.broadcast_to(full, mask.shape))
+        masks.append(mask)
         stamps = [
             np.asarray(table.column(name).fill_null(base).to_numpy(zero_copy_only=False), np.int64)
             if name in table.column_names
@@ -104,6 +111,12 @@ def several(stated, tables, trained):
         parts.append((np.asarray(table.column("entity").to_numpy(), np.int64), *stamps))
     empty = np.zeros(0, np.int64)
     entity, since, until, known = (np.concatenate([part[at] for part in parts] + [empty]) for at in range(4))
+    if partial:
+        mask = np.concatenate(masks)
+        mask = np.column_stack((mask, ~mask.any(1)))
+        rows, columns = np.nonzero(mask)
+        entity = entity[rows] * mask.shape[1] + columns
+        since, until, known = (values[rows] for values in (since, until, known))
     tasks = tables["tasks"]
     times = (
         np.asarray(tasks.column("time").to_numpy(), np.int64)

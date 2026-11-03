@@ -9,7 +9,7 @@ from graphspec.infra.timing import timed
 from graphspec.schema import time as clock
 from graphspec.schema.decisions import WHOLE
 from graphspec.schema.references import SORTS
-from graphspec.schema.schema import VALUE, absent, inward, outward
+from graphspec.schema.schema import FACT_COLUMNS, VALUE, absent, inward, outward
 from graphspec.schema.targets import TARGETS
 from graphspec.schema.time import ALWAYS, NEVER
 
@@ -76,6 +76,24 @@ def read(schema, observers, table, label, name):
     result["seq"] = column(table, "seq", np.int64) if sequenced else np.zeros(table.num_rows, np.int64)
     result["watched"] = clock.watched(table, observers, label, name)
     LOG.debug("read exit graph=%s rows=%d seconds=%.4f", name, table.num_rows, time.perf_counter() - started)
+    return result
+
+
+@timed("parse.scope")
+def scope(table, columns, layout, where):
+    result = np.zeros((table.num_rows, len(layout)), bool)
+    positions = {name: layout.index(name) for name in columns}
+    if FACT_COLUMNS not in table.column_names:
+        result[:, list(positions.values())] = True
+        return result
+    stated = table.column(FACT_COLUMNS).to_pylist()
+    if stated == [list(columns)] * table.num_rows:
+        result[:, list(positions.values())] = True
+        return result
+    for row, names in enumerate(stated):
+        if not isinstance(names, list) or any(name not in positions for name in names) or len(set(names)) != len(names):
+            raise ValueError("%s row %d states fact columns as distinct names declared for its kind" % (where, row))
+        result[row, [positions[name] for name in names]] = True
     return result
 
 
@@ -481,9 +499,11 @@ def parsed(registry, splits, observers, tables, rows, series, name):
         part["values"] = codes(
             registry, table, entities[kind], encoding.positions(entities[kind]), len(layout)
         )
+        part["scope"] = scope(table, entities[kind], layout, "the observations of %s in %s" % (kind, name))
         parts.append(part)
     seen = gathered(parts, len(layout))
     seen["entity"] = np.concatenate([part["entity"] for part in parts] + [np.zeros(0, np.int32)])
+    seen["scope"] = np.concatenate([part["scope"] for part in parts] + [np.zeros((0, len(layout)), bool)])
     seen = arranged(seen, np.lexsort((seen["seq"], seen["until"], seen["entity"], seen["since"])))
     width = max([len(registry.attributes(group)) for group in registry.groups] + [0])
     parts = []
@@ -586,6 +606,7 @@ def parse(registry, tables, parts):
         obs_until=seen["until"],
         obs_seq=seen["seq"].astype(np.int32),
         obs_values=seen["values"],
+        obs_scope=seen["scope"],
         **sparse("obs", seen, seen["watched"], seen["watchers"]),
         fact_source=facts["source"].astype(np.int32),
         fact_target=facts["target"].astype(np.int32),

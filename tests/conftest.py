@@ -270,6 +270,7 @@ def pytest_configure(config):
     started = time.perf_counter()
     config.addinivalue_line("markers", "gpu: the test is about the GPU and is skipped where none is present")
     config.addinivalue_line("markers", "slow: the test is left out of the default run; run it with -m slow")
+    config.addinivalue_line("markers", "extended: run this regression group separately with -m 'extended and not slow'")
     config.option.loadscopereorder = False
     LOG.debug("configure exit seconds=%.4f", time.perf_counter() - started)
 

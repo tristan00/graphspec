@@ -18,6 +18,7 @@ from graphspec.schema.schema import (
     ACTIONS,
     DECLARED,
     EDGE,
+    FACT_COLUMNS,
     FOLLOWS,
     INNER,
     LINK,
@@ -676,6 +677,21 @@ def gathered(schema, statements, given, values, where):
     return pa.concat_tables(found) if found else none(schema, given, values)
 
 
+@timed("synthetic.observations")
+def observations(schema, statements, columns, where):
+    found = []
+    for statement in statements:
+        rows = statement["rows"]
+        names = [name for name in columns if name in rows]
+        count = len(rows["key"])
+        supplied = dict(rows, **{name: [None] * count for name in columns if name not in rows})
+        part = facts(schema, dict(statement, rows=supplied), ("key",), columns, where)
+        found.append(part.append_column(FACT_COLUMNS, pa.array([names] * part.num_rows, pa.list_(pa.string()))))
+    if found:
+        return pa.concat_tables(found)
+    return none(schema, ("key",), columns).append_column(FACT_COLUMNS, pa.array([], pa.list_(pa.string())))
+
+
 @timed("synthetic.fields")
 def fields(schema):
     return GRAPH + (("sets",) if schema.sets else ()) + (("held",) if schema.holds else ())
@@ -720,10 +736,9 @@ def case_rows(schema, index, graph, counter):
 
     parts = []
     for kind, columns in schema.entities().items():
-        held_rows = gathered(
+        held_rows = observations(
             schema,
             [statement for statement in graph["values"] if statement["kind"] == kind],
-            ("key",),
             columns,
             "%s, values of %s" % (where, kind),
         )
@@ -734,6 +749,7 @@ def case_rows(schema, index, graph, counter):
                 "from": found(kind, held_rows.column("key").to_pylist()),
                 "to": pa.array(ids),
                 **{name: held_rows.column(name) for name in columns},
+                FACT_COLUMNS: held_rows.column(FACT_COLUMNS),
             }
         )
     tables[("observation", None, None)] = pa.concat_tables(parts)
