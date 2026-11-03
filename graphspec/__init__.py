@@ -4,6 +4,7 @@ initialize_storage()
 identities()
 compiled()
 
+from .build.builder import Builder
 from .build.calls import GraphTables, write_task
 from .build.forms import FORMS
 from .build.generators import DISTANCES, Scripted
@@ -48,6 +49,7 @@ __all__ = [
     "TYPES",
     "UTILITIES",
     "EdgeType",
+    "Builder",
     "Registry",
     "GraphTables",
     "Operation",

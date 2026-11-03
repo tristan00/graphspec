@@ -8,9 +8,16 @@ LOG = logging.getLogger(__name__)
 
 
 def build_bank(task, output, workers, trained):
+    from graphspec.build.builder import Builder
+
     from .bank.build import build
 
     started = time.perf_counter()
+    if isinstance(task, Builder):
+        output = output_path(output)
+        if output.exists():
+            raise FileExistsError("bank output already exists: " + str(output))
+        task = task.stage(output.parent, output.name + "-source")
     result = build(task, output, workers, trained)
     LOG.info("build_bank exit seconds=%.3f output=%s", time.perf_counter() - started, output)
     return result

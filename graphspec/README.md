@@ -1,5 +1,7 @@
 **Graph spec core**
 
+`Builder({}, sources)` accepts facts directly. Declare its schema with `schema(mapping)` and each graph with `graph(name, unit, **attributes)`, using `None` for a graph without a clock. Then call `node`, `edge`, `event`, `change` and `task`; `graph=` may be omitted when exactly one graph is declared. Timed facts state `known=None` when they have no separate time of knowledge, and a sequence tie rule requires `seq`. A change ends at the next change of the same column of the same node. Use `builder.stage(output, name)` to keep staged tables or `tuning.build_bank(builder, output, workers, trained)` to stage and build them. The base fact calls accept ordinary nodes and pair edges.
+
 Node facts may state different columns of the same node. `GraphTables.observe` and synthetic statements record the columns supplied, including columns explicitly set to null. Staged observation relations can carry `fact:columns`, a list of declared columns for each row; a relation without it states every column of its kind. The bank stores this scope as `obs_scope`. At each step, visible facts combine by column, and `time/several` selects among facts that state the same column. A null in a selected fact stays missing. Knowledge times, corrections and observer visibility are applied before combination. Bank version 20 records the scope; earlier banks must be rebuilt from their sources.
 
 | Where | What is there |
