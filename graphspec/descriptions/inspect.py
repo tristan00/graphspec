@@ -15,18 +15,23 @@ LOG = logging.getLogger(__name__)
 
 @timed("inspect.builder")
 def builder_text(builder, plan=None):
+    from graphspec.build.builder import Builder
     from graphspec.build.planning import stated
     from graphspec.build.readers import Source, proposals
     from graphspec.build.writing import canonical_records
 
     sources = [(name, declaration) for name, declaration in builder.declarations.items() if isinstance(declaration, Source)]
-    if sources and plan is None:
+    pending = builder.pending()
+    if (sources or pending) and plan is None:
         raise ValueError("inspect of source declarations requires an explicit BuildPlan")
-    if sources:
+    if sources or pending:
         plan = stated(plan)
     result = ["source %s: %s" % (name, json.dumps(proposals(declaration, builder.sources, plan, name), sort_keys=True))
               for name, declaration in sources]
-    if builder.stated is None and sources:
+    result += ["function %s: %s" % (name, reason) for name, reason in builder.functions.items()]
+    if pending:
+        builder = Builder(builder.declarations, builder.sources).map(plan, "inspected")
+    elif builder.stated is None:
         return "\n".join(result)
     case = canonical_records(builder.records(snapshot=False))
     schema = Schema(case["schema"])
@@ -49,6 +54,8 @@ def builder_text(builder, plan=None):
                 target["splits"][split] = target["splits"].get(split, 0) + 1
         result.append("graph %s counts: %s" % (graph["name"], json.dumps(counts, sort_keys=True)))
     result.append("skipped references: 0")
+    if builder.counts:
+        result.append("presence: %s" % json.dumps(builder.counts, sort_keys=True))
     return "\n".join(result)
 
 

@@ -58,8 +58,14 @@ def appended(statements, fields, row):
 class Builder:
     @timed("builder.init")
     def __init__(self, script, sources):
+        from .scripted import SCRIPTED
+
+        self.functions = {}
         if isinstance(script, (str, Path)):
-            script = declarations(namespace(script, sources))
+            held = namespace(script, sources)
+            self.functions = {name: SCRIPTED.named(name)["reason"] for name, value in held.items()
+                              if callable(value) and getattr(value, "__name__", None) == name and name in SCRIPTED.names()}
+            script = declarations(held)
         if not isinstance(script, Mapping):
             raise ValueError("a builder takes a script path or a mapping from names to declarations")
         self.declarations = dict(script)

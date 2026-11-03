@@ -1,15 +1,17 @@
 import gc
 import logging
+import re
+import runpy
 import time
 from pathlib import Path
 
 import pytest
-from described_sources import WRITERS, written
+from described_sources import WRITERS, csv, day, written
 from support import pipelined
-from test_described import ROWS, read
+from test_described import REASONS, ROWS, read
 
 from conftest import Inline
-from graphspec import GENERATORS, SCRIPTED, Builder, BuildPlan, validate
+from graphspec import GENERATORS, SCRIPTED, Builder, BuildPlan, inspect, validate
 from graphspec.infra.files import read_json
 from graphspec.operations import parameters
 from tuning import build_bank, configuration, fit, open_bank
@@ -19,6 +21,8 @@ from tuning.families.model_spec import configured, groups
 LOG = logging.getLogger(__name__)
 pytestmark = pytest.mark.described
 ROOT = Path(__file__).parent / "described"
+WALKTHROUGH = Path(__file__).parent / "walkthrough"
+DOCUMENT = Path(__file__).parents[1] / "docs" / "loader.md"
 PLAN = BuildPlan(64 << 20, 1)
 BUDGET = 0.5
 STATED = {"time/steps": "tasks", "time/scheme": "state", "time/several": "last", "graphs/join": "separate",
@@ -103,6 +107,11 @@ def test_a_described_script_validates_builds_and_fits_from_synthetic_sources_wit
     held = set(SCRIPTED.names())
     try:
         seconds = run(name, tmp_path)
+        builder = Builder(ROOT / name, tmp_path / "sources")
+        assert builder.functions == REASONS.get(name, {})
+        if builder.functions:
+            shown = inspect(builder, plan=PLAN)
+            assert all("function %s: %s" % pair in shown for pair in builder.functions.items())
     finally:
         for added in set(SCRIPTED.names()) - held:
             del SCRIPTED.held[added], GENERATORS.held[added]
@@ -110,3 +119,48 @@ def test_a_described_script_validates_builds_and_fits_from_synthetic_sources_wit
     assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
     assert read(name, (ROOT / name).read_text(encoding="utf-8"))["statements"] <= ROWS[name][1]
     assert seconds <= BUDGET, (name, seconds)
+
+
+def library(folder):
+    started = time.perf_counter()
+    folder.mkdir(parents=True)
+    csv(folder, "members.csv", [dict(member="m%d" % at, joined=day(at), branch="b%d" % (at % 2)) for at in range(6)])
+    loans = []
+    for at in range(40):
+        kept = 3 + (at * 7) % 13
+        loans.append(dict(loan="l%d" % at, member="m%d" % (at % 6), book="k%d" % (at % 7), lent=day(10 + at),
+                          back=day(10 + at + kept), late=str(kept > 9).lower()))
+    csv(folder, "loans.csv", loans)
+    LOG.debug("library exit loans=%d seconds=%.4f", len(loans), time.perf_counter() - started)
+
+
+def test_the_walkthrough_of_the_document_inspects_builds_and_fits_its_script_within_the_budget(
+    tmp_path, monkeypatch, warmed, capsys
+):
+    monkeypatch.setattr("tuning.batches.packing.Packer", Inline)
+    script = (WALKTHROUGH / "library.py").read_text(encoding="utf-8")
+    opening, rest = script.split("\n\n", 1)
+    found = read("library.py", opening + '\n\nDESCRIPTION = "a library lends books"\n' + rest)
+    assert found["refused"] == [] and found["functions"] == {} and found["statements"] == 6
+    assert found["counts"] == dict(sources=2, declarations=4, functions=0)
+    (tmp_path / "library.py").write_text(script, encoding="utf-8")
+    library(tmp_path / "data")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GRAPHSPEC_HOME", str(tmp_path / "home"))
+    gc.collect()
+    spent = time.process_time()
+    runpy.run_path(str(WALKTHROUGH / "run.py"), run_name="walkthrough")
+    seconds = time.process_time() - spent
+    LOG.info("walkthrough exit processor=%.3f", seconds)
+    printed = capsys.readouterr().out
+    assert "member" in printed and "overdue" in printed and "borrowed" in printed
+    saved = read_json(tmp_path / "home" / "runs" / "library" / "result.json")
+    assert saved["status"] == "complete" and 0 < saved["optimizer_updates"] <= 20
+    assert seconds <= BUDGET, seconds
+
+
+def test_the_walkthrough_held_here_is_the_one_the_document_shows():
+    if not DOCUMENT.exists():
+        pytest.skip("docs/loader.md is not in this checkout; the walkthrough held under tests/walkthrough is the one run")
+    blocks = re.findall(r"```python\n(.*?)```", DOCUMENT.read_text(encoding="utf-8"), re.S)
+    assert blocks[:2] == [(WALKTHROUGH / name).read_text(encoding="utf-8") for name in ("library.py", "run.py")]
