@@ -56,6 +56,10 @@ Whole-table reductions require `whole=True`, the caller's explicit assertion tha
 
 The literal `never` lies beyond every finite int64 time. Expressions combining it with finite times use exact decimal integer ticks only for that result; source and bank formats stay unchanged. `hash(key, 'salt')` and `hash(key, salt='salt')` are equivalent; the keyword form treats all positional arguments as keys.
 
+Table operations are immutable declarations registered in `TABLES`. They use the same expressions: `kept = select(records, where="value > 0")`, then `scaled = compute(kept, columns=dict(fraction="value / sum(value)"))`. Put them beside their sources in the builder and read the result with `builder.read("scaled", plan)`. `builder.frame("scaled", plan)` also exposes the Arrow table, exact semantic column kinds, completeness, outcome annotations and row lineage as read-only metadata. Each completed table numbers its own rows from zero; retained provenance records the input rows separately.
+
+Shipped operations are `select`, `compute`, `join`, `group`, `pivot`, `unpivot`, `expand`, `nested`, `cut`, `align`, `union`, `order`, and `closure`. Operations currently materialize complete dependencies and results under explicit retained-input, scratch and output guards. An over-budget operation stops; source-only reads remain streaming. Custom entries use `table([inputs], name="registered", columns=..., **parameters)`: their versioned callback takes a list of Arrow-table iterators and one parameter mapping, then yields canonically typed Arrow tables. Arbitrary custom transformations retain an explicit opaque input-lineage reference instead of invented source-row matches.
+
 ```powershell
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime synthetic --output D:/graphspec-runtime/datasets/demo --name demo --shape uniform --columns 4 --signals 2 --graphs 4 --entities 40 --steps 12 --degree 2.0 --max-degree 6 --alive 0.8 --lifetime 4.0 --period 3 --level task --seed 1
 ./scripts/graphspec.ps1 -Home D:/graphspec-runtime inspect D:/graphspec-runtime/datasets/demo/demo.task.json

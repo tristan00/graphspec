@@ -13,6 +13,24 @@ from .build.generators import DISTANCES, Scripted
 from .build.output import Stage
 from .build.planning import BuildPlan
 from .build.readers import READERS, Source, source
+from .build.table_types import TABLES, Frame
+from .build.tables import (
+    Table,
+    align,
+    closure,
+    compute,
+    cut,
+    expand,
+    group,
+    join,
+    nested,
+    order,
+    pivot,
+    select,
+    table,
+    union,
+    unpivot,
+)
 from .descriptions.describe import counts, describe
 from .descriptions.differences import differences
 from .descriptions.inspect import inspect
@@ -57,6 +75,7 @@ __all__ = [
     "STEPS",
     "STORAGE",
     "TARGETS",
+    "TABLES",
     "TIES",
     "TYPES",
     "UTILITIES",
@@ -72,11 +91,27 @@ __all__ = [
     "Scripted",
     "Stage",
     "Source",
+    "Table",
+    "Frame",
     "counts",
     "describe",
     "differences",
     "inspect",
     "evaluate",
     "source",
+    "align",
+    "closure",
+    "compute",
+    "cut",
+    "expand",
+    "group",
+    "join",
+    "nested",
+    "order",
+    "pivot",
+    "select",
+    "table",
+    "union",
+    "unpivot",
     "write_task",
 ]

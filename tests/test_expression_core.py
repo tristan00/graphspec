@@ -63,6 +63,7 @@ def test_conditionals_evaluate_only_selected_rows_but_validate_both_branches():
     with pytest.raises(ValueError, match="types"):
         evaluate("x if True else keep", table, columns, plan=PLAN)
     assert evaluate("x if missing else 1", table, columns, plan=PLAN).values.to_pylist() == [None, None]
+    assert evaluate("sum(x) if count(x) > 1 else missing", table, columns, plan=PLAN, whole=True).values.as_py() == 3.0
 
 
 def test_conditional_aggregate_reduces_original_whole_scope():
@@ -268,7 +269,10 @@ def test_custom_callbacks_preserve_list_rows_and_reject_nested_never(monkeypatch
     table = pa.table(dict(moment=[(1 << 63) - 1, -(1 << 63)]))
     columns = dict(moment=dict(type="time", unit="turn"))
     result = evaluate("time_lengths(list(coalesce(moment, never)))", table, columns, plan=PLAN, whole=True, unit="turn")
-    assert result.values.to_pylist() == [2.0, 2.0] and seen == [pa.list_(pa.int64())]
+    assert result.values.as_py() == 2.0 and seen == [pa.list_(pa.int64())]
+    counts = pa.table(dict(x=pa.array([1.0, 2.0])))
+    assert evaluate("sqrt(sum(x) + 1)", counts, dict(x="number"), plan=PLAN, whole=True).values.as_py() == 2.0
+    assert evaluate("x + sum(x)", counts, dict(x="number"), plan=PLAN, whole=True).values.to_pylist() == [4.0, 5.0]
     with pytest.raises(ValueError, match="row 1.*list member.*never.*int64"):
         evaluate("time_lengths(list(never))", table, columns, plan=PLAN, whole=True, unit="turn")
     with pytest.raises(ValueError, match="row 1.*list member.*never.*int64"):

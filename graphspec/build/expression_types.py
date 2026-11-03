@@ -54,6 +54,7 @@ class Call:
     ordered: bool = False
     through: object = UNSTATED
     indices: object = None
+    neighbors: object = None
 
 
 class Function:

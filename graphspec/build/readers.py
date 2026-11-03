@@ -39,9 +39,11 @@ def namespace(path, sources):
 
 @timed("readers.declarations")
 def declarations(namespace):
-    result = {name: value for name, value in namespace.items() if isinstance(value, Source)}
+    from .tables import Table
+
+    result = {name: value for name, value in namespace.items() if isinstance(value, (Source, Table))}
     if not result:
-        raise ValueError("a declaration script exports source declarations")
+        raise ValueError("a declaration script exports source declarations or table declarations")
     return result
 
 
@@ -141,11 +143,12 @@ def batches(declaration, sources, plan, name=None):
 
 class SourceSession:
     @timed("readers.SourceSession")
-    def __init__(self, declarations, sources, plan):
+    def __init__(self, declarations, sources, plan, temporal=()):
         self.declarations = {name: declaration for name, declaration in declarations.items() if isinstance(declaration, Source)}
         self.sources, self.plan = sources, stated(plan)
         self.iterators, self.initial, self.consumed = {}, {}, set()
         self.retained, self.resolved, self.graph_unit = 0, False, None
+        self.temporal = tuple(temporal)
 
     @timed("readers.SourceSession.enter")
     def __enter__(self):
@@ -212,7 +215,7 @@ class SourceSession:
 
 @timed("readers.time_unit")
 def time_unit(session):
-    columns = []
+    columns = list(session.temporal)
     for name, declaration in session.declarations.items():
         declared = declaration.columns
         for column, given in declared.items():
@@ -225,7 +228,7 @@ def time_unit(session):
     return unit(columns)
 
 
-def typed(declaration, sources, plan, name=None, declarations=None, session=None):
+def typed(declaration, sources, plan, name=None, declarations=None, session=None, temporal=()):
     started = time.perf_counter()
     declarations = declarations if declarations is not None else {name if name is not None else str(declaration.place): declaration}
     if name is None:
@@ -234,7 +237,7 @@ def typed(declaration, sources, plan, name=None, declarations=None, session=None
     where = "source %s (%s)" % (source_name, declaration.place)
     owns_session = session is None
     if owns_session:
-        session = SourceSession(declarations, sources, plan)
+        session = SourceSession(declarations, sources, plan, temporal)
     columns = declaration.columns
     offset, schema, iterator = 0, None, None
     try:

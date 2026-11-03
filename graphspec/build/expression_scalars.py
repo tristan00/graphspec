@@ -201,8 +201,13 @@ class Shift:
         if not call().ordered:
             raise ValueError("previous and following require an explicitly ordered context")
         values = array(values)
-        positions = [index + self.direction if 0 <= index + self.direction < len(values) else None
-                     for index in range(len(values))]
+        if call().neighbors is None:
+            positions = [index + self.direction if 0 <= index + self.direction < len(values) else None
+                         for index in range(len(values))]
+        else:
+            positions = call().neighbors["previous" if self.direction < 0 else "following"]
+            if len(positions) != len(values):
+                raise ValueError("ordered neighbor positions align with the complete ordered table")
         return pc.take(values, pa.array(positions, pa.int64()))
 
 
@@ -220,5 +225,5 @@ FUNCTIONS.register("vector", Function(vector, (NUMBERS,), vector_kind, minimum=1
 FUNCTIONS.register("point", Function(vector, (NUMBERS,), point_kind, minimum=2, maximum=3))
 FUNCTIONS.register("row", Function(row, (), "number"))
 FUNCTIONS.register("hash", Function(hashed, ("any",), "number", minimum=1, maximum=None, keywords=("salt",)))
-FUNCTIONS.register("previous", Function(Shift(-1), ("any",), same_kind, nulls="read"))
-FUNCTIONS.register("following", Function(Shift(1), ("any",), same_kind, nulls="read"))
+FUNCTIONS.register("previous", Function(Shift(-1), ("any",), same_kind, nulls="read", version=2))
+FUNCTIONS.register("following", Function(Shift(1), ("any",), same_kind, nulls="read", version=2))

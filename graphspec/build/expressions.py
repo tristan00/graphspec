@@ -12,7 +12,7 @@ import pyarrow.compute as pc
 
 from graphspec.infra.timing import timed
 from graphspec.registries import version
-from graphspec.schema.columns import SHIPPED, held, statement
+from graphspec.schema.columns import SHIPPED, held, representation, statement
 from graphspec.schema.fields import ColumnValueError
 from graphspec.schema.schema import TYPES
 
@@ -98,6 +98,36 @@ def mapping(node, unit=UNSTATED):
 
 @timed("expressions.kind")
 def column_kind(given, physical, unit):
+    if isinstance(given, Kind):
+        if given.name not in (*SHIPPED, "missing", "points", "shares"):
+            raise ValueError("a column Kind names a shipped expression representation")
+        if physical != datatype(given):
+            raise ValueError("a column Kind requires its exact Arrow representation %s, found %s" % (datatype(given), physical))
+        if given.name == "time" and physical == EXTENDED_TIME:
+            valid = True
+        elif given.name in ("points", "shares"):
+            valid = physical == (aggregates.POINTS if given.name == "points" else aggregates.SHARES)
+        elif given.name == "missing":
+            valid = pa.types.is_null(physical)
+        else:
+            valid = representation(given.name, physical)
+        if not valid:
+            raise ValueError("column Kind %s has an invalid Arrow representation %s" % (given.name, physical))
+        if given.name in ("time", "interval") and (unit is UNSTATED or given.unit != unit):
+            raise ValueError("a temporal column Kind states the graph's explicit unit")
+        if given.name == "duration" and (type(given.unit) is not str or not given.unit):
+            raise ValueError("a duration column Kind states its unit")
+        if given.name in ("vector", "point") and (type(given.width) is not int or given.width < 1
+                                                  or physical.list_size != given.width
+                                                  or given.name == "point" and given.width not in (2, 3)):
+            raise ValueError("a vector or point column Kind states its exact valid width")
+        if given.name == "list":
+            if not (pa.types.is_list(physical) or pa.types.is_large_list(physical)) or given.of is None:
+                raise ValueError("a list column Kind states its member type")
+            column_kind(given.of, physical.value_type, unit)
+        if given.name == "nested" and not pa.types.is_struct(physical):
+            raise ValueError("a nested column Kind holds an Arrow struct")
+        return given
     declared = statement(given)
     name = declared.get("type")
     if type(name) is not str or not name:
@@ -159,8 +189,11 @@ def raw(value):
 
 @timed("expressions.literal_argument")
 def literal_argument(node):
-    return isinstance(node, (ast.Constant, ast.List)) or isinstance(node, ast.Name) and node.id in ("missing", "never") \
-        or isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)) and literal_argument(node.operand)
+    if isinstance(node, (ast.Constant, ast.List)) or isinstance(node, ast.Name) and node.id in ("missing", "never"):
+        return True
+    if isinstance(node, (ast.Call, ast.Name, ast.Attribute)):
+        return False
+    return all(literal_argument(value) for value in ast.iter_child_nodes(node))
 
 
 @timed("expressions.checked_output")
@@ -225,18 +258,35 @@ def custom_argument(value, kind):
 
 class Evaluator:
     @timed("expressions.Evaluator")
-    def __init__(self, table, columns, whole, unit, offset, ordered, through, namespaces):
+    def __init__(self, table, columns, whole, unit, offset, ordered, through, namespaces, positions=None, neighbors=None):
         if not isinstance(table, pa.Table) or not isinstance(columns, Mapping):
             raise ValueError("evaluate takes an already-typed Arrow table and its column declarations")
         if type(whole) is not bool or type(ordered) is not bool:
             raise ValueError("whole and ordered are explicit booleans")
         if type(offset) is not int or offset < 0:
             raise ValueError("row offset is a nonnegative whole number")
+        if isinstance(positions, (pa.Array, pa.ChunkedArray)):
+            positions = positions.to_pylist()
+        if positions is not None and (not isinstance(positions, (list, tuple)) or len(positions) != table.num_rows
+                                      or any(type(value) is not int or value < 0 for value in positions)):
+            raise ValueError("expression positions states one nonnegative whole input-row position per row")
+        self.positions = tuple(range(table.num_rows)) if positions is None else tuple(positions)
+        if neighbors is not None:
+            if not ordered or not isinstance(neighbors, Mapping) or set(neighbors) != {"previous", "following"}:
+                raise ValueError("ordered neighbors states previous and following row maps")
+            neighbors = {name: list(values) for name, values in neighbors.items()}
+            if any(len(values) != table.num_rows or any(
+                value is not None and (type(value) is not int or not 0 <= value < table.num_rows) for value in values
+            ) for values in neighbors.values()):
+                raise ValueError("ordered neighbors maps each row to an existing row or missing")
+        self.neighbors = neighbors
         self.tables, self.columns = {None: table}, {None: dict(columns)}
         for name, entry in (namespaces or {}).items():
-            if name not in ("earlier", "later") or not isinstance(entry, (tuple, list)) or len(entry) != 2 \
+            if name not in ("earlier", "later", "other") or not isinstance(entry, (tuple, list)) or len(entry) != 2 \
                     or not isinstance(entry[0], pa.Table) or not isinstance(entry[1], Mapping):
-                raise ValueError("namespaces states earlier/later as (complete Arrow table, column declarations)")
+                raise ValueError("namespaces states earlier/later or aligned other as (Arrow table, column declarations)")
+            if name == "other" and entry[0].num_rows != table.num_rows:
+                raise ValueError("the other namespace has exactly one aligned row per main row")
             self.tables[name], self.columns[name] = entry[0], dict(entry[1])
         self.whole, self.unit, self.offset, self.ordered, self.through = whole, unit, offset, ordered, through
         self.kinds, self.inferred, self.reductions = {}, {}, {}
@@ -266,7 +316,13 @@ class Evaluator:
                 through = pc.take(through, pa.array(ids, pa.int64()))
         offset = self.offset if scope is None else 0
         return Call(self.unit, len(ids), tuple(arguments), keywords or {}, offset, self.ordered, through,
-                    tuple(offset + value for value in ids))
+                    tuple(self.position(value, scope) for value in ids), self.neighbors if scope is None else None)
+
+    @timed("expressions.position")
+    def position(self, index, scope=None):
+        if scope is not None:
+            return index
+        return self.offset + (self.positions[index] if 0 <= index < len(self.positions) else index)
 
     @timed("expressions.function")
     def function(self, node):
@@ -279,6 +335,26 @@ class Evaluator:
         if not isinstance(entry, Function) and type(entry.gives) is not str:
             raise ValueError("a custom function states gives as a registered type name")
         return entry
+
+    @timed("expressions.derived")
+    def derived(self, node):
+        return any(isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                   and value.func.id != "column" and self.function(value).aggregate for value in ast.walk(node))
+
+    @timed("expressions.varying")
+    def varying(self, node, inside=False):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "column" or node.func.id in ("row", "previous", "following") and not inside:
+                return not inside
+            inside = inside or self.function(node).aggregate
+            children = [*node.args, *(keyword.value for keyword in node.keywords)]
+        elif isinstance(node, ast.Name):
+            return not inside and node.id not in ("missing", "never")
+        elif isinstance(node, ast.Attribute):
+            return not inside
+        else:
+            children = list(ast.iter_child_nodes(node))
+        return any(self.varying(child, inside) for child in children)
 
     @timed("expressions.result_kind")
     def result_kind(self, entry, arguments, keywords):
@@ -322,7 +398,9 @@ class Evaluator:
         elif isinstance(node, ast.Name):
             result = Value(None, self.column(node.id))
         elif isinstance(node, ast.Attribute):
-            if not aggregate or not isinstance(node.value, ast.Name) or node.value.id not in ("earlier", "later"):
+            if not isinstance(node.value, ast.Name) or node.value.id not in ("earlier", "later", "other"):
+                raise ValueError("an attribute reads an earlier, later or aligned other column")
+            if node.value.id != "other" and not aggregate:
                 raise ValueError("earlier/later columns are read only inside an aggregate")
             result = Value(None, self.column(node.attr, node.value.id))
         elif isinstance(node, ast.Subscript):
@@ -422,7 +500,7 @@ class Evaluator:
     def column_values(self, name, ids, scope=None, current=None):
         kind = self.column(name, scope)
         values = self.tables[scope][name]
-        if current is not None and scope is None:
+        if current in ("earlier", "later") and scope in (None, "other"):
             if len(values) != 1:
                 raise ValueError("an unqualified column in window rows requires one current row")
             return Value(values[0], kind)
@@ -478,7 +556,7 @@ class Evaluator:
         original_ids = ids
         if entry.aggregate:
             names = {value.value.id for value in ast.walk(node) if isinstance(value, ast.Attribute)
-                     and isinstance(value.value, ast.Name)}
+                     and isinstance(value.value, ast.Name) and value.value.id in ("earlier", "later")}
             if len(names) > 1:
                 raise ValueError("one aggregate reads one earlier/later row scope")
             scope = next(iter(names)) if names else None
@@ -493,6 +571,11 @@ class Evaluator:
         arguments = [self.run(value, ids, scope, aggregate or entry.aggregate) for value in node.args]
         keywords = {name: self.run(value, ids, scope, aggregate or entry.aggregate) for name, value in keywords_nodes.items()}
         kind = self.infer(node, aggregate).kind
+        folded = not entry.aggregate and node.func.id not in ("row", "previous", "following") \
+            and all(scalar(value) for value in (*arguments, *keywords.values())) and self.derived(node) \
+            and not (node.func.id == "met" and isinstance(self.through, (pa.Array, pa.ChunkedArray)))
+        if folded:
+            ids = ids[:1] if ids else [0]
         with calling(self.context(arguments, keywords, ids, scope, node.func.id == "met")):
             arrays = [rows(value, len(ids)) for value in arguments]
             keyword_arrays = {name: rows(value, len(ids)) for name, value in keywords.items()}
@@ -508,7 +591,7 @@ class Evaluator:
                         result = entry(*arrays, **keyword_arrays)
                     except ColumnValueError as error:
                         position = ids[error.row - 1] if 0 < error.row <= len(ids) else error.row - 1
-                        absolute = ColumnValueError(position + 1 + (self.offset if scope is None else 0), error.detail)
+                        absolute = ColumnValueError(self.position(position, scope) + 1, error.detail)
                         absolute.absolute = True
                         raise absolute from error
                 if not isinstance(result, pa.Scalar):
@@ -552,11 +635,11 @@ class Evaluator:
                 if entry.aggregate:
                     raise ValueError("aggregate %s returned an invalid value: %s" % (node.func.id, error.detail)) from error
                 position = ids[error.row - 1] if 0 < error.row <= len(ids) else error.row - 1
-                absolute = ColumnValueError(position + 1 + (self.offset if scope is None else 0), error.detail)
+                absolute = ColumnValueError(self.position(position, scope) + 1, error.detail)
                 absolute.absolute = True
                 raise absolute from error
             checked(output.nbytes * 4, "expression function output")
-        value = Value(result, kind)
+        value = Value(result[0] if folded else result, kind)
         if entry.aggregate:
             self.reductions[id(node)] = value
         elif node.func.id in ("previous", "following"):
@@ -621,6 +704,12 @@ class Evaluator:
                 return comparisons[0] if len(comparisons) == 1 else self.logic(comparisons, True, ids, scope)
             if isinstance(node, ast.IfExp):
                 predicate = self.run(node.test, ids, scope, aggregate)
+                if scalar(predicate) and not self.varying(node):
+                    selected = predicate.values.as_py()
+                    if selected is None:
+                        return Value(pa.scalar(None, datatype(inferred.kind)), inferred.kind)
+                    branch = self.run(node.body if selected else node.orelse, ids, scope, aggregate)
+                    return Value(branch.values.cast(datatype(inferred.kind), safe=True), inferred.kind)
                 with calling(self.context(ids=ids, scope=scope)):
                     flags = rows(predicate, len(ids)).to_pylist()
                 parts = []
@@ -639,14 +728,14 @@ class Evaluator:
             if getattr(error, "absolute", False):
                 raise
             position = ids[error.row - 1] if ids and 0 < error.row <= len(ids) else error.row - 1
-            result = ColumnValueError(position + 1 + (self.offset if scope is None else 0), error.detail)
+            result = ColumnValueError(self.position(position, scope) + 1, error.detail)
             result.absolute = True
             raise result from error
         raise ValueError("unsupported expression form %s" % type(node).__name__)
 
 
 def evaluate(text, table, columns, *, plan, whole=False, unit=UNSTATED, declaration="expression", field="value",
-             offset=0, ordered=False, through=UNSTATED, namespaces=None):
+             offset=0, ordered=False, through=UNSTATED, namespaces=None, positions=None, neighbors=None):
     started = time.perf_counter()
     try:
         with reading(stated(plan)):
@@ -657,7 +746,7 @@ def evaluate(text, table, columns, *, plan, whole=False, unit=UNSTATED, declarat
             nodes = list(ast.walk(tree))
             if len(nodes) > 4096 or any(not isinstance(node, ALLOWED) for node in nodes):
                 raise ValueError("the expression uses an unsupported or excessively large Python syntax form")
-            evaluator = Evaluator(table, columns, whole, unit, offset, ordered, through, namespaces)
+            evaluator = Evaluator(table, columns, whole, unit, offset, ordered, through, namespaces, positions, neighbors)
             evaluator.infer(tree.body)
             result = evaluator.run(tree.body, list(range(table.num_rows)))
             return result

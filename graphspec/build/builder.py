@@ -15,6 +15,10 @@ from graphspec.schema.time import ALWAYS, NEVER, UNITED
 
 from . import records
 from .readers import Source, SourceSession, declarations, namespace, typed
+from .table_session import Session as TableSession
+from .table_session import batches as table_batches
+from .table_session import collect
+from .tables import Table
 
 LOG = logging.getLogger(__name__)
 UNSTATED = object()
@@ -57,12 +61,27 @@ class Builder:
             if name not in self.declarations:
                 raise ValueError("the builder has no source named %s" % name)
             declaration = self.declarations[name]
-        if not isinstance(declaration, Source):
-            raise ValueError("read names a source declaration")
+        if not isinstance(declaration, (Source, Table)):
+            raise ValueError("read names a source or table declaration")
+        if isinstance(declaration, Table):
+            return table_batches(declaration, self.declarations, self.sources, plan, name)
         held = dict(self.declarations)
         if not any(value is declaration for value in held.values()):
             held[str(declaration.place)] = declaration
-        return typed(declaration, self.sources, plan, name, held)
+        names, _, sources, temporal = collect(held, declaration, name)
+        return typed(declaration, self.sources, plan, names[id(declaration)], sources, temporal=temporal)
+
+    @timed("builder.frame")
+    def frame(self, declaration, plan):
+        name = declaration if isinstance(declaration, str) else None
+        if name is not None:
+            if name not in self.declarations:
+                raise ValueError("the builder has no table named %s" % name)
+            declaration = self.declarations[name]
+        if not isinstance(declaration, (Source, Table)):
+            raise ValueError("frame names a source or table declaration")
+        with TableSession(self.declarations, self.sources, plan, declaration, name) as session:
+            return session.get(declaration)
 
     @timed("builder.schema")
     def schema(self, mapping):
@@ -346,7 +365,7 @@ class Builder:
         schema = self.required()
         if not self.graphs:
             raise ValueError("the builder holds no declared graph")
-        pending = [name for name, declaration in self.declarations.items() if not isinstance(declaration, Source)]
+        pending = [name for name, declaration in self.declarations.items() if not isinstance(declaration, (Source, Table))]
         if pending:
             raise ValueError("the declarations need handlers before they can be built: %s" % ", ".join(pending))
         if not snapshot:
@@ -380,6 +399,12 @@ class Builder:
 
     @timed("builder.check_sources")
     def check_sources(self, plan):
+        if any(isinstance(declaration, Table) for declaration in self.declarations.values()):
+            with TableSession(self.declarations, self.sources, plan) as session:
+                for declaration in self.declarations.values():
+                    if isinstance(declaration, (Source, Table)):
+                        session.get(declaration)
+            return
         sources = {name: declaration for name, declaration in self.declarations.items() if isinstance(declaration, Source)}
         if not sources:
             return
